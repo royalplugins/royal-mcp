@@ -1,0 +1,841 @@
+/* Royal MCP Admin Styles */
+
+.royal-mcp-settings .royal-mcp-settings-container {
+    max-width: 1200px;
+}
+
+.royal-mcp-settings .postbox {
+    margin-bottom: 20px;
+}
+
+.royal-mcp-settings .postbox-header h2 {
+    margin: 0;
+    padding: 12px;
+}
+
+.royal-mcp-settings .inside {
+    padding: 12px;
+}
+
+/* Toggle Switch */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 24px;
+}
+
+.switch.small {
+    width: 40px;
+    height: 20px;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+    border-radius: 24px;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+}
+
+.switch.small .slider:before {
+    height: 14px;
+    width: 14px;
+}
+
+input:checked + .slider {
+    background-color: #2271b1;
+}
+
+input:focus + .slider {
+    box-shadow: 0 0 1px #2271b1;
+}
+
+input:checked + .slider:before {
+    transform: translateX(26px);
+}
+
+.switch.small input:checked + .slider:before {
+    transform: translateX(20px);
+}
+
+/* ==========================================
+   Platform Items
+   ========================================== */
+
+#platforms-list {
+    margin: 20px 0;
+}
+
+.platform-item {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    transition: box-shadow 0.2s ease;
+}
+
+.platform-item:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.platform-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    background: #fafafa;
+    border-bottom: 1px solid #eee;
+}
+
+.platform-info {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.platform-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 20px;
+    font-weight: 600;
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+
+.platform-details {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.platform-name {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #1d2327;
+}
+
+.platform-description {
+    font-size: 13px;
+    color: #646970;
+}
+
+.platform-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.platform-actions .button {
+    padding: 4px 8px;
+    min-height: 30px;
+}
+
+.platform-actions .button .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+    line-height: 1;
+}
+
+.platform-toggle .dashicons {
+    transition: transform 0.2s ease;
+}
+
+.remove-platform:hover {
+    color: #d63638;
+    border-color: #d63638;
+}
+
+.platform-config {
+    padding: 20px;
+    background: #fff;
+}
+
+.platform-fields {
+    margin: 0 0 20px 0;
+}
+
+.platform-fields th {
+    width: 180px;
+    padding: 12px 10px 12px 0;
+    vertical-align: top;
+}
+
+.platform-fields td {
+    padding: 12px 10px 12px 0;
+}
+
+.platform-fields .required {
+    color: #d63638;
+    margin-left: 2px;
+}
+
+.platform-fields input[type="text"],
+.platform-fields input[type="password"],
+.platform-fields input[type="url"],
+.platform-fields select {
+    width: 100%;
+    max-width: 400px;
+}
+
+.platform-fields .toggle-password {
+    margin-left: 5px;
+    vertical-align: middle;
+}
+
+.platform-fields .toggle-password .dashicons {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+}
+
+.platform-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 15px;
+    border-top: 1px solid #eee;
+    margin-top: 10px;
+}
+
+.platform-links {
+    display: flex;
+    gap: 10px;
+}
+
+.platform-links .button-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    text-decoration: none;
+    color: #2271b1;
+}
+
+.platform-links .button-link:hover {
+    color: #135e96;
+}
+
+.platform-links .dashicons {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+}
+
+.platform-test {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.test-connection {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.test-connection .dashicons {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+}
+
+.test-connection .dashicons.spin {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    100% { transform: rotate(360deg); }
+}
+
+.connection-status {
+    font-size: 13px;
+    padding: 4px 10px;
+    border-radius: 4px;
+}
+
+.connection-status.success {
+    background: #d4edda;
+    color: #155724;
+}
+
+.connection-status.error {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+/* Empty State */
+.platform-empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    background: #f9f9f9;
+    border: 2px dashed #ddd;
+    border-radius: 8px;
+    margin: 20px 0;
+}
+
+.platform-empty-state .empty-icon {
+    margin-bottom: 15px;
+}
+
+.platform-empty-state .empty-icon .dashicons {
+    font-size: 48px;
+    width: 48px;
+    height: 48px;
+    color: #c3c4c7;
+}
+
+.platform-empty-state h3 {
+    margin: 0 0 10px 0;
+    font-size: 18px;
+    color: #1d2327;
+}
+
+.platform-empty-state p {
+    margin: 0;
+    color: #646970;
+}
+
+/* Add Platform Section */
+.add-platform-section {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #eee;
+}
+
+.add-platform-dropdown {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+#add-platform-select {
+    min-width: 280px;
+    padding: 8px 12px;
+}
+
+#add-platform-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+#add-platform-btn .dashicons {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+}
+
+/* ==========================================
+   Legacy MCP Servers (Backward Compatibility)
+   ========================================== */
+
+#mcp-servers-list {
+    margin: 20px 0;
+}
+
+.mcp-server-item {
+    background: #f9f9f9;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 15px;
+    margin-bottom: 15px;
+}
+
+.mcp-server-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #ddd;
+}
+
+.mcp-server-header h3 {
+    margin: 0;
+    font-size: 16px;
+}
+
+.mcp-server-item .form-table {
+    margin: 0;
+}
+
+.mcp-server-item .form-table th {
+    width: 200px;
+    padding: 10px 10px 10px 0;
+}
+
+.mcp-server-item .form-table td {
+    padding: 10px 10px 10px 0;
+}
+
+#add-server {
+    margin-top: 10px;
+}
+
+/* ==========================================
+   API Endpoints Reference
+   ========================================== */
+
+.api-endpoints-reference h3 {
+    margin-top: 20px;
+    margin-bottom: 10px;
+    font-size: 15px;
+}
+
+.api-endpoints-reference h3:first-child {
+    margin-top: 0;
+}
+
+.api-endpoints-reference ul {
+    list-style: none;
+    padding-left: 0;
+    margin: 10px 0;
+}
+
+.api-endpoints-reference li {
+    padding: 8px 0;
+    border-bottom: 1px solid #f0f0f0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.api-endpoints-reference li:last-child {
+    border-bottom: none;
+}
+
+.api-endpoints-reference code {
+    background: #f0f0f0;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 13px;
+    color: #c7254e;
+    min-width: 180px;
+    display: inline-block;
+}
+
+/* ==========================================
+   Logs Page
+   ========================================== */
+
+.royal-mcp-logs .column-timestamp {
+    width: 180px;
+}
+
+.royal-mcp-logs .column-server {
+    width: 150px;
+}
+
+.royal-mcp-logs .column-action {
+    width: 250px;
+}
+
+.royal-mcp-logs .column-status {
+    width: 100px;
+}
+
+.royal-mcp-logs .column-details {
+    width: 120px;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.status-badge.status-success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.status-badge.status-error {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+/* Log Details Modal */
+.log-modal {
+    display: none;
+    position: fixed;
+    z-index: 100000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.5);
+}
+
+.log-modal-content {
+    background-color: #fefefe;
+    margin: 5% auto;
+    padding: 20px;
+    border: 1px solid #888;
+    width: 80%;
+    max-width: 900px;
+    border-radius: 5px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.log-modal-close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.log-modal-close:hover,
+.log-modal-close:focus {
+    color: #000;
+}
+
+.log-details-container h3 {
+    margin-top: 20px;
+    margin-bottom: 10px;
+    font-size: 16px;
+}
+
+.log-details-container pre {
+    background: #f5f5f5;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    padding: 15px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* ==========================================
+   Responsive Styles
+   ========================================== */
+
+@media screen and (max-width: 782px) {
+    .platform-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 15px;
+    }
+
+    .platform-info {
+        width: 100%;
+    }
+
+    .platform-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    .platform-footer {
+        flex-direction: column;
+        gap: 15px;
+        align-items: flex-start;
+    }
+
+    .platform-links {
+        flex-wrap: wrap;
+    }
+
+    .platform-fields th {
+        width: 100%;
+        display: block;
+        padding-bottom: 5px;
+    }
+
+    .platform-fields td {
+        display: block;
+        padding-top: 0;
+    }
+
+    .add-platform-dropdown {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    #add-platform-select {
+        min-width: 100%;
+    }
+
+    .mcp-server-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .mcp-server-header .button {
+        margin-top: 10px;
+    }
+
+    .api-endpoints-reference li {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 5px;
+    }
+
+    .api-endpoints-reference code {
+        min-width: auto;
+    }
+
+    .log-modal-content {
+        width: 95%;
+        margin: 10% auto;
+    }
+}
+
+/* ==========================================
+   Utility Classes
+   ========================================== */
+
+.code {
+    font-family: Consolas, Monaco, monospace;
+}
+
+.regular-text {
+    width: 25em;
+}
+
+.description {
+    font-style: italic;
+    color: #646970;
+}
+
+.required {
+    color: #d63638;
+}
+
+/* ==========================================
+   Claude Connector Settings
+   ========================================== */
+
+.connector-settings-box {
+    border-left: 4px solid #6B4C9A;
+}
+
+.connector-settings-box .postbox-header h2 {
+    display: flex;
+    align-items: center;
+}
+
+.connector-settings-box .beta-badge {
+    background: #6B4C9A;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 10px;
+    text-transform: uppercase;
+}
+
+.connector-intro {
+    font-size: 14px;
+    margin-bottom: 20px;
+    font-style: normal !important;
+}
+
+.connector-fields {
+    background: #f9f9f9;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.connector-field {
+    margin-bottom: 20px;
+}
+
+.connector-field:last-child {
+    margin-bottom: 0;
+}
+
+.connector-field > label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #1d2327;
+}
+
+.connector-field .optional {
+    font-weight: 400;
+    color: #646970;
+}
+
+.connector-input-group {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.connector-input-group input {
+    flex: 1;
+    min-width: 300px;
+    max-width: 500px;
+}
+
+.connector-input-group .button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.connector-input-group .button .dashicons {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+}
+
+.connector-advanced {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px dashed #ddd;
+}
+
+.toggle-advanced {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #2271b1;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.toggle-advanced:hover {
+    color: #135e96;
+}
+
+.toggle-advanced .dashicons {
+    transition: transform 0.2s ease;
+}
+
+.toggle-advanced.open .dashicons {
+    transform: rotate(180deg);
+}
+
+.advanced-fields {
+    margin-top: 15px;
+    padding: 15px;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+}
+
+.connector-help {
+    background: #fff;
+    border: 1px solid #c3c4c7;
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.connector-help h4 {
+    margin: 0 0 15px 0;
+    font-size: 14px;
+    color: #1d2327;
+}
+
+.connector-help ol {
+    margin: 0;
+    padding-left: 20px;
+}
+
+.connector-help li {
+    margin-bottom: 8px;
+    color: #50575e;
+}
+
+.connector-help li:last-child {
+    margin-bottom: 0;
+}
+
+.connector-help a {
+    color: #2271b1;
+}
+
+.copy-btn.copied {
+    background: #00a32a;
+    border-color: #00a32a;
+    color: #fff;
+}
+
+.copy-btn.copied .dashicons {
+    color: #fff;
+}
+
+/* ==========================================
+   Documentation Banner
+   ========================================== */
+
+.royal-mcp-docs-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #e7f3ff;
+    border: 1px solid #c8e1ff;
+    color: #1d2327;
+    padding: 12px 20px;
+    border-radius: 8px;
+    margin: 15px 0 20px 0;
+}
+
+.royal-mcp-docs-banner .dashicons {
+    font-size: 24px;
+    width: 24px;
+    height: 24px;
+    color: #2271b1;
+}
+
+.royal-mcp-docs-banner span {
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.royal-mcp-docs-banner .button {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.royal-mcp-docs-banner .button .dashicons {
+    font-size: 14px;
+    width: 14px;
+    height: 14px;
+}
+
