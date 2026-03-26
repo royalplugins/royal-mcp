@@ -166,10 +166,10 @@ class Server {
     private function get_tools() {
         return [
             // Posts
-            ['name' => 'wp_get_posts', 'description' => 'Get WordPress posts', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of posts (max 100)'], 'search' => ['type' => 'string', 'description' => 'Search term'], 'status' => ['type' => 'string', 'description' => 'Post status (publish, draft, etc)']]]],
-            ['name' => 'wp_get_post', 'description' => 'Get single post by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID']], 'required' => ['id']]],
-            ['name' => 'wp_create_post', 'description' => 'Create new post', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft']], 'excerpt' => ['type' => 'string'], 'categories' => ['type' => 'array', 'items' => ['type' => 'integer']]], 'required' => ['title', 'content']]],
-            ['name' => 'wp_update_post', 'description' => 'Update existing post', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'excerpt' => ['type' => 'string']], 'required' => ['id']]],
+            ['name' => 'wp_get_posts', 'description' => 'Get WordPress posts of any post type', 'inputSchema' => ['type' => 'object', 'properties' => ['post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post). Use wp_get_post_types to discover available types.'], 'per_page' => ['type' => 'integer', 'description' => 'Number of posts (max 100)'], 'search' => ['type' => 'string', 'description' => 'Search term'], 'status' => ['type' => 'string', 'description' => 'Post status (publish, draft, etc)']]]],
+            ['name' => 'wp_get_post', 'description' => 'Get single post by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID'], 'include_fields' => ['type' => 'boolean', 'description' => 'Include all custom fields (ACF + post meta) in the response (default false)']], 'required' => ['id']]],
+            ['name' => 'wp_create_post', 'description' => 'Create a new post of any post type with optional custom fields and taxonomy terms', 'inputSchema' => ['type' => 'object', 'properties' => ['post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post). Use wp_get_post_types to discover available types.'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft']], 'excerpt' => ['type' => 'string'], 'categories' => ['type' => 'array', 'items' => ['type' => 'integer']], 'meta_fields' => ['type' => 'object', 'description' => 'Key-value map of custom fields / post meta to set (e.g. {"project_status": "active", "budget": 5000}). Use wp_get_cpt_fields to discover available fields.'], 'taxonomy_terms' => ['type' => 'object', 'description' => 'Map of taxonomy slug to array of term IDs to assign (e.g. {"project_category": [12, 34]}). Use wp_get_taxonomies to discover available taxonomies.']], 'required' => ['title', 'content']]],
+            ['name' => 'wp_update_post', 'description' => 'Update existing post with optional custom fields and taxonomy terms', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'excerpt' => ['type' => 'string'], 'meta_fields' => ['type' => 'object', 'description' => 'Key-value map of custom fields / post meta to update (e.g. {"project_status": "complete"})'], 'taxonomy_terms' => ['type' => 'object', 'description' => 'Map of taxonomy slug to array of term IDs to assign (replaces existing terms for that taxonomy)']], 'required' => ['id']]],
             ['name' => 'wp_delete_post', 'description' => 'Delete post', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean', 'description' => 'Skip trash and permanently delete']], 'required' => ['id']]],
             ['name' => 'wp_count_posts', 'description' => 'Get post counts by status', 'inputSchema' => ['type' => 'object', 'properties' => ['post_type' => ['type' => 'string', 'description' => 'Post type (post, page, etc)']]]],
 
@@ -189,10 +189,16 @@ class Server {
             // Categories & Tags (Terms)
             ['name' => 'wp_get_categories', 'description' => 'Get all categories', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer']]]],
             ['name' => 'wp_get_tags', 'description' => 'Get all tags', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer']]]],
-            ['name' => 'wp_create_term', 'description' => 'Create category or tag', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'taxonomy' => ['type' => 'string', 'enum' => ['category', 'post_tag']], 'description' => ['type' => 'string'], 'parent' => ['type' => 'integer']], 'required' => ['name', 'taxonomy']]],
-            ['name' => 'wp_delete_term', 'description' => 'Delete category or tag', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'enum' => ['category', 'post_tag']]], 'required' => ['id', 'taxonomy']]],
-            ['name' => 'wp_add_post_terms', 'description' => 'Add categories/tags to a post', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'terms' => ['type' => 'array', 'items' => ['type' => 'integer']], 'taxonomy' => ['type' => 'string', 'enum' => ['category', 'post_tag']]], 'required' => ['post_id', 'terms', 'taxonomy']]],
+            ['name' => 'wp_get_terms', 'description' => 'Get terms for any taxonomy (use wp_get_taxonomies to discover available taxonomies)', 'inputSchema' => ['type' => 'object', 'properties' => ['taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, or any custom taxonomy)'], 'number' => ['type' => 'integer', 'description' => 'Number of terms to return (max 200, default 100)'], 'hide_empty' => ['type' => 'boolean', 'description' => 'Hide terms with no posts (default false)']], 'required' => ['taxonomy']]],
+            ['name' => 'wp_create_term', 'description' => 'Create a term in any taxonomy (category, tag, or custom)', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, or any custom taxonomy)'], 'description' => ['type' => 'string'], 'parent' => ['type' => 'integer']], 'required' => ['name', 'taxonomy']]],
+            ['name' => 'wp_delete_term', 'description' => 'Delete a term from any taxonomy', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug']], 'required' => ['id', 'taxonomy']]],
+            ['name' => 'wp_add_post_terms', 'description' => 'Add/set terms on a post for any taxonomy', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'terms' => ['type' => 'array', 'items' => ['type' => 'integer'], 'description' => 'Array of term IDs'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, or any custom taxonomy)']], 'required' => ['post_id', 'terms', 'taxonomy']]],
             ['name' => 'wp_count_terms', 'description' => 'Get term counts', 'inputSchema' => ['type' => 'object', 'properties' => ['taxonomy' => ['type' => 'string']]]],
+
+            // Custom Post Types & Taxonomies Discovery
+            ['name' => 'wp_get_post_types', 'description' => 'List all registered custom post types', 'inputSchema' => ['type' => 'object', 'properties' => ['show_public_only' => ['type' => 'boolean', 'description' => 'Only return public post types (default true)'], 'include_built_in' => ['type' => 'boolean', 'description' => 'Include built-in types post/page/attachment (default false)']]]],
+            ['name' => 'wp_get_taxonomies', 'description' => 'List all registered taxonomies, optionally filtered by post type', 'inputSchema' => ['type' => 'object', 'properties' => ['post_type' => ['type' => 'string', 'description' => 'Filter taxonomies by post type slug'], 'public_only' => ['type' => 'boolean', 'description' => 'Only return public taxonomies (default true)']]]],
+            ['name' => 'wp_get_cpt_fields', 'description' => 'Get custom fields schema for a post type — returns ACF field groups and registered meta keys', 'inputSchema' => ['type' => 'object', 'properties' => ['post_type' => ['type' => 'string', 'description' => 'Post type slug']], 'required' => ['post_type']]],
 
             // Comments
             ['name' => 'wp_get_comments', 'description' => 'Get comments', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'per_page' => ['type' => 'integer'], 'status' => ['type' => 'string']]]],
@@ -599,7 +605,10 @@ class Server {
         switch ($name) {
             // ==================== POSTS ====================
             case 'wp_get_posts':
+                $post_type = !empty($args['post_type']) ? sanitize_key($args['post_type']) : 'post';
+                if (!post_type_exists($post_type)) throw new \Exception('Post type does not exist: ' . esc_html($post_type));
                 $query_args = [
+                    'post_type' => $post_type,
                     'numberposts' => min(intval($args['per_page'] ?? 10), 100),
                     's' => sanitize_text_field($args['search'] ?? ''),
                 ];
@@ -609,6 +618,7 @@ class Server {
                     return [
                         'id' => $p->ID,
                         'title' => $p->post_title,
+                        'post_type' => $p->post_type,
                         'excerpt' => wp_trim_words($p->post_content, 50),
                         'status' => $p->post_status,
                         'url' => get_permalink($p),
@@ -619,8 +629,9 @@ class Server {
             case 'wp_get_post':
                 $post = get_post(intval($args['id']));
                 if (!$post) throw new \Exception('Post not found');
-                return [
+                $result = [
                     'id' => $post->ID,
+                    'post_type' => $post->post_type,
                     'title' => $post->post_title,
                     'content' => $post->post_content,
                     'excerpt' => $post->post_excerpt,
@@ -630,29 +641,64 @@ class Server {
                     'modified' => $post->post_modified,
                     'author' => get_the_author_meta('display_name', $post->post_author),
                 ];
+                if (!empty($args['include_fields'])) {
+                    $result['meta'] = get_post_meta($post->ID);
+                    $result['acf_fields'] = function_exists('get_fields') ? (\get_fields($post->ID) ?: []) : [];
+                }
+                return $result;
 
             case 'wp_create_post':
+                $post_type = !empty($args['post_type']) ? sanitize_key($args['post_type']) : 'post';
+                if (!post_type_exists($post_type)) throw new \Exception('Post type does not exist: ' . esc_html($post_type));
                 $post_data = [
-                    'post_title' => sanitize_text_field($args['title']),
-                    'post_content' => wp_kses_post($args['content']),
-                    'post_status' => in_array($args['status'] ?? 'draft', ['publish', 'draft']) ? $args['status'] : 'draft',
-                    'post_type' => 'post',
+                    'post_title'   => sanitize_text_field($args['title']),
+                    'post_content' => wp_kses_post($args['content'] ?? ''),
+                    'post_status'  => in_array($args['status'] ?? 'draft', ['publish', 'draft']) ? $args['status'] : 'draft',
+                    'post_type'    => $post_type,
                 ];
                 if (!empty($args['excerpt'])) $post_data['post_excerpt'] = sanitize_text_field($args['excerpt']);
                 if (!empty($args['categories'])) $post_data['post_category'] = array_map('intval', $args['categories']);
                 $post_id = wp_insert_post($post_data);
                 if (is_wp_error($post_id)) throw new \Exception(esc_html($post_id->get_error_message()));
-                return ['id' => $post_id, 'message' => 'Post created successfully', 'url' => get_permalink($post_id)];
+                if (!empty($args['meta_fields']) && is_array($args['meta_fields'])) {
+                    foreach ($args['meta_fields'] as $meta_key => $meta_value) {
+                        update_post_meta($post_id, sanitize_key($meta_key), $meta_value);
+                    }
+                }
+                if (!empty($args['taxonomy_terms']) && is_array($args['taxonomy_terms'])) {
+                    foreach ($args['taxonomy_terms'] as $tax => $terms) {
+                        $tax = sanitize_key($tax);
+                        if (taxonomy_exists($tax)) {
+                            wp_set_object_terms($post_id, array_map('intval', (array) $terms), $tax);
+                        }
+                    }
+                }
+                return ['id' => $post_id, 'post_type' => $post_type, 'message' => 'Post created successfully', 'url' => get_permalink($post_id)];
 
             case 'wp_update_post':
-                $data = ['ID' => intval($args['id'])];
+                $post_id = intval($args['id']);
+                if (!get_post($post_id)) throw new \Exception('Post not found');
+                $data = ['ID' => $post_id];
                 if (isset($args['title'])) $data['post_title'] = sanitize_text_field($args['title']);
                 if (isset($args['content'])) $data['post_content'] = wp_kses_post($args['content']);
                 if (isset($args['status'])) $data['post_status'] = sanitize_text_field($args['status']);
                 if (isset($args['excerpt'])) $data['post_excerpt'] = sanitize_text_field($args['excerpt']);
                 $result = wp_update_post($data);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
-                return ['id' => $args['id'], 'message' => 'Post updated successfully'];
+                if (!empty($args['meta_fields']) && is_array($args['meta_fields'])) {
+                    foreach ($args['meta_fields'] as $meta_key => $meta_value) {
+                        update_post_meta($post_id, sanitize_key($meta_key), $meta_value);
+                    }
+                }
+                if (!empty($args['taxonomy_terms']) && is_array($args['taxonomy_terms'])) {
+                    foreach ($args['taxonomy_terms'] as $tax => $terms) {
+                        $tax = sanitize_key($tax);
+                        if (taxonomy_exists($tax)) {
+                            wp_set_object_terms($post_id, array_map('intval', (array) $terms), $tax);
+                        }
+                    }
+                }
+                return ['id' => $post_id, 'message' => 'Post updated successfully'];
 
             case 'wp_delete_post':
                 $force = !empty($args['force']);
@@ -774,24 +820,38 @@ class Server {
                     return ['id' => $t->term_id, 'name' => $t->name, 'slug' => $t->slug, 'count' => $t->count];
                 }, $tags ?: []);
 
+            case 'wp_get_terms':
+                $taxonomy = sanitize_key($args['taxonomy']);
+                if (!taxonomy_exists($taxonomy)) throw new \Exception('Taxonomy does not exist: ' . esc_html($taxonomy));
+                $number = min(intval($args['number'] ?? 100), 200);
+                $hide_empty = !empty($args['hide_empty']);
+                $terms = get_terms(['taxonomy' => $taxonomy, 'number' => $number, 'hide_empty' => $hide_empty]);
+                if (is_wp_error($terms)) throw new \Exception(esc_html($terms->get_error_message()));
+                return array_map(function($t) {
+                    return ['term_id' => $t->term_id, 'name' => $t->name, 'slug' => $t->slug, 'count' => $t->count, 'parent' => $t->parent];
+                }, $terms);
+
             case 'wp_create_term':
-                $taxonomy = in_array($args['taxonomy'], ['category', 'post_tag']) ? $args['taxonomy'] : 'category';
+                $taxonomy = sanitize_key($args['taxonomy']);
+                if (!taxonomy_exists($taxonomy)) throw new \Exception('Taxonomy does not exist: ' . esc_html($taxonomy));
                 $term_args = [];
                 if (!empty($args['description'])) $term_args['description'] = sanitize_text_field($args['description']);
-                if (!empty($args['parent']) && $taxonomy === 'category') $term_args['parent'] = intval($args['parent']);
+                if (!empty($args['parent'])) $term_args['parent'] = intval($args['parent']);
                 $result = wp_insert_term(sanitize_text_field($args['name']), $taxonomy, $term_args);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
-                return ['id' => $result['term_id'], 'message' => ucfirst($taxonomy) . ' created successfully'];
+                return ['id' => $result['term_id'], 'message' => 'Term created successfully in ' . esc_html($taxonomy)];
 
             case 'wp_delete_term':
-                $taxonomy = in_array($args['taxonomy'], ['category', 'post_tag']) ? $args['taxonomy'] : 'category';
+                $taxonomy = sanitize_key($args['taxonomy']);
+                if (!taxonomy_exists($taxonomy)) throw new \Exception('Taxonomy does not exist: ' . esc_html($taxonomy));
                 $result = wp_delete_term(intval($args['id']), $taxonomy);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
                 if (!$result) throw new \Exception('Failed to delete term');
                 return ['message' => 'Term deleted successfully'];
 
             case 'wp_add_post_terms':
-                $taxonomy = in_array($args['taxonomy'], ['category', 'post_tag']) ? $args['taxonomy'] : 'category';
+                $taxonomy = sanitize_key($args['taxonomy']);
+                if (!taxonomy_exists($taxonomy)) throw new \Exception('Taxonomy does not exist: ' . esc_html($taxonomy));
                 $result = wp_set_post_terms(intval($args['post_id']), array_map('intval', $args['terms']), $taxonomy, true);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
                 return ['message' => 'Terms added to post successfully'];
@@ -800,6 +860,80 @@ class Server {
                 $taxonomy = sanitize_text_field($args['taxonomy'] ?? 'category');
                 $count = wp_count_terms(['taxonomy' => $taxonomy, 'hide_empty' => false]);
                 return ['taxonomy' => $taxonomy, 'count' => $count];
+
+            // ==================== CUSTOM POST TYPES & TAXONOMIES ====================
+            case 'wp_get_post_types':
+                $show_public_only = ($args['show_public_only'] ?? true) !== false;
+                $include_built_in = !empty($args['include_built_in']);
+                $query_args = $show_public_only ? ['public' => true] : [];
+                $post_types = get_post_types($query_args, 'objects');
+                $built_in = ['post', 'page', 'attachment', 'revision', 'nav_menu_item', 'custom_css', 'customize_changeset', 'oembed_cache', 'user_request', 'wp_block', 'wp_template', 'wp_template_part', 'wp_global_styles', 'wp_navigation', 'wp_font_face', 'wp_font_family'];
+                $result = [];
+                foreach ($post_types as $pt) {
+                    if (!$include_built_in && in_array($pt->name, $built_in, true)) continue;
+                    $result[] = [
+                        'name' => $pt->name,
+                        'label' => $pt->label,
+                        'singular_label' => $pt->labels->singular_name ?? $pt->label,
+                        'description' => $pt->description,
+                        'supports' => get_all_post_type_supports($pt->name),
+                        'taxonomies' => get_object_taxonomies($pt->name),
+                    ];
+                }
+                return $result;
+
+            case 'wp_get_taxonomies':
+                $public_only = ($args['public_only'] ?? true) !== false;
+                $query_args = $public_only ? ['public' => true] : [];
+                $taxonomies = get_taxonomies($query_args, 'objects');
+                $post_type_filter = !empty($args['post_type']) ? sanitize_key($args['post_type']) : null;
+                $result = [];
+                foreach ($taxonomies as $tax) {
+                    if ($post_type_filter && !in_array($post_type_filter, $tax->object_type, true)) continue;
+                    $result[] = [
+                        'name' => $tax->name,
+                        'label' => $tax->label,
+                        'singular_label' => $tax->labels->singular_name ?? $tax->label,
+                        'hierarchical' => $tax->hierarchical,
+                        'post_types' => $tax->object_type,
+                    ];
+                }
+                return $result;
+
+            case 'wp_get_cpt_fields':
+                $post_type = sanitize_key($args['post_type']);
+                if (!post_type_exists($post_type)) throw new \Exception('Post type does not exist: ' . esc_html($post_type));
+                $acf_fields = [];
+                $meta_keys = [];
+                // ACF fields
+                if (function_exists('acf_get_field_groups')) {
+                    $groups = \acf_get_field_groups(['post_type' => $post_type]);
+                    foreach ($groups as $group) {
+                        $fields = \acf_get_fields($group['key']);
+                        if (!$fields) continue;
+                        foreach ($fields as $field) {
+                            $field_data = [
+                                'name' => $field['name'],
+                                'label' => $field['label'],
+                                'type' => $field['type'],
+                                'required' => !empty($field['required']),
+                                'instructions' => $field['instructions'] ?? '',
+                            ];
+                            if (!empty($field['choices'])) $field_data['choices'] = $field['choices'];
+                            $acf_fields[] = $field_data;
+                        }
+                    }
+                }
+                // Registered meta keys
+                $registered = get_registered_meta_keys('post', $post_type);
+                foreach ($registered as $key => $schema) {
+                    $meta_keys[] = [
+                        'key' => $key,
+                        'type' => $schema['type'] ?? 'string',
+                        'description' => $schema['description'] ?? '',
+                    ];
+                }
+                return ['post_type' => $post_type, 'acf_fields' => $acf_fields, 'meta_keys' => $meta_keys];
 
             // ==================== COMMENTS ====================
             case 'wp_get_comments':
