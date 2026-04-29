@@ -14,15 +14,6 @@ $royal_mcp_configured_platforms = $royal_mcp_settings['platforms'] ?? [];
 <div class="wrap royal-mcp-settings">
     <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
 
-    <div class="royal-mcp-docs-banner">
-        <span class="dashicons dashicons-book-alt"></span>
-        <span><?php esc_html_e('Need help getting started?', 'royal-mcp'); ?></span>
-        <a href="https://royalplugins.com/support/royal-mcp/" target="_blank" class="button button-primary">
-            <?php esc_html_e('View Documentation', 'royal-mcp'); ?>
-            <span class="dashicons dashicons-external" style="margin-top: 3px;"></span>
-        </a>
-    </div>
-
     <?php settings_errors(); ?>
 
     <form method="post" action="options.php" id="royal-mcp-settings-form">
@@ -56,6 +47,42 @@ $royal_mcp_configured_platforms = $royal_mcp_settings['platforms'] ?? [];
                         </tr>
                         <tr>
                             <th scope="row">
+                                <label for="allow_option_writes"><?php esc_html_e('Allow AI to write WordPress options', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[allow_option_writes]"
+                                           id="allow_option_writes"
+                                           value="1"
+                                           <?php checked(!empty($royal_mcp_settings['allow_option_writes'])); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When enabled, AI agents can write to allowlisted WordPress options via the wp_update_option tool. Sensitive options (siteurl, secret keys, license keys, etc.) are permanently denylisted regardless of this setting. Plugin authors opt their settings in via the royal_mcp_writable_options filter.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="allow_theme_writes"><?php esc_html_e('Allow AI to modify theme appearance', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[allow_theme_writes]"
+                                           id="allow_theme_writes"
+                                           value="1"
+                                           <?php checked(!empty($royal_mcp_settings['allow_theme_writes'])); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When enabled, AI agents can update theme customizer settings (theme_mods) and the active theme\'s custom CSS. Theme mod writes also require the mod name to be in the allowlist (extend via the royal_mcp_writable_theme_mods filter — default allowlist is empty, opt-in only). Custom CSS is filtered through wp_kses so script tags are stripped.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
                                 <label for="api_key"><?php esc_html_e('WordPress API Key', 'royal-mcp'); ?></label>
                             </th>
                             <td>
@@ -72,7 +99,7 @@ $royal_mcp_configured_platforms = $royal_mcp_settings['platforms'] ?? [];
                                         name="royal_mcp_settings[regenerate_api_key]"
                                         value="1"
                                         class="button"
-                                        onclick="return confirm('<?php esc_attr_e('Are you sure? This will invalidate the current API key.', 'royal-mcp'); ?>');">
+                                        id="rmcp-regenerate-key">
                                     <?php esc_html_e('Regenerate', 'royal-mcp'); ?>
                                 </button>
                                 <p class="description">
@@ -429,6 +456,10 @@ $royal_mcp_configured_platforms = $royal_mcp_settings['platforms'] ?? [];
                             <li><?php esc_html_e('Paste the Remote MCP Server URL from above', 'royal-mcp'); ?></li>
                             <li><?php esc_html_e('Click "Add" to save the connector', 'royal-mcp'); ?></li>
                         </ol>
+                        <div class="notice notice-warning inline" style="margin-top: 12px;">
+                            <p><strong><?php esc_html_e('Cloudflare Users:', 'royal-mcp'); ?></strong>
+                            <?php esc_html_e('If you use Cloudflare, you must turn off "Block AI Bots" in Security settings. This setting blocks Anthropic\'s MCP backend requests and prevents the connector from completing. This is enabled by default on new Cloudflare domains.', 'royal-mcp'); ?></p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -482,6 +513,8 @@ $royal_mcp_configured_platforms = $royal_mcp_settings['platforms'] ?? [];
 
         <?php submit_button(); ?>
     </form>
+
+    <?php \Royal_MCP\Admin\Settings_Page::render_founders_banner(); ?>
 </div>
 
 <!-- Platform Item Template -->

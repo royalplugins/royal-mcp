@@ -47,12 +47,18 @@ class Client {
 
         $url = trailingslashit($server['url']) . ltrim($endpoint, '/');
 
+        // SSRF protection: validate URL before making request
+        $url_check = \Royal_MCP\Platform\Registry::validate_external_url( $url );
+        if ( is_wp_error( $url_check ) ) {
+            return $url_check;
+        }
+
         $args = [
             'method' => strtoupper($method),
             'headers' => array_merge([
                 'Content-Type' => 'application/json',
             ], $headers),
-            'timeout' => 30,
+            'timeout' => 10,
         ];
 
         if (!empty($server['api_key'])) {
@@ -108,6 +114,15 @@ class Client {
             return [
                 'success' => false,
                 'message' => __('Server not found', 'royal-mcp'),
+            ];
+        }
+
+        // SSRF protection: validate URL before making request
+        $url_check = \Royal_MCP\Platform\Registry::validate_external_url( $server['url'] );
+        if ( is_wp_error( $url_check ) ) {
+            return [
+                'success' => false,
+                'message' => $url_check->get_error_message(),
             ];
         }
 

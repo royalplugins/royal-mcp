@@ -8,6 +8,13 @@ jQuery(document).ready(function($) {
     // Copy Buttons
     // ==========================================
 
+    // Regenerate API key confirmation
+    $('#rmcp-regenerate-key').on('click', function(e) {
+        if (!confirm(royalMcp.strings.confirmRegenerate)) {
+            e.preventDefault();
+        }
+    });
+
     $('#copy-api-key').on('click', function(e) {
         e.preventDefault();
         const apiKey = $('#api_key').val();
