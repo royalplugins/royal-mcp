@@ -12,12 +12,87 @@ class Settings_Page {
     public function __construct() {
         add_action('admin_menu', [$this, 'add_menu_page']);
         add_action('admin_init', [$this, 'register_settings']);
+        add_action('admin_init', [$this, 'maybe_dismiss_founders_banner']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_scripts']);
         add_filter('admin_footer_text', [$this, 'admin_footer_text']);
 
         // AJAX handlers
         add_action('wp_ajax_royal_mcp_test_connection', [$this, 'ajax_test_connection']);
         add_action('wp_ajax_royal_mcp_get_platform_fields', [$this, 'ajax_get_platform_fields']);
+    }
+
+    /**
+     * Output the Royal Plugins Founders Bundle banner if the current user has
+     * not dismissed it. Called from the Royal MCP admin templates only.
+     */
+    public static function render_founders_banner() {
+        $user_id = get_current_user_id();
+        if (!$user_id || get_user_meta($user_id, 'royal_mcp_founders_dismissed', true)) {
+            return;
+        }
+
+        $dismiss_url = wp_nonce_url(
+            add_query_arg('royal_mcp_dismiss_founders', '1'),
+            'royal_mcp_dismiss_founders'
+        );
+
+        $plugins = [
+            ['icon' => 'shield-alt',  'name' => __('GuardPress Pro', 'royal-mcp'),       'url' => 'https://royalplugins.com/guardpress/'],
+            ['icon' => 'superhero',   'name' => __('ForgeCache', 'royal-mcp'),           'url' => 'https://royalplugins.com/forgecache/'],
+            ['icon' => 'database',    'name' => __('SiteVault Pro', 'royal-mcp'),        'url' => 'https://royalplugins.com/sitevault/'],
+            ['icon' => 'chart-line',  'name' => __('SEObolt Pro', 'royal-mcp'),          'url' => 'https://royalplugins.com/seobolt/'],
+            ['icon' => 'feedback',    'name' => __('FormForge Pro', 'royal-mcp'),        'url' => 'https://royalplugins.com/formforge/'],
+            ['icon' => 'groups',      'name' => __('Royal Affiliate Pro', 'royal-mcp'),  'url' => 'https://royalplugins.com/royal-affiliates/'],
+        ];
+        ?>
+        <div class="royal-mcp-founders-banner">
+            <a href="<?php echo esc_url($dismiss_url); ?>" class="royal-mcp-founders-dismiss" aria-label="<?php esc_attr_e('Dismiss this notice', 'royal-mcp'); ?>">
+                <span class="dashicons dashicons-no-alt" aria-hidden="true"></span>
+            </a>
+            <div class="royal-mcp-founders-left">
+                <span class="royal-mcp-founders-eyebrow">
+                    <span class="dashicons dashicons-star-filled" aria-hidden="true"></span>
+                    <?php esc_html_e('Founders Pricing', 'royal-mcp'); ?>
+                </span>
+                <h2 class="royal-mcp-founders-title"><?php esc_html_e('Royal Plugins Founders Bundle', 'royal-mcp'); ?></h2>
+                <p class="royal-mcp-founders-subtitle"><?php esc_html_e('All 6 premium plugins. Lifetime updates. One bundle, one purchase. Built by the team behind Royal MCP.', 'royal-mcp'); ?></p>
+                <a href="https://royalplugins.com/founders/" target="_blank" rel="noopener noreferrer" class="royal-mcp-founders-cta-primary">
+                    <?php esc_html_e('View bundle', 'royal-mcp'); ?>
+                    <span class="dashicons dashicons-arrow-right-alt" aria-hidden="true"></span>
+                </a>
+            </div>
+            <div class="royal-mcp-founders-grid">
+                <?php foreach ($plugins as $plugin) : ?>
+                    <a href="<?php echo esc_url($plugin['url']); ?>" target="_blank" rel="noopener noreferrer" class="royal-mcp-founders-grid-item">
+                        <span class="dashicons dashicons-<?php echo esc_attr($plugin['icon']); ?>" aria-hidden="true"></span>
+                        <span class="royal-mcp-founders-grid-item-name"><?php echo esc_html($plugin['name']); ?></span>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <?php
+    }
+
+    /**
+     * Persist a per-user dismissal of the Founders banner when the dismiss
+     * link is followed. Validates capability and nonce, then redirects.
+     */
+    public function maybe_dismiss_founders_banner() {
+        if (!isset($_GET['royal_mcp_dismiss_founders'])) {
+            return;
+        }
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+        if (!isset($_GET['_wpnonce']) ||
+            !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'royal_mcp_dismiss_founders')) {
+            return;
+        }
+
+        update_user_meta(get_current_user_id(), 'royal_mcp_founders_dismissed', 1);
+
+        wp_safe_redirect(remove_query_arg(['royal_mcp_dismiss_founders', '_wpnonce']));
+        exit;
     }
 
     public function add_menu_page() {
@@ -62,6 +137,8 @@ class Settings_Page {
         $settings = get_option('royal_mcp_settings', []);
 
         $sanitized['enabled'] = isset($input['enabled']) ? (bool) $input['enabled'] : false;
+        $sanitized['allow_option_writes'] = isset($input['allow_option_writes']) ? (bool) $input['allow_option_writes'] : false;
+        $sanitized['allow_theme_writes'] = isset($input['allow_theme_writes']) ? (bool) $input['allow_theme_writes'] : false;
 
         // Sanitize API key
         if (isset($input['api_key']) && !empty($input['api_key'])) {
@@ -186,6 +263,7 @@ class Settings_Page {
                 'getApiKey' => esc_html__('Get API Key', 'royal-mcp'),
                 'documentation' => esc_html__('Documentation', 'royal-mcp'),
                 'confirmRemove' => esc_html__('Are you sure you want to remove this platform?', 'royal-mcp'),
+                'confirmRegenerate' => esc_html__('Are you sure? This will invalidate the current API key.', 'royal-mcp'),
             ],
         ]);
     }

@@ -516,6 +516,41 @@ class Registry {
     /**
      * Get the endpoint URL for a platform
      */
+    /**
+     * Validate that a URL is safe for outbound requests (SSRF protection).
+     *
+     * @param string $url The URL to validate.
+     * @return true|\WP_Error True if safe, WP_Error if not.
+     */
+    public static function validate_external_url( $url ) {
+        $parsed = wp_parse_url( $url );
+
+        if ( empty( $parsed['scheme'] ) || ! in_array( $parsed['scheme'], array( 'http', 'https' ), true ) ) {
+            return new \WP_Error( 'invalid_url_scheme', __( 'Only HTTP and HTTPS URLs are allowed.', 'royal-mcp' ) );
+        }
+
+        if ( empty( $parsed['host'] ) ) {
+            return new \WP_Error( 'invalid_url_host', __( 'URL must include a hostname.', 'royal-mcp' ) );
+        }
+
+        $host = $parsed['host'];
+
+        // Block localhost and loopback
+        $blocked = array( 'localhost', '127.0.0.1', '::1', '0.0.0.0' );
+        if ( in_array( strtolower( $host ), $blocked, true ) ) {
+            return new \WP_Error( 'blocked_url', __( 'Localhost and loopback addresses are not allowed.', 'royal-mcp' ) );
+        }
+
+        // Block private and reserved IP ranges
+        if ( filter_var( $host, FILTER_VALIDATE_IP ) ) {
+            if ( ! filter_var( $host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE ) ) {
+                return new \WP_Error( 'blocked_url', __( 'Private and reserved IP addresses are not allowed.', 'royal-mcp' ) );
+            }
+        }
+
+        return true;
+    }
+
     public static function get_endpoint($platform_id, $config) {
         $platform = self::get_platform($platform_id);
 
@@ -564,6 +599,15 @@ class Registry {
             $test_url .= $platform['test_endpoint'];
         }
 
+        // SSRF protection: validate URL before making request
+        $url_check = self::validate_external_url( $test_url );
+        if ( is_wp_error( $url_check ) ) {
+            return [
+                'success' => false,
+                'message' => $url_check->get_error_message(),
+            ];
+        }
+
         // Handle query param auth (Google)
         if ($platform['auth_type'] === 'query' && !empty($config['api_key'])) {
             $test_url = add_query_arg($platform['auth_param'], $config['api_key'], $test_url);
@@ -573,7 +617,7 @@ class Registry {
         $request_args = [
             'method' => $platform['test_method'] ?? 'GET',
             'headers' => $headers,
-            'timeout' => 15,
+            'timeout' => 10,
         ];
 
         // Add body for POST requests if test_body is defined
