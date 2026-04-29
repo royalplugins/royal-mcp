@@ -131,7 +131,7 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
 </div>
 
 <!-- Modal for log details -->
-<div id="log-details-modal" class="log-modal" style="display: none;">
+<div id="log-details-modal" class="log-modal">
     <div class="log-modal-content">
         <span class="log-modal-close">&times;</span>
         <h2><?php esc_html_e('Log Details', 'royal-mcp'); ?></h2>
