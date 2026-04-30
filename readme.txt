@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, mcp-server
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.10
+Stable tag: 1.4.12
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -248,6 +248,18 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Changelog ==
 
+= 1.4.12 =
+* Enhancement: `wp_get_taxonomies` now returns a `slug` field on each entry as a clearer alias for the taxonomy identifier. WordPress's `WP_Taxonomy` object uses `name` for the slug for historical reasons, which often confuses AI agents that expect a `slug` field on something called a "taxonomy". Both `slug` and `name` are populated and contain the same value; existing callers that read `name` continue to work.
+* Enhancement: `wp_get_term_meta` returns a structured response — `{term_id, key, value}` when reading a single key, or `{term_id, meta: {...}}` when reading all meta for a term. Pre-1.4.12 the tool returned the raw scalar value (or raw associative array), inconsistent with `wp_update_term_meta` / `wp_delete_term_meta` which already returned structured arrays. AI agents now see the same shape across the term-meta tool family.
+
+= 1.4.11 =
+* New: `wp_update_term` — rename, re-slug, edit description, or change the parent of any term in any taxonomy. Resolves a long-standing gap where AI agents could create and delete terms but not edit them.
+* New: `wp_get_term_meta`, `wp_update_term_meta`, `wp_delete_term_meta` — read/write term meta. Most useful for editing tag/category SEO meta stored by Yoast SEO (`_yoast_wpseo_title`, `_yoast_wpseo_metadesc`), Rank Math (`rank_math_title`, `rank_math_description`), or AIOSEO (`_aioseo_title`, `_aioseo_description`).
+* New: `wp_get_taxonomies` — discover all registered public taxonomies (built-in plus custom taxonomies registered by themes/plugins like `product_cat`, `brand`, etc.). Returns slug, label, hierarchical flag, and which post types the taxonomy applies to.
+* Enhancement: `wp_create_term`, `wp_delete_term`, and `wp_add_post_terms` now accept any registered taxonomy, not just `category` and `post_tag`. The hardcoded enum has been replaced with runtime `taxonomy_exists()` validation. WooCommerce, EDD, custom-taxonomy, and post-type-specific term workflows now work directly.
+* Enhancement: `wp_create_term` accepts an optional `slug` parameter for deterministic URL slugs.
+* Enhancement: `wp_create_post` and `wp_update_post` accept a `post_author` user ID. Defaults to the authenticated MCP user (admin). Validates that the user exists before mutating the post.
+
 = 1.4.10 =
 * New: Royal Ledger integration (4 tools) — `rl_get_costs`, `rl_create_cost`, `rl_get_renewals`, `rl_get_keys`. Auto-loads when Royal Ledger is active. License key VALUES are never exposed through MCP — only masked previews are returned (decryption requires logging into wp-admin).
 * New: ForgeCache integration (3 tools) — `fc_clear_cache`, `fc_get_cache_stats`, `fc_purge_url`. Auto-loads when ForgeCache is active.
@@ -367,6 +379,12 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release
 
 == Upgrade Notice ==
+
+= 1.4.12 =
+Two small consistency improvements to the term tools shipped in 1.4.11. wp_get_taxonomies now returns a `slug` field alias, and wp_get_term_meta returns a structured object matching the rest of the term-meta tool family. Existing readers of the old fields continue to work.
+
+= 1.4.11 =
+Adds wp_update_term, wp_get/update/delete_term_meta, and wp_get_taxonomies tools — covering tag/category renaming and SEO-plugin term meta (Yoast, Rank Math, AIOSEO). Existing term tools now accept any taxonomy. wp_create_post and wp_update_post accept a post_author user ID. No breaking changes.
 
 = 1.4.10 =
 Adds 16 new MCP tools: Royal Ledger, ForgeCache, and Royal Links ecosystem integrations (auto-load when each host plugin is active), SEO meta (Yoast or Rank Math auto-routed), permalink structure read/update, and post revision history + restore. No breaking changes.
