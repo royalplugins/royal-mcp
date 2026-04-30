@@ -298,7 +298,7 @@ class WooCommerce {
 				'description' => 'List all registered global WooCommerce product attributes with their pa_* taxonomy slugs and IDs. Use this before wc_set_product_attributes or wc_get_attribute_terms to discover correct attribute IDs and slugs.',
 				'inputSchema' => [
 					'type'       => 'object',
-					'properties' => [],
+					'properties' => new \stdClass(),
 				],
 			],
 			[
