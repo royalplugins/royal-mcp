@@ -269,7 +269,7 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_batch_update_variations',
-				'description' => 'Batch create, update, and/or delete product variations in one call',
+				'description' => 'Batch create, update, and/or delete product variations in one call. All operations are scoped to product_id — updates/deletes for variations belonging to a different product are rejected. Batch deletes are always permanent (force=true).',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -571,6 +571,10 @@ class WooCommerce {
 				}
 				self::apply_variation_fields( $variation, $args );
 				$variation->save();
+				$parent = wc_get_product( $variation->get_parent_id() );
+				if ( $parent ) {
+					\WC_Product_Variable::sync( $parent );
+				}
 				return [ 'id' => intval( $args['variation_id'] ), 'message' => 'Variation updated successfully' ];
 
 			case 'wc_delete_variation':
@@ -583,6 +587,10 @@ class WooCommerce {
 				}
 				$force = isset( $args['force'] ) ? (bool) $args['force'] : true;
 				$variation->delete( $force );
+				$parent = wc_get_product( intval( $args['product_id'] ) );
+				if ( $parent ) {
+					\WC_Product_Variable::sync( $parent );
+				}
 				return [ 'id' => intval( $args['variation_id'] ), 'deleted' => true, 'force' => $force ];
 
 			case 'wc_batch_update_variations':
@@ -608,6 +616,10 @@ class WooCommerce {
 						$result['update'][] = [ 'id' => $var_id, 'error' => 'Not found' ];
 						continue;
 					}
+					if ( $variation->get_parent_id() !== intval( $args['product_id'] ) ) {
+						$result['update'][] = [ 'id' => $var_id, 'error' => 'Variation does not belong to this product' ];
+						continue;
+					}
 					self::apply_variation_fields( $variation, $data );
 					$variation->save();
 					$result['update'][] = [ 'id' => $var_id ];
@@ -616,6 +628,10 @@ class WooCommerce {
 					$variation = wc_get_product( intval( $var_id ) );
 					if ( ! $variation || ! $variation->is_type( 'variation' ) ) {
 						$result['delete'][] = [ 'id' => $var_id, 'error' => 'Not found' ];
+						continue;
+					}
+					if ( $variation->get_parent_id() !== intval( $args['product_id'] ) ) {
+						$result['delete'][] = [ 'id' => $var_id, 'error' => 'Variation does not belong to this product' ];
 						continue;
 					}
 					$variation->delete( true );
