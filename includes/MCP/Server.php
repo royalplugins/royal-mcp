@@ -337,8 +337,8 @@ class Server {
             // Posts (supports custom post types)
             ['name' => 'wp_get_posts', 'description' => 'Get WordPress posts (supports custom post types)', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of posts (max 100)'], 'search' => ['type' => 'string', 'description' => 'Search term'], 'status' => ['type' => 'string', 'description' => 'Post status (publish, draft, etc)'], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post). Use wp_get_post_types to discover available types']]]],
             ['name' => 'wp_get_post', 'description' => 'Get single post by ID (any post type)', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID']], 'required' => ['id']]],
-            ['name' => 'wp_create_post', 'description' => 'Create new post (supports custom post types)', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft']], 'excerpt' => ['type' => 'string'], 'categories' => ['type' => 'array', 'items' => ['type' => 'integer']], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post)'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image']], 'required' => ['title', 'content']]],
-            ['name' => 'wp_update_post', 'description' => 'Update existing post (any post type). Use featured_media to change the featured image by attachment ID, or use wp_set_featured_image for a URL-based workflow.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'excerpt' => ['type' => 'string'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image (pass 0 to remove)']], 'required' => ['id']]],
+            ['name' => 'wp_create_post', 'description' => 'Create new post (supports custom post types)', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft']], 'excerpt' => ['type' => 'string'], 'categories' => ['type' => 'array', 'items' => ['type' => 'integer']], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post)'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to assign as the post author. Defaults to the authenticated MCP user (admin). Use wp_get_users to discover available author IDs.']], 'required' => ['title', 'content']]],
+            ['name' => 'wp_update_post', 'description' => 'Update existing post (any post type). Use featured_media to change the featured image by attachment ID, or use wp_set_featured_image for a URL-based workflow.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'excerpt' => ['type' => 'string'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image (pass 0 to remove)'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as the post author. Use wp_get_users to discover available author IDs.']], 'required' => ['id']]],
             ['name' => 'wp_get_post_types', 'description' => 'Get all registered public post types (including custom post types)', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_delete_post', 'description' => 'Delete post', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean', 'description' => 'Skip trash and permanently delete']], 'required' => ['id']]],
             ['name' => 'wp_count_posts', 'description' => 'Get post counts by status', 'inputSchema' => ['type' => 'object', 'properties' => ['post_type' => ['type' => 'string', 'description' => 'Post type (post, page, etc)']]]],
@@ -363,10 +363,17 @@ class Server {
             // Categories & Tags (Terms)
             ['name' => 'wp_get_categories', 'description' => 'Get all categories', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer']]]],
             ['name' => 'wp_get_tags', 'description' => 'Get all tags', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer']]]],
-            ['name' => 'wp_create_term', 'description' => 'Create category or tag', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'taxonomy' => ['type' => 'string', 'enum' => ['category', 'post_tag']], 'description' => ['type' => 'string'], 'parent' => ['type' => 'integer']], 'required' => ['name', 'taxonomy']]],
-            ['name' => 'wp_delete_term', 'description' => 'Delete category or tag', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'enum' => ['category', 'post_tag']]], 'required' => ['id', 'taxonomy']]],
-            ['name' => 'wp_add_post_terms', 'description' => 'Add categories/tags to a post', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'terms' => ['type' => 'array', 'items' => ['type' => 'integer']], 'taxonomy' => ['type' => 'string', 'enum' => ['category', 'post_tag']]], 'required' => ['post_id', 'terms', 'taxonomy']]],
-            ['name' => 'wp_count_terms', 'description' => 'Get term counts', 'inputSchema' => ['type' => 'object', 'properties' => ['taxonomy' => ['type' => 'string']]]],
+            ['name' => 'wp_create_term', 'description' => 'Create a term in any registered taxonomy (category, post_tag, or any custom taxonomy). Use wp_get_taxonomies to discover available taxonomy slugs.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)'], 'description' => ['type' => 'string'], 'parent' => ['type' => 'integer', 'description' => 'Parent term ID (only applies to hierarchical taxonomies)'], 'slug' => ['type' => 'string', 'description' => 'Optional URL-friendly slug. Auto-generated from name if omitted.']], 'required' => ['name', 'taxonomy']]],
+            ['name' => 'wp_update_term', 'description' => 'Update an existing term in any taxonomy. Use this to rename a tag/category, edit its description, or change its slug. Pair with wp_update_term_meta to edit SEO meta on tags (Yoast/Rank Math/AIOSEO store tag SEO data in wp_termmeta).', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to'], 'name' => ['type' => 'string'], 'slug' => ['type' => 'string'], 'description' => ['type' => 'string'], 'parent' => ['type' => 'integer', 'description' => 'Parent term ID (hierarchical taxonomies only)']], 'required' => ['id', 'taxonomy']]],
+            ['name' => 'wp_delete_term', 'description' => 'Delete a term from any registered taxonomy.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to']], 'required' => ['id', 'taxonomy']]],
+            ['name' => 'wp_add_post_terms', 'description' => 'Add or replace terms on a post in any taxonomy.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'terms' => ['type' => 'array', 'items' => ['type' => 'integer']], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)']], 'required' => ['post_id', 'terms', 'taxonomy']]],
+            ['name' => 'wp_count_terms', 'description' => 'Get term counts in a taxonomy', 'inputSchema' => ['type' => 'object', 'properties' => ['taxonomy' => ['type' => 'string']]]],
+            ['name' => 'wp_get_taxonomies', 'description' => 'Get all registered public taxonomies (built-in plus custom taxonomies registered by themes/plugins like product_cat, brand, etc.). Returns the taxonomy slug, label, hierarchical flag, and which post types it applies to.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+
+            // Term Meta (for SEO-plugin tag/category meta — Yoast, Rank Math, AIOSEO)
+            ['name' => 'wp_get_term_meta', 'description' => 'Get term meta data. Useful for reading tag/category SEO meta stored by Yoast, Rank Math, or AIOSEO before editing it.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string', 'description' => 'Specific meta key. Omit to return all meta for the term.']], 'required' => ['term_id']]],
+            ['name' => 'wp_update_term_meta', 'description' => 'Update term meta data. Common keys for SEO plugins: Yoast uses _yoast_wpseo_title / _yoast_wpseo_metadesc; Rank Math uses rank_math_title / rank_math_description; AIOSEO uses _aioseo_title / _aioseo_description.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['type' => 'string']], 'required' => ['term_id', 'key', 'value']]],
+            ['name' => 'wp_delete_term_meta', 'description' => 'Delete term meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['term_id', 'key']]],
 
             // Comments
             ['name' => 'wp_get_comments', 'description' => 'Get comments', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'per_page' => ['type' => 'integer'], 'status' => ['type' => 'string']]]],
@@ -923,6 +930,12 @@ class Server {
                     $fm = get_post(intval($args['featured_media']));
                     if (!$fm || $fm->post_type !== 'attachment') throw new \Exception('featured_media attachment not found.');
                 }
+                // Pre-validate post_author so we don't create a post owned by a non-existent user.
+                if (isset($args['post_author']) && intval($args['post_author']) > 0) {
+                    if (!get_userdata(intval($args['post_author']))) {
+                        throw new \Exception('post_author user ID not found.');
+                    }
+                }
                 $post_data = [
                     'post_title' => sanitize_text_field($args['title']),
                     'post_content' => wp_kses_post($args['content']),
@@ -931,6 +944,9 @@ class Server {
                 ];
                 if (!empty($args['excerpt'])) $post_data['post_excerpt'] = sanitize_text_field($args['excerpt']);
                 if (!empty($args['categories'])) $post_data['post_category'] = array_map('intval', $args['categories']);
+                if (isset($args['post_author']) && intval($args['post_author']) > 0) {
+                    $post_data['post_author'] = intval($args['post_author']);
+                }
                 $post_id = wp_insert_post($post_data);
                 if (is_wp_error($post_id)) throw new \Exception(esc_html($post_id->get_error_message()));
                 if (isset($args['featured_media'])) {
@@ -945,11 +961,20 @@ class Server {
                     $fm = get_post(intval($args['featured_media']));
                     if (!$fm || $fm->post_type !== 'attachment') throw new \Exception('featured_media attachment not found.');
                 }
+                // Pre-validate post_author before mutating the post.
+                if (isset($args['post_author']) && intval($args['post_author']) > 0) {
+                    if (!get_userdata(intval($args['post_author']))) {
+                        throw new \Exception('post_author user ID not found.');
+                    }
+                }
                 $data = ['ID' => $post_id];
                 if (isset($args['title'])) $data['post_title'] = sanitize_text_field($args['title']);
                 if (isset($args['content'])) $data['post_content'] = wp_kses_post($args['content']);
                 if (isset($args['status'])) $data['post_status'] = sanitize_text_field($args['status']);
                 if (isset($args['excerpt'])) $data['post_excerpt'] = sanitize_text_field($args['excerpt']);
+                if (isset($args['post_author']) && intval($args['post_author']) > 0) {
+                    $data['post_author'] = intval($args['post_author']);
+                }
                 $result = wp_update_post($data);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
                 if (isset($args['featured_media'])) {
@@ -980,6 +1005,26 @@ class Server {
                         'supports' => array_keys(array_filter(get_all_post_type_supports($pt->name))),
                     ];
                 }, $types));
+
+            case 'wp_get_taxonomies':
+                $taxonomies = get_taxonomies(['public' => true], 'objects');
+                return array_values(array_map(function($tax) {
+                    // 1.4.12 — `slug` added as a clearer alias for the taxonomy
+                    // identifier. WP_Taxonomy uses `name` for the slug for
+                    // historical reasons, which surprises AI agents that
+                    // expect a `slug` field on something called a "taxonomy".
+                    // Both fields hold the same value; keep `name` for
+                    // backward compat with anything already using it.
+                    return [
+                        'slug'         => $tax->name,
+                        'name'         => $tax->name,
+                        'label'        => $tax->label,
+                        'description'  => $tax->description,
+                        'hierarchical' => (bool) $tax->hierarchical,
+                        'object_type'  => array_values((array) $tax->object_type),
+                        'show_in_rest' => (bool) $tax->show_in_rest,
+                    ];
+                }, $taxonomies));
 
             // ==================== PAGES ====================
             case 'wp_get_pages':
@@ -1188,23 +1233,46 @@ class Server {
                 }, $tags ?: []);
 
             case 'wp_create_term':
-                $taxonomy = in_array($args['taxonomy'], ['category', 'post_tag']) ? $args['taxonomy'] : 'category';
+                $taxonomy = sanitize_text_field($args['taxonomy']);
+                if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
+                $tax_obj = get_taxonomy($taxonomy);
                 $term_args = [];
                 if (!empty($args['description'])) $term_args['description'] = sanitize_text_field($args['description']);
-                if (!empty($args['parent']) && $taxonomy === 'category') $term_args['parent'] = intval($args['parent']);
+                if (!empty($args['slug'])) $term_args['slug'] = sanitize_title($args['slug']);
+                if (!empty($args['parent']) && $tax_obj && $tax_obj->hierarchical) $term_args['parent'] = intval($args['parent']);
                 $result = wp_insert_term(sanitize_text_field($args['name']), $taxonomy, $term_args);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
-                return ['id' => $result['term_id'], 'message' => ucfirst($taxonomy) . ' created successfully'];
+                return ['id' => $result['term_id'], 'taxonomy' => $taxonomy, 'message' => 'Term created successfully'];
+
+            case 'wp_update_term':
+                $taxonomy = sanitize_text_field($args['taxonomy']);
+                if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
+                $term_id = intval($args['id']);
+                if (!get_term($term_id, $taxonomy)) throw new \Exception('Term not found in taxonomy ' . esc_html($taxonomy));
+                $update_args = [];
+                if (isset($args['name'])) $update_args['name'] = sanitize_text_field($args['name']);
+                if (isset($args['slug'])) $update_args['slug'] = sanitize_title($args['slug']);
+                if (isset($args['description'])) $update_args['description'] = sanitize_text_field($args['description']);
+                if (isset($args['parent'])) {
+                    $tax_obj = get_taxonomy($taxonomy);
+                    if ($tax_obj && $tax_obj->hierarchical) $update_args['parent'] = intval($args['parent']);
+                }
+                if (empty($update_args)) throw new \Exception('No update fields provided. Pass at least one of: name, slug, description, parent.');
+                $result = wp_update_term($term_id, $taxonomy, $update_args);
+                if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
+                return ['id' => $term_id, 'taxonomy' => $taxonomy, 'message' => 'Term updated successfully'];
 
             case 'wp_delete_term':
-                $taxonomy = in_array($args['taxonomy'], ['category', 'post_tag']) ? $args['taxonomy'] : 'category';
+                $taxonomy = sanitize_text_field($args['taxonomy']);
+                if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
                 $result = wp_delete_term(intval($args['id']), $taxonomy);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
                 if (!$result) throw new \Exception('Failed to delete term');
                 return ['message' => 'Term deleted successfully'];
 
             case 'wp_add_post_terms':
-                $taxonomy = in_array($args['taxonomy'], ['category', 'post_tag']) ? $args['taxonomy'] : 'category';
+                $taxonomy = sanitize_text_field($args['taxonomy']);
+                if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
                 $result = wp_set_post_terms(intval($args['post_id']), array_map('intval', $args['terms']), $taxonomy, true);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
                 return ['message' => 'Terms added to post successfully'];
@@ -1213,6 +1281,41 @@ class Server {
                 $taxonomy = sanitize_text_field($args['taxonomy'] ?? 'category');
                 $count = wp_count_terms(['taxonomy' => $taxonomy, 'hide_empty' => false]);
                 return ['taxonomy' => $taxonomy, 'count' => $count];
+
+            case 'wp_get_term_meta':
+                $term_id = intval($args['term_id']);
+                if (!get_term($term_id)) throw new \Exception('Term not found');
+                // 1.4.12 — wrap return in a structured object for consistency
+                // with wp_update_term_meta / wp_delete_term_meta which return
+                // structured arrays. Single-key get returns {term_id, key,
+                // value}; full-meta get returns {term_id, meta: {...}}.
+                if (!empty($args['key'])) {
+                    $key = sanitize_text_field($args['key']);
+                    return [
+                        'term_id' => $term_id,
+                        'key'     => $key,
+                        'value'   => get_term_meta($term_id, $key, true),
+                    ];
+                }
+                return [
+                    'term_id' => $term_id,
+                    'meta'    => (array) get_term_meta($term_id),
+                ];
+
+            case 'wp_update_term_meta':
+                $term_id = intval($args['term_id']);
+                if (!get_term($term_id)) throw new \Exception('Term not found');
+                $meta_value = is_string($args['value']) ? sanitize_textarea_field($args['value']) : $args['value'];
+                $result = update_term_meta($term_id, sanitize_text_field($args['key']), $meta_value);
+                if ($result === false) throw new \Exception('Failed to update term meta');
+                return ['term_id' => $term_id, 'key' => sanitize_text_field($args['key']), 'message' => 'Term meta updated'];
+
+            case 'wp_delete_term_meta':
+                $term_id = intval($args['term_id']);
+                if (!get_term($term_id)) throw new \Exception('Term not found');
+                $result = delete_term_meta($term_id, sanitize_text_field($args['key']));
+                if (!$result) throw new \Exception('Failed to delete term meta (key may not exist)');
+                return ['term_id' => $term_id, 'message' => 'Term meta deleted'];
 
             // ==================== COMMENTS ====================
             case 'wp_get_comments':
