@@ -515,6 +515,18 @@ class Server {
      * Per MCP spec: Opens SSE stream for server notifications
      */
     private function handle_get_stream($request) {
+        // SSE / server-initiated messages are not supported on this host.
+        // Return 405 so MCP clients (e.g. mcp-remote) do not retry the stream.
+        $response = new \WP_REST_Response([
+            'jsonrpc' => '2.0',
+            'error' => [
+                'code' => -32600,
+                'message' => 'Server-sent events (SSE) are not supported. Use HTTP POST for all MCP communication.',
+            ],
+        ], 405);
+        $response->header('Allow', 'POST, DELETE, OPTIONS');
+        return $response;
+
         // Authenticate before any session logic.
         $auth_check = $this->validate_auth($request);
         if ($auth_check !== true) {
@@ -786,7 +798,7 @@ class Server {
                     'jsonrpc' => '2.0',
                     'id' => $id,
                     'result' => [
-                        'protocolVersion' => '2025-03-26',
+                        'protocolVersion' => '2025-11-25',
                         'serverInfo' => [
                             'name' => 'Royal MCP WordPress',
                             'version' => ROYAL_MCP_VERSION,
