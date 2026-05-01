@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  * OAuth 2.0 Authorization Server for MCP.
  *
  * Implements the OAuth 2.1 authorization code flow with PKCE
- * per the MCP specification (2025-03-26).
+ * per the MCP specification (2025-11-25).
  *
  * Endpoints (served at domain root via rewrite rules):
  *  - GET  /.well-known/oauth-authorization-server  → metadata()
