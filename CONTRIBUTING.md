@@ -33,7 +33,7 @@ For deeply diverged branches, opening a fresh branch off the new `main` and cher
 - **PHP:** WordPress Coding Standards. ABSPATH check on line 1 of every PHP file.
 - **Security:** Escape all output (`esc_html`, `esc_attr`, `esc_url`), sanitize all input (`sanitize_text_field`, `wp_unslash`), prepare all SQL (`$wpdb->prepare()`).
 - **Naming:** Option keys use the `rmcp_` prefix; AJAX/CSS use `rmcp-` / `rmcp_`. Don't mix prefixes.
-- **MCP spec:** Follow the [Model Context Protocol 2025-03-26 spec](https://modelcontextprotocol.io/) for any tool/transport changes.
+- **MCP spec:** Follow the [Model Context Protocol 2025-11-25 spec](https://modelcontextprotocol.io/specification/2025-11-25/) for any tool/transport changes.
 
 ## Reporting Bugs
 
