@@ -245,7 +245,7 @@ class Royal_MCP_Plugin {
     public function register_mcp_endpoint() {
         $server = new Royal_MCP\MCP\Server();
 
-        // NEW: Streamable HTTP endpoint (2025-03-26 spec)
+        // Streamable HTTP endpoint (2025-11-25 spec)
         // Single endpoint for all MCP communication - no SSE connection needed
         // MCP protocol requires public REST endpoints — auth enforced inside
         // Server::validate_auth() on every request (API key or Bearer token).
