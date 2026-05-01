@@ -383,7 +383,7 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 == Upgrade Notice ==
 
 = 1.4.12 =
-Recommended update for all installs: fixes a Claude Desktop compatibility issue where the entire tool list could silently fail to appear after recent Claude Desktop updates, and stops an mcp-remote reconnection loop that could drop the MCP session. Also adds two small consistency improvements to the term tools (slug alias on wp_get_taxonomies, structured response on wp_get_term_meta). No breaking changes.
+Recommended update: fixes Claude Desktop tool-list silent failure after recent Claude Desktop updates, and an mcp-remote reconnection loop that could drop the MCP session. Also adds slug alias on wp_get_taxonomies and a structured response on wp_get_term_meta. No breaking changes.
 
 = 1.4.11 =
 Adds wp_update_term, wp_get/update/delete_term_meta, and wp_get_taxonomies tools — covering tag/category renaming and SEO-plugin term meta (Yoast, Rank Math, AIOSEO). Existing term tools now accept any taxonomy. wp_create_post and wp_update_post accept a post_author user ID. No breaking changes.
