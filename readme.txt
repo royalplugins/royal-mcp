@@ -249,6 +249,8 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 == Changelog ==
 
 = 1.4.12 =
+* Fix: MCP `protocolVersion` bumped from `2025-03-26` to `2025-11-25`. Current Claude Desktop builds send `protocolVersion: 2025-11-25` in their `initialize` handshake; when the server responded with the older date, Claude Desktop silently rejected the entire tool list (no error, tools simply did not appear in the connector). All existing installs should update to restore Claude Desktop compatibility. Thanks to @ober37 for the report and patch.
+* Fix: `handle_get_stream()` now returns HTTP 405 with `Allow: POST, DELETE, OPTIONS` instead of an immediately-closed SSE stream. The previous behaviour caused `mcp-remote` (the standard bridge between Claude Desktop and HTTP MCP servers) to treat the closed stream as a dropped connection and rapidly retry, hitting rate limits and dropping the entire MCP session. Returning 405 stops the retry loop and keeps the connection stable. Thanks again to @ober37.
 * Enhancement: `wp_get_taxonomies` now returns a `slug` field on each entry as a clearer alias for the taxonomy identifier. WordPress's `WP_Taxonomy` object uses `name` for the slug for historical reasons, which often confuses AI agents that expect a `slug` field on something called a "taxonomy". Both `slug` and `name` are populated and contain the same value; existing callers that read `name` continue to work.
 * Enhancement: `wp_get_term_meta` returns a structured response — `{term_id, key, value}` when reading a single key, or `{term_id, meta: {...}}` when reading all meta for a term. Pre-1.4.12 the tool returned the raw scalar value (or raw associative array), inconsistent with `wp_update_term_meta` / `wp_delete_term_meta` which already returned structured arrays. AI agents now see the same shape across the term-meta tool family.
 
@@ -381,7 +383,7 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 == Upgrade Notice ==
 
 = 1.4.12 =
-Two small consistency improvements to the term tools shipped in 1.4.11. wp_get_taxonomies now returns a `slug` field alias, and wp_get_term_meta returns a structured object matching the rest of the term-meta tool family. Existing readers of the old fields continue to work.
+Recommended update for all installs: fixes a Claude Desktop compatibility issue where the entire tool list could silently fail to appear after recent Claude Desktop updates, and stops an mcp-remote reconnection loop that could drop the MCP session. Also adds two small consistency improvements to the term tools (slug alias on wp_get_taxonomies, structured response on wp_get_term_meta). No breaking changes.
 
 = 1.4.11 =
 Adds wp_update_term, wp_get/update/delete_term_meta, and wp_get_taxonomies tools — covering tag/category renaming and SEO-plugin term meta (Yoast, Rank Math, AIOSEO). Existing term tools now accept any taxonomy. wp_create_post and wp_update_post accept a post_author user ID. No breaking changes.
