@@ -31,21 +31,27 @@ MCP gives AI agents the ability to read, create, update, and delete your WordPre
 
 Royal MCP prevents all of this with API key authentication on session initialization, timing-safe key comparison, per-IP rate limiting (60 requests/minute), and a full activity log of every MCP interaction.
 
-= 41+ MCP Tools Built In =
+= 67 Core Tools + 32 Integration Tools =
 
-**WordPress Core (41 tools):**
+**WordPress Core (67 tools):**
 
-* Posts — create, read, update, delete, search, count (featured images supported)
+* Posts — create, read, update, delete, search, count (any registered public post type, featured images supported)
 * Pages — full CRUD with parent page support
-* Media — browse, upload from URL or base64, update alt text and metadata, set as featured image, delete
-* Comments — create (respects moderation settings), read, delete
+* Post Types — discover all registered public post types on the site
+* Post Revisions — list revision history and roll a post back to any prior version
+* Media — browse, upload from URL or base64, update alt text/caption/title/description, set as featured image, delete
+* Comments — create, read, delete; full moderation suite (list pending, approve, mark spam, trash)
 * Users — display names and roles (emails and usernames are not exposed)
-* Categories & Tags — create, assign, delete, count
-* Menus — list menus and menu items
-* Post Meta — read, update, delete custom fields
+* Categories & Tags & Custom Taxonomies — create, update (rename/re-slug/edit/move), delete, assign, count, discover all registered taxonomies
+* Term Meta — read, update, delete (most useful for Yoast / Rank Math / AIOSEO term-level SEO meta)
+* Menus — list menus, list menu items, create / update / delete / reorder menu items
+* Post Meta — read, update, delete custom fields (works with ACF, MetaBox, JetEngine, Pods, CPT UI)
+* SEO Meta — read and write Yoast SEO or Rank Math title/description/focus keyword/robots/OG fields (auto-detects active SEO plugin)
 * Site Info — site name, description, WordPress version, timezone
 * Plugins & Themes — list installed plugins and themes with active status
+* Theme Appearance — get active theme, read/write theme mods (gated by admin toggle + allowlist), read/write Custom CSS
 * Search — full-text content search across post types
+* Permalink Structure — read and update permalink settings (gated by admin toggle)
 * Options — read allowlisted core options, read full plugin settings by slug (sensitive keys redacted), and write to allowlisted options when an admin enables it
 
 = Plugin Integrations (Conditional) =
@@ -79,11 +85,31 @@ When SiteVault is active, AI agents can manage your backups:
 * View backup statistics — total size, last backup, counts
 * List and review backup schedules
 
+**ForgeCache Integration (3 tools):**
+When ForgeCache is active, AI agents can manage your page cache:
+
+* Clear the entire cache, or purge a specific URL
+* View cache statistics — hit rate, file count, total size
+
+**Royal Ledger Integration (4 tools):**
+When Royal Ledger is active, AI agents can review your software costs and license data:
+
+* List recurring software costs and renewal dates
+* Get cost summaries grouped by month, vendor, or category
+* List stored license keys (key VALUES are never exposed — only masked previews; decryption requires logging into wp-admin)
+
+**Royal Links Integration (3 tools):**
+When Royal Links is active, AI agents can manage your branded short links:
+
+* List existing links with click counts and target URLs
+* Create new branded short links
+* Get click statistics for any link
+
 = Royal MCP and the WordPress Core Abilities API =
 
 WordPress 6.9 shipped the Abilities API in November 2025 — a primitive that lets plugins register typed capabilities AI agents can call. Core ships three default abilities (site info, user info, environment info) and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol.
 
-Royal MCP is a complete, production-ready MCP server that predates the official adapter. It runs the full Streamable HTTP transport, enforces API key authentication on every request, ships OAuth 2.0 for Claude Desktop's native connector flow, rate-limits per-IP, redacts sensitive data, and logs every interaction. Out of the box it includes 41+ tools for WordPress core operations plus integrations for WooCommerce, GuardPress, and SiteVault.
+Royal MCP is a complete, production-ready MCP server that predates the official adapter. It runs the full Streamable HTTP transport, enforces API key authentication on every request, ships OAuth 2.0 for Claude Desktop's native connector flow, rate-limits per-IP, redacts sensitive data, and logs every interaction. Out of the box it includes 67 tools for WordPress core operations plus 32 integration tools that auto-load when WooCommerce, GuardPress, SiteVault, ForgeCache, Royal Ledger, or Royal Links is active.
 
 = Supported AI Platforms =
 
@@ -111,7 +137,7 @@ Royal MCP works with any MCP-compliant client, IDE, or AI agent framework — no
 
 = MCP Spec Compliance =
 
-Royal MCP implements the [MCP 2025-03-26 Streamable HTTP transport specification](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http):
+Royal MCP implements the [MCP 2025-11-25 Streamable HTTP transport specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http):
 
 * Single `/mcp` endpoint for all JSON-RPC communication
 * POST for client messages, GET for server-sent events, DELETE for session termination
@@ -174,7 +200,7 @@ Security. Most MCP plugins — and 41% of all public MCP servers — have no aut
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
-No. WordPress 6.9 added the Abilities API — a primitive for registering AI-callable functions — and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, and 41+ ready-to-use tools spanning posts, pages, media, comments, users, options, and WooCommerce/GuardPress/SiteVault.
+No. WordPress 6.9 added the Abilities API — a primitive for registering AI-callable functions — and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 67 ready-to-use WordPress core tools, and 32 integration tools that auto-load for WooCommerce, GuardPress, SiteVault, ForgeCache, Royal Ledger, and Royal Links.
 
 = Does Royal MCP work with WooCommerce? =
 
@@ -211,7 +237,7 @@ Royal MCP performs a clean uninstall. All plugin options, database tables (activ
 
 = Does Royal MCP work with Claude Code, VS Code, Cursor, Windsurf, or other AI IDEs? =
 
-Yes. Any MCP-compliant client can connect to Royal MCP. Configure your IDE or client with the MCP server URL (`https://yoursite.com/wp-json/royal-mcp/v1/mcp`) and the API key (sent in the `X-Royal-MCP-API-Key` header). Claude Desktop additionally supports the native "Add Connector" OAuth 2.0 flow, which Royal MCP handles via Dynamic Client Registration (RFC 7591) — no manual API key management required on that path. The same OAuth flow works in any client that follows MCP 2025-03-26 spec.
+Yes. Any MCP-compliant client can connect to Royal MCP. Configure your IDE or client with the MCP server URL (`https://yoursite.com/wp-json/royal-mcp/v1/mcp`) and the API key (sent in the `X-Royal-MCP-API-Key` header). Claude Desktop additionally supports the native "Add Connector" OAuth 2.0 flow, which Royal MCP handles via Dynamic Client Registration (RFC 7591) — no manual API key management required on that path. The same OAuth flow works in any client that follows the MCP 2025-11-25 spec.
 
 = Does Royal MCP work with custom fields, ACF, MetaBox, JetEngine, Pods, or CPT UI? =
 
