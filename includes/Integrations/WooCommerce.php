@@ -783,7 +783,7 @@ class WooCommerce {
 					'hide_empty' => (bool) ( $args['hide_empty'] ?? false ),
 				] );
 				if ( is_wp_error( $terms ) ) {
-					throw new \Exception( $terms->get_error_message() );
+					throw new \Exception( esc_html( $terms->get_error_message() ) );
 				}
 				return array_values( array_map( function( $term ) {
 					return [
@@ -804,7 +804,7 @@ class WooCommerce {
 				];
 				$new_id = wc_create_attribute( $attr_data );
 				if ( is_wp_error( $new_id ) ) {
-					throw new \Exception( $new_id->get_error_message() );
+					throw new \Exception( esc_html( $new_id->get_error_message() ) );
 				}
 				$new_taxonomy = wc_attribute_taxonomy_name( $attr_data['slug'] );
 				return [
@@ -831,7 +831,7 @@ class WooCommerce {
 					if ( $attr_id > 0 ) {
 						$global_attr = wc_get_attribute( $attr_id );
 						if ( ! $global_attr || is_wp_error( $global_attr ) ) {
-							throw new \Exception( 'Attribute ID not found: ' . $attr_id );
+							throw new \Exception( 'Attribute ID not found: ' . esc_html( $attr_id ) );
 						}
 						// wc_get_attribute() returns slug already prefixed with pa_; don't double-prefix.
 						$taxonomy = $global_attr->slug;
