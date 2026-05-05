@@ -114,6 +114,69 @@ class REST_Controller {
             'callback' => [$this, 'search_content'],
             'permission_callback' => [$this, 'check_permission'],
         ]);
+
+        // Products - Attributes (static segment must come before dynamic /products/(?P<id>\d+))
+        register_rest_route($this->namespace, '/products/attributes', [
+            [
+                'methods' => 'GET',
+                'callback' => [$this, 'get_product_attributes'],
+                'permission_callback' => [$this, 'check_permission'],
+            ],
+            [
+                'methods' => 'POST',
+                'callback' => [$this, 'create_product_attribute'],
+                'permission_callback' => [$this, 'check_permission'],
+            ],
+        ]);
+
+        register_rest_route($this->namespace, '/products/attributes/(?P<attribute_id>\d+)/terms', [
+            [
+                'methods' => 'GET',
+                'callback' => [$this, 'get_attribute_terms'],
+                'permission_callback' => [$this, 'check_permission'],
+            ],
+        ]);
+
+        // Products - Variations
+        register_rest_route($this->namespace, '/products/(?P<id>\d+)/variations', [
+            [
+                'methods' => 'GET',
+                'callback' => [$this, 'get_product_variations'],
+                'permission_callback' => [$this, 'check_permission'],
+            ],
+            [
+                'methods' => 'POST',
+                'callback' => [$this, 'create_variation'],
+                'permission_callback' => [$this, 'check_permission'],
+            ],
+        ]);
+
+        register_rest_route($this->namespace, '/products/(?P<id>\d+)/variations/(?P<variation_id>\d+)', [
+            [
+                'methods' => 'GET',
+                'callback' => [$this, 'get_variation'],
+                'permission_callback' => [$this, 'check_permission'],
+            ],
+            [
+                'methods' => 'PUT',
+                'callback' => [$this, 'update_variation'],
+                'permission_callback' => [$this, 'check_permission'],
+            ],
+            [
+                'methods' => 'DELETE',
+                'callback' => [$this, 'delete_variation'],
+                'permission_callback' => [$this, 'check_permission'],
+            ],
+        ]);
+
+        // Products - set attributes on a specific product
+        register_rest_route($this->namespace, '/products/(?P<id>\d+)/attributes', [
+            [
+                'methods' => 'POST',
+                'callback' => [$this, 'set_product_attributes'],
+                'permission_callback' => [$this, 'check_permission'],
+            ],
+        ]);
     }
 
     public function check_permission($request) {
@@ -683,6 +746,149 @@ class REST_Controller {
             'total' => $query->found_posts,
             'query' => $search_query,
         ]);
+    }
+
+    // WooCommerce - Variation methods
+    public function get_product_variations($request) {
+        $product_id = intval($request['id']);
+        $params = $request->get_params();
+
+        try {
+            $result = \Royal_MCP\Integrations\WooCommerce::execute_tool('wc_get_product_variations', [
+                'product_id' => $product_id,
+                'per_page'   => $params['per_page'] ?? 100,
+            ]);
+            $this->log_request($request, 'success', "Retrieved variations for product {$product_id}");
+            return rest_ensure_response($result);
+        } catch (\Exception $e) {
+            $this->log_request($request, 'error', $e->getMessage());
+            return new \WP_Error('wc_error', $e->getMessage(), ['status' => 400]);
+        }
+    }
+
+    public function create_variation($request) {
+        $product_id = intval($request['id']);
+        $params = $request->get_json_params() ?? [];
+        $params['product_id'] = $product_id;
+
+        try {
+            $result = \Royal_MCP\Integrations\WooCommerce::execute_tool('wc_create_variation', $params);
+            $this->log_request($request, 'success', "Created variation for product {$product_id}");
+            return rest_ensure_response($result);
+        } catch (\Exception $e) {
+            $this->log_request($request, 'error', $e->getMessage());
+            return new \WP_Error('wc_error', $e->getMessage(), ['status' => 400]);
+        }
+    }
+
+    public function get_variation($request) {
+        $product_id   = intval($request['id']);
+        $variation_id = intval($request['variation_id']);
+
+        try {
+            $result = \Royal_MCP\Integrations\WooCommerce::execute_tool('wc_get_variation', [
+                'product_id'   => $product_id,
+                'variation_id' => $variation_id,
+            ]);
+            $this->log_request($request, 'success', "Retrieved variation {$variation_id}");
+            return rest_ensure_response($result);
+        } catch (\Exception $e) {
+            $this->log_request($request, 'error', $e->getMessage());
+            return new \WP_Error('wc_error', $e->getMessage(), ['status' => 404]);
+        }
+    }
+
+    public function update_variation($request) {
+        $product_id   = intval($request['id']);
+        $variation_id = intval($request['variation_id']);
+        $params = $request->get_json_params() ?? [];
+        $params['product_id']   = $product_id;
+        $params['variation_id'] = $variation_id;
+
+        try {
+            $result = \Royal_MCP\Integrations\WooCommerce::execute_tool('wc_update_variation', $params);
+            $this->log_request($request, 'success', "Updated variation {$variation_id}");
+            return rest_ensure_response($result);
+        } catch (\Exception $e) {
+            $this->log_request($request, 'error', $e->getMessage());
+            return new \WP_Error('wc_error', $e->getMessage(), ['status' => 400]);
+        }
+    }
+
+    public function delete_variation($request) {
+        $product_id   = intval($request['id']);
+        $variation_id = intval($request['variation_id']);
+        $force = $request->get_param('force') !== 'false';
+
+        try {
+            $result = \Royal_MCP\Integrations\WooCommerce::execute_tool('wc_delete_variation', [
+                'product_id'   => $product_id,
+                'variation_id' => $variation_id,
+                'force'        => $force,
+            ]);
+            $this->log_request($request, 'success', "Deleted variation {$variation_id}");
+            return rest_ensure_response($result);
+        } catch (\Exception $e) {
+            $this->log_request($request, 'error', $e->getMessage());
+            return new \WP_Error('wc_error', $e->getMessage(), ['status' => 400]);
+        }
+    }
+
+    // WooCommerce - Attribute methods
+    public function get_product_attributes($request) {
+        try {
+            $result = \Royal_MCP\Integrations\WooCommerce::execute_tool('wc_get_product_attributes', []);
+            $this->log_request($request, 'success', 'Retrieved product attributes');
+            return rest_ensure_response($result);
+        } catch (\Exception $e) {
+            $this->log_request($request, 'error', $e->getMessage());
+            return new \WP_Error('wc_error', $e->getMessage(), ['status' => 400]);
+        }
+    }
+
+    public function create_product_attribute($request) {
+        $params = $request->get_json_params() ?? [];
+
+        try {
+            $result = \Royal_MCP\Integrations\WooCommerce::execute_tool('wc_create_product_attribute', $params);
+            $this->log_request($request, 'success', 'Created product attribute');
+            return rest_ensure_response($result);
+        } catch (\Exception $e) {
+            $this->log_request($request, 'error', $e->getMessage());
+            return new \WP_Error('wc_error', $e->getMessage(), ['status' => 400]);
+        }
+    }
+
+    public function get_attribute_terms($request) {
+        $attribute_id = intval($request['attribute_id']);
+        $params = $request->get_params();
+
+        try {
+            $result = \Royal_MCP\Integrations\WooCommerce::execute_tool('wc_get_attribute_terms', [
+                'attribute_id' => $attribute_id,
+                'hide_empty'   => ($params['hide_empty'] ?? '') === 'true',
+            ]);
+            $this->log_request($request, 'success', "Retrieved terms for attribute {$attribute_id}");
+            return rest_ensure_response($result);
+        } catch (\Exception $e) {
+            $this->log_request($request, 'error', $e->getMessage());
+            return new \WP_Error('wc_error', $e->getMessage(), ['status' => 400]);
+        }
+    }
+
+    public function set_product_attributes($request) {
+        $product_id = intval($request['id']);
+        $params = $request->get_json_params() ?? [];
+        $params['product_id'] = $product_id;
+
+        try {
+            $result = \Royal_MCP\Integrations\WooCommerce::execute_tool('wc_set_product_attributes', $params);
+            $this->log_request($request, 'success', "Set attributes for product {$product_id}");
+            return rest_ensure_response($result);
+        } catch (\Exception $e) {
+            $this->log_request($request, 'error', $e->getMessage());
+            return new \WP_Error('wc_error', $e->getMessage(), ['status' => 400]);
+        }
     }
 
     // Helper methods

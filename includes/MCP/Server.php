@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * MCP Server - Streamable HTTP Transport (2025-03-26 spec)
+ * MCP Server - Streamable HTTP Transport (2025-11-25 spec)
  *
  * Single endpoint that accepts POST for all JSON-RPC messages
  * and returns either JSON or SSE stream based on Accept header.
@@ -2212,7 +2212,7 @@ class Server {
             'error' => 'SSE transport deprecated',
             'message' => 'Please use the Streamable HTTP transport at /wp-json/royal-mcp/v1/mcp',
             'endpoint' => rest_url('royal-mcp/v1/mcp'),
-            'spec' => '2025-03-26'
+            'spec' => '2025-11-25'
         ]);
         exit;
     }

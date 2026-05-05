@@ -365,7 +365,7 @@ $royal_mcp_configured_platforms = $royal_mcp_settings['platforms'] ?? [];
                         <div class="connector-field">
                             <label><?php esc_html_e('Remote MCP Server URL', 'royal-mcp'); ?></label>
                             <?php
-                            // Streamable HTTP endpoint (2025-03-26 spec)
+                            // Streamable HTTP endpoint (2025-11-25 spec)
                             $royal_mcp_url = rest_url('royal-mcp/v1/mcp');
                             // Force HTTPS for Claude connector (required)
                             $royal_mcp_url_https = preg_replace('/^http:/', 'https:', $royal_mcp_url);

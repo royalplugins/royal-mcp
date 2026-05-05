@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  * OAuth 2.0 Authorization Server for MCP.
  *
  * Implements the OAuth 2.1 authorization code flow with PKCE
- * per the MCP specification (2025-03-26).
+ * per the MCP specification (2025-11-25).
  *
  * Endpoints (served at domain root via rewrite rules):
  *  - GET  /.well-known/oauth-authorization-server  → metadata()
@@ -429,10 +429,22 @@ class Server {
 
     /**
      * Send a JSON response and exit.
+     *
+     * Default policy: no-store, to defeat aggressive edge caches (PowerBoost,
+     * LiteSpeed, Varnish, Cloudflare APO) that would otherwise key cache by URL
+     * only and serve a stale 4xx response to subsequent requests of any method.
+     * Discovery/metadata endpoints opt-in to public caching by passing their
+     * own Cache-Control header in $extra_headers.
      */
     private function json_response( $data, $status = 200, $extra_headers = [] ) {
         status_header( $status );
         header( 'Content-Type: application/json; charset=utf-8' );
+
+        if ( ! isset( $extra_headers['Cache-Control'] ) ) {
+            header( 'Cache-Control: no-store, no-cache, must-revalidate' );
+            header( 'Pragma: no-cache' );
+        }
+
         foreach ( $extra_headers as $key => $value ) {
             header( $key . ': ' . $value );
         }
