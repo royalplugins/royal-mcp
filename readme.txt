@@ -31,7 +31,7 @@ MCP gives AI agents the ability to read, create, update, and delete your WordPre
 
 Royal MCP prevents all of this with API key authentication on session initialization, timing-safe key comparison, per-IP rate limiting (60 requests/minute), and a full activity log of every MCP interaction.
 
-= 67 Core Tools + 42 Integration Tools =
+= 67 Core Tools + 49 Integration Tools =
 
 **WordPress Core (67 tools):**
 
@@ -58,13 +58,14 @@ Royal MCP prevents all of this with API key authentication on session initializa
 
 Royal MCP automatically detects compatible plugins and adds specialized MCP tools. No configuration needed — if the plugin is active, the tools appear.
 
-**WooCommerce Integration (19 tools):**
+**WooCommerce Integration (26 tools):**
 When WooCommerce is active, AI agents can manage your store end-to-end:
 
 * Browse and search products by category, status, or type
 * Create and update simple and variable products with prices, SKUs, stock levels
 * Manage variable products — list, get, create, update, delete, and batch-update product variations
 * Manage global attributes (`pa_*` taxonomies) — list registered attributes, list attribute terms, register new attributes, assign attributes to a product as variation axes
+* Manage coupons — list, search by code, get, create, update, delete (trash or permanent), and bulk-purge trash; supports all standard WC coupon fields (discount type, expiry, usage limits, product/category restrictions, email allowlists)
 * View orders, order details, and update order status
 * List customers with order count and total spent
 * Get store statistics — revenue, order count, average order value by period
@@ -111,7 +112,7 @@ When Royal Links is active, AI agents can manage your branded short links:
 
 WordPress 6.9 shipped the Abilities API in November 2025 — a primitive that lets plugins register typed capabilities AI agents can call. Core ships three default abilities (site info, user info, environment info) and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol.
 
-Royal MCP is a complete, production-ready MCP server that predates the official adapter. It runs the full Streamable HTTP transport, enforces API key authentication on every request, ships OAuth 2.0 for Claude Desktop's native connector flow, rate-limits per-IP, redacts sensitive data, and logs every interaction. Out of the box it includes 67 tools for WordPress core operations plus 42 integration tools that auto-load when WooCommerce, GuardPress, SiteVault, ForgeCache, Royal Ledger, or Royal Links is active.
+Royal MCP is a complete, production-ready MCP server that predates the official adapter. It runs the full Streamable HTTP transport, enforces API key authentication on every request, ships OAuth 2.0 for Claude Desktop's native connector flow, rate-limits per-IP, redacts sensitive data, and logs every interaction. Out of the box it includes 67 tools for WordPress core operations plus 49 integration tools that auto-load when WooCommerce, GuardPress, SiteVault, ForgeCache, Royal Ledger, or Royal Links is active.
 
 = Supported AI Platforms =
 
@@ -202,11 +203,11 @@ Security. Most MCP plugins — and 41% of all public MCP servers — have no aut
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
-No. WordPress 6.9 added the Abilities API — a primitive for registering AI-callable functions — and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 67 ready-to-use WordPress core tools, and 42 integration tools that auto-load for WooCommerce, GuardPress, SiteVault, ForgeCache, Royal Ledger, and Royal Links.
+No. WordPress 6.9 added the Abilities API — a primitive for registering AI-callable functions — and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 67 ready-to-use WordPress core tools, and 49 integration tools that auto-load for WooCommerce, GuardPress, SiteVault, ForgeCache, Royal Ledger, and Royal Links.
 
 = Does Royal MCP work with WooCommerce? =
 
-Yes. When WooCommerce is active, Royal MCP automatically adds 19 MCP tools spanning product management (simple and variable, including variation CRUD and global attribute management), order management (view, update status), customer data, and store statistics. No additional configuration is needed — the tools appear automatically in the MCP tools list.
+Yes. When WooCommerce is active, Royal MCP automatically adds 26 MCP tools spanning product management (simple and variable, including variation CRUD and global attribute management), full coupon management (list/get/create/update/delete + bulk trash purge), order management (view, update status), customer data, and store statistics. No additional configuration is needed — the tools appear automatically in the MCP tools list.
 
 = Can AI assistants configure my plugins for me? =
 
@@ -279,6 +280,7 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 = 1.4.13 =
 * Fix: OAuth endpoint responses (`/register`, `/token`, `/authorize`, and all error responses) now send `Cache-Control: no-store, no-cache, must-revalidate` by default. Previously, aggressive edge caches like o2switch PowerBoost, LiteSpeed Cache, and Cloudflare APO could cache a 405 response from a stale GET probe and serve it to subsequent valid POSTs, breaking Claude.ai's web connector OAuth flow with "Couldn't reach the MCP server". Discovery endpoints (`/.well-known/oauth-*`) keep their public caching opt-in. Resolves a WP.org forum report against 1.4.8.
 * New: 10 WooCommerce variation and attribute MCP tools — `wc_get_product_variations`, `wc_get_variation`, `wc_create_variation`, `wc_update_variation`, `wc_delete_variation`, `wc_batch_update_variations`, `wc_get_product_attributes`, `wc_get_attribute_terms`, `wc_create_product_attribute`, `wc_set_product_attributes`. AI agents can now manage variable products end-to-end: register global attributes, set variation axes, generate variations, and update price/stock/SKU/dimensions in single calls or in batch. Cross-product ownership is validated on every get/update/delete to prevent variation writes against the wrong parent. Parent product price and stock cache is synced via `WC_Product_Variable::sync()` after every mutation. Contributed by @ober37.
+* New: 7 WooCommerce coupon management MCP tools — `wc_get_coupons`, `wc_get_coupon`, `wc_get_coupon_count`, `wc_create_coupon`, `wc_update_coupon`, `wc_delete_coupon`, `wc_empty_coupon_trash`. Full CRUD coverage including code search, status filter, all standard coupon fields (percent/fixed_cart/fixed_product discount types, expiry, usage limits, product/category restrictions, email allowlists), trash-then-purge or force-permanent deletion, and bulk trash purge. Every operation validates the post type is `shop_coupon` to prevent product IDs being silently accepted by `new \WC_Coupon( $id )`. Contributed by @ober37.
 
 = 1.4.12 =
 * Fix: MCP `protocolVersion` bumped from `2025-03-26` to `2025-11-25`. Current Claude Desktop builds send `protocolVersion: 2025-11-25` in their `initialize` handshake; when the server responded with the older date, Claude Desktop silently rejected the entire tool list (no error, tools simply did not appear in the connector). All existing installs should update to restore Claude Desktop compatibility. Thanks to @ober37 for the report and patch.
@@ -415,7 +417,7 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 == Upgrade Notice ==
 
 = 1.4.13 =
-Recommended update: fixes OAuth endpoint cache poisoning that broke the Claude.ai web connector on hosts with aggressive edge caches (PowerBoost, LiteSpeed, Cloudflare APO). Adds 10 new WooCommerce tools for variable product and global attribute management. No breaking changes.
+Recommended update: fixes OAuth endpoint cache poisoning that broke the Claude.ai web connector on hosts with aggressive edge caches. Adds 17 new WooCommerce tools — variable product and attribute management plus full coupon CRUD. No breaking changes.
 
 = 1.4.12 =
 Recommended update: fixes Claude Desktop tool-list silent failure after recent Claude Desktop updates, and an mcp-remote reconnection loop that could drop the MCP session. Also adds slug alias on wp_get_taxonomies and a structured response on wp_get_term_meta. No breaking changes.
