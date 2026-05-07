@@ -512,11 +512,24 @@ class Server {
 
     /**
      * Handle GET - SSE stream for server-initiated messages
-     * Per MCP spec: Opens SSE stream for server notifications
+     *
+     * Auth check goes FIRST per RFC 9728 (Protected Resource Metadata) —
+     * unauthenticated GET must return 401 + WWW-Authenticate so RFC 9728-aware
+     * clients (Claude.ai web, ChatGPT) can discover OAuth and start the flow.
+     *
+     * Authenticated GET then returns 405 since this server does not host SSE,
+     * preserving the 1.4.12 fix that stopped mcp-remote retry storms.
+     *
+     * See _dev/MCP_ENDPOINT_BEHAVIOR_MATRIX.md before changing.
      */
     private function handle_get_stream($request) {
-        // SSE / server-initiated messages are not supported on this host.
-        // Return 405 so MCP clients (e.g. mcp-remote) do not retry the stream.
+        $auth_check = $this->validate_auth($request);
+        if ($auth_check !== true) {
+            return $auth_check;
+        }
+
+        // Authenticated client — SSE not hosted here, return 405 so mcp-remote
+        // falls back to POST-only mode instead of retrying.
         $response = new \WP_REST_Response([
             'jsonrpc' => '2.0',
             'error' => [
@@ -527,12 +540,7 @@ class Server {
         $response->header('Allow', 'POST, DELETE, OPTIONS');
         return $response;
 
-        // Authenticate before any session logic.
-        $auth_check = $this->validate_auth($request);
-        if ($auth_check !== true) {
-            return $auth_check;
-        }
-
+        // Unreachable below — preserved for future SSE support.
         $session_id = $request->get_header('Mcp-Session-Id');
         $accept = $request->get_header('Accept');
 
