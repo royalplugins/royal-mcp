@@ -1,0 +1,139 @@
+# Royal MCP `/wp-json/royal-mcp/v1/mcp` Endpoint Behavior Contract
+
+**Last verified:** 2026-05-07 (Royal MCP 1.4.14)
+
+> ⚠️ **Read this before changing any HTTP response code on the MCP endpoint.**
+> We've burned ourselves twice now (1.4.12 fix broke 1.4.13 web-connector flow).
+> The matrix below is the ground truth — any code change that violates a
+> non-greyed-out cell in the "expected" column is a regression.
+
+---
+
+## Why this doc exists
+
+The MCP Streamable HTTP transport spec, RFC 9728 (Protected Resource Metadata),
+and the realities of multiple MCP clients (Claude.ai web, Claude Desktop via
+mcp-remote, ChatGPT, Cursor, Cline, etc.) place overlapping demands on the
+single `/mcp` endpoint. Different clients probe in different ways, and small
+response-code changes can silently break one client while fixing another.
+
+Every prior shipped fix to this endpoint has had unintended consequences for at
+least one client. The matrix is the spec for how every method × auth-state
+combo MUST respond — derived from the MCP spec, RFC 9728, and observed client
+behavior.
+
+---
+
+## Authoritative sources
+
+1. **MCP Streamable HTTP transport spec** —
+   https://modelcontextprotocol.io/specification/2025-06-18/basic/transports
+   - GET on the MCP endpoint **MUST** either return `Content-Type: text/event-stream`
+     OR HTTP 405 Method Not Allowed. Both are spec-compliant.
+   - POST is the primary delivery mechanism for client → server JSON-RPC.
+
+2. **RFC 9728 — OAuth 2.0 Protected Resource Metadata** —
+   https://datatracker.ietf.org/doc/rfc9728/
+   - Unauthenticated requests to a protected resource **MUST** return 401 with
+     `WWW-Authenticate: Bearer resource_metadata="<URL>"` so the client can
+     discover the OAuth authorization server.
+
+3. **mcp-remote source** (Claude Desktop bridge) —
+   https://github.com/geelen/mcp-remote
+   - On 401 + `WWW-Authenticate` → reads header, starts OAuth discovery.
+   - On 405 → triggers fallback to the deprecated HTTP+SSE transport. (This is
+     why 1.4.12 returning 405 stopped its retry storm — mcp-remote handled the
+     405 cleanly instead of treating a closed SSE stream as a dropped
+     connection.)
+
+4. **Anthropic MCP connector docs** —
+   https://platform.claude.com/docs/en/agents-and-tools/mcp-connector
+   - Claude Code/web first checks RFC 9728 metadata, then RFC 8414. MCP
+     endpoints **must** send 401 + `WWW-Authenticate: Bearer` on unauth
+     requests for OAuth flow to start.
+
+---
+
+## The contract
+
+### Resolution of the spec tension
+
+The MCP spec says GET → `text/event-stream` OR 405. RFC 9728 says unauth
+requests → 401 + WWW-Authenticate. These don't conflict — they apply at
+different layers:
+
+1. **Authentication check goes FIRST.** If the request lacks credentials, return
+   401 + `WWW-Authenticate: Bearer resource_metadata="..."` regardless of HTTP
+   method.
+2. **Method dispatch goes SECOND.** Only authenticated requests reach the
+   method-specific logic, and only there does the GET → 405 (no SSE) rule
+   apply.
+
+This ordering is what every spec-compliant implementation does. Royal MCP
+1.4.13 had it backwards (method check before auth check on GET only); 1.4.14
+fixes the order.
+
+### Test matrix
+
+| Client | Method | Auth state | Expected response | Why |
+|---|---|---|---|---|
+| Claude.ai web (URL-only mode) | GET | none | **401 + `WWW-Authenticate: Bearer resource_metadata="..."`** | Probes endpoint to start OAuth discovery (RFC 9728). 405 makes Claude bail with "couldn't reach". |
+| Claude.ai web | POST `initialize` | none | **401 + `WWW-Authenticate`** | Same OAuth discovery trigger. Body content irrelevant. |
+| Claude.ai web | POST `initialize` | Bearer (valid) | **200 + JSON-RPC result** | Standard MCP initialize response. |
+| Claude.ai web | POST | Bearer (invalid) | **401 + `WWW-Authenticate: Bearer error="invalid_token", resource_metadata="..."`** | RFC 6750 §3 — invalid token error response. |
+| Claude.ai web | OPTIONS | any | **204 + CORS headers** | Preflight for browser-initiated fetch. |
+| Claude Desktop (mcp-remote) | GET | Bearer | **405 + `Allow: POST, DELETE, OPTIONS`** | We don't host SSE. mcp-remote handles 405 by falling back to POST-only mode. **DO NOT change this** — broke once already in pre-1.4.12. |
+| Claude Desktop (mcp-remote) | GET | none | **401 + `WWW-Authenticate`** | mcp-remote will start OAuth flow. Rare path (Claude Desktop is configured with token), but spec-correct. |
+| Claude Desktop (mcp-remote) | POST | Bearer | **200 + JSON-RPC result** | Primary mode. |
+| ChatGPT MCP connector | GET | none | **401 + `WWW-Authenticate`** | Same RFC 9728 flow as Claude.ai. |
+| Cursor / Cline / Windsurf | POST | Bearer | **200 + JSON-RPC result** | These clients use POST exclusively for JSON-RPC. No GET probe. |
+| Healthcheck / curl probe | GET | none | **401 + `WWW-Authenticate`** | Acceptable — caller learns auth is required. Not a regression. |
+| Browser direct visit | GET | none | **401 + `WWW-Authenticate`** | Same. |
+| Any client | DELETE | Bearer + valid `Mcp-Session-Id` | **200 / 204** (session terminated) | Per spec §Session Management. |
+| Any client | DELETE | none | **401** | Auth-first rule applies. |
+| Any client | DELETE | Bearer + missing session header | **400 Bad Request** | Per spec — server requires `Mcp-Session-Id`. |
+| Any client | unknown method (PUT, PATCH, etc.) | any | **405 + `Allow: GET, POST, DELETE, OPTIONS`** | WP REST API default; should not change. |
+
+### Negative cases (regressions to avoid)
+
+- ❌ Returning 405 for unauthenticated GET. Breaks Claude.ai web (1.4.13 bug).
+- ❌ Returning 200 with an empty/closed SSE stream for GET. Breaks mcp-remote
+  (pre-1.4.12 bug — caused retry storm).
+- ❌ Returning 401 *without* a `WWW-Authenticate` header. Clients can't
+  discover OAuth and treat it as a hard-fail.
+- ❌ Returning 200 OK to an unauthenticated request of any method. Defeats
+  authentication.
+- ❌ Returning 403 instead of 401 for invalid tokens. Spec/RFC 6750 say 401 for
+  bad/missing credentials.
+
+### Headers the endpoint MUST send (where applicable)
+
+- **`WWW-Authenticate: Bearer resource_metadata="<home_url>/.well-known/oauth-protected-resource"`**
+  on every 401. The `resource_metadata` URL is what tells RFC 9728-aware
+  clients where to start OAuth discovery.
+
+- **`Access-Control-Allow-Origin: *`** + **`Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS`**
+  + **`Access-Control-Allow-Headers: Content-Type, Accept, Authorization, Mcp-Session-Id, X-Royal-MCP-API-Key`**
+  on OPTIONS preflight.
+
+- **`Allow: POST, DELETE, OPTIONS`** on the authenticated 405 (GET when SSE
+  unavailable) — tells clients which methods *are* allowed.
+
+---
+
+## Process: how to evolve this contract safely
+
+1. Find the cell in the matrix you're considering changing.
+2. Identify the specific client(s) whose behavior depends on that cell. Cite
+   their source/docs in the PR.
+3. Re-verify against the current MCP spec version (the spec evolves —
+   `2025-11-25` is the most recent published version).
+4. Update this matrix in the SAME commit as the code change. Bump the
+   "Last verified" date.
+5. Manually exercise the updated cell with a real client (Claude.ai web is the
+   most representative — it does the most aggressive probing).
+6. After ship, monitor support-forum traffic for ~7 days for regressions before
+   declaring the change stable.
+
+If you're not willing to do step 5, you don't have evidence the change works
+and shouldn't ship it.
