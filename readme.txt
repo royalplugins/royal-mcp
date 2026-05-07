@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, mcp-server
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.13
+Stable tag: 1.4.14
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -277,6 +277,10 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Changelog ==
 
+= 1.4.14 =
+* Fix: Unauthenticated GET requests to the MCP endpoint (`/wp-json/royal-mcp/v1/mcp`) now return HTTP 401 with `WWW-Authenticate: Bearer resource_metadata="..."` instead of 405. This restores the spec-correct OAuth discovery path for Claude.ai's web connector and ChatGPT's MCP connector, which probe with GET first and rely on the 401 + WWW-Authenticate response (per RFC 9728 Protected Resource Metadata) to start the OAuth flow. Without this header, those clients silently fail with "Couldn't reach the MCP server" and never display the authorization window. Authenticated GET continues to return 405 with `Allow: POST, DELETE, OPTIONS` (preserving the 1.4.12 fix for mcp-remote / Claude Desktop). Resolves a WP.org forum report against 1.4.13 on SiteGround.
+* New: Self-check that detects when the host is blocking `/.well-known/oauth-authorization-server` and surfaces a dismissible admin notice on Royal MCP and Plugins screens linking to the manual fix. Some managed hosts (notably SiteGround, but also some o2switch and Hostinger configurations) reserve the `/.well-known/` path prefix at the nginx layer for ACME SSL renewals and serve a static 404 for any other path under it — before WordPress sees the request. Without this notice, customers only discovered the issue when their Claude.ai connector failed to authorize. The check runs on a 12-hour cached transient, skips on dev domains and multisite subsites, and is invalidated on settings save so config changes re-probe immediately.
+
 = 1.4.13 =
 * Fix: OAuth endpoint responses (`/register`, `/token`, `/authorize`, and all error responses) now send `Cache-Control: no-store, no-cache, must-revalidate` by default. Previously, aggressive edge caches like o2switch PowerBoost, LiteSpeed Cache, and Cloudflare APO could cache a 405 response from a stale GET probe and serve it to subsequent valid POSTs, breaking Claude.ai's web connector OAuth flow with "Couldn't reach the MCP server". Discovery endpoints (`/.well-known/oauth-*`) keep their public caching opt-in. Resolves a WP.org forum report against 1.4.8.
 * New: 10 WooCommerce variation and attribute MCP tools — `wc_get_product_variations`, `wc_get_variation`, `wc_create_variation`, `wc_update_variation`, `wc_delete_variation`, `wc_batch_update_variations`, `wc_get_product_attributes`, `wc_get_attribute_terms`, `wc_create_product_attribute`, `wc_set_product_attributes`. AI agents can now manage variable products end-to-end: register global attributes, set variation axes, generate variations, and update price/stock/SKU/dimensions in single calls or in batch. Cross-product ownership is validated on every get/update/delete to prevent variation writes against the wrong parent. Parent product price and stock cache is synced via `WC_Product_Variable::sync()` after every mutation. Contributed by @ober37.
@@ -415,6 +419,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release
 
 == Upgrade Notice ==
+
+= 1.4.14 =
+Recommended update: fixes Claude.ai web connector / ChatGPT MCP connector failing with "Couldn't reach the MCP server" — unauthenticated GET to the MCP endpoint now returns 401 + WWW-Authenticate so OAuth discovery (RFC 9728) starts correctly. Also adds an admin notice that detects when your host blocks `/.well-known/oauth-authorization-server` (SiteGround / o2switch / Hostinger nginx intercept) and links to the manual fix. Authenticated GET still returns 405 — Claude Desktop / mcp-remote unaffected. No breaking changes.
 
 = 1.4.13 =
 Recommended update: fixes OAuth endpoint cache poisoning that broke the Claude.ai web connector on hosts with aggressive edge caches. Adds 17 new WooCommerce tools — variable product and attribute management plus full coupon CRUD. No breaking changes.
