@@ -304,9 +304,20 @@ class Server {
             return false;
         }
 
-        // Check transient for session validity
+        // Check transient for session validity.
         $session_data = get_transient('royal_mcp_session_' . $session_id);
-        return $session_data !== false;
+        if ($session_data === false) {
+            return false;
+        }
+
+        // Sliding window: refresh the TTL on every valid hit so an actively-used
+        // session never times out. Pre-1.4.15 the transient had a fixed
+        // HOUR_IN_SECONDS lifetime with no refresh, so Claude Desktop sessions
+        // died exactly 60 minutes after creation regardless of activity, then
+        // auto-reconnected and spawned competing mcp-remote npx processes.
+        set_transient('royal_mcp_session_' . $session_id, $session_data, DAY_IN_SECONDS);
+
+        return true;
     }
 
     /**
@@ -315,12 +326,13 @@ class Server {
      * @param string $session_id The session ID to store
      */
     private function store_session($session_id, $auth_fingerprint = '') {
-        // Store session with 1 hour expiry, bound to auth credentials
+        // Store session with 24-hour expiry, refreshed on every valid hit
+        // (see is_valid_session). Bound to auth credentials.
         set_transient('royal_mcp_session_' . $session_id, [
             'created' => time(),
             'last_event_id' => 0,
             'auth_fingerprint' => $auth_fingerprint,
-        ], HOUR_IN_SECONDS);
+        ], DAY_IN_SECONDS);
     }
 
     /**
