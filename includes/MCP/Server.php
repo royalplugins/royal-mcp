@@ -131,6 +131,10 @@ class Server {
 
         // Neither provided — return 401 with WWW-Authenticate for OAuth discovery.
         // Per MCP spec (2025-06-18 / RFC 9728), include resource_metadata URL.
+        // Cache-Control: no-store is critical here. Pre-1.4.15 this 401 was
+        // getting cached at edge (URL-keyed) and served to subsequent
+        // authenticated requests, breaking every MCP client that hits GET /mcp
+        // before sending its credentials (Claude.ai web, ChatGPT discovery).
         $resource_metadata_url = home_url( '/.well-known/oauth-protected-resource' );
         $response = new \WP_REST_Response([
             'jsonrpc' => '2.0',
@@ -140,6 +144,8 @@ class Server {
             ],
         ], 401);
         $response->header('WWW-Authenticate', 'Bearer resource_metadata="' . $resource_metadata_url . '"');
+        $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+        $response->header('Pragma', 'no-cache');
         return $response;
     }
 
@@ -156,13 +162,23 @@ class Server {
         }
 
         if (empty($settings['api_key']) || !hash_equals($settings['api_key'], $api_key)) {
-            return new \WP_REST_Response([
+            // 401, not 403, per RFC 7235 — wrong credentials means "auth failed",
+            // which is 401. 403 is reserved for "auth succeeded but lacks
+            // permission". Pre-1.4.15 returned 403 here. Strict MCP clients
+            // (per RFC 9728 OAuth discovery) start the OAuth flow on 401, not
+            // 403, so the wrong status was suppressing legitimate retries.
+            $resource_metadata_url = home_url( '/.well-known/oauth-protected-resource' );
+            $response = new \WP_REST_Response([
                 'jsonrpc' => '2.0',
                 'error' => [
                     'code' => -32600,
                     'message' => 'Invalid API key.',
                 ],
-            ], 403);
+            ], 401);
+            $response->header('WWW-Authenticate', 'Bearer error="invalid_token", resource_metadata="' . $resource_metadata_url . '"');
+            $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+            $response->header('Pragma', 'no-cache');
+            return $response;
         }
 
         // The API key is stored in admin-only settings, so whoever presents it is admin-level trusted.
@@ -202,6 +218,8 @@ class Server {
             ], 401);
             $resource_metadata_url = home_url( '/.well-known/oauth-protected-resource' );
             $response->header('WWW-Authenticate', 'Bearer error="invalid_token", resource_metadata="' . $resource_metadata_url . '"');
+            $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+            $response->header('Pragma', 'no-cache');
             return $response;
         }
 
@@ -304,9 +322,20 @@ class Server {
             return false;
         }
 
-        // Check transient for session validity
+        // Check transient for session validity.
         $session_data = get_transient('royal_mcp_session_' . $session_id);
-        return $session_data !== false;
+        if ($session_data === false) {
+            return false;
+        }
+
+        // Sliding window: refresh the TTL on every valid hit so an actively-used
+        // session never times out. Pre-1.4.15 the transient had a fixed
+        // HOUR_IN_SECONDS lifetime with no refresh, so Claude Desktop sessions
+        // died exactly 60 minutes after creation regardless of activity, then
+        // auto-reconnected and spawned competing mcp-remote npx processes.
+        set_transient('royal_mcp_session_' . $session_id, $session_data, DAY_IN_SECONDS);
+
+        return true;
     }
 
     /**
@@ -315,12 +344,13 @@ class Server {
      * @param string $session_id The session ID to store
      */
     private function store_session($session_id, $auth_fingerprint = '') {
-        // Store session with 1 hour expiry, bound to auth credentials
+        // Store session with 24-hour expiry, refreshed on every valid hit
+        // (see is_valid_session). Bound to auth credentials.
         set_transient('royal_mcp_session_' . $session_id, [
             'created' => time(),
             'last_event_id' => 0,
             'auth_fingerprint' => $auth_fingerprint,
-        ], HOUR_IN_SECONDS);
+        ], DAY_IN_SECONDS);
     }
 
     /**
@@ -538,6 +568,8 @@ class Server {
             ],
         ], 405);
         $response->header('Allow', 'POST, DELETE, OPTIONS');
+        $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+        $response->header('Pragma', 'no-cache');
         return $response;
 
         // Unreachable below — preserved for future SSE support.
@@ -786,11 +818,22 @@ class Server {
     }
 
     /**
-     * Create JSON response with proper headers
+     * Create JSON response with proper headers.
+     *
+     * Cache-Control: no-store is mandatory on every MCP response. Pre-1.4.15 the
+     * 1.4.13 fix that added no-store to OAuth endpoints (OAuth/Server.php)
+     * never propagated here, so MCP responses were getting cached at edge
+     * (Cloudflare, host-level fastcgi cache, intermediaries) — the same root
+     * cause as the OAuth cache poisoning bug, just on a different endpoint.
+     * Customer reproduction: bare GET /mcp returned a stale auth-error response
+     * regardless of whether the Authorization / X-Royal-MCP-API-Key header was
+     * present, until a query string busted the URL-keyed cache.
      */
     private function json_response($data, $status = 200) {
         $response = new \WP_REST_Response($data, $status);
         $response->header('Content-Type', 'application/json');
+        $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+        $response->header('Pragma', 'no-cache');
         $response->header('Access-Control-Allow-Origin', '*');
         $response->header('Access-Control-Expose-Headers', 'Mcp-Session-Id');
         return $response;

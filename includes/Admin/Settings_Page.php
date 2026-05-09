@@ -140,13 +140,17 @@ class Settings_Page {
         $sanitized['allow_option_writes'] = isset($input['allow_option_writes']) ? (bool) $input['allow_option_writes'] : false;
         $sanitized['allow_theme_writes'] = isset($input['allow_theme_writes']) ? (bool) $input['allow_theme_writes'] : false;
 
-        // Sanitize API key
-        if (isset($input['api_key']) && !empty($input['api_key'])) {
+        // Sanitize API key.
+        // Order matters: the readonly `api_key` field in the settings form posts the
+        // current value on every submit, so we must check `regenerate_api_key` FIRST.
+        // Pre-1.4.15 the order was reversed and the regenerate button was silently
+        // overridden — clicking Regenerate did nothing, customer kept the same key.
+        if (isset($input['regenerate_api_key'])) {
+            $sanitized['api_key'] = bin2hex(random_bytes(16));
+        } elseif (isset($input['api_key']) && !empty($input['api_key'])) {
             $sanitized['api_key'] = sanitize_text_field($input['api_key']);
-        } elseif (isset($input['regenerate_api_key'])) {
-            $sanitized['api_key'] = wp_generate_password(32, false);
         } else {
-            $sanitized['api_key'] = $settings['api_key'] ?? wp_generate_password(32, false);
+            $sanitized['api_key'] = $settings['api_key'] ?? bin2hex(random_bytes(16));
         }
 
         // Sanitize OAuth settings
@@ -277,7 +281,7 @@ class Settings_Page {
             'enabled' => false,
             'platforms' => [],
             'mcp_servers' => [],
-            'api_key' => wp_generate_password(32, false),
+            'api_key' => bin2hex(random_bytes(16)),
         ]);
 
         $platforms = Registry::get_platforms();
