@@ -69,6 +69,16 @@ class Royal_MCP_Plugin {
         add_action('rest_api_init', [$this, 'register_rest_routes']);
         add_action('rest_api_init', [$this, 'register_mcp_endpoint']);
 
+        // Cache-Control: no-store on EVERY response under our REST namespace.
+        // 1.4.13 added this to OAuth endpoints. 1.4.15 audit found the MCP
+        // endpoint missing it (Server::json_response) and the REST_Controller
+        // routes (/posts, /pages, /site, etc.) also missing it — both got
+        // poisoned by URL-keyed edge caches when CF cached an early response
+        // and served it back to differently-authenticated requests. The
+        // global filter below covers the whole namespace defensively;
+        // per-response edits in MCP/Server.php are kept as belt-and-suspenders.
+        add_filter('rest_post_dispatch', [$this, 'force_no_store_on_namespace'], 10, 3);
+
         // OAuth 2.0 endpoints (served at domain root, not under /wp-json/).
         add_action('init', [$this, 'register_oauth_rewrites']);
         add_filter('query_vars', [$this, 'register_oauth_query_vars']);
@@ -79,6 +89,31 @@ class Royal_MCP_Plugin {
 
         // Add plugin action links (Settings, Docs)
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), [$this, 'add_action_links']);
+    }
+
+    /**
+     * Force no-store cache headers on every response under royal-mcp/* namespace.
+     *
+     * Hooked late on rest_post_dispatch so it overrides any cache headers a
+     * route callback may have set. Audited on 2026-05-09 — required to prevent
+     * Cloudflare/host-level caches from URL-keying responses and serving them
+     * back to subsequent requests with different auth state.
+     *
+     * @param \WP_REST_Response $response The dispatch result.
+     * @param \WP_REST_Server   $server   The REST server instance.
+     * @param \WP_REST_Request  $request  The original request.
+     * @return \WP_REST_Response
+     */
+    public function force_no_store_on_namespace( $response, $server, $request ) {
+        if ( ! $response instanceof \WP_REST_Response ) {
+            return $response;
+        }
+        $route = $request->get_route();
+        if ( is_string( $route ) && 0 === strpos( $route, '/royal-mcp/' ) ) {
+            $response->header( 'Cache-Control', 'no-store, no-cache, must-revalidate, private' );
+            $response->header( 'Pragma', 'no-cache' );
+        }
+        return $response;
     }
 
     /**

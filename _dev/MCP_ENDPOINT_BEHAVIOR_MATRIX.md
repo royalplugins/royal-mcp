@@ -1,6 +1,6 @@
 # Royal MCP `/wp-json/royal-mcp/v1/mcp` Endpoint Behavior Contract
 
-**Last verified:** 2026-05-07 (Royal MCP 1.4.14)
+**Last verified:** 2026-05-09 (Royal MCP 1.4.15)
 
 > ⚠️ **Read this before changing any HTTP response code on the MCP endpoint.**
 > We've burned ourselves twice now (1.4.12 fix broke 1.4.13 web-connector flow).
@@ -137,3 +137,61 @@ fixes the order.
 
 If you're not willing to do step 5, you don't have evidence the change works
 and shouldn't ship it.
+
+---
+
+## Per-host compatibility matrix
+
+Different WordPress hosts intercept, cache, or rewrite REST API requests in
+ways that break MCP clients silently. This table captures known behaviors.
+
+| Host | Known issue | Royal MCP fix | Customer-side action |
+|------|-------------|----------------|----------------------|
+| **SiteGround** | nginx blocks `/.well-known/` paths at server level (returns 404 before WP sees the request). Static workaround files served as `text/plain` rather than `application/json`. | Admin notice (`Well_Known_Notice` class) detects the block and surfaces manual fix. 1.4.15 candidate: notice for the Content-Type variant. | Place static `.well-known/` files OR add `<FilesMatch>` block in `.htaccess`. SiteGround support ticket for nginx Content-Type override. |
+| **o2switch (PowerBoost)** | Aggressive edge cache poisons OAuth endpoint responses — caches a 405 from a stale GET probe and serves it to subsequent valid POSTs. | 1.4.13 added `Cache-Control: no-store` to OAuth endpoints. 1.4.15 extended to MCP endpoint + REST_Controller routes (audit-discovered gap). | URL exclusion for `/wp-json/royal-mcp/*` in PowerBoost cache rules if `no-store` is ignored. |
+| **Hostinger** | Some configs intercept `/.well-known/` similar to SiteGround. | Same as SiteGround — admin notice. | Same — static file workaround. |
+| **Cloudflare** (any underlying host) | Bot Fight Mode rejects scripted scanner requests. Edge cache may URL-key responses that lack `Cache-Control: no-store`. | 1.4.15 ships global `rest_post_dispatch` filter forcing `no-store` on every `/royal-mcp/*` response. | Page Rules: bypass cache for `/wp-json/royal-mcp/*`. Disable Bot Fight Mode for the MCP path if false-positives. |
+| **Cloudflare APO** (Automatic Platform Optimization) | Caches WP responses including REST API. | Same `no-store` filter — APO honors it. | Disable APO if responses still cached after 1.4.15. |
+| **LiteSpeed (web server)** | Default cache configuration may cache REST endpoints. | Same `no-store` filter. | LiteSpeed Cache plugin: exclude `/wp-json/royal-mcp/` from cache rules. |
+| **Plain Apache + mod_security** | Some default rule sets reject Authorization header on certain paths. | None — server-side issue. | `SecRuleRemoveById <id>` for the offending rule. |
+
+If a customer reports "MCP works in Claude Desktop but not Claude.ai web (or
+vice versa)", the smoking gun is almost always one of the rows above —
+specifically the cells where a host's edge cache or path-rewrite layer affects
+GET /wp-json/royal-mcp/v1/mcp differently than POST.
+
+---
+
+## Per-MCP-client compatibility matrix
+
+Different MCP clients probe the endpoint in different ways. A change that
+fixes one can silently break another. Test against ALL of these before
+shipping.
+
+| Client | Transport | First probe | Auth method | Failure mode if broken |
+|--------|-----------|-------------|-------------|------------------------|
+| **Claude.ai web** (web-based connector) | Streamable HTTP | `GET /.well-known/oauth-protected-resource` (RFC 9728), then `GET /mcp` for OAuth discovery | OAuth 2.0 Bearer token | "Couldn't reach the MCP server" — silently fails when 401+WWW-Authenticate is missing or has wrong format |
+| **Claude Desktop** (via mcp-remote npx bridge) | Streamable HTTP after fallback negotiation | `GET /mcp` for SSE — falls back to POST-only on 405 | OAuth flow OR `--header X-Royal-MCP-API-Key` | Retry storm if 405 missing `Allow` header. Multiple npx processes if session expires. |
+| **ChatGPT** (custom MCP connector) | Streamable HTTP | RFC 9728 discovery (same as Claude.ai web) | OAuth 2.0 Bearer token | Similar to Claude.ai web — fails on missing WWW-Authenticate |
+| **Cursor** | Streamable HTTP | POST initialize directly | API key in header (or OAuth) | "Connection failed" with no detail. Less robust than Claude clients. |
+| **Cline** (VS Code) | Streamable HTTP | POST initialize | API key | Same as Cursor |
+| **Custom mcp-remote** (`--header` mode) | Streamable HTTP, no OAuth | POST initialize | Whatever header the user puts in `--header` flag | Works as long as auth header reaches the server. Bypasses OAuth entirely — useful for hosts where OAuth keeps failing. |
+| **Direct curl / programmatic** (Royal Plugins audit script, custom integrations) | Streamable HTTP | Whatever the script sends | API key OR Bearer token | Tests can be run against this — see `_dev/audit.py` |
+
+**Audit invariant:** any change to MCP response codes, headers, or auth flow
+must be re-tested against AT LEAST Claude.ai web AND Claude Desktop +
+mcp-remote. These two clients have the most divergent probing patterns; if
+a change works for both, it'll usually work for the others.
+
+---
+
+## Cross-references
+
+- `AUDIT_1.4.15.md` — what the 2026-05-09 audit found and how each was fixed.
+- `audit.py` — runnable behavioral test suite. Pre-ship gate.
+- `pre-ship.sh` — wraps security-scanner, audit-plugin, and the behavioral
+  audit into a single refuse-to-exit-0 gate before any release.
+- `gotcha_oauth_cache_poisoning.md` (memory) — the OAuth-side instance of the
+  same root cause that bug 4 found on the MCP side.
+- `gotcha_royal_mcp_endpoint_response_codes.md` (memory) — the 1.4.12/1.4.13
+  whack-a-mole that motivated this matrix existing in the first place.
