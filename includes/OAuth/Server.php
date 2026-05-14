@@ -21,11 +21,18 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Server {
 
     /**
+     * The current OAuth action being handled (metadata|authorize|token|register|protected_resource).
+     * Set by dispatch() so error logging knows which endpoint fired.
+     */
+    private $current_action = 'unknown';
+
+    /**
      * Dispatch an OAuth request based on the query var value.
      *
      * @param string $action The royal_mcp_oauth query var (metadata|authorize|token|register).
      */
     public function dispatch( $action ) {
+        $this->current_action = $action;
         $request_method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'GET';
 
         // Set CORS headers for token and register endpoints (may be called cross-origin).
@@ -171,6 +178,7 @@ class Server {
         // Validate client FIRST — never redirect to unvalidated redirect_uri (OAuth 2.1 §4.1.2.1).
         $client = Token_Store::get_client( $client_id );
         if ( ! $client ) {
+            $this->log_event( 'invalid_client', 'Unknown client_id at /authorize.', 400 );
             wp_die(
                 esc_html__( 'Unknown client_id. The application has not been registered.', 'royal-mcp' ),
                 esc_html__( 'Authorization Error', 'royal-mcp' ),
@@ -180,6 +188,7 @@ class Server {
 
         // Validate redirect_uri BEFORE any redirects.
         if ( empty( $redirect_uri ) || ! Token_Store::validate_redirect_uri( $redirect_uri, $client ) ) {
+            $this->log_event( 'invalid_redirect_uri', 'Invalid or missing redirect_uri at /authorize (GET).', 400 );
             wp_die(
                 esc_html__( 'Invalid redirect_uri.', 'royal-mcp' ),
                 esc_html__( 'Authorization Error', 'royal-mcp' ),
@@ -249,6 +258,7 @@ class Server {
         // Verify nonce.
         $nonce = isset( $_POST['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ) : '';
         if ( ! wp_verify_nonce( $nonce, 'royal_mcp_authorize' ) ) {
+            $this->log_event( 'invalid_request', 'CSRF nonce verification failed at /authorize (POST).', 403 );
             wp_die(
                 esc_html__( 'Security check failed. Please try again.', 'royal-mcp' ),
                 esc_html__( 'Authorization Error', 'royal-mcp' ),
@@ -272,16 +282,19 @@ class Server {
         // Validate client still exists.
         $client = Token_Store::get_client( $client_id );
         if ( ! $client ) {
+            $this->log_event( 'invalid_client', 'Unknown client_id at /authorize (POST).', 400 );
             wp_die( esc_html__( 'Unknown client.', 'royal-mcp' ), '', [ 'response' => 400 ] );
         }
 
         // Validate redirect_uri again.
         if ( empty( $redirect_uri ) || ! Token_Store::validate_redirect_uri( $redirect_uri, $client ) ) {
+            $this->log_event( 'invalid_redirect_uri', 'Invalid or missing redirect_uri at /authorize (POST).', 400 );
             wp_die( esc_html__( 'Invalid redirect URI.', 'royal-mcp' ), '', [ 'response' => 400 ] );
         }
 
         // Must be logged in.
         if ( ! is_user_logged_in() ) {
+            $this->log_event( 'unauthorized', 'Authorize POST received without an authenticated WP user session.', 401 );
             wp_die( esc_html__( 'Not authenticated.', 'royal-mcp' ), '', [ 'response' => 401 ] );
         }
 
@@ -456,6 +469,8 @@ class Server {
      * Send an OAuth error response and exit.
      */
     private function json_error( $error, $description, $status = 400 ) {
+        $this->log_event( $error, $description, $status );
+
         $this->json_response(
             [
                 'error'             => $error,
@@ -466,9 +481,82 @@ class Server {
     }
 
     /**
+     * Log an OAuth event to the royal_mcp_logs table.
+     *
+     * STRICT SAFELIST: this method only logs values that are already public
+     * (client_id is in URLs, grant_type is a fixed enum, our error strings
+     * are hardcoded) plus the request metadata WP already exposes (IP, UA,
+     * REQUEST_URI). If a future change needs more context, expand this
+     * safelist deliberately — DO NOT add the raw POST body, code,
+     * code_verifier, client_secret, refresh_token, or access_token here
+     * under any circumstance. These are credentials in flight and must
+     * never reach the logs table.
+     */
+    private function log_event( $error_code, $description, $status ) {
+        global $wpdb;
+
+        // Read public OAuth identifiers from POST first (token/register/authorize-POST),
+        // fall back to GET (authorize-GET). Avoid $_REQUEST — its contents depend on PHP's
+        // request_order config and can include $_COOKIE on some hosts.
+        $client_id     = $this->log_pick_param( 'client_id' );
+        $grant_type    = $this->log_pick_param( 'grant_type' );
+        $response_type = $this->log_pick_param( 'response_type' );
+
+        $request_meta = [
+            'method'        => isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '',
+            'uri'           => isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '',
+            'ip'            => $this->get_client_ip(),
+            'user_agent'    => isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '',
+            'client_id'     => $client_id,
+            'grant_type'    => $grant_type,
+            'response_type' => $response_type,
+        ];
+
+        $response_meta = [
+            'http_status' => (int) $status,
+            'error'       => $error_code,
+            'description' => $description,
+        ];
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Direct insert is intentional; this is the logs table.
+        $wpdb->insert(
+            $wpdb->prefix . 'royal_mcp_logs',
+            [
+                'mcp_server'    => 'OAuth Server',
+                'action'        => 'oauth:' . $this->current_action,
+                'request_data'  => wp_json_encode( $request_meta ),
+                'response_data' => wp_json_encode( $response_meta ),
+                'status'        => 'error',
+            ],
+            [ '%s', '%s', '%s', '%s', '%s' ]
+        );
+    }
+
+    /**
+     * Read a public OAuth identifier from $_POST or $_GET (POST wins).
+     * Used only by log_event() for fields we already treat as non-secret
+     * (client_id, grant_type, response_type). Never use for secrets.
+     */
+    private function log_pick_param( $key ) {
+        // phpcs:disable WordPress.Security.NonceVerification.Missing,WordPress.Security.NonceVerification.Recommended -- OAuth endpoints are intentionally nonceless; logged values are public identifiers.
+        if ( isset( $_POST[ $key ] ) ) {
+            return sanitize_text_field( wp_unslash( $_POST[ $key ] ) );
+        }
+        if ( isset( $_GET[ $key ] ) ) {
+            return sanitize_text_field( wp_unslash( $_GET[ $key ] ) );
+        }
+        // phpcs:enable WordPress.Security.NonceVerification.Missing,WordPress.Security.NonceVerification.Recommended
+        return '';
+    }
+
+    /**
      * Redirect to the client with an error (authorize endpoint).
      */
     private function authorize_error( $redirect_uri, $state, $error, $description ) {
+        // Log every authorize-error redirect; the client (e.g. claude.ai) sees this
+        // as a query string but our server otherwise has no record of it.
+        $this->log_event( $error, $description, 302 );
+
         if ( empty( $redirect_uri ) ) {
             wp_die( esc_html( $description ), esc_html__( 'Authorization Error', 'royal-mcp' ), [ 'response' => 400 ] );
         }

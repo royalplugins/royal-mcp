@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, mcp-server
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.15
+Stable tag: 1.4.16
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -277,6 +277,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Changelog ==
 
+= 1.4.16 =
+* New: OAuth flow now writes a structured error entry to Royal MCP > Activity Logs every time a `/token`, `/register`, or `/authorize` request fails. Pre-1.4.16 every OAuth failure exited silently — no `error_log()`, no Activity Log entry, no admin-visible trace. Customers and support had to enable `WP_DEBUG_LOG` and patch the plugin source to surface the failing validation rule (PKCE mismatch, redirect_uri mismatch, expired code, unknown client_id, CSRF nonce failure, etc.). Each entry now records the OAuth error code, our error description, HTTP status, request URI, IP, User-Agent, and the public `client_id` / `grant_type` / `response_type` when present. Auth codes, PKCE verifiers, client secrets, refresh tokens, and access tokens are explicitly excluded from the log payload. Surfaced after a customer support thread where a `/token` POST returned HTTP 400 from inside the plugin with a 89-byte body that no log on the customer's side captured.
+
 = 1.4.15 =
 * Fix: API key Regenerate button on the settings page is no longer silently overridden. Pre-1.4.15 the form submitted the existing readonly `api_key` field value alongside the regenerate flag, and the sanitize callback checked `api_key` before `regenerate_api_key` — so clicking Regenerate did nothing, customers kept the same key indefinitely, and any "I rotated my key" troubleshooting step was a no-op. Sanitize order is flipped: `regenerate_api_key` is now checked first, then `api_key`, then the fallback. Resolves a customer-reported key rotation failure on SiteGround.
 * Fix: Newly generated API keys now use 32-character lowercase hex (`bin2hex(random_bytes(16))`) instead of 32-character mixed-case alphanumeric (`wp_generate_password(32, false)`). Mixed-case keys produced visually-ambiguous characters in monospace admin fonts (uppercase O vs digit 0, uppercase I vs lowercase l vs digit 1, lowercase o vs digit 0) — customers transcribing keys into Claude Desktop / mcp-remote configs by hand would silently flip a character at the visually-identical position and hit "Invalid API key" with no obvious cause. Hex eliminates the ambiguity. Existing keys keep working — only newly-regenerated keys use the new format. Same entropy (128 bits) as before.
@@ -426,6 +429,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release
 
 == Upgrade Notice ==
+
+= 1.4.16 =
+Recommended update: OAuth /token, /register, and /authorize failures now write to Royal MCP > Activity Logs with the exact error code, description, and HTTP status. Pre-1.4.16 these exited silently and required wp-config debug constants to diagnose. No breaking changes.
 
 = 1.4.15 =
 Critical update: four customer-affecting bugs fixed. (1) API key Regenerate button being silently overridden — clicking did nothing pre-1.4.15. (2) New keys switched to lowercase hex to eliminate uppercase/lowercase character ambiguity in monospace admin fonts. (3) Fixed 1-hour MCP session TTL replaced with sliding 24-hour window so active Claude Desktop sessions stop dying mid-day. (4) MCP endpoint responses (including unauth 401s) now send `Cache-Control: no-store` — pre-1.4.15 these were missing the header that 1.4.13 added to OAuth endpoints, leaving the MCP endpoint vulnerable to the same edge-cache poisoning. Existing keys keep working.
