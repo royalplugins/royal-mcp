@@ -514,6 +514,32 @@ $royal_mcp_configured_platforms = $royal_mcp_settings['platforms'] ?? [];
         <?php submit_button(); ?>
     </form>
 
+    <!-- Troubleshooting / Reset OAuth State -->
+    <div class="postbox royal-mcp-troubleshooting" style="margin-top: 20px;">
+        <div class="postbox-header">
+            <h2><?php esc_html_e('Troubleshooting', 'royal-mcp'); ?></h2>
+        </div>
+        <div class="inside">
+            <h3><?php esc_html_e('Reset OAuth State', 'royal-mcp'); ?></h3>
+            <p class="description">
+                <?php esc_html_e('Wipes all registered OAuth clients, issued access/refresh tokens, and pending authorization codes. Use this when a Claude.ai, Claude Desktop, or ChatGPT connector gets stuck mid-handshake and won\'t complete authorization. Your Royal MCP settings, API key, and Activity Log are NOT affected.', 'royal-mcp'); ?>
+            </p>
+            <p class="description" style="color: #d63638;">
+                <strong><?php esc_html_e('Warning:', 'royal-mcp'); ?></strong>
+                <?php esc_html_e('All currently-connected MCP clients will need to re-authorize after running this. Only use this if you\'re actively troubleshooting a stuck connection.', 'royal-mcp'); ?>
+            </p>
+            <p>
+                <button type="button"
+                        class="button button-secondary"
+                        id="royal-mcp-reset-oauth-state">
+                    <span class="dashicons dashicons-trash" style="line-height: 1.4;"></span>
+                    <?php esc_html_e('Reset OAuth State', 'royal-mcp'); ?>
+                </button>
+                <span id="royal-mcp-reset-oauth-state-status" style="margin-left: 10px;"></span>
+            </p>
+        </div>
+    </div>
+
     <?php \Royal_MCP\Admin\Settings_Page::render_founders_banner(); ?>
 </div>
 

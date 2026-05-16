@@ -19,6 +19,7 @@ class Settings_Page {
         // AJAX handlers
         add_action('wp_ajax_royal_mcp_test_connection', [$this, 'ajax_test_connection']);
         add_action('wp_ajax_royal_mcp_get_platform_fields', [$this, 'ajax_get_platform_fields']);
+        add_action('wp_ajax_royal_mcp_reset_oauth_state', [$this, 'ajax_reset_oauth_state']);
     }
 
     /**
@@ -232,18 +233,28 @@ class Settings_Page {
             return;
         }
 
+        // Use filemtime() appended to the version string so intra-version patches
+        // bust CDN / immutable browser caches. Plain ROYAL_MCP_VERSION alone is
+        // not enough on Cloudflare-fronted sites where plugin JS/CSS gets cached
+        // with `Cache-Control: immutable, max-age=2592000` — the same ?ver= URL
+        // serves the stale asset for 30 days regardless of hard-refresh.
+        $css_path = ROYAL_MCP_PLUGIN_DIR . 'assets/css/admin.css';
+        $js_path  = ROYAL_MCP_PLUGIN_DIR . 'assets/js/admin.js';
+        $css_ver  = ROYAL_MCP_VERSION . '.' . (file_exists($css_path) ? filemtime($css_path) : '0');
+        $js_ver   = ROYAL_MCP_VERSION . '.' . (file_exists($js_path)  ? filemtime($js_path)  : '0');
+
         wp_enqueue_style(
             'royal-mcp-admin',
             ROYAL_MCP_PLUGIN_URL . 'assets/css/admin.css',
             [],
-            ROYAL_MCP_VERSION
+            $css_ver
         );
 
         wp_enqueue_script(
             'royal-mcp-admin',
             ROYAL_MCP_PLUGIN_URL . 'assets/js/admin.js',
             ['jquery'],
-            ROYAL_MCP_VERSION,
+            $js_ver,
             true
         );
 
@@ -381,6 +392,54 @@ class Settings_Page {
         wp_send_json_success([
             'html' => $html,
             'platform' => $platform,
+        ]);
+    }
+
+    /**
+     * AJAX handler — wipe all OAuth state (clients, tokens, in-flight auth codes).
+     *
+     * Used by the "Reset OAuth State" button on the settings page. Replaces the
+     * wp-cli SQL recipe customers previously had to paste from support emails
+     * when a Claude connector got stuck mid-handshake. All connected MCP clients
+     * will need to re-authorize after this runs — that's the point.
+     */
+    public function ajax_reset_oauth_state() {
+        check_ajax_referer('royal_mcp_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => esc_html__('Unauthorized', 'royal-mcp')]);
+        }
+
+        $counts = \Royal_MCP\OAuth\Token_Store::reset_all_oauth_state();
+
+        // Audit trail in the Activity Log so we can see who reset and when.
+        global $wpdb;
+        $current_user = wp_get_current_user();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->insert(
+            $wpdb->prefix . 'royal_mcp_logs',
+            [
+                'mcp_server'    => 'OAuth Server',
+                'action'        => 'oauth:reset',
+                'request_data'  => wp_json_encode([
+                    'user_id'    => (int) $current_user->ID,
+                    'user_login' => $current_user->user_login,
+                ]),
+                'response_data' => wp_json_encode($counts),
+                'status'        => 'success',
+            ],
+            ['%s', '%s', '%s', '%s', '%s']
+        );
+
+        wp_send_json_success([
+            'message' => sprintf(
+                /* translators: 1: clients deleted, 2: tokens deleted, 3: auth codes deleted */
+                esc_html__('OAuth state reset. Deleted %1$d clients, %2$d tokens, %3$d auth codes. Connected MCP clients will need to re-authorize.', 'royal-mcp'),
+                (int) $counts['clients'],
+                (int) $counts['tokens'],
+                (int) $counts['auth_codes']
+            ),
+            'counts'  => $counts,
         ]);
     }
 

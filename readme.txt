@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, mcp-server
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.16
+Stable tag: 1.4.17
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -277,6 +277,13 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Changelog ==
 
+= 1.4.17 =
+* Fix: Authorization codes (the short-lived single-use secret exchanged at the OAuth `/token` step) are now stored in a dedicated `wp_royal_mcp_oauth_auth_codes` database table with atomic single-row consume, replacing the previous WordPress-transient storage. On host stacks running multiple object-cache layers (LiteSpeed Cache + SpeedyCache confirmed as a reproducer), the transient backend was silently evicting the auth code in the ~2-second window between `/authorize` and `/token`, breaking the OAuth handshake with `invalid_grant: Authorization code is invalid, expired, or already used.` even on a fully clean test. The new storage layer is unaffected by object-cache eviction since reads and writes go directly to the database. The schema migration runs automatically on `plugins_loaded` for existing installs (no manual reactivation required).
+* New: "Reset OAuth State" admin button on the Royal MCP settings page. One click wipes all registered OAuth clients, issued access/refresh tokens, and pending authorization codes — recovering from stuck handshakes without dropping to wp-cli or SQL. All currently-connected MCP clients will need to re-authorize after running this. The plugin's settings, API key, and Activity Log are not affected. The reset action is recorded in Activity Logs (action `oauth:reset`) for audit. Capability-gated to `manage_options`; nonce-protected; confirmation modal before destructive action.
+* New: MCP `tools/call` requests now write a structured entry to Royal MCP > Activity Logs on every invocation (action `tools/call:<tool_name>`). Pre-1.4.17, OAuth-connected sessions running tool calls through the modern `/wp-json/royal-mcp/v1/mcp` endpoint produced zero log entries even when fully working, which led customers to misdiagnose a working connection as broken. Logged metadata is intentionally minimal — tool name and the keys of the argument array, but never the argument values, since tool args can contain arbitrary customer data (post content, search queries, etc.). Errors thrown by tool dispatchers are captured with their message.
+* Fix: Activity Log "View Details" modal was rendering both Request Data and Response Data panels as the string `[object Object]` instead of the actual JSON payload. Root cause: the click handler was reading the JSON-encoded data attributes via jQuery's `.data()` helper, which auto-parses JSON-looking values into JavaScript objects — and `JSON.parse(object)` then threw, falling through to a catch that displayed the toString() of the object. Switched to `.attr('data-request')` / `.attr('data-response')` which return the raw attribute string, so the formatter sees actual JSON. Pre-existing bug; only became user-visible in 1.4.17 because the new OAuth and tool-call entries surface the View Details panel as the primary diagnostic surface.
+* Fix: Plugin admin CSS and JS now use `ROYAL_MCP_VERSION . filemtime($file)` as the cache-busting version string, instead of `ROYAL_MCP_VERSION` alone. On Cloudflare-fronted installs (and similar CDN configurations), plugin assets are cached with `Cache-Control: immutable, max-age=2592000` — meaning an intra-version patch to `admin.js` or `admin.css` was being served stale for up to 30 days because the `?ver=X.Y.Z` query string was unchanged. Appending `filemtime()` makes the URL change on every file modification, forcing browsers and CDNs to fetch fresh. Affects only the admin-side assets; REST/MCP endpoints are unaffected.
+
 = 1.4.16 =
 * New: OAuth flow now writes a structured error entry to Royal MCP > Activity Logs every time a `/token`, `/register`, or `/authorize` request fails. Pre-1.4.16 every OAuth failure exited silently — no `error_log()`, no Activity Log entry, no admin-visible trace. Customers and support had to enable `WP_DEBUG_LOG` and patch the plugin source to surface the failing validation rule (PKCE mismatch, redirect_uri mismatch, expired code, unknown client_id, CSRF nonce failure, etc.). Each entry now records the OAuth error code, our error description, HTTP status, request URI, IP, User-Agent, and the public `client_id` / `grant_type` / `response_type` when present. Auth codes, PKCE verifiers, client secrets, refresh tokens, and access tokens are explicitly excluded from the log payload.
 
@@ -429,6 +436,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release
 
 == Upgrade Notice ==
+
+= 1.4.17 =
+Critical fix where OAuth fails with "Authorization code invalid" — auth codes now use a dedicated DB table with atomic consume, unaffected by object-cache eviction (LiteSpeed + SpeedyCache reproducer). Also adds a Reset OAuth State button and Activity Log entries for MCP tool calls.
 
 = 1.4.16 =
 Recommended update: OAuth /token, /register, and /authorize failures now write to Royal MCP > Activity Logs with the exact error code, description, and HTTP status. Pre-1.4.16 these exited silently and required wp-config debug constants to diagnose. No breaking changes.
