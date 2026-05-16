@@ -915,6 +915,7 @@ class Server {
 
         try {
             $result = $this->execute_tool($name, $args);
+            $this->log_tool_call($name, $args, 'success', null);
             return [
                 'jsonrpc' => '2.0',
                 'id' => $id,
@@ -926,6 +927,7 @@ class Server {
                 ],
             ];
         } catch (\Exception $e) {
+            $this->log_tool_call($name, $args, 'error', $e->getMessage());
             return [
                 'jsonrpc' => '2.0',
                 'id' => $id,
@@ -938,6 +940,47 @@ class Server {
                 ],
             ];
         }
+    }
+
+    /**
+     * Log an MCP tool call to wp_royal_mcp_logs.
+     *
+     * STRICT SAFELIST: logs the tool name and the KEYS of the argument array,
+     * but NEVER the argument VALUES. Tool arguments can contain arbitrary
+     * customer data (post content, search queries with PII, user-supplied
+     * credentials passed through, etc.) — keys alone tell us "what was called"
+     * without leaking "what data." Error messages from the tool dispatcher are
+     * our own strings, safe to log.
+     *
+     * Added 1.4.17 to close the observability gap where the modern /mcp endpoint
+     * was producing zero Activity Log entries even when actively serving tool
+     * calls — making customers think the connection was broken.
+     */
+    private function log_tool_call($tool_name, $args, $status, $error_message) {
+        global $wpdb;
+
+        $request_meta = [
+            'tool'     => (string) $tool_name,
+            'arg_keys' => is_array($args) ? array_keys($args) : [],
+        ];
+
+        $response_meta = [ 'status' => $status ];
+        if ('error' === $status && $error_message) {
+            $response_meta['error'] = (string) $error_message;
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Intentional direct insert to the logs table.
+        $wpdb->insert(
+            $wpdb->prefix . 'royal_mcp_logs',
+            [
+                'mcp_server'    => 'MCP Server',
+                'action'        => 'tools/call:' . sanitize_text_field((string) $tool_name),
+                'request_data'  => wp_json_encode($request_meta),
+                'response_data' => wp_json_encode($response_meta),
+                'status'        => 'success' === $status ? 'success' : 'error',
+            ],
+            ['%s', '%s', '%s', '%s', '%s']
+        );
     }
 
     private function execute_tool($name, $args) {

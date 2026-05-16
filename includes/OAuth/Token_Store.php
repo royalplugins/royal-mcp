@@ -39,14 +39,25 @@ class Token_Store {
     }
 
     /**
-     * Create both OAuth tables. Called from plugin activation.
+     * Get the authorization codes table name.
+     */
+    public static function auth_codes_table() {
+        global $wpdb;
+        return $wpdb->prefix . 'royal_mcp_oauth_auth_codes';
+    }
+
+    /**
+     * Create all OAuth tables. Called from plugin activation AND from the
+     * runtime migration check in royal-mcp.php (which fires on plugins_loaded
+     * when royal_mcp_db_version doesn't match ROYAL_MCP_VERSION). Idempotent.
      */
     public static function create_tables() {
         global $wpdb;
         $charset_collate = $wpdb->get_charset_collate();
 
-        $tokens_table  = self::tokens_table();
-        $clients_table = self::clients_table();
+        $tokens_table     = self::tokens_table();
+        $clients_table    = self::clients_table();
+        $auth_codes_table = self::auth_codes_table();
 
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
@@ -80,6 +91,28 @@ class Token_Store {
             PRIMARY KEY  (id),
             UNIQUE KEY client_id (client_id)
         ) $charset_collate;" );
+
+        // Authorization codes — added 1.4.17. Moved off transients because object
+        // cache backends on some host stacks (LiteSpeed + SpeedyCache, confirmed)
+        // silently evict the transient key between /authorize and /token, breaking
+        // the OAuth handshake. Direct DB storage with sha256-hashed lookup gives
+        // us reliable consume semantics regardless of cache backend.
+        dbDelta( "CREATE TABLE IF NOT EXISTS $auth_codes_table (
+            id bigint(20) NOT NULL AUTO_INCREMENT,
+            code_hash varchar(64) NOT NULL,
+            user_id bigint(20) NOT NULL,
+            client_id varchar(255) NOT NULL,
+            redirect_uri text NOT NULL,
+            code_challenge varchar(255) NOT NULL,
+            code_challenge_method varchar(10) NOT NULL DEFAULT 'S256',
+            scope varchar(255) DEFAULT '',
+            used tinyint(1) DEFAULT 0 NOT NULL,
+            expires_at datetime NOT NULL,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY code_hash (code_hash),
+            KEY expires_at (expires_at)
+        ) $charset_collate;" );
     }
 
     /**
@@ -87,41 +120,93 @@ class Token_Store {
      */
     public static function drop_tables() {
         global $wpdb;
-        $tokens_table  = esc_sql( self::tokens_table() );
-        $clients_table = esc_sql( self::clients_table() );
+        $tokens_table     = esc_sql( self::tokens_table() );
+        $clients_table    = esc_sql( self::clients_table() );
+        $auth_codes_table = esc_sql( self::auth_codes_table() );
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
         $wpdb->query( "DROP TABLE IF EXISTS `{$tokens_table}`" );
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
         $wpdb->query( "DROP TABLE IF EXISTS `{$clients_table}`" );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $wpdb->query( "DROP TABLE IF EXISTS `{$auth_codes_table}`" );
     }
 
     /* ------------------------------------------------------------------
-     *  Authorization codes  (stored as transients — short-lived)
+     *  Authorization codes  (DB-backed since 1.4.17 — see create_tables comment)
      * ----------------------------------------------------------------*/
 
     /**
      * Store an authorization code.
      *
-     * @param string $code       The raw authorization code.
-     * @param array  $data       Payload: user_id, client_id, redirect_uri, code_challenge, code_challenge_method, scope.
+     * Stores only the sha256 hash of the code, not the code itself — same
+     * defense-in-depth pattern we use for access/refresh tokens. If the table
+     * is ever leaked, attackers can't replay the codes (and they're expired
+     * within 10 minutes anyway).
+     *
+     * @param string $code The raw authorization code (caller keeps the plaintext).
+     * @param array  $data Payload: user_id, client_id, redirect_uri, code_challenge, code_challenge_method, scope.
      */
     public static function store_auth_code( $code, array $data ) {
-        $data['created_at'] = time();
-        set_transient( 'royal_mcp_authcode_' . hash( 'sha256', $code ), $data, self::AUTH_CODE_TTL );
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Intentional direct insert.
+        $wpdb->insert(
+            self::auth_codes_table(),
+            [
+                'code_hash'             => hash( 'sha256', $code ),
+                'user_id'               => isset( $data['user_id'] ) ? (int) $data['user_id'] : 0,
+                'client_id'             => isset( $data['client_id'] ) ? (string) $data['client_id'] : '',
+                'redirect_uri'          => isset( $data['redirect_uri'] ) ? (string) $data['redirect_uri'] : '',
+                'code_challenge'        => isset( $data['code_challenge'] ) ? (string) $data['code_challenge'] : '',
+                'code_challenge_method' => isset( $data['code_challenge_method'] ) ? (string) $data['code_challenge_method'] : 'S256',
+                'scope'                 => isset( $data['scope'] ) ? (string) $data['scope'] : '',
+                'expires_at'            => gmdate( 'Y-m-d H:i:s', time() + self::AUTH_CODE_TTL ),
+            ],
+            [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' ]
+        );
     }
 
     /**
-     * Consume an authorization code (single-use).
+     * Consume an authorization code (single-use, atomic).
+     *
+     * Two-step pattern: an atomic UPDATE marks the row used IFF it exists,
+     * is unused, and is unexpired — returning affected_rows = 1 if we won the
+     * race (single-row MySQL lock semantics make this safe for concurrent
+     * /token POSTs). If we won, a SELECT reads the payload. If two requests
+     * arrive simultaneously with the same code, exactly one will get the
+     * payload; the other gets false.
      *
      * @param string $code The raw code presented by the client.
-     * @return array|false The stored data, or false if invalid/expired.
+     * @return array|false The stored payload, or false if invalid/expired/already-used.
      */
     public static function consume_auth_code( $code ) {
-        $key  = 'royal_mcp_authcode_' . hash( 'sha256', $code );
-        $data = get_transient( $key );
-        // Immediately delete — codes are single-use.
-        delete_transient( $key );
-        return $data;
+        global $wpdb;
+        $table = self::auth_codes_table();
+        $hash  = hash( 'sha256', $code );
+        $now   = gmdate( 'Y-m-d H:i:s' );
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+        $claimed = $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE `{$table}` SET used = 1 WHERE code_hash = %s AND used = 0 AND expires_at > %s",
+                $hash,
+                $now
+            )
+        );
+
+        if ( ! $claimed ) {
+            return false; // Code doesn't exist, already consumed, or expired.
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT user_id, client_id, redirect_uri, code_challenge, code_challenge_method, scope FROM `{$table}` WHERE code_hash = %s LIMIT 1",
+                $hash
+            ),
+            ARRAY_A
+        );
+
+        return $row ? $row : false;
     }
 
     /* ------------------------------------------------------------------
@@ -250,16 +335,60 @@ class Token_Store {
     }
 
     /**
-     * Delete expired and revoked tokens. Called by scheduled cleanup.
+     * Wipe ALL OAuth state — registered clients, issued tokens, and pending
+     * auth codes — in one operation. Used by the admin "Reset OAuth State"
+     * button to recover from stuck handshakes without resorting to wp-cli SQL.
+     *
+     * All connected MCP clients will need to re-authorize after this runs.
+     * Does NOT touch settings (API key, allow-lists), Activity Log entries,
+     * or any other plugin state.
+     *
+     * @return array Counts of deleted rows: [ 'clients' => N, 'tokens' => N, 'auth_codes' => N ].
+     */
+    public static function reset_all_oauth_state() {
+        global $wpdb;
+        $tokens_table     = esc_sql( self::tokens_table() );
+        $clients_table    = esc_sql( self::clients_table() );
+        $auth_codes_table = esc_sql( self::auth_codes_table() );
+
+        // Wipe all rows in each OAuth table. Table names come from esc_sql() above; no user input. phpcs:ignore comments are per-line because the security scanner grep is line-scoped, not block-scoped.
+        $tokens     = (int) $wpdb->query( "DELETE FROM `{$tokens_table}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $clients    = (int) $wpdb->query( "DELETE FROM `{$clients_table}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $auth_codes = (int) $wpdb->query( "DELETE FROM `{$auth_codes_table}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+
+        // Belt-and-suspenders: clear any legacy transients from <1.4.17 installs that upgraded mid-flow. New auth codes since 1.4.17 are DB-backed, but a pre-upgrade in-flight transient could still exist on the first run.
+        $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_authcode_%' OR option_name LIKE '_transient_timeout_royal_mcp_authcode_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+
+        return [
+            'clients'    => $clients,
+            'tokens'     => $tokens,
+            'auth_codes' => $auth_codes,
+        ];
+    }
+
+    /**
+     * Delete expired and revoked tokens, plus expired and consumed auth codes.
+     * Called by scheduled cleanup.
      */
     public static function cleanup_expired() {
         global $wpdb;
-        $table = esc_sql( self::tokens_table() );
+        $tokens_table     = esc_sql( self::tokens_table() );
+        $auth_codes_table = esc_sql( self::auth_codes_table() );
+        $now              = gmdate( 'Y-m-d H:i:s' );
+
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
         $wpdb->query(
             $wpdb->prepare(
-                "DELETE FROM `{$table}` WHERE revoked = 1 OR expires_at < %s",
-                gmdate( 'Y-m-d H:i:s' )
+                "DELETE FROM `{$tokens_table}` WHERE revoked = 1 OR expires_at < %s",
+                $now
+            )
+        );
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM `{$auth_codes_table}` WHERE used = 1 OR expires_at < %s",
+                $now
             )
         );
     }

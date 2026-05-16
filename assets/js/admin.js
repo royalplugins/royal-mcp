@@ -240,6 +240,46 @@ jQuery(document).ready(function($) {
     });
 
     // ==========================================
+    // Reset OAuth State button (Troubleshooting section)
+    // ==========================================
+    $(document).on('click', '#royal-mcp-reset-oauth-state', function(e) {
+        e.preventDefault();
+
+        const confirmMsg = 'This will delete all registered OAuth clients, issued access/refresh tokens, and pending authorization codes.\n\nAll currently-connected MCP clients (Claude.ai, Claude Desktop, ChatGPT, etc.) will need to re-authorize after this runs.\n\nYour settings, API key, and Activity Log are NOT affected.\n\nContinue?';
+        if (!window.confirm(confirmMsg)) {
+            return;
+        }
+
+        const $btn = $(this);
+        const $status = $('#royal-mcp-reset-oauth-state-status');
+
+        $btn.prop('disabled', true);
+        $status.css('color', '').text('Resetting...');
+
+        $.ajax({
+            url: royalMcp.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'royal_mcp_reset_oauth_state',
+                nonce: royalMcp.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    $status.css('color', '#00a32a').text(response.data.message);
+                } else {
+                    $status.css('color', '#d63638').text((response.data && response.data.message) || 'Reset failed');
+                }
+            },
+            error: function() {
+                $status.css('color', '#d63638').text('Reset request failed (network or server error)');
+            },
+            complete: function() {
+                $btn.prop('disabled', false);
+            }
+        });
+    });
+
+    // ==========================================
     // Helper Functions
     // ==========================================
 
@@ -474,8 +514,12 @@ jQuery(document).ready(function($) {
     // ==========================================
 
     $('.view-log-details').on('click', function() {
-        const requestData = $(this).data('request');
-        const responseData = $(this).data('response');
+        // Use .attr() rather than .data() — jQuery's .data() auto-parses
+        // JSON-looking attribute values into JavaScript objects, which then
+        // crash JSON.parse() and render as "[object Object]" in the modal.
+        // .attr() returns the raw string value of the HTML attribute.
+        const requestData = $(this).attr('data-request') || '';
+        const responseData = $(this).attr('data-response') || '';
 
         try {
             const formattedRequest = JSON.stringify(JSON.parse(requestData), null, 2);
