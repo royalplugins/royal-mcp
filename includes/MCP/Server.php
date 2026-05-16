@@ -7,6 +7,7 @@ use Royal_MCP\Integrations\SiteVault as SVIntegration;
 use Royal_MCP\Integrations\RoyalLedger as RLIntegration;
 use Royal_MCP\Integrations\ForgeCache as FCIntegration;
 use Royal_MCP\Integrations\RoyalLinks as RLinksIntegration;
+use Royal_MCP\Integrations\Elementor as ElementorIntegration;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -471,6 +472,7 @@ class Server {
         $tools = array_merge( $tools, RLIntegration::get_tools() );
         $tools = array_merge( $tools, FCIntegration::get_tools() );
         $tools = array_merge( $tools, RLinksIntegration::get_tools() );
+        $tools = array_merge( $tools, ElementorIntegration::get_tools() );
 
         return $tools;
     }
@@ -2083,6 +2085,9 @@ class Server {
                 }
                 if ( strpos( $name, 'rlinks_' ) === 0 ) {
                     return RLinksIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'elementor_' ) === 0 ) {
+                    return ElementorIntegration::execute_tool( $name, $args );
                 }
                 throw new \Exception('Unknown tool: ' . esc_html($name));
         }

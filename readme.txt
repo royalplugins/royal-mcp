@@ -1,16 +1,16 @@
 === Royal MCP – Secure AI Connector for Claude, ChatGPT & Gemini ===
 Contributors: royalpluginsteam
 Donate link: https://www.royalplugins.com
-Tags: mcp, ai, claude, chatgpt, mcp-server
+Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.18
+Stable tag: 1.4.19
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Preview-On-WordPress-Playground: yes
 
-The security-first MCP server for WordPress. Connect Claude, ChatGPT, and Gemini with API key auth, rate limiting, and activity logging.
+The security-first MCP server for WordPress. Connect Claude, ChatGPT, and Gemini with API key auth, rate limiting, activity logging, and Elementor page cloning tools.
 
 == Description ==
 
@@ -31,7 +31,7 @@ MCP gives AI agents the ability to read, create, update, and delete your WordPre
 
 Royal MCP prevents all of this with API key authentication on session initialization, timing-safe key comparison, per-IP rate limiting (60 requests/minute), and a full activity log of every MCP interaction.
 
-= 67 Core Tools + 49 Integration Tools =
+= 67 Core Tools + 55 Integration Tools =
 
 **WordPress Core (67 tools):**
 
@@ -108,6 +108,16 @@ When Royal Links is active, AI agents can manage your branded short links:
 * Create new branded short links
 * Get click statistics for any link
 
+**Elementor Integration (6 tools):**
+When Elementor (free or Pro) is active, AI agents can clone and customize existing Elementor pages without trying to generate page-builder JSON from scratch:
+
+* Clone an existing Elementor page with a new title and fresh element IDs (so the duplicate opens in the editor without ID collisions)
+* Bulk-replace text across heading, text-editor, button, image-box, icon-box, icon-list, testimonial, tabs, accordion, toggle, star-rating, call-to-action, and flip-box widgets
+* Swap image URLs across image, image-box, background_image, and gallery widget settings
+* Get a compact outline of any page (section/container hierarchy, widget types, text snippets) so Claude can reason over a full page in a few KB instead of the raw JSON
+* List saved templates from the Elementor template library and import templates from JSON
+* Atomic widgets (Elementor 4.0+ Editor V4 elements) pass through opaque — we never decode atomic schemas because Elementor itself may shift them. Widget-level creation from scratch is intentionally out of scope; the design commitment is to work from an existing-known-good source.
+
 = Royal MCP and the WordPress Core Abilities API =
 
 WordPress 6.9 shipped the Abilities API in November 2025 — a primitive that lets plugins register typed capabilities AI agents can call. Core ships three default abilities (site info, user info, environment info) and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol.
@@ -133,7 +143,7 @@ Royal MCP works with any MCP-compliant client, IDE, or AI agent framework — no
 * **AI code IDEs** — Claude Code, VS Code (with MCP extension), Cursor, Windsurf, Continue, Cline, Zed, JetBrains AI Assistant.
 * **API testing tools** — Postman, Bruno, Insomnia (use the API key in the `X-Royal-MCP-API-Key` header).
 * **Custom field plugins** — Advanced Custom Fields (ACF), MetaBox, JetEngine, Pods, CPT UI, Custom Field Suite. The `wp_get_post_meta` / `wp_update_post_meta` tools read and write any custom field, so AI agents can populate ACF fields just like a human editor.
-* **Page builders** — Elementor, Divi, Beaver Builder, Bricks, Gutenberg, Spectra, Stackable. Post content stored by builders is fully readable and writable by AI.
+* **Page builders** — Elementor has dedicated tools for clone-and-customize workflows (clone a page, find/replace text, swap images, get an outline, import templates) — see the Tools list. Widget-level creation from scratch is intentionally out of scope. Divi, Beaver Builder, Bricks, Gutenberg, Spectra, and Stackable store standard post content that is readable and writable by AI; page-builder-specific JSON storage is opaque unless covered by a dedicated tool.
 * **Multilingual** — WPML, Polylang, TranslatePress, qTranslate. Translated posts appear as separate posts and can be read or written via the standard post tools.
 * **AI agent frameworks** — LangChain, AutoGen, CrewAI, LlamaIndex, Haystack — any MCP-compatible framework can call Royal MCP's tools.
 * **AI app platforms** — Anthropic Console, OpenAI Playground, Google AI Studio, Vertex AI, Azure AI Studio, Amazon Bedrock Console.
@@ -288,6 +298,11 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.4.19 =
+* New: Six Elementor tools for clone-and-customize workflows: `elementor_clone_page` duplicates an existing Elementor page with fresh element IDs and draft status; `elementor_replace_text` does bulk text substitution across heading, text-editor, button, image-box, icon-box, icon-list, testimonial, tabs, accordion, toggle, star-rating, call-to-action, and flip-box widgets; `elementor_replace_image` swaps image URLs across image, image-box, background_image, and gallery widget settings; `elementor_get_page_outline` extracts a compact section/container hierarchy with widget types and text snippets (typically under 2KB so Claude can reason over a full page without burning the JSON budget); `elementor_list_local_templates` enumerates entries in the Elementor template library; `elementor_import_template` wraps the official `\Elementor\TemplateLibrary\Source_Local::import_template()` API. All six tools auto-register when Elementor is active and are hidden otherwise. Atomic widgets (Elementor 4.0+ Editor V4 elements) pass through opaque — we never decode atomic schemas because Elementor itself may shift them. Widget-level creation from scratch is intentionally out of scope; the design commitment is to never generate Elementor JSON from a blank slate and to always work from an existing-known-good source. Capability-gated (`edit_posts` plus `edit_post` per-post). Tested end-to-end against a real Elementor Pro 4.0.4 page with 74 widgets and 9 top-level containers.
+* New: Admin notice now detects stale static `.well-known/oauth-authorization-server` files left in the webroot from a pre-1.4.0-era host-support workaround. The smoking gun: the static file's metadata advertises OAuth endpoints under `/wp-json/royal-mcp/v1/authorize` (the old REST-namespace paths) instead of the current root paths (`/authorize`, `/token`, `/register`). Claude.ai reads the stale metadata, follows the bad URLs to 404, and the connection silently fails. The notice surfaces the file paths and the SSH/SFTP delete command, with a per-user dismiss. Detection is cached in a 12-hour transient and skipped on dev hosts and multisite subsites, same pattern as the existing host-blocked detection. Triggered by a customer support ticket where the connection looked working from a curl probe but Claude.ai connector consistently failed; root cause was a leftover file from host support six months earlier. The existing host-blocked detection (404 on `/.well-known/`) is unchanged.
+* Doc: Readme "Page builders" line softened. Previous text ("Post content stored by builders is fully readable and writable by AI") implied a flat statement of universal coverage that wasn't accurate for Elementor's JSON-storage model. New text describes Elementor's clone-and-customize tools explicitly and clarifies that page-builder-specific JSON storage is opaque to AI unless covered by a dedicated tool. Divi/Beaver Builder/Bricks/Gutenberg/Spectra/Stackable handling is unchanged — their standard post content remains AI-readable via the existing post tools.
 
 = 1.4.18 =
 * Fix: The `/wp-json/royal-mcp/v1/mcp` GET handler is now User-Agent-aware. Anthropic's post-OAuth session-establishment probe (User-Agent: `Claude-User`) now receives HTTP 200 + `Content-Type: text/event-stream` with a minimal keepalive comment, satisfying the spec-compliant session start. Other authenticated GET requests (mcp-remote, custom scripts) continue to receive 405 with `Allow: POST, DELETE, OPTIONS` to preserve the 1.4.12 fix that stopped mcp-remote's retry-storm pattern. Without this differentiation, customers updating to 1.4.17 would see the auth-code DB-table fix succeed at `/token` but Anthropic's subsequent GET probe receive 405 four times before giving up — same connector-failure symptom they had on 1.4.16, just with a different cause. This is the 4th iteration of the `/mcp` endpoint response-code matrix and the discrimination layer is documented in `_internal/royal-mcp/MCP_ENDPOINT_BEHAVIOR_MATRIX.md`.
