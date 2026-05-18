@@ -574,8 +574,9 @@ class WooCommerce {
 				$limit  = min( intval( $args['per_page'] ?? 10 ), 100 );
 				$status = ! empty( $args['status'] ) ? sanitize_text_field( $args['status'] ) : 'any';
 				$orders = wc_get_orders( [
-					'limit'  => $limit,
-					'status' => $status,
+					'limit'   => $limit,
+					'status'  => $status,
+					'type'    => 'shop_order',
 					'orderby' => 'date',
 					'order'   => 'DESC',
 				] );
@@ -583,14 +584,14 @@ class WooCommerce {
 
 			case 'wc_get_order':
 				$order = wc_get_order( intval( $args['id'] ) );
-				if ( ! $order ) {
+				if ( ! $order || ! $order instanceof \WC_Order ) {
 					throw new \Exception( 'Order not found' );
 				}
 				return self::format_order_detail( $order );
 
 			case 'wc_update_order_status':
 				$order = wc_get_order( intval( $args['id'] ) );
-				if ( ! $order ) {
+				if ( ! $order || ! $order instanceof \WC_Order ) {
 					throw new \Exception( 'Order not found' );
 				}
 				$allowed_statuses = [ 'pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' ];
@@ -1090,6 +1091,7 @@ class WooCommerce {
 		$orders = wc_get_orders( [
 			'limit'      => -1,
 			'status'     => [ 'completed', 'processing' ],
+			'type'       => 'shop_order',
 			'date_after' => $after,
 			'return'     => 'objects',
 		] );
