@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.19
+Stable tag: 1.4.20
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -298,6 +298,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.4.20 =
+* Fix: WooCommerce order tools no longer hang when a `shop_order_refund` record appears in the result set. With HPOS (High-Performance Order Storage) enabled, WooCommerce stores both real orders and refund child records in the same `wc_orders` table, and `wc_get_orders()` returned both unless explicitly filtered. The `format_order_summary()` and `format_order_detail()` formatters expect a `WC_Order` and choke when handed a `WC_Order_Refund`, producing an indefinite hang that surfaced to MCP clients as error -32001 (timeout). Fixed in all four call sites in `includes/Integrations/WooCommerce.php`: the `wc_get_orders` and `get_store_stats` queries now include `'type' => 'shop_order'`; the `wc_get_order` and `wc_update_order_status` handlers now reject inputs that don't resolve to a `WC_Order` instance (catching refund IDs because `WC_Order_Refund` extends `WC_Abstract_Order`, not `WC_Order`). Only affects HPOS-enabled stores — pre-HPOS, `shop_order_refund` lives in `wp_posts` as a distinct post_type and is never returned by `wc_get_orders()`. Thanks to @ober37 for the diagnosis and the PR (royalplugins/royal-mcp#20, #21).
 
 = 1.4.19 =
 * New: Six Elementor tools for clone-and-customize workflows: `elementor_clone_page` duplicates an existing Elementor page with fresh element IDs and draft status; `elementor_replace_text` does bulk text substitution across heading, text-editor, button, image-box, icon-box, icon-list, testimonial, tabs, accordion, toggle, star-rating, call-to-action, and flip-box widgets; `elementor_replace_image` swaps image URLs across image, image-box, background_image, and gallery widget settings; `elementor_get_page_outline` extracts a compact section/container hierarchy with widget types and text snippets (typically under 2KB so Claude can reason over a full page without burning the JSON budget); `elementor_list_local_templates` enumerates entries in the Elementor template library; `elementor_import_template` wraps the official `\Elementor\TemplateLibrary\Source_Local::import_template()` API. All six tools auto-register when Elementor is active and are hidden otherwise. Atomic widgets (Elementor 4.0+ Editor V4 elements) pass through opaque — we never decode atomic schemas because Elementor itself may shift them. Widget-level creation from scratch is intentionally out of scope; the design commitment is to never generate Elementor JSON from a blank slate and to always work from an existing-known-good source. Capability-gated (`edit_posts` plus `edit_post` per-post). Tested end-to-end against a real Elementor Pro 4.0.4 page with 74 widgets and 9 top-level containers.
