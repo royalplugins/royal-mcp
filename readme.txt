@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.20
+Stable tag: 1.4.21
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -298,6 +298,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.4.21 =
+* Fix: Gutenberg block content created or updated via `wp_create_page`, `wp_update_page`, `wp_create_post`, and `wp_update_post` is no longer mangled in the block's JSON comment. Two compounding bugs surfaced on WordPress 7.0's new per-block Custom CSS feature, where a block like `<!-- wp:table {"style":{"css":"a\nb\n& table { color: red; }"}} -->` round-tripped as `au005cnbu005cnu005cu0026 table { color: red; }`, breaking the block's render and triggering Gutenberg's "unexpected content" warning. (1) Pre-1.4.21 the tools ran `wp_kses_post()` on the caller's content before handing it to `wp_insert_post()`, which HTML-encoded the block delimiters. The fix removes that pre-filter and trusts WordPress's own `content_save_pre` filter inside `wp_insert_post()`, which applies `wp_filter_post_kses` based on the calling user's `unfiltered_html` capability — the same code path the block editor itself uses when admins save block content. (2) `wp_insert_post()` runs `wp_unslash()` on its arguments internally per the WordPress slashing convention, which was stripping the literal backslashes inside escape sequences (`\n`, `&`) that block JSON depends on. The fix `wp_slash()`es the content before passing, so the internal `wp_unslash` leaves the original input intact. Round-trip is now byte-for-byte preserved on both WordPress 6.x and 7.0. Reported by @danielkleinert in royalplugins/royal-mcp#15.
 
 = 1.4.20 =
 * Fix: WooCommerce order tools no longer hang when a `shop_order_refund` record appears in the result set. With HPOS (High-Performance Order Storage) enabled, WooCommerce stores both real orders and refund child records in the same `wc_orders` table, and `wc_get_orders()` returned both unless explicitly filtered. The `format_order_summary()` and `format_order_detail()` formatters expect a `WC_Order` and choke when handed a `WC_Order_Refund`, producing an indefinite hang that surfaced to MCP clients as error -32001 (timeout). Fixed in all four call sites in `includes/Integrations/WooCommerce.php`: the `wc_get_orders` and `get_store_stats` queries now include `'type' => 'shop_order'`; the `wc_get_order` and `wc_update_order_status` handlers now reject inputs that don't resolve to a `WC_Order` instance (catching refund IDs because `WC_Order_Refund` extends `WC_Abstract_Order`, not `WC_Order`). Only affects HPOS-enabled stores — pre-HPOS, `shop_order_refund` lives in `wp_posts` as a distinct post_type and is never returned by `wc_get_orders()`. Thanks to @ober37 for the diagnosis and the PR (royalplugins/royal-mcp#20, #21).

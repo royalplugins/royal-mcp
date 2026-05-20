@@ -1084,9 +1084,19 @@ class Server {
                         throw new \Exception('post_author user ID not found.');
                     }
                 }
+                // 1.4.21 — Two-part fix for Gutenberg block JSON round-trip
+                // (issue #15). (1) Drop wp_kses_post(): WP's own
+                // `content_save_pre` filter inside wp_insert_post() runs
+                // wp_filter_post_kses for callers without `unfiltered_html`
+                // and is block-aware; pre-calling wp_kses_post() here
+                // HTML-encodes block delimiters. (2) wp_slash() the content:
+                // wp_insert_post() runs wp_unslash() internally, which would
+                // otherwise strip the literal backslashes inside escape
+                // sequences (`\n`, `&`) that WP 7.0's per-block `style.css`
+                // depends on.
                 $post_data = [
                     'post_title' => sanitize_text_field($args['title']),
-                    'post_content' => wp_kses_post($args['content']),
+                    'post_content' => wp_slash($args['content']),
                     'post_status' => in_array($args['status'] ?? 'draft', ['publish', 'draft']) ? $args['status'] : 'draft',
                     'post_type' => $post_type,
                 ];
@@ -1117,7 +1127,8 @@ class Server {
                 }
                 $data = ['ID' => $post_id];
                 if (isset($args['title'])) $data['post_title'] = sanitize_text_field($args['title']);
-                if (isset($args['content'])) $data['post_content'] = wp_kses_post($args['content']);
+                // 1.4.21 — see wp_create_post above (issue #15).
+                if (isset($args['content'])) $data['post_content'] = wp_slash($args['content']);
                 if (isset($args['status'])) $data['post_status'] = sanitize_text_field($args['status']);
                 if (isset($args['excerpt'])) $data['post_excerpt'] = sanitize_text_field($args['excerpt']);
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
@@ -1202,9 +1213,10 @@ class Server {
                 ];
 
             case 'wp_create_page':
+                // 1.4.21 — see wp_create_post above (issue #15).
                 $page_data = [
                     'post_title' => sanitize_text_field($args['title']),
-                    'post_content' => wp_kses_post($args['content']),
+                    'post_content' => wp_slash($args['content']),
                     'post_status' => in_array($args['status'] ?? 'draft', ['publish', 'draft']) ? $args['status'] : 'draft',
                     'post_type' => 'page',
                 ];
@@ -1216,7 +1228,8 @@ class Server {
             case 'wp_update_page':
                 $data = ['ID' => intval($args['id'])];
                 if (isset($args['title'])) $data['post_title'] = sanitize_text_field($args['title']);
-                if (isset($args['content'])) $data['post_content'] = wp_kses_post($args['content']);
+                // 1.4.21 — see wp_create_post above (issue #15).
+                if (isset($args['content'])) $data['post_content'] = wp_slash($args['content']);
                 if (isset($args['status'])) $data['post_status'] = sanitize_text_field($args['status']);
                 $result = wp_update_post($data);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
