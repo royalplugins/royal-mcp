@@ -477,6 +477,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Upgrade Notice ==
 
+= 1.4.21 =
+Recommended update for WordPress 7.0: Gutenberg blocks created or updated via `wp_create_page`, `wp_update_page`, `wp_create_post`, and `wp_update_post` no longer corrupt escape sequences (`\n`, `&`, backslashes) inside block JSON. Surfaced on WP 7.0's new per-block Custom CSS feature.
+
 = 1.4.17 =
 Critical fix where OAuth fails with "Authorization code invalid" — auth codes now use a dedicated DB table with atomic consume, unaffected by object-cache eviction (LiteSpeed + SpeedyCache reproducer). Also adds a Reset OAuth State button and Activity Log entries for MCP tool calls.
 
