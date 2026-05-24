@@ -415,6 +415,10 @@ $royal_mcp_configured_platforms = $royal_mcp_settings['platforms'] ?? [];
                                         <button type="button" class="button generate-oauth" data-field="oauth_client_id">
                                             <?php esc_html_e('Generate', 'royal-mcp'); ?>
                                         </button>
+                                        <?php else : ?>
+                                        <button type="button" class="button clear-oauth" data-field="oauth_client_id">
+                                            <?php esc_html_e('Clear', 'royal-mcp'); ?>
+                                        </button>
                                         <?php endif; ?>
                                     </div>
                                 </div>
@@ -437,6 +441,10 @@ $royal_mcp_configured_platforms = $royal_mcp_settings['platforms'] ?? [];
                                         <?php if (empty($royal_mcp_settings['oauth_client_secret'])) : ?>
                                         <button type="button" class="button generate-oauth" data-field="oauth_client_secret">
                                             <?php esc_html_e('Generate', 'royal-mcp'); ?>
+                                        </button>
+                                        <?php else : ?>
+                                        <button type="button" class="button clear-oauth" data-field="oauth_client_secret">
+                                            <?php esc_html_e('Clear', 'royal-mcp'); ?>
                                         </button>
                                         <?php endif; ?>
                                     </div>

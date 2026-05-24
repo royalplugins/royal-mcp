@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.21
+Stable tag: 1.4.22
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -299,6 +299,13 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Changelog ==
 
+= 1.4.22 =
+* Fix: AI Platforms → Test Connection on the Claude platform now uses the model selected in the dropdown and the underlying test ping points at a model Anthropic still serves. Pre-1.4.22 the Test Connection button had two compounding defects in `Platform\Registry.php`: the `test_body.model` was hardcoded to `claude-3-5-haiku-20241022` regardless of the dropdown selection, AND that model has since been deprecated by Anthropic — so every click of Test Connection returned `Server responded with status 404: model: claude-3-5-haiku-20241022` no matter which model was chosen or whether the API key was valid. The dropdown is also refreshed to the current Claude lineup (Opus 4.7, Sonnet 4.6, Haiku 4.5) and the Gemini dropdown adds the 2.x family entries. Reported by two customers within four days; affects every Royal MCP install using the AI Platforms feature with a Claude key.
+* Fix: Manually-configured OAuth Client ID and Client Secret in Claude Connector Settings → Advanced settings can now be cleared through the UI. Pre-1.4.22 the sanitize callback treated an empty submission as "preserve previous value" (defense against accidental blanking), which left customers no way to switch from manual-credential mode back to Dynamic Client Registration once a static client had been generated. A new Clear button appears next to each field when populated; it AJAX-clears the stored value and the connector falls back to Dynamic Client Registration on the next handshake. The existing Reset OAuth State button (1.4.17) is also extended to wipe these manual credentials in addition to clients/tokens/auth codes, with a success message that confirms when it happened.
+* Fix: OAuth root rewrite rules (`/authorize`, `/token`, `/register`, `/.well-known/oauth-authorization-server`) now match both bare and trailing-slash variants. Pre-1.4.22 the rules used a bare `$` regex anchor that didn't match the trailing-slash form WordPress canonical_redirect adds on default permalink structures — the trailing-slash URL fell through to standard WP page lookup and could be hijacked by membership plugins or theme templates that serve their own page for any non-matching URL. Discovery clients then received HTML at 200 instead of JSON metadata and silently failed. Widening to `/?$` matches both forms; the bare-path variants continue to work.
+* New: Admin notice detects when your web server returns a 301 trailing-slash redirect on POST `/register` — a host-side config issue (Nginx `mod_dir`, Apache `mod_dir`, or `.htaccess` canonicalization) that breaks OAuth registration because clients don't follow 301 on POST. The notice surfaces the issue and links to a support article with Nginx and Apache fixes. Cached in a 12-hour transient and skipped on dev hosts and multisite subsites, matching the existing self-check pattern. Self-check probes are short-circuited inside the OAuth dispatcher so they don't generate Activity Log noise.
+* New: The existing `.well-known/` self-check (1.4.14, 1.4.19) now also detects when the discovery endpoint returns an HTML body at status 200 — a membership plugin (ARMember, MemberPress, Restrict Content Pro) or theme template is intercepting the request and serving its own login or access-denied page instead of letting Royal MCP's JSON response through. Surfaces a notice with the most common fixes (add OAuth paths to the plugin's unrestricted-URL list, re-save Permalinks, deactivate suspects).
+
 = 1.4.21 =
 * Fix: Gutenberg block content created or updated via `wp_create_page`, `wp_update_page`, `wp_create_post`, and `wp_update_post` is no longer mangled in the block's JSON comment. Two compounding bugs surfaced on WordPress 7.0's new per-block Custom CSS feature, where a block like `<!-- wp:table {"style":{"css":"a\nb\n& table { color: red; }"}} -->` round-tripped as `au005cnbu005cnu005cu0026 table { color: red; }`, breaking the block's render and triggering Gutenberg's "unexpected content" warning. (1) Pre-1.4.21 the tools ran `wp_kses_post()` on the caller's content before handing it to `wp_insert_post()`, which HTML-encoded the block delimiters. The fix removes that pre-filter and trusts WordPress's own `content_save_pre` filter inside `wp_insert_post()`, which applies `wp_filter_post_kses` based on the calling user's `unfiltered_html` capability — the same code path the block editor itself uses when admins save block content. (2) `wp_insert_post()` runs `wp_unslash()` on its arguments internally per the WordPress slashing convention, which was stripping the literal backslashes inside escape sequences (`\n`, `&`) that block JSON depends on. The fix `wp_slash()`es the content before passing, so the internal `wp_unslash` leaves the original input intact. Round-trip is now byte-for-byte preserved on both WordPress 6.x and 7.0. Reported by @danielkleinert in royalplugins/royal-mcp#15.
 
@@ -476,6 +483,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release
 
 == Upgrade Notice ==
+
+= 1.4.22 =
+Strongly recommended update. Fixes AI Platforms → Test Connection on Claude (was returning 404 for every customer regardless of dropdown choice or API key validity), restores the ability to clear manually-configured OAuth Client ID/Secret through the UI, and widens OAuth root rewrite rules to also match trailing-slash variants so membership plugins can't hijack discovery requests. Adds two new self-check admin notices (host-side 301 on /register; membership plugin serving HTML on /.well-known/).
 
 = 1.4.21 =
 Recommended update for WordPress 7.0: Gutenberg blocks created or updated via `wp_create_page`, `wp_update_page`, `wp_create_post`, and `wp_update_post` no longer corrupt escape sequences (`\n`, `&`, backslashes) inside block JSON. Surfaced on WP 7.0's new per-block Custom CSS feature.

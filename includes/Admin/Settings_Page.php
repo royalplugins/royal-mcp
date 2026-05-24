@@ -20,6 +20,7 @@ class Settings_Page {
         add_action('wp_ajax_royal_mcp_test_connection', [$this, 'ajax_test_connection']);
         add_action('wp_ajax_royal_mcp_get_platform_fields', [$this, 'ajax_get_platform_fields']);
         add_action('wp_ajax_royal_mcp_reset_oauth_state', [$this, 'ajax_reset_oauth_state']);
+        add_action('wp_ajax_royal_mcp_clear_oauth_field', [$this, 'ajax_clear_oauth_field']);
     }
 
     /**
@@ -431,15 +432,56 @@ class Settings_Page {
             ['%s', '%s', '%s', '%s', '%s']
         );
 
+        $base_message = sprintf(
+            /* translators: 1: clients deleted, 2: tokens deleted, 3: auth codes deleted */
+            esc_html__('OAuth state reset. Deleted %1$d clients, %2$d tokens, %3$d auth codes. Connected MCP clients will need to re-authorize.', 'royal-mcp'),
+            (int) $counts['clients'],
+            (int) $counts['tokens'],
+            (int) $counts['auth_codes']
+        );
+
+        if ( ! empty( $counts['static_creds_cleared'] ) ) {
+            $base_message .= ' ' . esc_html__('Manually-configured OAuth client credentials were also cleared; the connector will fall back to Dynamic Client Registration.', 'royal-mcp');
+        }
+
         wp_send_json_success([
-            'message' => sprintf(
-                /* translators: 1: clients deleted, 2: tokens deleted, 3: auth codes deleted */
-                esc_html__('OAuth state reset. Deleted %1$d clients, %2$d tokens, %3$d auth codes. Connected MCP clients will need to re-authorize.', 'royal-mcp'),
-                (int) $counts['clients'],
-                (int) $counts['tokens'],
-                (int) $counts['auth_codes']
-            ),
+            'message' => $base_message,
             'counts'  => $counts,
+        ]);
+    }
+
+    /**
+     * AJAX handler — clear a single OAuth manual-credential field (oauth_client_id
+     * or oauth_client_secret) from the royal_mcp_settings option.
+     *
+     * Pre-1.4.22 the sanitize callback treated an empty form submission as
+     * "preserve previous value" (defense against accidental blanking), which left
+     * customers with no UI path to switch from manual-credential mode back to
+     * Dynamic Client Registration once they'd generated a static client.
+     */
+    public function ajax_clear_oauth_field() {
+        check_ajax_referer('royal_mcp_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => esc_html__('Unauthorized', 'royal-mcp')]);
+        }
+
+        $field = isset($_POST['field']) ? sanitize_text_field(wp_unslash($_POST['field'])) : '';
+        $allowed_fields = ['oauth_client_id', 'oauth_client_secret'];
+        if (!in_array($field, $allowed_fields, true)) {
+            wp_send_json_error(['message' => esc_html__('Invalid field name.', 'royal-mcp')]);
+        }
+
+        $settings = get_option('royal_mcp_settings', []);
+        if (!is_array($settings)) {
+            $settings = [];
+        }
+        $settings[$field] = '';
+        update_option('royal_mcp_settings', $settings);
+
+        wp_send_json_success([
+            'field'   => $field,
+            'message' => esc_html__('Field cleared. Save your settings to confirm.', 'royal-mcp'),
         ]);
     }
 
