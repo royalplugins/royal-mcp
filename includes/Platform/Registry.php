@@ -44,20 +44,19 @@ class Registry {
                         'type' => 'select',
                         'label' => 'Model',
                         'required' => false,
-                        'default' => 'claude-sonnet-4-20250514',
+                        'default' => 'claude-sonnet-4-6',
                         'options' => [
-                            'claude-sonnet-4-20250514' => 'Claude Sonnet 4 (Latest)',
-                            'claude-opus-4-20250514' => 'Claude Opus 4 (Most Capable)',
-                            'claude-3-5-sonnet-20241022' => 'Claude 3.5 Sonnet',
-                            'claude-3-5-haiku-20241022' => 'Claude 3.5 Haiku (Fast)',
-                            'claude-3-opus-20240229' => 'Claude 3 Opus',
+                            'claude-opus-4-7' => 'Claude Opus 4.7 (Most Capable)',
+                            'claude-sonnet-4-6' => 'Claude Sonnet 4.6 (Latest, Recommended)',
+                            'claude-haiku-4-5-20251001' => 'Claude Haiku 4.5 (Fast & Cheap)',
+                            'claude-sonnet-4-20250514' => 'Claude Sonnet 4 (May 2025, pinned)',
                         ],
                     ],
                 ],
                 'test_endpoint' => '/v1/messages',
                 'test_method' => 'POST',
                 'test_body' => [
-                    'model' => 'claude-3-5-haiku-20241022',
+                    'model' => 'claude-haiku-4-5-20251001',
                     'max_tokens' => 10,
                     'messages' => [
                         ['role' => 'user', 'content' => 'Hi']
@@ -134,11 +133,13 @@ class Registry {
                         'type' => 'select',
                         'label' => 'Model',
                         'required' => false,
-                        'default' => 'gemini-1.5-pro',
+                        'default' => 'gemini-2.5-pro',
                         'options' => [
-                            'gemini-1.5-pro' => 'Gemini 1.5 Pro (Latest)',
-                            'gemini-1.5-flash' => 'Gemini 1.5 Flash (Fast)',
-                            'gemini-1.0-pro' => 'Gemini 1.0 Pro',
+                            'gemini-2.5-pro' => 'Gemini 2.5 Pro (Latest, Recommended)',
+                            'gemini-2.5-flash' => 'Gemini 2.5 Flash (Fast & Cheap)',
+                            'gemini-2.0-flash' => 'Gemini 2.0 Flash',
+                            'gemini-1.5-pro' => 'Gemini 1.5 Pro (Legacy)',
+                            'gemini-1.5-flash' => 'Gemini 1.5 Flash (Legacy)',
                         ],
                     ],
                 ],
@@ -620,9 +621,15 @@ class Registry {
             'timeout' => 10,
         ];
 
-        // Add body for POST requests if test_body is defined
+        // Add body for POST requests if test_body is defined.
+        // Substitute the user's selected model into test_body so the dropdown choice
+        // actually controls the test — surfaces model-access issues at test time.
         if (($platform['test_method'] ?? 'GET') === 'POST' && !empty($platform['test_body'])) {
-            $request_args['body'] = wp_json_encode($platform['test_body']);
+            $test_body = $platform['test_body'];
+            if (!empty($config['model']) && array_key_exists('model', $test_body)) {
+                $test_body['model'] = $config['model'];
+            }
+            $request_args['body'] = wp_json_encode($test_body);
         }
 
         $response = wp_remote_request($test_url, $request_args);

@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & Gemini
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.4.21
+ * Version: 1.4.22
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ROYAL_MCP_VERSION', '1.4.21');
+define('ROYAL_MCP_VERSION', '1.4.22');
 define('ROYAL_MCP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ROYAL_MCP_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('ROYAL_MCP_PLUGIN_FILE', __FILE__);
@@ -225,10 +225,10 @@ class Royal_MCP_Plugin {
      */
     public function register_oauth_rewrites() {
         add_rewrite_rule( '\.well-known/oauth-protected-resource(/.*)?$', 'index.php?royal_mcp_oauth=protected_resource', 'top' );
-        add_rewrite_rule( '\.well-known/oauth-authorization-server$', 'index.php?royal_mcp_oauth=metadata', 'top' );
-        add_rewrite_rule( 'authorize$', 'index.php?royal_mcp_oauth=authorize', 'top' );
-        add_rewrite_rule( 'token$', 'index.php?royal_mcp_oauth=token', 'top' );
-        add_rewrite_rule( 'register$', 'index.php?royal_mcp_oauth=register', 'top' );
+        add_rewrite_rule( '\.well-known/oauth-authorization-server/?$', 'index.php?royal_mcp_oauth=metadata', 'top' );
+        add_rewrite_rule( 'authorize/?$', 'index.php?royal_mcp_oauth=authorize', 'top' );
+        add_rewrite_rule( 'token/?$', 'index.php?royal_mcp_oauth=token', 'top' );
+        add_rewrite_rule( 'register/?$', 'index.php?royal_mcp_oauth=register', 'top' );
     }
 
     /**
@@ -257,6 +257,17 @@ class Royal_MCP_Plugin {
                 echo wp_json_encode( [ 'error' => 'server_error', 'error_description' => 'Royal MCP is currently disabled.' ] );
                 exit;
             }
+        }
+
+        // Short-circuit self-check probes from Well_Known_Notice::check_register_301().
+        // Reaching this point means the rewrite resolved (so there's no host-side 301 to
+        // detect); return 204 No Content without invoking OAuth\Server so we don't pollute
+        // the Activity Log with a synthetic "register failed" entry every 12 hours.
+        $ua = isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '';
+        if ( 'Royal MCP Self-Check' === $ua && in_array( $action, [ 'register', 'authorize', 'token' ], true ) ) {
+            status_header( 204 );
+            header( 'Cache-Control: no-store, no-cache, must-revalidate, private' );
+            exit;
         }
 
         $oauth_server = new Royal_MCP\OAuth\Server();

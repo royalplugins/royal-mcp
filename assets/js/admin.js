@@ -78,6 +78,47 @@ jQuery(document).ready(function($) {
         showNotice('OAuth ' + (field === 'oauth_client_id' ? 'Client ID' : 'Client Secret') + ' generated. Remember to save your settings!');
     });
 
+    // Clear OAuth credentials — wipes the stored value via AJAX so the connector
+    // can fall back to Dynamic Client Registration. Pre-1.4.22 there was no UI
+    // path to clear these fields once generated.
+    $(document).on('click', '.clear-oauth', function(e) {
+        e.preventDefault();
+        const $btn = $(this);
+        const field = $btn.data('field');
+        const fieldLabel = field === 'oauth_client_id' ? 'Client ID' : 'Client Secret';
+
+        if (!confirm('Clear the stored OAuth ' + fieldLabel + '? Any MCP client using these credentials will need to re-authorize.')) {
+            return;
+        }
+
+        $btn.prop('disabled', true);
+
+        $.ajax({
+            url: royalMcp.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'royal_mcp_clear_oauth_field',
+                nonce: royalMcp.nonce,
+                field: field
+            },
+            success: function(response) {
+                if (response.success) {
+                    $('#' + field).val('');
+                    showNotice('OAuth ' + fieldLabel + ' cleared. The connector will use Dynamic Client Registration on the next handshake.');
+                    // Reload so the Generate button reappears in place of Clear.
+                    setTimeout(function() { window.location.reload(); }, 800);
+                } else {
+                    $btn.prop('disabled', false);
+                    showNotice((response.data && response.data.message) || 'Failed to clear field.', 'error');
+                }
+            },
+            error: function() {
+                $btn.prop('disabled', false);
+                showNotice('Network error while clearing field.', 'error');
+            }
+        });
+    });
+
     function generateRandomString(length) {
         const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
         let result = '';

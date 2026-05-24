@@ -359,10 +359,24 @@ class Token_Store {
         // Belt-and-suspenders: clear any legacy transients from <1.4.17 installs that upgraded mid-flow. New auth codes since 1.4.17 are DB-backed, but a pre-upgrade in-flight transient could still exist on the first run.
         $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_authcode_%' OR option_name LIKE '_transient_timeout_royal_mcp_authcode_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 
+        // Also clear any manually-configured static OAuth client_id / client_secret so the
+        // connector falls back to Dynamic Client Registration on the next handshake.
+        // Pre-1.4.22 these settings were not part of the reset, leaving customers unable to
+        // toggle back from manual-creds mode to DCR through the UI.
+        $static_creds_cleared = 0;
+        $settings             = get_option( 'royal_mcp_settings', [] );
+        if ( is_array( $settings ) && ( ! empty( $settings['oauth_client_id'] ) || ! empty( $settings['oauth_client_secret'] ) ) ) {
+            $settings['oauth_client_id']     = '';
+            $settings['oauth_client_secret'] = '';
+            update_option( 'royal_mcp_settings', $settings );
+            $static_creds_cleared = 1;
+        }
+
         return [
-            'clients'    => $clients,
-            'tokens'     => $tokens,
-            'auth_codes' => $auth_codes,
+            'clients'              => $clients,
+            'tokens'               => $tokens,
+            'auth_codes'           => $auth_codes,
+            'static_creds_cleared' => $static_creds_cleared,
         ];
     }
 
