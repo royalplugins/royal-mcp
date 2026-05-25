@@ -174,6 +174,11 @@ Full security architecture: [royalplugins.com/support/royal-mcp/](https://royalp
 - **Issues** — [github.com/royalplugins/royal-mcp/issues](https://github.com/royalplugins/royal-mcp/issues). Customer-impact issues are typically acknowledged within 24h and triaged with version targets.
 - **Contributing** — PRs welcome. The plugin source is committed to both this repo and the wp.org SVN trunk; releases are coordinated through the wp.org review process.
 
+## Further reading
+
+- **[Editing Elementor with Claude: The Four Workflows That Work Today](https://royalplugins.com/blog/editing-elementor-with-claude-four-workflows/)** — the four real architectures for AI-editing Elementor pages and when to reach for which. User-facing version with prompts, examples, and a video demo of the clone-and-customize flow.
+- **[Editing Elementor with Claude: 4 MCP Architectures](https://royalplugins.hashnode.dev/editing-elementor-with-claude-mcp-architectures)** — engineer's cut on Hashnode. The PHP under the hood of `elementor_clone_page`, the six tool signatures, and the HTTP-Basic-vs-OAuth-2.1 auth-model tradeoff.
+
 ## Related projects
 
 - [GuardPress](https://royalplugins.com/guardpress/) — WordPress security hardening
