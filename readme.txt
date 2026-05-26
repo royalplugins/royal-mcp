@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.22
+Stable tag: 1.4.23
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -127,9 +127,9 @@ Royal MCP is a complete, production-ready MCP server that predates the official 
 = Supported AI Platforms =
 
 * **Claude (Anthropic)** — Full MCP support via Claude Desktop, Claude Code, and VS Code
-* **OpenAI / ChatGPT** — GPT-4o, GPT-4 Turbo, GPT-3.5 Turbo
-* **Google Gemini** — Gemini 1.5 Pro, 1.5 Flash
-* **Groq** — Llama 3.3, Mixtral, Gemma 2
+* **OpenAI / ChatGPT** — GPT-5.5, GPT-5, GPT-5 Mini, o3
+* **Google Gemini** — Gemini 3.5 Flash, 3.1 Flash-Lite
+* **Groq** — Llama 3.3, Llama 3.1, GPT-OSS
 * **Azure OpenAI** — Azure-hosted OpenAI deployments
 * **AWS Bedrock** — Claude, Llama, Titan models
 * **Ollama / LM Studio** — Local self-hosted models (no external data transmission)
@@ -298,6 +298,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.4.23 =
+* Fix: AI Platforms model dropdowns refreshed across all five LLM providers (Claude, OpenAI, Gemini, Groq, Bedrock) to remove deprecated and retired models, add current production lineups, and rotate defaults to vendor-recommended replacements. Verified against each vendor's official deprecation page on the day of release (Anthropic, OpenAI, Google AI, Groq, AWS Bedrock). Specifically: Claude removed `claude-sonnet-4-20250514` (Anthropic retires it on June 15, 2026); OpenAI replaced `gpt-4o-mini`/`gpt-4-turbo`/`gpt-4`/`gpt-3.5-turbo`/`o1-preview`/`o1-mini` with GPT-5.5, GPT-5, GPT-5 Mini, GPT-5 Nano, and o3, and the new default is `gpt-5`; Gemini removed the entire 1.5 family (already returns 404), the 2.0 Flash variants (shut down June 1, 2026), and the 2.5 family (all retire October 16, 2026), with the dropdown now offering `gemini-3.5-flash` (new default) and `gemini-3.1-flash-lite`; Groq removed `mixtral-8x7b-32768` and `gemma2-9b-it` and added `openai/gpt-oss-120b` and `openai/gpt-oss-20b`; AWS Bedrock refreshed from the year-old Claude 3 Sonnet / Claude 3 Haiku / Llama 3 / Titan Text lineup to Claude 4 family (Opus 4.7, Sonnet 4.6, Haiku 4.5), Amazon Nova 2 Lite + Nova Pro, and Llama 3.3 70B. Pre-1.4.23 customers picking any of these now-retired models would receive 404 from the vendor (Test Connection) or upstream API errors (any runtime call); 1.4.23 also resets the default model on Gemini, OpenAI, and Bedrock to current vendor-recommended replacements so fresh installs land on a working model without manual selection. No code paths beyond `Platform\Registry.php` are changed; existing installs that already have a working model stored in settings are unaffected.
 
 = 1.4.22 =
 * Fix: AI Platforms → Test Connection on the Claude platform now uses the model selected in the dropdown and the underlying test ping points at a model Anthropic still serves. Pre-1.4.22 the Test Connection button had two compounding defects in `Platform\Registry.php`: the `test_body.model` was hardcoded to `claude-3-5-haiku-20241022` regardless of the dropdown selection, AND that model has since been deprecated by Anthropic — so every click of Test Connection returned `Server responded with status 404: model: claude-3-5-haiku-20241022` no matter which model was chosen or whether the API key was valid. The dropdown is also refreshed to the current Claude lineup (Opus 4.7, Sonnet 4.6, Haiku 4.5) and the Gemini dropdown adds the 2.x family entries. Reported by two customers within four days; affects every Royal MCP install using the AI Platforms feature with a Claude key.
@@ -483,6 +486,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release
 
 == Upgrade Notice ==
+
+= 1.4.23 =
+Strongly recommended update. AI Platforms model dropdowns are now verified-current across Claude, OpenAI, Gemini, Groq, and AWS Bedrock — every retired or near-term-deprecating model is removed, current production models are added, and defaults are rotated to vendor-recommended replacements. Fixes Test Connection 404s and prevents runtime failures from picking models the vendor no longer serves. Verified against each vendor's official deprecation page on release day.
 
 = 1.4.22 =
 Strongly recommended update. Fixes AI Platforms → Test Connection on Claude (was returning 404 for every customer regardless of dropdown choice or API key validity), restores the ability to clear manually-configured OAuth Client ID/Secret through the UI, and widens OAuth root rewrite rules to also match trailing-slash variants so membership plugins can't hijack discovery requests. Adds two new self-check admin notices (host-side 301 on /register; membership plugin serving HTML on /.well-known/).
