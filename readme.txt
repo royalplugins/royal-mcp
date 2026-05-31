@@ -224,7 +224,7 @@ Security. Most MCP plugins — and 41% of all public MCP servers — have no aut
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
-No. WordPress 6.9 added the Abilities API — a primitive for registering AI-callable functions — and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 67 ready-to-use WordPress core tools, and 49 integration tools that auto-load for WooCommerce, GuardPress, SiteVault, ForgeCache, Royal Ledger, and Royal Links.
+No. WordPress 6.9 added the Abilities API — a primitive for registering AI-callable functions — and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 67 ready-to-use WordPress core tools, and 59 integration tools that auto-load for WooCommerce, GuardPress, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, and Advanced Custom Fields.
 
 = Does Royal MCP work with WooCommerce? =
 
