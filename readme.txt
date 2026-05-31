@@ -18,6 +18,8 @@ https://youtu.be/8Wbr0ReLpok
 
 Royal MCP is a security-first Model Context Protocol (MCP) server for WordPress. It gives AI platforms like Claude, ChatGPT, and Google Gemini structured access to your WordPress content — with authentication, rate limiting, and audit logging that most MCP implementations skip entirely.
 
+**First-time setup walkthrough (with videos):** [royalplugins.com/support/royal-mcp/connecting-to-claude/](https://royalplugins.com/support/royal-mcp/connecting-to-claude/)
+
 According to [recent security research](https://mcpplaygroundonline.com/blog/mcp-server-security-complete-guide-2026), 41% of public MCP servers have no authentication and respond to tool calls without any credentials. Royal MCP takes the opposite approach: every MCP session requires an API key, every request is rate-limited, and every interaction is logged.
 
 = Why Security Matters for MCP =
@@ -31,7 +33,7 @@ MCP gives AI agents the ability to read, create, update, and delete your WordPre
 
 Royal MCP prevents all of this with API key authentication on session initialization, timing-safe key comparison, per-IP rate limiting (60 requests/minute), and a full activity log of every MCP interaction.
 
-= 67 Core Tools + 55 Integration Tools =
+= 67 Core Tools + 59 Integration Tools =
 
 **WordPress Core (67 tools):**
 
@@ -108,6 +110,14 @@ When Royal Links is active, AI agents can manage your branded short links:
 * Create new branded short links
 * Get click statistics for any link
 
+**Advanced Custom Fields Integration (4 tools):**
+When ACF (free or Pro) is active, AI agents can read and write ACF fields with the field-type-aware formatting the ACF UI uses — instead of the raw serialized values WordPress meta returns:
+
+* Read a single ACF field, formatted per its Return Format setting (hydrated post objects, parsed repeater rows, image arrays, etc.)
+* Read every ACF field on a post in one call, with name/label/type/value bundled — the most efficient way for an AI to discover what fields exist and read them all
+* Update an ACF field with type-aware value handling (scalar for text/number, array for repeaters and flex content, post ID for relationships, attachment ID for images)
+* Enumerate ACF field groups on the site, optionally filtered by post type — for AI-driven discovery of available custom fields before reading/writing
+
 **Elementor Integration (6 tools):**
 When Elementor (free or Pro) is active, AI agents can clone and customize existing Elementor pages without trying to generate page-builder JSON from scratch:
 
@@ -122,7 +132,7 @@ When Elementor (free or Pro) is active, AI agents can clone and customize existi
 
 WordPress 6.9 shipped the Abilities API in November 2025 — a primitive that lets plugins register typed capabilities AI agents can call. Core ships three default abilities (site info, user info, environment info) and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol.
 
-Royal MCP is a complete, production-ready MCP server that predates the official adapter. It runs the full Streamable HTTP transport, enforces API key authentication on every request, ships OAuth 2.0 for Claude Desktop's native connector flow, rate-limits per-IP, redacts sensitive data, and logs every interaction. Out of the box it includes 67 tools for WordPress core operations plus 49 integration tools that auto-load when WooCommerce, GuardPress, SiteVault, ForgeCache, Royal Ledger, or Royal Links is active.
+Royal MCP is a complete, production-ready MCP server that predates the official adapter. It runs the full Streamable HTTP transport, enforces API key authentication on every request, ships OAuth 2.0 for Claude Desktop's native connector flow, rate-limits per-IP, redacts sensitive data, and logs every interaction. Out of the box it includes 67 tools for WordPress core operations plus 59 integration tools that auto-load when WooCommerce, GuardPress, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, or Advanced Custom Fields (ACF) is active.
 
 = Supported AI Platforms =
 
@@ -142,7 +152,7 @@ Royal MCP works with any MCP-compliant client, IDE, or AI agent framework — no
 * **Desktop AI apps** — Claude Desktop (native MCP connector via OAuth 2.0), ChatGPT Desktop, Gemini Advanced.
 * **AI code IDEs** — Claude Code, VS Code (with MCP extension), Cursor, Windsurf, Continue, Cline, Zed, JetBrains AI Assistant.
 * **API testing tools** — Postman, Bruno, Insomnia (use the API key in the `X-Royal-MCP-API-Key` header).
-* **Custom field plugins** — Advanced Custom Fields (ACF), MetaBox, JetEngine, Pods, CPT UI, Custom Field Suite. The `wp_get_post_meta` / `wp_update_post_meta` tools read and write any custom field, so AI agents can populate ACF fields just like a human editor.
+* **Custom field plugins** — Advanced Custom Fields (ACF) has dedicated `acf_*` tools that return values formatted per each field's Return Format setting (the same way the ACF UI shows them). MetaBox, JetEngine, Pods, CPT UI, and Custom Field Suite are supported through the `wp_get_post_meta` / `wp_update_post_meta` tools, so AI agents can populate custom fields just like a human editor.
 * **Page builders** — Elementor has dedicated tools for clone-and-customize workflows (clone a page, find/replace text, swap images, get an outline, import templates) — see the Tools list. Widget-level creation from scratch is intentionally out of scope. Divi, Beaver Builder, Bricks, Gutenberg, Spectra, and Stackable store standard post content that is readable and writable by AI; page-builder-specific JSON storage is opaque unless covered by a dedicated tool.
 * **Multilingual** — WPML, Polylang, TranslatePress, qTranslate. Translated posts appear as separate posts and can be read or written via the standard post tools.
 * **AI agent frameworks** — LangChain, AutoGen, CrewAI, LlamaIndex, Haystack — any MCP-compatible framework can call Royal MCP's tools.
@@ -198,6 +208,7 @@ This plugin connects to third-party AI services to enable AI platforms to intera
 4. Copy your API key — you will need this to authenticate MCP connections
 5. Add your AI platform(s) and enter their API keys
 6. In your AI client (Claude Desktop, VS Code, etc.), configure the MCP server URL and API key
+7. New to MCP? Follow the step-by-step connection walkthrough (with videos) at [royalplugins.com/support/royal-mcp/connecting-to-claude/](https://royalplugins.com/support/royal-mcp/connecting-to-claude/)
 
 Full setup guides for each platform are available at [royalplugins.com/support/royal-mcp/](https://royalplugins.com/support/royal-mcp/).
 
