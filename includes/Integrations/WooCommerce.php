@@ -506,7 +506,21 @@ class WooCommerce {
 				return self::format_product_detail( $product );
 
 			case 'wc_create_product':
-				$product = new \WC_Product_Simple();
+				$type              = sanitize_text_field( $args['type'] ?? 'simple' );
+				$product_class_map = [
+					'simple'   => '\WC_Product_Simple',
+					'variable' => '\WC_Product_Variable',
+					'grouped'  => '\WC_Product_Grouped',
+					'external' => '\WC_Product_External',
+				];
+				if ( ! isset( $product_class_map[ $type ] ) ) {
+					throw new \Exception( 'Unsupported product type: ' . $type . '. Supported types: simple, variable, grouped, external.' );
+				}
+				$class = $product_class_map[ $type ];
+				if ( ! class_exists( $class ) ) {
+					throw new \Exception( 'Product class not available: ' . $class . ' (WooCommerce may not be fully loaded)' );
+				}
+				$product = new $class();
 				$product->set_name( sanitize_text_field( $args['name'] ) );
 				if ( isset( $args['regular_price'] ) ) {
 					$product->set_regular_price( sanitize_text_field( $args['regular_price'] ) );
