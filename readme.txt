@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.23
+Stable tag: 1.4.24
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -310,6 +310,12 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Changelog ==
 
+= 1.4.24 =
+* New: Advanced Custom Fields integration. Four new MCP tools — `acf_get_field`, `acf_get_fields`, `acf_update_field`, `acf_get_field_groups` — registered automatically when ACF (free or Pro) is active. The dedicated integration returns values formatted per each field's Return Format setting (hydrated post objects, parsed repeater rows, image arrays, attachment IDs) instead of the raw serialized values WordPress's standard meta API returns. `acf_get_fields` bundles discovery and read into one call — AI agents can list every ACF field defined on a post with its name, label, type, and value in a single round-trip. WP_Post / WP_User / WP_Term return values are flattened to small JSON-encodable arrays so the LLM gets useful structure without raw WP objects in the response payload. Sites without ACF active see no change — the tools are conditionally registered behind `function_exists('get_field')`.
+* Fix: `wc_create_product` now respects the `type` argument and creates the matching WooCommerce product class (Simple, Variable, Grouped, External). Pre-1.4.24 the tool's input schema advertised the four product types but the handler hardcoded `WC_Product_Simple` regardless of the caller's choice — so passing `type: variable` silently returned a simple product, and the downstream `wc_create_variation` call then failed with "Product is not a variable product", breaking the variable-product workflow end-to-end. Unsupported product types now throw an explicit exception so callers see the failure instead of getting a wrong-typed product back. Reported by @sandrinne in royalplugins/royal-mcp#30; bug had been present since the WooCommerce integration first shipped in 1.4.10.
+* Doc: readme.txt Description now leads with a "First-time setup walkthrough (with videos)" pointer to the Connecting Claude to Royal MCP guide, and the Installation section ends with the same pointer for users who skip past the listing description. New users arriving via wp.org plugin search were missing the setup guide that's been linked from the marketing-site sub-nav for weeks.
+* Doc: AI Platforms screen in WP Admin now shows a contextual notice on the Claude platform card pointing at the inbound setup guide. The AI Platforms feature configures outbound API calls (this site -> Claude), but customers frequently arrive at this card meaning to do the inbound MCP setup (Claude.ai or Claude Desktop -> this site). The notice clarifies the distinction and links to the guide so users don't get stuck. Only renders when Claude has been added as a platform.
+
 = 1.4.23 =
 * Fix: AI Platforms model dropdowns refreshed across all five LLM providers (Claude, OpenAI, Gemini, Groq, Bedrock) to remove deprecated and retired models, add current production lineups, and rotate defaults to vendor-recommended replacements. Verified against each vendor's official deprecation page on the day of release (Anthropic, OpenAI, Google AI, Groq, AWS Bedrock). Specifically: Claude removed `claude-sonnet-4-20250514` (Anthropic retires it on June 15, 2026); OpenAI replaced `gpt-4o-mini`/`gpt-4-turbo`/`gpt-4`/`gpt-3.5-turbo`/`o1-preview`/`o1-mini` with GPT-5.5, GPT-5, GPT-5 Mini, GPT-5 Nano, and o3, and the new default is `gpt-5`; Gemini removed the entire 1.5 family (already returns 404), the 2.0 Flash variants (shut down June 1, 2026), and the 2.5 family (all retire October 16, 2026), with the dropdown now offering `gemini-3.5-flash` (new default) and `gemini-3.1-flash-lite`; Groq removed `mixtral-8x7b-32768` and `gemma2-9b-it` and added `openai/gpt-oss-120b` and `openai/gpt-oss-20b`; AWS Bedrock refreshed from the year-old Claude 3 Sonnet / Claude 3 Haiku / Llama 3 / Titan Text lineup to Claude 4 family (Opus 4.7, Sonnet 4.6, Haiku 4.5), Amazon Nova 2 Lite + Nova Pro, and Llama 3.3 70B. Pre-1.4.23 customers picking any of these now-retired models would receive 404 from the vendor (Test Connection) or upstream API errors (any runtime call); 1.4.23 also resets the default model on Gemini, OpenAI, and Bedrock to current vendor-recommended replacements so fresh installs land on a working model without manual selection. No code paths beyond `Platform\Registry.php` are changed; existing installs that already have a working model stored in settings are unaffected.
 
@@ -497,6 +503,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release
 
 == Upgrade Notice ==
+
+= 1.4.24 =
+Recommended update. Adds Advanced Custom Fields integration (four `acf_*` tools that return ACF-formatted values instead of raw postmeta). Fixes `wc_create_product` ignoring the `type` argument and always creating simple products — the variable-product workflow end-to-end (create variable product -> create variations) was broken since the integration first shipped in 1.4.10. Adds setup-guide pointers in the wp.org listing and on the AI Platforms admin screen so new users can find the Connecting Claude walkthrough without having to discover the marketing site first.
 
 = 1.4.23 =
 Strongly recommended update. AI Platforms model dropdowns are now verified-current across Claude, OpenAI, Gemini, Groq, and AWS Bedrock — every retired or near-term-deprecating model is removed, current production models are added, and defaults are rotated to vendor-recommended replacements. Fixes Test Connection 404s and prevents runtime failures from picking models the vendor no longer serves. Verified against each vendor's official deprecation page on release day.
