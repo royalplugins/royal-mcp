@@ -23,7 +23,7 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 |---|---|
 | **Auth** | API key (`X-Royal-MCP-API-Key`) **or** OAuth 2.1 with PKCE + Dynamic Client Registration (RFC 7591) |
 | **Transport** | MCP 2025-11-25 Streamable HTTP (single `/mcp` endpoint, POST/GET/DELETE) |
-| **Tool count** | Up to 122 (67 WordPress core + 55 conditional plugin integrations) |
+| **Tool count** | Up to 126 (67 WordPress core + 59 conditional plugin integrations) |
 | **Rate limit** | 60 req/min per IP (configurable) |
 | **Session model** | Sliding 24h TTL with refresh-on-access |
 | **Activity log** | Every tool call logged (tool name + arg keys; argument values are never recorded) |
@@ -46,7 +46,7 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 - **Search** — Cross-content search by query
 - **SEO** — Yoast / Rank Math / AIOSEO meta read/write where the plugin is active
 
-### Plugin integrations (55 tools, conditional)
+### Plugin integrations (59 tools, conditional)
 
 Auto-register only when the integrated plugin is active.
 
@@ -55,10 +55,11 @@ Auto-register only when the integrated plugin is active.
 | WooCommerce | 26 | Products, variations, attributes, coupons, orders, customers, store stats |
 | GuardPress | 7 | Security score, failed logins, blocked IPs, vulnerability scans, audit log |
 | SiteVault | 6 | Trigger backups, monitor progress, list schedules |
+| Elementor | 6 | Clone pages, replace text, swap images, get outline, list templates, import templates |
 | Royal Ledger | 4 | Software costs, renewal dates, license keys (values never exposed) |
+| **Advanced Custom Fields** (new in 1.4.24) | **4** | **Read/write ACF fields with each field's Return Format respected (hydrated post objects, parsed repeater rows, image arrays); enumerate field groups for AI-driven discovery** |
 | Royal Links | 3 | Branded short links, click stats |
 | ForgeCache | 3 | Cache stats, clear cache, purge URL |
-| **Elementor** (new in 1.4.19) | **6** | **Clone-and-customize workflow: clone pages, replace text, swap images, get outline, list templates, import templates** |
 
 ## What we don't do
 
