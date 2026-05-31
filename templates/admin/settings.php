@@ -190,6 +190,21 @@ $royal_mcp_configured_platforms = $royal_mcp_settings['platforms'] ?? [];
                                            value="<?php echo esc_attr($royal_mcp_platform_id); ?>">
 
                                     <table class="form-table platform-fields">
+                                        <?php if ('claude' === $royal_mcp_platform_id) : ?>
+                                            <tr class="platform-field platform-claude-setup-hint">
+                                                <td colspan="2">
+                                                    <div class="notice notice-info inline" style="margin: 0; padding: 8px 12px;">
+                                                        <p style="margin: 0;">
+                                                            <strong><?php esc_html_e('Also connecting Claude TO this site?', 'royal-mcp'); ?></strong>
+                                                            <?php esc_html_e('This card configures outbound calls FROM your site to Claude\'s API. To connect Claude.ai or Claude Desktop to this site as an MCP server, follow the setup guide:', 'royal-mcp'); ?>
+                                                            <a href="https://royalplugins.com/support/royal-mcp/connecting-to-claude/" target="_blank" rel="noopener noreferrer">
+                                                                <?php esc_html_e('Connecting Claude to Royal MCP &rarr;', 'royal-mcp'); ?>
+                                                            </a>
+                                                        </p>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        <?php endif; ?>
                                         <?php
                                         foreach ($royal_mcp_platform['fields'] as $royal_mcp_field_id => $royal_mcp_field) :
                                             $royal_mcp_field_name = "royal_mcp_settings[platforms][{$royal_mcp_index}][{$royal_mcp_field_id}]";

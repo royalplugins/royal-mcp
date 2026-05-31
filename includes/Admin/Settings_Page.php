@@ -489,6 +489,27 @@ class Settings_Page {
      * Render platform-specific fields
      */
     public function render_platform_fields($platform, $index, $values = []) {
+        // The "AI Platforms" feature configures OUTBOUND calls (this site calling
+        // Claude's API). Customers frequently arrive at this card meaning to do
+        // the INBOUND setup (connecting Claude.ai to this site as an MCP server).
+        // Surface the setup-guide link on the Claude card so they don't get stuck.
+        if (isset($platform['id']) && 'claude' === $platform['id']) {
+            ?>
+            <tr class="platform-field platform-claude-setup-hint">
+                <td colspan="2">
+                    <div class="notice notice-info inline" style="margin: 0; padding: 8px 12px;">
+                        <p style="margin: 0;">
+                            <strong><?php esc_html_e('Also connecting Claude TO this site?', 'royal-mcp'); ?></strong>
+                            <?php esc_html_e('This card configures outbound calls FROM your site to Claude\'s API. To connect Claude.ai or Claude Desktop to this site as an MCP server, follow the setup guide:', 'royal-mcp'); ?>
+                            <a href="https://royalplugins.com/support/royal-mcp/connecting-to-claude/" target="_blank" rel="noopener noreferrer">
+                                <?php esc_html_e('Connecting Claude to Royal MCP &rarr;', 'royal-mcp'); ?>
+                            </a>
+                        </p>
+                    </div>
+                </td>
+            </tr>
+            <?php
+        }
         foreach ($platform['fields'] as $field_id => $field) {
             $field_name = "royal_mcp_settings[platforms][{$index}][{$field_id}]";
             $field_value = $values[$field_id] ?? ($field['default'] ?? '');
