@@ -8,6 +8,7 @@ use Royal_MCP\Integrations\RoyalLedger as RLIntegration;
 use Royal_MCP\Integrations\ForgeCache as FCIntegration;
 use Royal_MCP\Integrations\RoyalLinks as RLinksIntegration;
 use Royal_MCP\Integrations\Elementor as ElementorIntegration;
+use Royal_MCP\Integrations\ACF as ACFIntegration;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -473,6 +474,7 @@ class Server {
         $tools = array_merge( $tools, FCIntegration::get_tools() );
         $tools = array_merge( $tools, RLinksIntegration::get_tools() );
         $tools = array_merge( $tools, ElementorIntegration::get_tools() );
+        $tools = array_merge( $tools, ACFIntegration::get_tools() );
 
         return $tools;
     }
@@ -2101,6 +2103,9 @@ class Server {
                 }
                 if ( strpos( $name, 'elementor_' ) === 0 ) {
                     return ElementorIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'acf_' ) === 0 ) {
+                    return ACFIntegration::execute_tool( $name, $args );
                 }
                 throw new \Exception('Unknown tool: ' . esc_html($name));
         }
