@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & Gemini
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.4.24
+ * Version: 1.4.25
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ROYAL_MCP_VERSION', '1.4.24');
+define('ROYAL_MCP_VERSION', '1.4.25');
 define('ROYAL_MCP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ROYAL_MCP_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('ROYAL_MCP_PLUGIN_FILE', __FILE__);

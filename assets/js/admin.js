@@ -46,17 +46,39 @@ jQuery(document).ready(function($) {
     });
 
     // ==========================================
-    // Connector Settings
+    // Setup Guides accordion + Advanced collapsibles (1.4.25)
     // ==========================================
 
-    // Toggle advanced settings
-    $('.toggle-advanced').on('click', function(e) {
+    // MCP Client Setup Guides — accordion. Clicking a header toggles its
+    // own body open/closed; others remain in whatever state the user left them.
+    $(document).on('click', '.setup-guide-header', function(e) {
+        e.preventDefault();
+        const $item = $(this).closest('.setup-guide-item');
+        const isOpen = $item.hasClass('open');
+        $item.toggleClass('open');
+        $(this).attr('aria-expanded', isOpen ? 'false' : 'true');
+    });
+
+    // Advanced (Legacy REST API + manual OAuth credentials)
+    $(document).on('click', '.advanced-toggle', function(e) {
         e.preventDefault();
         const $btn = $(this);
-        const $fields = $btn.next('.advanced-fields');
+        const targetId = $btn.attr('aria-controls') || $btn.attr('id') + '-content';
+        const $content = $btn.next('.advanced-content').length
+            ? $btn.next('.advanced-content')
+            : $('#' + targetId);
 
-        $btn.toggleClass('open');
-        $fields.slideToggle(200);
+        if (!$content.length) return;
+
+        const willOpen = $content.is('[hidden]') || $content.is(':hidden');
+        $btn.toggleClass('open', willOpen);
+        $btn.attr('aria-expanded', willOpen ? 'true' : 'false');
+
+        if (willOpen) {
+            $content.removeAttr('hidden').hide().slideDown(200);
+        } else {
+            $content.slideUp(200, function() { $(this).attr('hidden', true); });
+        }
     });
 
     // Generate OAuth credentials
@@ -168,10 +190,7 @@ jQuery(document).ready(function($) {
         // Increment index
         platformIndex++;
 
-        showNotice('Platform added! Configure it and save your changes.');
-
-        // Show Claude connector settings if Claude/Anthropic was added
-        updateClaudeConnectorVisibility();
+        showNotice('Provider added. Configure it and save your changes.');
     });
 
     // Toggle platform config visibility
@@ -204,14 +223,11 @@ jQuery(document).ready(function($) {
                         <div class="empty-icon">
                             <span class="dashicons dashicons-cloud"></span>
                         </div>
-                        <h3>No AI Platforms Configured</h3>
-                        <p>Add your first AI platform to get started.</p>
+                        <h3>No outbound AI providers configured</h3>
+                        <p>Add a provider below to give this site outbound API access — purely optional, only needed if you want WordPress to call out to AI services.</p>
                     </div>
                 `);
             }
-
-            // Hide Claude connector settings if Claude/Anthropic was removed
-            updateClaudeConnectorVisibility();
         });
     });
 
@@ -530,24 +546,6 @@ jQuery(document).ready(function($) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
-    }
-
-    function updateClaudeConnectorVisibility() {
-        // Check if any platform is Claude
-        let hasClaude = false;
-        $('#platforms-list .platform-item').each(function() {
-            if ($(this).data('platform') === 'claude') {
-                hasClaude = true;
-                return false; // break
-            }
-        });
-
-        // Show or hide the Claude connector settings section
-        if (hasClaude) {
-            $('#claude-connector-settings').slideDown(200);
-        } else {
-            $('#claude-connector-settings').slideUp(200);
-        }
     }
 
     // ==========================================

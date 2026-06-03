@@ -1,5 +1,75 @@
 /* Royal MCP Admin Styles */
 
+/* ==========================================
+   1.4.25 — Universal Button + Icon Polish
+   (Foundation: every Royal MCP button is a flex
+   container so dashicons center visually instead
+   of sitting on the text baseline. color: inherit
+   on dashicons fixes the blue-on-blue invisible
+   icon on .button-primary.)
+   ========================================== */
+
+.royal-mcp-settings .button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    vertical-align: middle;
+    padding: 6px 14px;
+    min-height: 34px;
+    line-height: 1.4;
+}
+
+.royal-mcp-settings .button .dashicons {
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+    margin: 0;
+}
+
+/* Icon-only buttons (no text label) collapse to clean squares */
+.royal-mcp-settings .platform-actions .button,
+.royal-mcp-settings .platform-fields .toggle-password,
+.royal-mcp-settings .advanced-content .button.copy-btn,
+.royal-mcp-settings .advanced-content .toggle-password {
+    padding: 6px 8px;
+    min-width: 36px;
+    min-height: 34px;
+    gap: 0;
+}
+
+/* Platform card footer buttons (Get API Key, Documentation, Test Connection)
+   need a touch more breathing room — they sit at the visual base of each card. */
+.royal-mcp-settings .platform-links .button,
+.royal-mcp-settings .platform-test .button {
+    padding: 7px 16px;
+    min-height: 36px;
+    gap: 8px;
+}
+
+/* Add Provider button — primary CTA, slightly weightier */
+.royal-mcp-settings #add-platform-btn {
+    padding: 8px 18px;
+    min-height: 36px;
+}
+
+/* Visible focus ring for keyboard navigation */
+.royal-mcp-settings .button:focus-visible {
+    box-shadow: 0 0 0 2px #fff, 0 0 0 4px #2271b1;
+    outline: 0;
+}
+
+/* Description text contrast: bump from #646970 to #50575e and drop italic
+   (italic at 13px on f9f9f9 grey backgrounds was hard to scan). */
+.royal-mcp-settings .description,
+.royal-mcp-settings p.description {
+    color: #50575e;
+    font-style: normal;
+    line-height: 1.5;
+}
+
 .royal-mcp-settings .royal-mcp-settings-container {
     max-width: 1200px;
 }
@@ -1041,6 +1111,409 @@ input:checked + .slider:before {
     }
     .royal-mcp-founders-title {
         font-size: 20px;
+    }
+}
+
+/* ==========================================
+   1.4.25 — New layout elements
+   (MCP URL block, Cloudflare warning, Advanced toggle,
+    Setup Guides accordion, Outbound banner)
+   ========================================== */
+
+/* --- MCP Server URL prominent block --- */
+.mcp-url-block {
+    background: linear-gradient(135deg, #f0f6ff 0%, #f8fafc 100%);
+    border: 1px solid #c3d4e8;
+    border-left: 4px solid #2271b1;
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin: 8px 0 4px;
+}
+
+.mcp-url-block .mcp-url-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    font-size: 14px;
+    color: #1d2327;
+    margin: 0 0 10px;
+}
+
+.mcp-url-block .mcp-url-label .dashicons {
+    color: #2271b1;
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+}
+
+.mcp-url-block .mcp-url-input-group {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.mcp-url-block .mcp-url-input-group input {
+    flex: 1;
+    min-width: 280px;
+    background: #fff;
+    font-family: Consolas, Monaco, monospace;
+    font-size: 13px;
+    padding: 8px 12px;
+    border: 1px solid #c3d4e8;
+}
+
+.mcp-url-block .mcp-url-hint {
+    margin: 0 0 12px;
+    color: #50575e;
+    font-size: 13px;
+    line-height: 1.55;
+    font-style: normal;
+}
+
+/* --- Cloudflare / localhost warning callouts --- */
+.cloudflare-warning {
+    background: #fff8e1;
+    border-left: 4px solid #f0c83a;
+    border-radius: 4px;
+    padding: 10px 14px;
+    margin-top: 10px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.cloudflare-warning.warning-error {
+    background: #fbeaea;
+    border-left-color: #d63638;
+}
+
+.cloudflare-warning .dashicons {
+    color: #c19200;
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.cloudflare-warning.warning-error .dashicons {
+    color: #d63638;
+}
+
+.cloudflare-warning p {
+    margin: 0;
+    color: #50575e;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.cloudflare-warning strong {
+    color: #1d2327;
+}
+
+/* --- Advanced (REST + OAuth) collapsible --- */
+.advanced-toggle {
+    background: none;
+    border: 0;
+    color: #2271b1;
+    cursor: pointer;
+    padding: 10px 0 6px;
+    margin-top: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.advanced-toggle:hover,
+.advanced-toggle:focus {
+    color: #135e96;
+    outline: none;
+}
+
+.advanced-toggle:focus-visible {
+    box-shadow: 0 0 0 2px #fff, 0 0 0 4px #2271b1;
+    border-radius: 4px;
+}
+
+.advanced-toggle .dashicons {
+    transition: transform 0.2s ease;
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+}
+
+.advanced-toggle.open .dashicons {
+    transform: rotate(180deg);
+}
+
+.advanced-content {
+    margin-top: 12px;
+    padding: 4px 16px 16px;
+    background: #f9f9f9;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+}
+
+.advanced-content .form-table {
+    margin: 0;
+}
+
+.advanced-content .optional {
+    font-weight: 400;
+    color: #646970;
+    font-size: 12px;
+}
+
+/* --- MCP Client Setup Guides --- */
+.setup-guides-intro {
+    margin: 0 0 16px !important;
+    font-size: 14px !important;
+}
+
+.setup-guides-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.setup-guide-item {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    overflow: hidden;
+    transition: box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.setup-guide-item:hover {
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    border-color: #c3d4e8;
+}
+
+.setup-guide-item.open {
+    border-color: #2271b1;
+}
+
+.setup-guide-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 18px;
+    cursor: pointer;
+    background: #fafafa;
+    border: 0;
+    width: 100%;
+    text-align: left;
+    font-family: inherit;
+    font-size: 15px;
+    color: #1d2327;
+    transition: background 0.15s ease;
+}
+
+.setup-guide-header:hover {
+    background: #f5f5f5;
+}
+
+.setup-guide-header:focus-visible {
+    outline: 0;
+    background: #f0f6ff;
+}
+
+.setup-guide-item.open .setup-guide-header {
+    background: #fff;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.setup-guide-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 14px;
+    flex-shrink: 0;
+    letter-spacing: 0;
+}
+
+.setup-guide-icon.icon-claude         { background: #6B4C9A; }
+.setup-guide-icon.icon-chatgpt        { background: #10a37f; }
+.setup-guide-icon.icon-claude-desktop { background: #4a2d6b; }
+.setup-guide-icon.icon-cursor         { background: #1f1f1f; }
+
+.setup-guide-name {
+    flex: 1;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.setup-guide-name small {
+    display: block;
+    font-weight: 400;
+    color: #646970;
+    font-size: 12.5px;
+    margin-top: 2px;
+}
+
+.setup-guide-chevron {
+    transition: transform 0.2s ease;
+    color: #646970;
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+}
+
+.setup-guide-item.open .setup-guide-chevron {
+    transform: rotate(180deg);
+    color: #2271b1;
+}
+
+.setup-guide-body {
+    display: none;
+    padding: 16px 18px 18px 66px;
+    color: #50575e;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.setup-guide-item.open .setup-guide-body {
+    display: block;
+}
+
+.setup-guide-body p {
+    margin: 0 0 12px;
+}
+
+.setup-guide-body ol {
+    margin: 0 0 14px;
+    padding-left: 20px;
+}
+
+.setup-guide-body ol > li {
+    margin-bottom: 10px;
+}
+
+.setup-guide-body ol > li:last-child {
+    margin-bottom: 0;
+}
+
+.setup-guide-body code {
+    background: #f0f0f0;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 13px;
+    color: #c7254e;
+    font-family: Consolas, Monaco, monospace;
+}
+
+.setup-guide-code-block {
+    background: #1d2327;
+    color: #f6f7f7;
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin: 8px 0;
+    overflow-x: auto;
+    font-size: 12.5px;
+    line-height: 1.55;
+}
+
+.setup-guide-code-block code {
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    border-radius: 0;
+    font-size: inherit;
+}
+
+.setup-guide-full-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #2271b1;
+    font-weight: 500;
+    text-decoration: none;
+    font-size: 13px;
+    margin-top: 4px;
+}
+
+.setup-guide-full-link:hover {
+    color: #135e96;
+    text-decoration: underline;
+}
+
+.setup-guide-full-link .dashicons {
+    font-size: 14px;
+    width: 14px;
+    height: 14px;
+}
+
+/* --- Outbound disambiguation banner --- */
+.outbound-banner {
+    background: #f0f6ff;
+    border: 1px solid #c3d4e8;
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 4px 0 20px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.outbound-banner .dashicons {
+    color: #2271b1;
+    font-size: 20px;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.outbound-banner p {
+    margin: 0;
+    color: #50575e;
+    font-size: 13.5px;
+    line-height: 1.6;
+}
+
+.outbound-banner strong {
+    color: #1d2327;
+}
+
+/* --- Misc 1.4.25 fixes --- */
+.warning-text {
+    color: #d63638 !important;
+}
+
+/* Responsive overrides for new layout */
+@media screen and (max-width: 782px) {
+    .mcp-url-block {
+        padding: 14px 16px;
+    }
+    .mcp-url-block .mcp-url-input-group {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .mcp-url-block .mcp-url-input-group input {
+        min-width: 0;
+        width: 100%;
+    }
+    .setup-guide-body {
+        padding: 14px 16px 16px;
+    }
+    .setup-guide-code-block {
+        font-size: 11.5px;
+    }
+    .outbound-banner {
+        padding: 12px 14px;
+    }
+    .advanced-content {
+        padding: 4px 12px 12px;
     }
 }
 
