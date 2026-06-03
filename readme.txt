@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.24
+Stable tag: 1.4.25
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -310,6 +310,16 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Changelog ==
 
+= 1.4.25 =
+* UX: MCP Server URL is now surfaced prominently in General Settings as the canonical inbound URL for every MCP client (Claude.ai, ChatGPT, Claude Desktop, Cursor, Gemini, and any other MCP host). Previously the same URL was tucked into a card labeled "Claude Connector Settings — FOR CLAUDE.AI", making it invisible to users setting up non-Claude clients who would then search the page for a ChatGPT-specific URL that doesn't exist. The new section header clarifies that the same URL works for all MCP-compatible clients.
+* UX: New "MCP Client Setup Guides" section with in-product accordion walkthroughs for Claude.ai, ChatGPT, Claude Desktop, and Cursor. Each guide references the canonical MCP Server URL from General Settings, with deep links to the full screenshot walkthroughs on royalplugins.com/support/. Previously only Claude.ai had an in-product Quick Setup Guide and ChatGPT / Claude Desktop / Cursor users had to leave the page to find setup instructions.
+* UX: "AI Platforms" section renamed to "Outbound AI Provider Configuration" with a prominent disambiguation banner clarifying that this section is for OUTBOUND API calls only (your site calling Claude or OpenAI), distinct from the INBOUND MCP server flow above. The "AI Platforms" naming was collision-prone — customers configuring an MCP client for inbound use would frequently mistake this outbound-only provider list for the place to "set up Claude/ChatGPT", enter their OpenAI API key, and then find that no inbound connection was made.
+* UX: Cloudflare warning ("turn off Block AI Bots") relocated from the Claude-only card to General Settings next to the MCP URL — it applies to every MCP client, not just Claude, but was previously only shown to users with the Claude provider configured.
+* UX: Legacy REST API Base URL demoted into a collapsible "Advanced" subsection within General Settings, alongside manual OAuth Client ID / Client Secret credentials. Most users connect via the canonical MCP Server URL and never need these.
+* Fix: Universal admin icon alignment pass. Every dashicon in every button on the Royal MCP settings page is now flex-centered relative to its container instead of sitting on the text baseline. Add Provider button no longer renders as a blue button with an invisible blue icon (dashicons now inherit white text color from `.button-primary`). Reset OAuth State, Copy, Regenerate, Test Connection, Add Provider, eye/visibility toggle, and the platform card collapse/delete buttons all share the same centering rule — previously each was hand-tuned per-button with mixed results, and a `line-height: 1.4` hack on the Reset OAuth button has been removed.
+* Fix: Description helper text contrast bumped from `#646970` italic to `#50575e` non-italic for readability on the gray `#f9f9f9` postbox backgrounds. The italic at 13px was hard to scan, particularly on the platform configuration cards.
+* Fix: Visible keyboard focus ring on all buttons in the settings page (2px white inner ring + 2px brand-blue outer ring) for accessibility.
+
 = 1.4.24 =
 * New: Advanced Custom Fields integration. Four new MCP tools — `acf_get_field`, `acf_get_fields`, `acf_update_field`, `acf_get_field_groups` — registered automatically when ACF (free or Pro) is active. The dedicated integration returns values formatted per each field's Return Format setting (hydrated post objects, parsed repeater rows, image arrays, attachment IDs) instead of the raw serialized values WordPress's standard meta API returns. `acf_get_fields` bundles discovery and read into one call — AI agents can list every ACF field defined on a post with its name, label, type, and value in a single round-trip. WP_Post / WP_User / WP_Term return values are flattened to small JSON-encodable arrays so the LLM gets useful structure without raw WP objects in the response payload. Sites without ACF active see no change — the tools are conditionally registered behind `function_exists('get_field')`.
 * Fix: `wc_create_product` now respects the `type` argument and creates the matching WooCommerce product class (Simple, Variable, Grouped, External). Pre-1.4.24 the tool's input schema advertised the four product types but the handler hardcoded `WC_Product_Simple` regardless of the caller's choice — so passing `type: variable` silently returned a simple product, and the downstream `wc_create_variation` call then failed with "Product is not a variable product", breaking the variable-product workflow end-to-end. Unsupported product types now throw an explicit exception so callers see the failure instead of getting a wrong-typed product back. Bug had been present since the WooCommerce integration first shipped in 1.4.10.
@@ -503,6 +513,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release
 
 == Upgrade Notice ==
+
+= 1.4.25 =
+Recommended update. Settings page UX pass: the MCP Server URL is now surfaced prominently in General Settings as the canonical URL for every MCP client (Claude.ai, ChatGPT, Claude Desktop, Cursor), instead of being tucked into a card labeled "FOR CLAUDE.AI" that hid it from non-Claude users. New in-product setup guides for Claude.ai, ChatGPT, Claude Desktop, and Cursor. "AI Platforms" section renamed and clarified as outbound-only configuration. Universal icon alignment fix across every button on the settings page, including the previously-invisible icon on the Add Provider button.
 
 = 1.4.24 =
 Recommended update. Adds Advanced Custom Fields integration (four `acf_*` tools that return ACF-formatted values instead of raw postmeta). Fixes `wc_create_product` ignoring the `type` argument and always creating simple products — the variable-product workflow end-to-end (create variable product -> create variations) was broken since the integration first shipped in 1.4.10. Adds setup-guide pointers in the wp.org listing and on the AI Platforms admin screen so new users can find the Connecting Claude walkthrough without having to discover the marketing site first.
