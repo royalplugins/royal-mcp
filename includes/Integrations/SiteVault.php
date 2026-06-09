@@ -88,6 +88,13 @@ class SiteVault {
 
 		$manager = \RB_Backup_Manager::instance();
 
+		// 1.4.26 — all SiteVault tools are admin-tier. Backups can contain the
+		// entire site (database + uploads + plugins). Even read-only listings
+		// expose backup contents, schedules, and storage destinations.
+		if ( ! current_user_can( 'manage_options' ) ) {
+			throw new \Exception( 'You do not have permission to use SiteVault tools.' );
+		}
+
 		switch ( $name ) {
 			case 'sv_get_backups':
 				$query_args = [

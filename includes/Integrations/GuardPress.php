@@ -84,6 +84,15 @@ class GuardPress {
 
 		$guardpress = \GuardPress::get_instance();
 
+		// 1.4.26 — all GuardPress tools are admin-tier. Security state
+		// (failed-login lists, blocked IPs, audit logs, vulnerability scan
+		// results) is sensitive — exposing it to a Subscriber tells an
+		// attacker which surfaces the site is already weak on. manage_options
+		// matches GuardPress's own admin-screen gating.
+		if ( ! current_user_can( 'manage_options' ) ) {
+			throw new \Exception( 'You do not have permission to use GuardPress security tools.' );
+		}
+
 		switch ( $name ) {
 			case 'gp_get_security_status':
 				if ( ! method_exists( 'GuardPress_Settings', 'get_security_score' ) ) {

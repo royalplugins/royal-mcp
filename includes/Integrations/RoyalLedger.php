@@ -102,6 +102,12 @@ class RoyalLedger {
 
 		switch ( $name ) {
 			case 'rl_get_costs':
+				// 1.4.26 — Royal Ledger holds financial bookkeeping (costs,
+				// renewals, licensed-products). manage_options matches the
+				// plugin's own admin-screen gating.
+				if ( ! current_user_can( 'manage_options' ) ) {
+					throw new \Exception( 'You do not have permission to view Royal Ledger cost data.' );
+				}
 				$query = [
 					'limit'  => min( intval( $args['limit'] ?? 50 ), 200 ),
 					'status' => sanitize_text_field( $args['status'] ?? 'active' ),
@@ -113,6 +119,9 @@ class RoyalLedger {
 				return array_map( [ __CLASS__, 'format_cost_item' ], $items );
 
 			case 'rl_create_cost':
+				if ( ! current_user_can( 'manage_options' ) ) {
+					throw new \Exception( 'You do not have permission to create Royal Ledger cost entries.' );
+				}
 				$name_arg = sanitize_text_field( $args['name'] ?? '' );
 				if ( empty( $name_arg ) ) {
 					throw new \Exception( 'name is required' );
@@ -147,6 +156,9 @@ class RoyalLedger {
 				return self::format_cost_item( $created );
 
 			case 'rl_get_renewals':
+				if ( ! current_user_can( 'manage_options' ) ) {
+					throw new \Exception( 'You do not have permission to view Royal Ledger renewal data.' );
+				}
 				$limit  = min( intval( $args['limit'] ?? 10 ), 100 );
 				$items  = \RLEDGER_Items::get_upcoming_renewals( $limit );
 				return array_map(
@@ -168,6 +180,12 @@ class RoyalLedger {
 				);
 
 			case 'rl_get_keys':
+				// 1.4.26 — license-key listings (even masked) are admin-only.
+				// The masked preview still reveals the existence + prefix of
+				// every license key on the site.
+				if ( ! current_user_can( 'manage_options' ) ) {
+					throw new \Exception( 'You do not have permission to view Royal Ledger license keys.' );
+				}
 				if ( ! class_exists( 'RLEDGER_Keys' ) ) {
 					throw new \Exception( 'RLEDGER_Keys class not loaded' );
 				}

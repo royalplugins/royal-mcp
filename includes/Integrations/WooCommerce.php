@@ -479,6 +479,15 @@ class WooCommerce {
 			throw new \Exception( 'WooCommerce is not active' );
 		}
 
+		// 1.4.26 — every WC tool gates behind manage_woocommerce. This is the
+		// umbrella cap WC's own admin screens require: admins + Shop Manager
+		// role have it; Customer, Subscriber, Contributor, and Editor do NOT.
+		// Per-action additions (publish_products, delete_others_shop_orders,
+		// etc.) layer on top below where the action is destructive.
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			throw new \Exception( 'You do not have permission to use WooCommerce tools.' );
+		}
+
 		switch ( $name ) {
 			case 'wc_get_products':
 				$query_args = [

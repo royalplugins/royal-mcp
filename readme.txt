@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.25
+Stable tag: 1.4.26
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -310,6 +310,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Changelog ==
 
+= 1.4.26 =
+* Security: Per-tool WordPress capability checks added to all content, user, term, comment, and integration tools. Pre-1.4.26, an authenticated OAuth Bearer token issued to a low-privileged WordPress role (Subscriber, Contributor) could be used to invoke admin-only operations via Royal MCP tools &mdash; create/update/delete admin-owned content, enumerate users, read private posts and post meta, manage WooCommerce records, trigger SiteVault backups, read GuardPress security audit logs, and more. The API-key authentication path was unaffected (it explicitly runs as the administrator role per 1.4.6, since the API key is admin-only-accessible). Per-tool checks now uniformly enforce: `read_post` on read tools (object-level), `list_users` on user-read tools, `edit_post` / `edit_others_posts` / `delete_post` / `delete_others_posts` on post-write tools (object-level via map_meta_cap), `manage_categories` / per-taxonomy caps on term tools, `edit_comment` on comment-delete, `manage_woocommerce` on WooCommerce tools, and `manage_options` on integration tools that touch backups, security state, or financial data. The list-tool status filters (`wp_get_posts`, `wp_get_comments`) were additionally converted from a denylist of restricted statuses to a positive allowlist of public statuses, so unexpected status values (`any`, unknown strings, typos) fail closed and require the matching read cap. The 1.4.23 ACF integration + 1.4.6 media upload + 1.4.17 comment-moderation + 1.4.17 menu tools were already correctly gated; 1.4.26 brings the rest of the tool surface to that same pattern. Reported by Erwan Le Rousseau (WPScan / Automattic). Recommended for all users.
+
 = 1.4.25 =
 * UX: MCP Server URL is now surfaced prominently in General Settings as the canonical inbound URL for every MCP client (Claude.ai, ChatGPT, Claude Desktop, Cursor, Gemini, and any other MCP host). Previously the same URL was tucked into a card labeled "Claude Connector Settings — FOR CLAUDE.AI", making it invisible to users setting up non-Claude clients who would then search the page for a ChatGPT-specific URL that doesn't exist. The new section header clarifies that the same URL works for all MCP-compatible clients.
 * UX: New "MCP Client Setup Guides" section with in-product accordion walkthroughs for Claude.ai, ChatGPT, Claude Desktop, and Cursor. Each guide references the canonical MCP Server URL from General Settings, with deep links to the full screenshot walkthroughs on royalplugins.com/support/. Previously only Claude.ai had an in-product Quick Setup Guide and ChatGPT / Claude Desktop / Cursor users had to leave the page to find setup instructions.
@@ -513,6 +516,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release
 
 == Upgrade Notice ==
+
+= 1.4.26 =
+Security patch — per-tool WordPress capability checks across the OAuth tool surface. Pre-1.4.26, tokens issued to Subscriber/Contributor roles could invoke admin-only operations. The API-key path was unaffected. Reported by Erwan Le Rousseau (WPScan / Automattic). Recommended for all users.
 
 = 1.4.25 =
 Recommended update. Settings page UX pass: the MCP Server URL is now surfaced prominently in General Settings as the canonical URL for every MCP client (Claude.ai, ChatGPT, Claude Desktop, Cursor), instead of being tucked into a card labeled "FOR CLAUDE.AI" that hid it from non-Claude users. New in-product setup guides for Claude.ai, ChatGPT, Claude Desktop, and Cursor. "AI Platforms" section renamed and clarified as outbound-only configuration. Universal icon alignment fix across every button on the settings page, including the previously-invisible icon on the Add Provider button.
