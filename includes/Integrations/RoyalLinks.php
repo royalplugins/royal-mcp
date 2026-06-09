@@ -83,6 +83,11 @@ class RoyalLinks {
 
 		switch ( $name ) {
 			case 'rlinks_get_links':
+				// 1.4.26 — Royal Links use the royal_link CPT; map to its
+				// edit_posts cap so listings respect what the role can see.
+				if ( ! current_user_can( 'edit_posts' ) ) {
+					throw new \Exception( 'You do not have permission to list Royal Links.' );
+				}
 				$query_args = [
 					'post_type'      => 'royal_link',
 					'post_status'    => 'publish',
@@ -107,6 +112,11 @@ class RoyalLinks {
 				return array_map( [ __CLASS__, 'format_link' ], $posts );
 
 			case 'rlinks_create_link':
+				// 1.4.26 — creating a redirect modifies how visitors leave the
+				// site; require publish_posts to mirror the create-post pattern.
+				if ( ! current_user_can( 'publish_posts' ) ) {
+					throw new \Exception( 'You do not have permission to create Royal Links.' );
+				}
 				if ( ! class_exists( 'Royal_Links_Post_Type' ) ) {
 					throw new \Exception( 'Royal_Links_Post_Type class not loaded' );
 				}
@@ -147,6 +157,12 @@ class RoyalLinks {
 				$post = get_post( $link_id );
 				if ( ! $post || $post->post_type !== 'royal_link' ) {
 					throw new \Exception( 'Royal Link not found for ID ' . esc_html( (string) $link_id ) );
+				}
+				// 1.4.26 — stats can include click counts + referrers; gate
+				// behind the link's own edit_post cap so a Subscriber can't
+				// read another author's link analytics.
+				if ( ! current_user_can( 'edit_post', $link_id ) ) {
+					throw new \Exception( 'You do not have permission to view stats for this Royal Link.' );
 				}
 				$period = sanitize_text_field( $args['period'] ?? '30days' );
 				$stats  = \Royal_Links_Tracker::get_link_stats( $link_id, $period );

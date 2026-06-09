@@ -74,6 +74,11 @@ class ForgeCache {
 
 		switch ( $name ) {
 			case 'fc_clear_cache':
+				// 1.4.26 — cache management is admin-tier; flushing site cache
+				// is destructive (forces re-generation across the whole site).
+				if ( ! current_user_can( 'manage_options' ) ) {
+					throw new \Exception( 'You do not have permission to clear the ForgeCache page cache.' );
+				}
 				\ForgeCache_Cache::clear_all_cache_static();
 				return [
 					'success' => true,
@@ -81,6 +86,9 @@ class ForgeCache {
 				];
 
 			case 'fc_get_cache_stats':
+				if ( ! current_user_can( 'manage_options' ) ) {
+					throw new \Exception( 'You do not have permission to view ForgeCache stats.' );
+				}
 				$stats = \ForgeCache_Cache::get_cache_stats();
 				return [
 					'total_files'      => (int) ( $stats['total_files'] ?? 0 ),
@@ -98,6 +106,12 @@ class ForgeCache {
 				$post_id = url_to_postid( $url );
 				if ( ! $post_id ) {
 					throw new \Exception( 'Could not resolve URL to a WordPress post or page on this site: ' . esc_html( $url ) );
+				}
+				// 1.4.26 — purging the cache for a specific post requires
+				// edit_post on the target (so a Subscriber can't purge an
+				// admin's draft cache).
+				if ( ! current_user_can( 'edit_post', $post_id ) ) {
+					throw new \Exception( 'You do not have permission to purge the cache for this post.' );
 				}
 				$cache = \ForgeCache_Cache::instance();
 				if ( method_exists( $cache, 'clear_post_cache' ) ) {

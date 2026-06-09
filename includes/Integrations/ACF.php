@@ -108,6 +108,11 @@ class ACF {
 				if ( ! get_post( $post_id ) ) {
 					throw new \Exception( 'Post not found for ID ' . esc_html( (string) $post_id ) );
 				}
+				// 1.4.26 — ACF field values live in post meta; gate behind the
+				// parent post's read cap (private posts' ACF data is not public).
+				if ( ! current_user_can( 'read_post', $post_id ) ) {
+					throw new \Exception( 'You do not have permission to read ACF fields on this post.' );
+				}
 				$field_object = get_field_object( $field_name, $post_id, true, true );
 				if ( ! $field_object ) {
 					return [
@@ -135,6 +140,9 @@ class ACF {
 				}
 				if ( ! get_post( $post_id ) ) {
 					throw new \Exception( 'Post not found for ID ' . esc_html( (string) $post_id ) );
+				}
+				if ( ! current_user_can( 'read_post', $post_id ) ) {
+					throw new \Exception( 'You do not have permission to read ACF fields on this post.' );
 				}
 				$objects = get_field_objects( $post_id, true, true );
 				if ( ! $objects ) {
@@ -168,6 +176,11 @@ class ACF {
 				if ( ! get_post( $post_id ) ) {
 					throw new \Exception( 'Post not found for ID ' . esc_html( (string) $post_id ) );
 				}
+				// 1.4.26 — writing ACF fields modifies the post; require the
+				// parent post's edit cap.
+				if ( ! current_user_can( 'edit_post', $post_id ) ) {
+					throw new \Exception( 'You do not have permission to edit ACF fields on this post.' );
+				}
 				if ( ! array_key_exists( 'value', $args ) ) {
 					throw new \Exception( 'value is required (pass null to clear the field)' );
 				}
@@ -186,6 +199,11 @@ class ACF {
 				];
 
 			case 'acf_get_field_groups':
+				// 1.4.26 — discovery of registered field groups is editor-tier
+				// metadata (which custom fields exist on which post types).
+				if ( ! current_user_can( 'edit_posts' ) ) {
+					throw new \Exception( 'You do not have permission to discover ACF field groups.' );
+				}
 				$filter = [];
 				if ( ! empty( $args['post_type'] ) ) {
 					$filter['post_type'] = sanitize_key( $args['post_type'] );

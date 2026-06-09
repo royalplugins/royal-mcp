@@ -1031,6 +1031,14 @@ class Server {
         switch ($name) {
             // ==================== POSTS ====================
             case 'wp_get_posts':
+                // 1.4.26 — per-tool cap check (WPScan / Erwan Le Rousseau report,
+                // CVSS 8.1). Pre-1.4.26 a Subscriber OAuth token could pass a
+                // non-public `status` (draft/private/trash) and receive
+                // admin-owned content. Require `read` to call at all, and
+                // strip restricted statuses unless the user can read them.
+                if (!current_user_can('read')) {
+                    throw new \Exception('You do not have permission to list posts.');
+                }
                 $query_args = [
                     'numberposts' => min(intval($args['per_page'] ?? 10), 100),
                     's' => sanitize_text_field($args['search'] ?? ''),
@@ -1041,7 +1049,29 @@ class Server {
                     if (!$pto || !$pto->public) throw new \Exception('Invalid or non-public post type: ' . esc_html($pt));
                     $query_args['post_type'] = $pt;
                 }
-                if (!empty($args['status'])) $query_args['post_status'] = sanitize_text_field($args['status']);
+                if (!empty($args['status'])) {
+                    $requested_status = sanitize_text_field($args['status']);
+                    // Allowlist of public WP post statuses (defaults to ['publish'];
+                    // honors any custom statuses registered as public). Anything
+                    // else — including 'any', 'private', 'draft', 'pending',
+                    // 'future', 'trash', unknown values, or typos — requires
+                    // read_private_posts for the relevant post type. Fail closed
+                    // on unexpected values. Erwan Le Rousseau's follow-up finding
+                    // on the original 1.4.26 patch: the prior denylist did not
+                    // match `status=any`, which let a low-privileged token
+                    // enumerate title + excerpt of private and draft posts.
+                    $public_statuses = get_post_stati(['public' => true]);
+                    if (!in_array($requested_status, $public_statuses, true)) {
+                        $pto_for_caps = !empty($args['post_type']) ? get_post_type_object(sanitize_text_field($args['post_type'])) : get_post_type_object('post');
+                        $needed_cap = $pto_for_caps && !empty($pto_for_caps->cap->read_private_posts)
+                            ? $pto_for_caps->cap->read_private_posts
+                            : 'read_private_posts';
+                        if (!current_user_can($needed_cap)) {
+                            throw new \Exception('You do not have permission to list ' . esc_html($requested_status) . ' posts.');
+                        }
+                    }
+                    $query_args['post_status'] = $requested_status;
+                }
                 $posts = get_posts($query_args);
                 return array_map(function($p) {
                     return [
@@ -1058,6 +1088,11 @@ class Server {
             case 'wp_get_post':
                 $post = get_post(intval($args['id']));
                 if (!$post) throw new \Exception('Post not found');
+                // 1.4.26 — per-post read check. read_post via map_meta_cap
+                // resolves to read_private_posts for non-public statuses.
+                if (!current_user_can('read_post', $post->ID)) {
+                    throw new \Exception('You do not have permission to read this post.');
+                }
                 return [
                     'id' => $post->ID,
                     'title' => $post->post_title,
@@ -1075,6 +1110,21 @@ class Server {
                 $post_type = sanitize_text_field($args['post_type'] ?? 'post');
                 $pto = get_post_type_object($post_type);
                 if (!$pto || !$pto->public) throw new \Exception('Invalid or non-public post type: ' . esc_html($post_type));
+                // 1.4.26 — per-post-type edit + publish caps. Pre-1.4.26 a
+                // Subscriber OAuth token could create-as-self including
+                // status=publish. The per-PT cap object maps `edit_posts` to
+                // the correct cap for custom post types (e.g. `edit_pages`).
+                $create_cap = !empty($pto->cap->edit_posts) ? $pto->cap->edit_posts : 'edit_posts';
+                if (!current_user_can($create_cap)) {
+                    throw new \Exception('You do not have permission to create ' . esc_html($post_type) . ' posts.');
+                }
+                $requested_status = isset($args['status']) ? sanitize_text_field($args['status']) : 'draft';
+                if ('publish' === $requested_status) {
+                    $publish_cap = !empty($pto->cap->publish_posts) ? $pto->cap->publish_posts : 'publish_posts';
+                    if (!current_user_can($publish_cap)) {
+                        throw new \Exception('You do not have permission to publish ' . esc_html($post_type) . ' posts.');
+                    }
+                }
                 // Pre-validate featured_media so we don't create an orphan post if the ID is bad.
                 if (isset($args['featured_media']) && intval($args['featured_media']) > 0) {
                     $fm = get_post(intval($args['featured_media']));
@@ -1116,6 +1166,13 @@ class Server {
 
             case 'wp_update_post':
                 $post_id = intval($args['id']);
+                // 1.4.26 — object-level edit_post resolves to edit_others_posts
+                // when the target isn't owned by the current user, and to the
+                // PT-specific cap (edit_page etc.) automatically via map_meta_cap.
+                if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
+                if (!current_user_can('edit_post', $post_id)) {
+                    throw new \Exception('You do not have permission to edit this post.');
+                }
                 // Pre-validate featured_media before mutating the post.
                 if (isset($args['featured_media']) && intval($args['featured_media']) > 0) {
                     $fm = get_post(intval($args['featured_media']));
@@ -1144,17 +1201,31 @@ class Server {
                 return ['id' => $post_id, 'message' => 'Post updated successfully'];
 
             case 'wp_delete_post':
+                $post_id = intval($args['id']);
+                if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
+                // 1.4.26 — object-level delete_post via map_meta_cap resolves
+                // to delete_others_posts when the target isn't owned by the
+                // current user.
+                if (!current_user_can('delete_post', $post_id)) {
+                    throw new \Exception('You do not have permission to delete this post.');
+                }
                 $force = !empty($args['force']);
-                $result = wp_delete_post(intval($args['id']), $force);
+                $result = wp_delete_post($post_id, $force);
                 if (!$result) throw new \Exception('Failed to delete post');
                 return ['message' => $force ? 'Post permanently deleted' : 'Post moved to trash'];
 
             case 'wp_count_posts':
+                if (!current_user_can('read')) {
+                    throw new \Exception('You do not have permission to view post counts.');
+                }
                 $type = sanitize_text_field($args['post_type'] ?? 'post');
                 $counts = wp_count_posts($type);
                 return (array) $counts;
 
             case 'wp_get_post_types':
+                if (!current_user_can('read')) {
+                    throw new \Exception('You do not have permission to list post types.');
+                }
                 $types = get_post_types(['public' => true], 'objects');
                 return array_values(array_map(function($pt) {
                     return [
@@ -1168,6 +1239,9 @@ class Server {
                 }, $types));
 
             case 'wp_get_taxonomies':
+                if (!current_user_can('read')) {
+                    throw new \Exception('You do not have permission to list taxonomies.');
+                }
                 $taxonomies = get_taxonomies(['public' => true], 'objects');
                 return array_values(array_map(function($tax) {
                     // 1.4.12 — `slug` added as a clearer alias for the taxonomy
@@ -1189,6 +1263,9 @@ class Server {
 
             // ==================== PAGES ====================
             case 'wp_get_pages':
+                if (!current_user_can('read')) {
+                    throw new \Exception('You do not have permission to list pages.');
+                }
                 $page_args = ['number' => min(intval($args['per_page'] ?? 10), 100)];
                 if (!empty($args['parent'])) $page_args['parent'] = intval($args['parent']);
                 $pages = get_pages($page_args);
@@ -1205,6 +1282,9 @@ class Server {
             case 'wp_get_page':
                 $page = get_post(intval($args['id']));
                 if (!$page || $page->post_type !== 'page') throw new \Exception('Page not found');
+                if (!current_user_can('read_post', $page->ID)) {
+                    throw new \Exception('You do not have permission to read this page.');
+                }
                 return [
                     'id' => $page->ID,
                     'title' => $page->post_title,
@@ -1215,11 +1295,18 @@ class Server {
                 ];
 
             case 'wp_create_page':
+                if (!current_user_can('edit_pages')) {
+                    throw new \Exception('You do not have permission to create pages.');
+                }
+                $page_status = in_array($args['status'] ?? 'draft', ['publish', 'draft']) ? $args['status'] : 'draft';
+                if ('publish' === $page_status && !current_user_can('publish_pages')) {
+                    throw new \Exception('You do not have permission to publish pages.');
+                }
                 // 1.4.21 — see wp_create_post above (issue #15).
                 $page_data = [
                     'post_title' => sanitize_text_field($args['title']),
                     'post_content' => wp_slash($args['content']),
-                    'post_status' => in_array($args['status'] ?? 'draft', ['publish', 'draft']) ? $args['status'] : 'draft',
+                    'post_status' => $page_status,
                     'post_type' => 'page',
                 ];
                 if (!empty($args['parent'])) $page_data['post_parent'] = intval($args['parent']);
@@ -1228,23 +1315,38 @@ class Server {
                 return ['id' => $page_id, 'message' => 'Page created successfully', 'url' => get_permalink($page_id)];
 
             case 'wp_update_page':
-                $data = ['ID' => intval($args['id'])];
+                $page_id = intval($args['id']);
+                $existing_page = $page_id > 0 ? get_post($page_id) : null;
+                if (!$existing_page || $existing_page->post_type !== 'page') throw new \Exception('Page not found.');
+                if (!current_user_can('edit_post', $page_id)) {
+                    throw new \Exception('You do not have permission to edit this page.');
+                }
+                $data = ['ID' => $page_id];
                 if (isset($args['title'])) $data['post_title'] = sanitize_text_field($args['title']);
                 // 1.4.21 — see wp_create_post above (issue #15).
                 if (isset($args['content'])) $data['post_content'] = wp_slash($args['content']);
                 if (isset($args['status'])) $data['post_status'] = sanitize_text_field($args['status']);
                 $result = wp_update_post($data);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
-                return ['id' => $args['id'], 'message' => 'Page updated successfully'];
+                return ['id' => $page_id, 'message' => 'Page updated successfully'];
 
             case 'wp_delete_page':
+                $page_id = intval($args['id']);
+                $existing_page = $page_id > 0 ? get_post($page_id) : null;
+                if (!$existing_page || $existing_page->post_type !== 'page') throw new \Exception('Page not found.');
+                if (!current_user_can('delete_post', $page_id)) {
+                    throw new \Exception('You do not have permission to delete this page.');
+                }
                 $force = !empty($args['force']);
-                $result = wp_delete_post(intval($args['id']), $force);
+                $result = wp_delete_post($page_id, $force);
                 if (!$result) throw new \Exception('Failed to delete page');
                 return ['message' => $force ? 'Page permanently deleted' : 'Page moved to trash'];
 
             // ==================== MEDIA ====================
             case 'wp_get_media':
+                if (!current_user_can('upload_files')) {
+                    throw new \Exception('You do not have permission to view the media library.');
+                }
                 $media_args = [
                     'post_type' => 'attachment',
                     'numberposts' => min(intval($args['per_page'] ?? 10), 100),
@@ -1265,6 +1367,9 @@ class Server {
             case 'wp_get_media_item':
                 $media = get_post(intval($args['id']));
                 if (!$media || $media->post_type !== 'attachment') throw new \Exception('Media not found');
+                if (!current_user_can('read_post', $media->ID)) {
+                    throw new \Exception('You do not have permission to read this media item.');
+                }
                 return [
                     'id' => $media->ID,
                     'title' => $media->post_title,
@@ -1373,23 +1478,38 @@ class Server {
                 return ['id' => $media_id, 'message' => 'Media updated successfully'];
 
             case 'wp_delete_media':
+                $media_id = intval($args['id']);
+                $existing_media = $media_id > 0 ? get_post($media_id) : null;
+                if (!$existing_media || $existing_media->post_type !== 'attachment') throw new \Exception('Media not found.');
+                if (!current_user_can('delete_post', $media_id)) {
+                    throw new \Exception('You do not have permission to delete this media item.');
+                }
                 $force = !empty($args['force']);
-                $result = wp_delete_attachment(intval($args['id']), $force);
+                $result = wp_delete_attachment($media_id, $force);
                 if (!$result) throw new \Exception('Failed to delete media');
                 return ['message' => 'Media deleted successfully'];
 
             case 'wp_count_media':
+                if (!current_user_can('upload_files')) {
+                    throw new \Exception('You do not have permission to view media library counts.');
+                }
                 $counts = wp_count_attachments();
                 return (array) $counts;
 
             // ==================== CATEGORIES & TAGS ====================
             case 'wp_get_categories':
+                if (!current_user_can('read')) {
+                    throw new \Exception('You do not have permission to list categories.');
+                }
                 $cats = get_categories(['number' => min(intval($args['per_page'] ?? 100), 100), 'hide_empty' => false]);
                 return array_map(function($c) {
                     return ['id' => $c->term_id, 'name' => $c->name, 'slug' => $c->slug, 'count' => $c->count, 'parent' => $c->parent];
                 }, $cats);
 
             case 'wp_get_tags':
+                if (!current_user_can('read')) {
+                    throw new \Exception('You do not have permission to list tags.');
+                }
                 $tags = get_tags(['number' => min(intval($args['per_page'] ?? 100), 100), 'hide_empty' => false]);
                 return array_map(function($t) {
                     return ['id' => $t->term_id, 'name' => $t->name, 'slug' => $t->slug, 'count' => $t->count];
@@ -1399,6 +1519,13 @@ class Server {
                 $taxonomy = sanitize_text_field($args['taxonomy']);
                 if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
                 $tax_obj = get_taxonomy($taxonomy);
+                // 1.4.26 — per-taxonomy edit_terms cap (resolves to
+                // manage_categories for the category taxonomy, manage_post_tags
+                // for tags, custom caps for custom taxonomies).
+                $edit_terms_cap = $tax_obj && !empty($tax_obj->cap->edit_terms) ? $tax_obj->cap->edit_terms : 'manage_categories';
+                if (!current_user_can($edit_terms_cap)) {
+                    throw new \Exception('You do not have permission to create terms in ' . esc_html($taxonomy) . '.');
+                }
                 $term_args = [];
                 if (!empty($args['description'])) $term_args['description'] = sanitize_text_field($args['description']);
                 if (!empty($args['slug'])) $term_args['slug'] = sanitize_title($args['slug']);
@@ -1412,6 +1539,10 @@ class Server {
                 if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
                 $term_id = intval($args['id']);
                 if (!get_term($term_id, $taxonomy)) throw new \Exception('Term not found in taxonomy ' . esc_html($taxonomy));
+                // 1.4.26 — object-level edit_term cap.
+                if (!current_user_can('edit_term', $term_id)) {
+                    throw new \Exception('You do not have permission to edit this term.');
+                }
                 $update_args = [];
                 if (isset($args['name'])) $update_args['name'] = sanitize_text_field($args['name']);
                 if (isset($args['slug'])) $update_args['slug'] = sanitize_title($args['slug']);
@@ -1428,7 +1559,13 @@ class Server {
             case 'wp_delete_term':
                 $taxonomy = sanitize_text_field($args['taxonomy']);
                 if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
-                $result = wp_delete_term(intval($args['id']), $taxonomy);
+                $term_id = intval($args['id']);
+                if (!get_term($term_id, $taxonomy)) throw new \Exception('Term not found in taxonomy ' . esc_html($taxonomy));
+                // 1.4.26 — object-level delete_term cap.
+                if (!current_user_can('delete_term', $term_id)) {
+                    throw new \Exception('You do not have permission to delete this term.');
+                }
+                $result = wp_delete_term($term_id, $taxonomy);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
                 if (!$result) throw new \Exception('Failed to delete term');
                 return ['message' => 'Term deleted successfully'];
@@ -1436,11 +1573,27 @@ class Server {
             case 'wp_add_post_terms':
                 $taxonomy = sanitize_text_field($args['taxonomy']);
                 if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
-                $result = wp_set_post_terms(intval($args['post_id']), array_map('intval', $args['terms']), $taxonomy, true);
+                $post_id = intval($args['post_id']);
+                if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
+                // 1.4.26 — assigning terms to a post requires the post's own
+                // edit cap (so a Subscriber can't tag an admin's draft).
+                if (!current_user_can('edit_post', $post_id)) {
+                    throw new \Exception('You do not have permission to edit this post.');
+                }
+                // Plus the per-taxonomy assign_terms cap.
+                $tax_obj = get_taxonomy($taxonomy);
+                $assign_cap = $tax_obj && !empty($tax_obj->cap->assign_terms) ? $tax_obj->cap->assign_terms : 'edit_posts';
+                if (!current_user_can($assign_cap)) {
+                    throw new \Exception('You do not have permission to assign terms in ' . esc_html($taxonomy) . '.');
+                }
+                $result = wp_set_post_terms($post_id, array_map('intval', $args['terms']), $taxonomy, true);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
                 return ['message' => 'Terms added to post successfully'];
 
             case 'wp_count_terms':
+                if (!current_user_can('read')) {
+                    throw new \Exception('You do not have permission to count terms.');
+                }
                 $taxonomy = sanitize_text_field($args['taxonomy'] ?? 'category');
                 $count = wp_count_terms(['taxonomy' => $taxonomy, 'hide_empty' => false]);
                 return ['taxonomy' => $taxonomy, 'count' => $count];
@@ -1448,6 +1601,9 @@ class Server {
             case 'wp_get_term_meta':
                 $term_id = intval($args['term_id']);
                 if (!get_term($term_id)) throw new \Exception('Term not found');
+                if (!current_user_can('manage_categories')) {
+                    throw new \Exception('You do not have permission to read term meta.');
+                }
                 // 1.4.12 — wrap return in a structured object for consistency
                 // with wp_update_term_meta / wp_delete_term_meta which return
                 // structured arrays. Single-key get returns {term_id, key,
@@ -1468,6 +1624,9 @@ class Server {
             case 'wp_update_term_meta':
                 $term_id = intval($args['term_id']);
                 if (!get_term($term_id)) throw new \Exception('Term not found');
+                if (!current_user_can('edit_term', $term_id)) {
+                    throw new \Exception('You do not have permission to edit this term.');
+                }
                 $meta_value = is_string($args['value']) ? sanitize_textarea_field($args['value']) : $args['value'];
                 $result = update_term_meta($term_id, sanitize_text_field($args['key']), $meta_value);
                 if ($result === false) throw new \Exception('Failed to update term meta');
@@ -1476,15 +1635,34 @@ class Server {
             case 'wp_delete_term_meta':
                 $term_id = intval($args['term_id']);
                 if (!get_term($term_id)) throw new \Exception('Term not found');
+                if (!current_user_can('edit_term', $term_id)) {
+                    throw new \Exception('You do not have permission to edit this term.');
+                }
                 $result = delete_term_meta($term_id, sanitize_text_field($args['key']));
                 if (!$result) throw new \Exception('Failed to delete term meta (key may not exist)');
                 return ['term_id' => $term_id, 'message' => 'Term meta deleted'];
 
             // ==================== COMMENTS ====================
             case 'wp_get_comments':
+                if (!current_user_can('read')) {
+                    throw new \Exception('You do not have permission to list comments.');
+                }
                 $comment_args = ['number' => min(intval($args['per_page'] ?? 10), 100)];
                 if (!empty($args['post_id'])) $comment_args['post_id'] = intval($args['post_id']);
-                if (!empty($args['status'])) $comment_args['status'] = sanitize_text_field($args['status']);
+                if (!empty($args['status'])) {
+                    $requested_comment_status = sanitize_text_field($args['status']);
+                    // 1.4.26 — sibling fix to the wp_get_posts allowlist
+                    // (Erwan Le Rousseau follow-up). Only 'approve' is public;
+                    // anything else ('all', 'hold', 'spam', 'trash', unknown
+                    // values) requires moderate_comments. WP_Comment_Query
+                    // with status=all returns hold/spam/trash too, so the
+                    // prior denylist let status=all bypass the check.
+                    if (!in_array($requested_comment_status, ['approve'], true)
+                        && !current_user_can('moderate_comments')) {
+                        throw new \Exception('You do not have permission to list ' . esc_html($requested_comment_status) . ' comments.');
+                    }
+                    $comment_args['status'] = $requested_comment_status;
+                }
                 $comments = get_comments($comment_args);
                 return array_map(function($c) {
                     return [
@@ -1498,8 +1676,20 @@ class Server {
                 }, $comments);
 
             case 'wp_create_comment':
+                if (!current_user_can('read')) {
+                    throw new \Exception('You do not have permission to create comments via the MCP API.');
+                }
+                $comment_post_id = intval($args['post_id']);
+                $comment_target_post = $comment_post_id > 0 ? get_post($comment_post_id) : null;
+                if (!$comment_target_post) throw new \Exception('Post not found.');
+                // 1.4.26 — block commenting on closed/private posts unless the
+                // user has the relevant edit cap on the target post.
+                if ('open' !== $comment_target_post->comment_status
+                    && !current_user_can('edit_post', $comment_post_id)) {
+                    throw new \Exception('Comments are closed on this post.');
+                }
                 $comment_data = [
-                    'comment_post_ID' => intval($args['post_id']),
+                    'comment_post_ID' => $comment_post_id,
                     'comment_content' => sanitize_text_field($args['content']),
                     'comment_author' => sanitize_text_field($args['author'] ?? 'Anonymous'),
                     'comment_author_email' => sanitize_email($args['author_email'] ?? ''),
@@ -1512,8 +1702,15 @@ class Server {
                 return ['id' => $comment_id, 'message' => 'Comment created (' . $status . ')'];
 
             case 'wp_delete_comment':
+                $comment_id = intval($args['id']);
+                if ($comment_id <= 0 || !get_comment($comment_id)) throw new \Exception('Comment not found.');
+                // 1.4.26 — object-level edit_comment via map_meta_cap resolves
+                // to moderate_comments for cross-author deletes.
+                if (!current_user_can('edit_comment', $comment_id)) {
+                    throw new \Exception('You do not have permission to delete this comment.');
+                }
                 $force = !empty($args['force']);
-                $result = wp_delete_comment(intval($args['id']), $force);
+                $result = wp_delete_comment($comment_id, $force);
                 if (!$result) throw new \Exception('Failed to delete comment');
                 return ['message' => 'Comment deleted successfully'];
 
@@ -1569,6 +1766,13 @@ class Server {
 
             // ==================== USERS ====================
             case 'wp_get_users':
+                // 1.4.26 — list_users is the cap WordPress core uses for the
+                // Users admin screen + the WP REST users endpoint. This is the
+                // exact tool from Erwan's PoC where a Subscriber could
+                // enumerate every account on the site.
+                if (!current_user_can('list_users')) {
+                    throw new \Exception('You do not have permission to list users.');
+                }
                 $user_args = ['number' => min(intval($args['per_page'] ?? 10), 100)];
                 if (!empty($args['role'])) $user_args['role'] = sanitize_text_field($args['role']);
                 $users = get_users($user_args);
@@ -1581,6 +1785,9 @@ class Server {
                 }, $users);
 
             case 'wp_get_user':
+                if (!current_user_can('list_users')) {
+                    throw new \Exception('You do not have permission to view user accounts.');
+                }
                 $user = get_user_by('ID', intval($args['id']));
                 if (!$user) throw new \Exception('User not found');
                 return [
@@ -1593,6 +1800,13 @@ class Server {
             // ==================== POST META ====================
             case 'wp_get_post_meta':
                 $post_id = intval($args['post_id']);
+                if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
+                // 1.4.26 — read_post on the parent gates meta reads.
+                // Erwan's PoC: pre-1.4.26 a Subscriber could read post meta on
+                // private admin-owned posts.
+                if (!current_user_can('read_post', $post_id)) {
+                    throw new \Exception('You do not have permission to read meta on this post.');
+                }
                 if (!empty($args['key'])) {
                     $value = get_post_meta($post_id, sanitize_text_field($args['key']), true);
                     return ['key' => $args['key'], 'value' => $value];
@@ -1600,22 +1814,35 @@ class Server {
                 return get_post_meta($post_id);
 
             case 'wp_update_post_meta':
+                $post_id = intval($args['post_id']);
+                if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
+                if (!current_user_can('edit_post', $post_id)) {
+                    throw new \Exception('You do not have permission to edit meta on this post.');
+                }
                 $meta_value = $args['value'];
                 if (is_string($meta_value)) {
                     $meta_value = sanitize_text_field($meta_value);
                 } elseif (is_array($meta_value)) {
                     $meta_value = array_map('sanitize_text_field', $meta_value);
                 }
-                $result = update_post_meta(intval($args['post_id']), sanitize_text_field($args['key']), $meta_value);
+                $result = update_post_meta($post_id, sanitize_text_field($args['key']), $meta_value);
                 return ['message' => 'Post meta updated successfully', 'result' => $result];
 
             case 'wp_delete_post_meta':
-                $result = delete_post_meta(intval($args['post_id']), sanitize_text_field($args['key']));
+                $post_id = intval($args['post_id']);
+                if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
+                if (!current_user_can('edit_post', $post_id)) {
+                    throw new \Exception('You do not have permission to edit meta on this post.');
+                }
+                $result = delete_post_meta($post_id, sanitize_text_field($args['key']));
                 if (!$result) throw new \Exception('Failed to delete post meta');
                 return ['message' => 'Post meta deleted successfully'];
 
             // ==================== SITE & SEARCH ====================
             case 'wp_get_site_info':
+                if (!current_user_can('read')) {
+                    throw new \Exception('You do not have permission to view site info.');
+                }
                 return [
                     'name' => get_bloginfo('name'),
                     'description' => get_bloginfo('description'),
@@ -1626,6 +1853,9 @@ class Server {
                 ];
 
             case 'wp_search':
+                if (!current_user_can('read')) {
+                    throw new \Exception('You do not have permission to search.');
+                }
                 $search_args = [
                     's' => sanitize_text_field($args['query']),
                     'post_type' => !empty($args['post_type']) ? sanitize_text_field($args['post_type']) : 'any',
@@ -1638,12 +1868,18 @@ class Server {
 
             // ==================== OPTIONS ====================
             case 'wp_get_option':
+                if (!current_user_can('manage_options')) {
+                    throw new \Exception('You do not have permission to read site options.');
+                }
                 $allowed = ['blogname', 'blogdescription', 'siteurl', 'home', 'admin_email', 'posts_per_page', 'date_format', 'time_format', 'timezone_string'];
                 $name = sanitize_text_field($args['name']);
                 if (!in_array($name, $allowed)) throw new \Exception('Option not allowed: ' . esc_html($name));
                 return ['name' => $name, 'value' => $this->redact_sensitive_keys(get_option($name))];
 
             case 'wp_get_plugin_settings':
+                if (!current_user_can('manage_options')) {
+                    throw new \Exception('You do not have permission to read plugin settings.');
+                }
                 $slug = sanitize_text_field($args['plugin_slug'] ?? '');
                 if (empty($slug)) throw new \Exception('plugin_slug is required.');
                 return [
@@ -1652,6 +1888,9 @@ class Server {
                 ];
 
             case 'wp_update_option':
+                if (!current_user_can('manage_options')) {
+                    throw new \Exception('You do not have permission to write site options.');
+                }
                 $name = sanitize_text_field($args['name'] ?? '');
                 if (empty($name)) throw new \Exception('Option name is required.');
 
@@ -1686,12 +1925,18 @@ class Server {
 
             // ==================== MENUS ====================
             case 'wp_get_menus':
+                if (!current_user_can('edit_theme_options')) {
+                    throw new \Exception('You do not have permission to list menus.');
+                }
                 $menus = wp_get_nav_menus();
                 return array_map(function($m) {
                     return ['id' => $m->term_id, 'name' => $m->name, 'slug' => $m->slug];
                 }, $menus);
 
             case 'wp_get_menu_items':
+                if (!current_user_can('edit_theme_options')) {
+                    throw new \Exception('You do not have permission to list menu items.');
+                }
                 $items = wp_get_nav_menu_items(intval($args['menu_id']));
                 if (!$items) return [];
                 return array_map(function($i) {
@@ -1815,6 +2060,9 @@ class Server {
 
             // ==================== PLUGINS & THEMES ====================
             case 'wp_get_plugins':
+                if (!current_user_can('activate_plugins')) {
+                    throw new \Exception('You do not have permission to list plugins.');
+                }
                 if (!function_exists('get_plugins')) {
                     require_once ABSPATH . 'wp-admin/includes/plugin.php';
                 }
@@ -1832,6 +2080,9 @@ class Server {
                 return $result;
 
             case 'wp_get_themes':
+                if (!current_user_can('switch_themes')) {
+                    throw new \Exception('You do not have permission to list themes.');
+                }
                 $themes = wp_get_themes();
                 $active = get_stylesheet();
                 $result = [];
@@ -1847,6 +2098,9 @@ class Server {
 
             // ==================== THEME & APPEARANCE ====================
             case 'wp_get_active_theme':
+                if (!current_user_can('read')) {
+                    throw new \Exception('You do not have permission to view the active theme.');
+                }
                 $theme = wp_get_theme();
                 if (!$theme->exists()) throw new \Exception('Active theme not found.');
                 $parent = $theme->parent();
@@ -1864,10 +2118,16 @@ class Server {
                 ];
 
             case 'wp_get_theme_mods':
+                if (!current_user_can('edit_theme_options')) {
+                    throw new \Exception('You do not have permission to read theme mods.');
+                }
                 $mods = get_theme_mods();
                 return is_array($mods) ? $mods : [];
 
             case 'wp_update_theme_mod':
+                if (!current_user_can('edit_theme_options')) {
+                    throw new \Exception('You do not have permission to update theme mods.');
+                }
                 $mod_name = sanitize_text_field($args['mod_name'] ?? '');
                 if (empty($mod_name)) throw new \Exception('mod_name is required.');
 
@@ -1894,6 +2154,9 @@ class Server {
                 ];
 
             case 'wp_get_custom_css':
+                if (!current_user_can('read')) {
+                    throw new \Exception('You do not have permission to read custom CSS.');
+                }
                 $theme_slug = isset($args['theme_slug']) ? sanitize_key($args['theme_slug']) : get_stylesheet();
                 $css = wp_get_custom_css($theme_slug);
                 $post = wp_get_custom_css_post($theme_slug);
@@ -1928,6 +2191,11 @@ class Server {
                 $post_id = intval($args['post_id'] ?? 0);
                 if ($post_id <= 0) throw new \Exception('post_id is required.');
                 if (!get_post($post_id)) throw new \Exception('Post not found: ' . esc_html((string) $post_id));
+                // 1.4.26 — read_post on the parent gates SEO-meta reads
+                // (private/draft posts' SEO meta is not public).
+                if (!current_user_can('read_post', $post_id)) {
+                    throw new \Exception('You do not have permission to read SEO meta on this post.');
+                }
                 $detected = $this->detect_seo_plugin();
                 if ($detected === 'yoast') {
                     return [
@@ -2014,6 +2282,9 @@ class Server {
 
             // ==================== PERMALINK STRUCTURE ====================
             case 'wp_get_permalink_structure':
+                if (!current_user_can('manage_options')) {
+                    throw new \Exception('You do not have permission to read permalink structure.');
+                }
                 return [
                     'permalink_structure' => (string) get_option('permalink_structure', ''),
                     'category_base'       => (string) get_option('category_base', ''),
@@ -2051,6 +2322,11 @@ class Server {
                 $post_id = intval($args['post_id'] ?? 0);
                 if ($post_id <= 0) throw new \Exception('post_id is required.');
                 if (!get_post($post_id)) throw new \Exception('Post not found.');
+                // 1.4.26 — revisions can contain past versions of admin-owned
+                // content; gate behind the parent post's read cap.
+                if (!current_user_can('read_post', $post_id)) {
+                    throw new \Exception('You do not have permission to read revisions on this post.');
+                }
                 $limit = min(intval($args['limit'] ?? 20), 100);
                 $revisions = wp_get_post_revisions($post_id, ['number' => $limit]);
                 return array_map(function($r) {
