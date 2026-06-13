@@ -14,7 +14,7 @@ The security-first MCP server for WordPress. Connect Claude, ChatGPT, and Gemini
 
 == Description ==
 
-https://youtu.be/8Wbr0ReLpok
+https://youtu.be/pf-mdRnXezM
 
 Royal MCP is a security-first Model Context Protocol (MCP) server for WordPress. It gives AI platforms like Claude, ChatGPT, and Google Gemini structured access to your WordPress content — with authentication, rate limiting, and audit logging that most MCP implementations skip entirely.
 
