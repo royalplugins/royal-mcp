@@ -113,14 +113,39 @@ class Server {
             ], 403);
         }
 
-        // Try OAuth 2.0 Bearer token first.
+        // Try OAuth 2.0 Bearer token first. If that fails, fall back to
+        // trying the same Bearer value as a static API key — most MCP
+        // clients (Apify, n8n, Make.com, anything that follows the
+        // universal HTTP convention for bearer credentials) send their
+        // static API key via `Authorization: Bearer <key>`, not the
+        // Royal-MCP-specific `X-Royal-MCP-API-Key` header. Pre-1.4.28 the
+        // value got routed entirely into OAuth validation, failed (since
+        // an API key is not an OAuth token), and returned 401 — even
+        // though the same key worked via the X-Royal-MCP-API-Key header.
+        // The fallback is a strict additive change: it doesn't widen the
+        // security perimeter (API keys were ALREADY accepted as bearer
+        // credentials, just under a different header name), it just
+        // accepts the convention every modern MCP client uses.
         $auth_header = $request->get_header('Authorization');
         if (!empty($auth_header) && stripos($auth_header, 'Bearer ') === 0) {
             $token = substr($auth_header, 7);
-            return $this->validate_bearer_token($token);
+            $oauth_result = $this->validate_bearer_token($token);
+            if (true === $oauth_result) {
+                return true;
+            }
+            $api_key_result = $this->validate_api_key_value($token, $settings);
+            if (true === $api_key_result) {
+                return true;
+            }
+            // Both failed — return the OAuth error response so OAuth-aware
+            // clients still see the proper RFC 9728 WWW-Authenticate
+            // challenge and can start a fresh authorization flow.
+            return $oauth_result;
         }
 
-        // Fall back to API key.
+        // Fall back to API key via the Royal-MCP-specific header (kept for
+        // existing integrations + tighter privacy where the admin doesn't
+        // want the API key to share a header name with OAuth tokens).
         $api_key = $request->get_header('X-Royal-MCP-API-Key');
         if (!empty($api_key)) {
             return $this->validate_api_key_value($api_key, $settings);
@@ -439,8 +464,8 @@ class Server {
             ['name' => 'wp_update_custom_css', 'description' => 'Update the active theme\'s custom CSS. CSS is filtered through wp_kses (script tags stripped). Requires the "Allow AI to modify theme appearance" admin toggle and unfiltered_html capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['css' => ['type' => 'string'], 'theme_slug' => ['type' => 'string', 'description' => 'Theme slug (defaults to active theme)']], 'required' => ['css']]],
 
             // SEO Meta (auto-detects Yoast SEO or Rank Math)
-            ['name' => 'wp_get_seo_meta', 'description' => 'Get the SEO meta fields for a post (title, description, focus keyword, robots, OG/Twitter overrides). Auto-detects Yoast SEO or Rank Math — returns the active plugin\'s fields. Returns empty values if neither is installed.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer']], 'required' => ['post_id']]],
-            ['name' => 'wp_update_seo_meta', 'description' => 'Update SEO meta fields on a post. Auto-routes to Yoast or Rank Math based on which is active. Requires edit_post capability on the target post.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'title' => ['type' => 'string', 'description' => 'SEO title (replaces the meta title used in browser tabs and SERPs)'], 'description' => ['type' => 'string', 'description' => 'SEO meta description (used in SERPs)'], 'focus_keyword' => ['type' => 'string', 'description' => 'Primary focus keyword for SEO scoring'], 'noindex' => ['type' => 'boolean', 'description' => 'Tell search engines not to index this URL'], 'og_title' => ['type' => 'string', 'description' => 'Open Graph title (Facebook / Slack / LinkedIn previews)'], 'og_description' => ['type' => 'string', 'description' => 'Open Graph description']], 'required' => ['post_id']]],
+            ['name' => 'wp_get_seo_meta', 'description' => 'Get the SEO meta fields for a post (title, description, focus keyword, robots, OG/Twitter overrides, URL slug). Auto-detects Yoast SEO or Rank Math — returns the active plugin\'s fields plus the post slug (which is a WordPress-native field, returned regardless of SEO plugin).', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer']], 'required' => ['post_id']]],
+            ['name' => 'wp_update_seo_meta', 'description' => 'Update SEO meta fields on a post. Auto-routes title/description/focus_keyword/noindex/og_* to Yoast or Rank Math based on which is active. The slug field is a WordPress-native field and works regardless of SEO plugin (corresponds to the URL slug shown in Yoast\'s and Rank Math\'s UI editors). Requires edit_post capability on the target post.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'title' => ['type' => 'string', 'description' => 'SEO title (replaces the meta title used in browser tabs and SERPs)'], 'description' => ['type' => 'string', 'description' => 'SEO meta description (used in SERPs)'], 'focus_keyword' => ['type' => 'string', 'description' => 'Primary focus keyword for SEO scoring'], 'noindex' => ['type' => 'boolean', 'description' => 'Tell search engines not to index this URL'], 'og_title' => ['type' => 'string', 'description' => 'Open Graph title (Facebook / Slack / LinkedIn previews)'], 'og_description' => ['type' => 'string', 'description' => 'Open Graph description'], 'slug' => ['type' => 'string', 'description' => 'URL slug (post_name). WordPress will sanitize and ensure uniqueness; the actually-saved value is returned in the response so the caller can confirm.']], 'required' => ['post_id']]],
 
             // Permalink Structure
             ['name' => 'wp_get_permalink_structure', 'description' => 'Get the WordPress permalink structure (e.g. /%postname%/, /%year%/%monthnum%/%postname%/). Read-only.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -2182,6 +2207,12 @@ class Server {
                 if (!current_user_can('read_post', $post_id)) {
                     throw new \Exception('You do not have permission to read SEO meta on this post.');
                 }
+                // Slug is a WordPress-native field (post_name column) — always
+                // returned regardless of whether an SEO plugin is detected.
+                // Yoast and Rank Math both expose the slug in their post editors
+                // alongside the SEO meta fields, so callers expect it here.
+                // Added in 1.4.28 in response to GH issue #34.
+                $slug = (string) get_post_field('post_name', $post_id);
                 $detected = $this->detect_seo_plugin();
                 if ($detected === 'yoast') {
                     return [
@@ -2193,6 +2224,7 @@ class Server {
                         'noindex'        => get_post_meta($post_id, '_yoast_wpseo_meta-robots-noindex', true) === '1',
                         'og_title'       => (string) get_post_meta($post_id, '_yoast_wpseo_opengraph-title', true),
                         'og_description' => (string) get_post_meta($post_id, '_yoast_wpseo_opengraph-description', true),
+                        'slug'           => $slug,
                     ];
                 }
                 if ($detected === 'rankmath') {
@@ -2205,12 +2237,14 @@ class Server {
                         'noindex'        => strpos((string) get_post_meta($post_id, 'rank_math_robots', true), 'noindex') !== false,
                         'og_title'       => (string) get_post_meta($post_id, 'rank_math_facebook_title', true),
                         'og_description' => (string) get_post_meta($post_id, 'rank_math_facebook_description', true),
+                        'slug'           => $slug,
                     ];
                 }
                 return [
                     'plugin'  => 'none',
                     'post_id' => $post_id,
-                    'note'    => 'No SEO plugin (Yoast SEO or Rank Math) detected on this site.',
+                    'slug'    => $slug,
+                    'note'    => 'No SEO plugin (Yoast SEO or Rank Math) detected on this site. The slug field is still returned because it is a WordPress-native field.',
                 ];
 
             case 'wp_update_seo_meta':
@@ -2220,45 +2254,88 @@ class Server {
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('edit_post capability required for this post.');
                 }
+                // Slug is a WordPress-native field; it works regardless of which
+                // (or whether any) SEO plugin is active. Pre-1.4.28 we threw on
+                // detected==='none' before even checking the fields — that would
+                // have rejected a slug-only update on sites without Yoast or Rank
+                // Math. Now: only throw "no SEO plugin" when the caller is
+                // actually trying to update an SEO-plugin-routed field.
                 $detected = $this->detect_seo_plugin();
-                if ($detected === 'none') {
-                    throw new \Exception('No SEO plugin (Yoast SEO or Rank Math) is active. Install one first.');
+                $seo_field_keys = ['title', 'description', 'focus_keyword', 'og_title', 'og_description', 'noindex'];
+                $wants_seo_field = false;
+                foreach ($seo_field_keys as $k) {
+                    if (array_key_exists($k, $args)) { $wants_seo_field = true; break; }
                 }
-                $field_map = $detected === 'yoast'
-                    ? [
-                        'title'          => '_yoast_wpseo_title',
-                        'description'    => '_yoast_wpseo_metadesc',
-                        'focus_keyword'  => '_yoast_wpseo_focuskw',
-                        'og_title'       => '_yoast_wpseo_opengraph-title',
-                        'og_description' => '_yoast_wpseo_opengraph-description',
-                    ]
-                    : [
-                        'title'          => 'rank_math_title',
-                        'description'    => 'rank_math_description',
-                        'focus_keyword'  => 'rank_math_focus_keyword',
-                        'og_title'       => 'rank_math_facebook_title',
-                        'og_description' => 'rank_math_facebook_description',
-                    ];
+                if ($wants_seo_field && $detected === 'none') {
+                    throw new \Exception('No SEO plugin (Yoast SEO or Rank Math) is active. Install one first, or pass only the slug field (which is WordPress-native and works without an SEO plugin).');
+                }
                 $updated = [];
-                foreach ($field_map as $arg_key => $meta_key) {
-                    if (array_key_exists($arg_key, $args)) {
-                        $value = sanitize_text_field((string) $args[$arg_key]);
-                        update_post_meta($post_id, $meta_key, $value);
-                        $updated[$arg_key] = $value;
+                if ($detected !== 'none') {
+                    $field_map = $detected === 'yoast'
+                        ? [
+                            'title'          => '_yoast_wpseo_title',
+                            'description'    => '_yoast_wpseo_metadesc',
+                            'focus_keyword'  => '_yoast_wpseo_focuskw',
+                            'og_title'       => '_yoast_wpseo_opengraph-title',
+                            'og_description' => '_yoast_wpseo_opengraph-description',
+                        ]
+                        : [
+                            'title'          => 'rank_math_title',
+                            'description'    => 'rank_math_description',
+                            'focus_keyword'  => 'rank_math_focus_keyword',
+                            'og_title'       => 'rank_math_facebook_title',
+                            'og_description' => 'rank_math_facebook_description',
+                        ];
+                    foreach ($field_map as $arg_key => $meta_key) {
+                        if (array_key_exists($arg_key, $args)) {
+                            $value = sanitize_text_field((string) $args[$arg_key]);
+                            update_post_meta($post_id, $meta_key, $value);
+                            $updated[$arg_key] = $value;
+                        }
+                    }
+                    if (array_key_exists('noindex', $args)) {
+                        $noindex = (bool) $args['noindex'];
+                        if ($detected === 'yoast') {
+                            update_post_meta($post_id, '_yoast_wpseo_meta-robots-noindex', $noindex ? '1' : '0');
+                        } else {
+                            $robots = (array) get_post_meta($post_id, 'rank_math_robots', true);
+                            if (!is_array($robots)) $robots = [];
+                            $robots = array_filter($robots, fn($r) => $r !== 'noindex' && $r !== 'index');
+                            $robots[] = $noindex ? 'noindex' : 'index';
+                            update_post_meta($post_id, 'rank_math_robots', array_values(array_unique($robots)));
+                        }
+                        $updated['noindex'] = $noindex;
                     }
                 }
-                if (array_key_exists('noindex', $args)) {
-                    $noindex = (bool) $args['noindex'];
-                    if ($detected === 'yoast') {
-                        update_post_meta($post_id, '_yoast_wpseo_meta-robots-noindex', $noindex ? '1' : '0');
-                    } else {
-                        $robots = (array) get_post_meta($post_id, 'rank_math_robots', true);
-                        if (!is_array($robots)) $robots = [];
-                        $robots = array_filter($robots, fn($r) => $r !== 'noindex' && $r !== 'index');
-                        $robots[] = $noindex ? 'noindex' : 'index';
-                        update_post_meta($post_id, 'rank_math_robots', array_values(array_unique($robots)));
+                // Slug (post_name) handling — added 1.4.28 in response to GH
+                // issue #34. We route through wp_update_post() rather than a
+                // direct DB write so WordPress runs its slug-uniqueness logic
+                // (appends -2, -3, etc on collision) and fires the standard
+                // save_post hooks downstream tools (caches, search indexes,
+                // sitemap generators) listen on. The actually-saved slug is
+                // read back and returned so the caller knows whether
+                // WordPress modified the requested value.
+                if (array_key_exists('slug', $args)) {
+                    $requested_slug = sanitize_title((string) $args['slug']);
+                    if ($requested_slug === '') {
+                        throw new \Exception('slug cannot be empty after sanitization. Pass a non-empty slug or omit the field.');
                     }
-                    $updated['noindex'] = $noindex;
+                    $update_result = wp_update_post([
+                        'ID'        => $post_id,
+                        'post_name' => $requested_slug,
+                    ], true);
+                    if (is_wp_error($update_result)) {
+                        throw new \Exception('Slug update failed: ' . $update_result->get_error_message());
+                    }
+                    $saved_slug = (string) get_post_field('post_name', $post_id);
+                    $updated['slug'] = $saved_slug;
+                    if ($saved_slug !== $requested_slug) {
+                        $updated['slug_note'] = sprintf(
+                            'WordPress modified the slug to avoid a collision: requested "%s", saved "%s".',
+                            $requested_slug,
+                            $saved_slug
+                        );
+                    }
                 }
                 return [
                     'plugin'  => $detected,
