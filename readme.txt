@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.27
+Stable tag: 1.4.28
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -312,6 +312,10 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Changelog ==
 
+= 1.4.28 =
+* Compatibility: Authorization-header API key fallback. Pre-1.4.28, if an MCP client sent its static API key via the universal `Authorization: Bearer <key>` HTTP header, Royal MCP routed the value entirely into OAuth-token validation, failed (since an API key is not an OAuth token), and returned 401 &mdash; even though the same key worked when sent via the Royal-MCP-specific `X-Royal-MCP-API-Key` header. This broke connection with several modern MCP clients (Apify&rsquo;s newly-launched MCP connectors, n8n, Make.com, anything that follows the universal HTTP convention for bearer credentials). 1.4.28 adds a strict-additive fallback: after OAuth-token validation fails, the same Bearer value is tried as an API key before returning the 401. The security perimeter is unchanged &mdash; API keys were already accepted as bearer credentials via a different header name; this just accepts the universal convention every modern MCP client uses. The `X-Royal-MCP-API-Key` header continues to work for backward compatibility.
+* Feature: Yoast / Rank Math `wp_get_seo_meta` and `wp_update_seo_meta` tools now read and write the post URL slug (the &ldquo;Slug&rdquo; field shown in Yoast&rsquo;s and Rank Math&rsquo;s post editors). Pre-1.4.28, AI agents could write SEO title, meta description, focus keyword, robots, and OG fields but had to fall back to `wp_update_post` for the slug &mdash; an extra tool call and a workflow break. Now a single `wp_update_seo_meta` call covers the whole SEO setup. The slug is a WordPress-native field (post_name), so it works regardless of whether Yoast or Rank Math is installed. Slug updates route through `wp_update_post()` so WordPress&rsquo;s slug-uniqueness logic runs (appends -2, -3, etc on collision) and downstream `save_post` hooks fire normally. The actually-saved slug is returned in the response so the caller can confirm whether WordPress modified the requested value. Requires `edit_post` capability on the target post (the same gate the rest of the tool already enforces). Thanks to @KKNORR-TC for the request (GH issue #34).
+
 = 1.4.27 =
 * Reliability: MCP session state moved off WordPress transients onto a dedicated `wp_royal_mcp_sessions` table. Pre-1.4.27, sites with an active WordPress object cache drop-in (typically dropped by some LiteSpeed-based managed hosts, or caching plugins like SpeedyCache) could see every MCP tool call after `initialize` fail with `404 Session not found or expired`, because the object cache backend was silently evicting the transient between requests. Direct DB storage with sha256-hashed session lookup gives reliable persistence regardless of cache backend &mdash; the same defense-in-depth pattern the 1.4.17 release applied to OAuth authorization codes for the identical root cause. No customer action required; the new table is created automatically on update, and existing transient-based sessions expire naturally as MCP clients reconnect.
 * Cleanup: Removed orphan admin-AJAX handler `royal_mcp_get_platform_fields` along with the `render_platform_fields` helper method it called. Both had been dead code &mdash; an earlier refactor moved the platform-field rendering inline into `templates/admin/settings.php`, leaving the class method as a vestige reachable only through the unused AJAX handler. The live Settings page render path is unchanged. ~130 lines removed; smaller attack surface (registered admin-AJAX handlers remain reachable via direct POST regardless of whether the UI wires them up).
@@ -523,6 +527,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release
 
 == Upgrade Notice ==
+
+= 1.4.28 =
+Compatibility + feature release. Adds Authorization-header API key support so MCP clients that send their key via the universal `Authorization: Bearer` header (Apify, n8n, Make.com, etc.) connect on first try. Extends `wp_get_seo_meta` and `wp_update_seo_meta` to cover the URL slug so AI agents can prepare the full SEO surface in one tool call. No customer action required; both changes are strictly additive.
 
 = 1.4.27 =
 Reliability patch &mdash; MCP session state moved off WordPress transients onto a dedicated table. Fixes "Session not found" errors on hosts with an active WordPress object cache drop-in. No customer action required; the new table is created automatically on update.
