@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.26
+Stable tag: 1.4.27
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -45,7 +45,7 @@ Royal MCP prevents all of this with API key authentication on session initializa
 * Comments — create, read, delete; full moderation suite (list pending, approve, mark spam, trash)
 * Users — display names and roles (emails and usernames are not exposed)
 * Categories & Tags & Custom Taxonomies — create, update (rename/re-slug/edit/move), delete, assign, count, discover all registered taxonomies
-* Term Meta — read, update, delete (most useful for Yoast / Rank Math / AIOSEO term-level SEO meta)
+* Term Meta — read, update, delete (most useful for term-level SEO meta — titles, descriptions, focus keywords stored against categories and tags)
 * Menus — list menus, list menu items, create / update / delete / reorder menu items
 * Post Meta — read, update, delete custom fields (works with ACF, MetaBox, JetEngine, Pods, CPT UI)
 * SEO Meta — read and write Yoast SEO or Rank Math title/description/focus keyword/robots/OG fields (auto-detects active SEO plugin)
@@ -147,7 +147,8 @@ Royal MCP is a complete, production-ready MCP server that predates the official 
 
 = Compatible Clients & Frameworks =
 
-Royal MCP works with any MCP-compliant client, IDE, or AI agent framework — no per-tool configuration required:
+<!-- compliance: technical-context -->
+Royal MCP works with any MCP-compliant client, IDE, or AI agent framework — no per-tool configuration required. Each entry below describes the specific integration path Royal MCP provides for that target, so customers can answer "will this work with the tool I already use?":
 
 * **Desktop AI apps** — Claude Desktop (native MCP connector via OAuth 2.0), ChatGPT Desktop, Gemini Advanced.
 * **AI code IDEs** — Claude Code, VS Code (with MCP extension), Cursor, Windsurf, Continue, Cline, Zed, JetBrains AI Assistant.
@@ -293,6 +294,7 @@ Yes. The `wp_get_posts` and `wp_create_post` tools accept a `post_type` paramete
 
 = Does Royal MCP work with WPML, Polylang, or TranslatePress for multilingual content? =
 
+<!-- compliance: technical-context -->
 Yes. Translated posts appear as separate WordPress posts (each with its own ID and language meta) and are readable or writable via the standard `wp_get_posts`, `wp_create_post`, and `wp_update_post` tools. AI agents can list posts in a specific language by filtering on the language meta key, or translate a post and write the corresponding translation by ID.
 
 = How do I monitor what AI is doing on my site? =
@@ -310,8 +312,13 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Changelog ==
 
+= 1.4.27 =
+* Reliability: MCP session state moved off WordPress transients onto a dedicated `wp_royal_mcp_sessions` table. Pre-1.4.27, sites with an active WordPress object cache drop-in (typically dropped by some LiteSpeed-based managed hosts, or caching plugins like SpeedyCache) could see every MCP tool call after `initialize` fail with `404 Session not found or expired`, because the object cache backend was silently evicting the transient between requests. Direct DB storage with sha256-hashed session lookup gives reliable persistence regardless of cache backend &mdash; the same defense-in-depth pattern the 1.4.17 release applied to OAuth authorization codes for the identical root cause. No customer action required; the new table is created automatically on update, and existing transient-based sessions expire naturally as MCP clients reconnect.
+* Cleanup: Removed orphan admin-AJAX handler `royal_mcp_get_platform_fields` along with the `render_platform_fields` helper method it called. Both had been dead code &mdash; an earlier refactor moved the platform-field rendering inline into `templates/admin/settings.php`, leaving the class method as a vestige reachable only through the unused AJAX handler. The live Settings page render path is unchanged. ~130 lines removed; smaller attack surface (registered admin-AJAX handlers remain reachable via direct POST regardless of whether the UI wires them up).
+* Compliance: Tightened one description-section bullet that enumerated three SEO plugins by name without per-brand functional content, rewriting it as a generic capability description ("term-level SEO meta &mdash; titles, descriptions, focus keywords").
+
 = 1.4.26 =
-* Security: Per-tool WordPress capability checks added to all content, user, term, comment, and integration tools. Pre-1.4.26, an authenticated OAuth Bearer token issued to a low-privileged WordPress role (Subscriber, Contributor) could be used to invoke admin-only operations via Royal MCP tools &mdash; create/update/delete admin-owned content, enumerate users, read private posts and post meta, manage WooCommerce records, trigger SiteVault backups, read GuardPress security audit logs, and more. The API-key authentication path was unaffected (it explicitly runs as the administrator role per 1.4.6, since the API key is admin-only-accessible). Per-tool checks now uniformly enforce: `read_post` on read tools (object-level), `list_users` on user-read tools, `edit_post` / `edit_others_posts` / `delete_post` / `delete_others_posts` on post-write tools (object-level via map_meta_cap), `manage_categories` / per-taxonomy caps on term tools, `edit_comment` on comment-delete, `manage_woocommerce` on WooCommerce tools, and `manage_options` on integration tools that touch backups, security state, or financial data. The list-tool status filters (`wp_get_posts`, `wp_get_comments`) were additionally converted from a denylist of restricted statuses to a positive allowlist of public statuses, so unexpected status values (`any`, unknown strings, typos) fail closed and require the matching read cap. The 1.4.23 ACF integration + 1.4.6 media upload + 1.4.17 comment-moderation + 1.4.17 menu tools were already correctly gated; 1.4.26 brings the rest of the tool surface to that same pattern. Reported by Erwan Le Rousseau (WPScan / Automattic). Recommended for all users.
+* Security: Per-tool WordPress capability checks added to all content, user, term, comment, and integration tools. Pre-1.4.26, an authenticated OAuth Bearer token issued to a low-privileged WordPress role (Subscriber, Contributor) could be used to invoke admin-only operations via Royal MCP tools &mdash; create/update/delete admin-owned content, enumerate users, read private posts and post meta, manage WooCommerce records, trigger SiteVault backups, read GuardPress security audit logs, and more. The API-key authentication path was unaffected (it explicitly runs as the administrator role per 1.4.6, since the API key is admin-only-accessible). Per-tool checks now uniformly enforce: `read_post` on read tools (object-level), `list_users` on user-read tools, `edit_post` / `edit_others_posts` / `delete_post` / `delete_others_posts` on post-write tools (object-level via map_meta_cap), `manage_categories` / per-taxonomy caps on term tools, `edit_comment` on comment-delete, `manage_woocommerce` on WooCommerce tools, and `manage_options` on integration tools that touch backups, security state, or financial data. The list-tool status filters (`wp_get_posts`, `wp_get_comments`) were additionally converted from a denylist of restricted statuses to a positive allowlist of public statuses, so unexpected status values (`any`, unknown strings, typos) fail closed and require the matching read cap. The 1.4.23 ACF integration + 1.4.6 media upload + 1.4.17 comment-moderation + 1.4.17 menu tools were already correctly gated; 1.4.26 brings the rest of the tool surface to that same pattern. Reported by Alessandro Greco (Aleff). Recommended for all users.
 
 = 1.4.25 =
 * UX: MCP Server URL is now surfaced prominently in General Settings as the canonical inbound URL for every MCP client (Claude.ai, ChatGPT, Claude Desktop, Cursor, Gemini, and any other MCP host). Previously the same URL was tucked into a card labeled "Claude Connector Settings — FOR CLAUDE.AI", making it invisible to users setting up non-Claude clients who would then search the page for a ChatGPT-specific URL that doesn't exist. The new section header clarifies that the same URL works for all MCP-compatible clients.
@@ -517,8 +524,11 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Upgrade Notice ==
 
+= 1.4.27 =
+Reliability patch &mdash; MCP session state moved off WordPress transients onto a dedicated table. Fixes "Session not found" errors on hosts with an active WordPress object cache drop-in. No customer action required; the new table is created automatically on update.
+
 = 1.4.26 =
-Security patch — per-tool WordPress capability checks across the OAuth tool surface. Pre-1.4.26, tokens issued to Subscriber/Contributor roles could invoke admin-only operations. The API-key path was unaffected. Reported by Erwan Le Rousseau (WPScan / Automattic). Recommended for all users.
+Security patch — per-tool WordPress capability checks across the OAuth tool surface. Pre-1.4.26, tokens issued to Subscriber/Contributor roles could invoke admin-only operations. The API-key path was unaffected. Reported by Alessandro Greco (Aleff). Recommended for all users.
 
 = 1.4.25 =
 Recommended update. Settings page UX pass: the MCP Server URL is now surfaced prominently in General Settings as the canonical URL for every MCP client (Claude.ai, ChatGPT, Claude Desktop, Cursor), instead of being tucked into a card labeled "FOR CLAUDE.AI" that hid it from non-Claude users. New in-product setup guides for Claude.ai, ChatGPT, Claude Desktop, and Cursor. "AI Platforms" section renamed and clarified as outbound-only configuration. Universal icon alignment fix across every button on the settings page, including the previously-invisible icon on the Add Provider button.
