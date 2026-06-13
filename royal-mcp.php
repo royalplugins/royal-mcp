@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & Gemini
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.4.26
+ * Version: 1.4.27
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ROYAL_MCP_VERSION', '1.4.26');
+define('ROYAL_MCP_VERSION', '1.4.27');
 define('ROYAL_MCP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ROYAL_MCP_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('ROYAL_MCP_PLUGIN_FILE', __FILE__);
@@ -87,6 +87,9 @@ class Royal_MCP_Plugin {
         // Scheduled token cleanup.
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'cleanup_expired']);
 
+        // 1.4.27 — sessions cleanup rides on the same daily cron action.
+        add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Session_Store::class, 'cleanup_expired']);
+
         // Add plugin action links (Settings, Docs)
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), [$this, 'add_action_links']);
     }
@@ -143,6 +146,19 @@ class Royal_MCP_Plugin {
             }
         }
 
+        // 1.4.27 — Create sessions table. Same force-load pattern as Token_Store
+        // because register_activation_hook fires before the autoloader on some
+        // WP versions, so class_exists() returns false on a fresh activation.
+        if ( class_exists( '\Royal_MCP\MCP\Session_Store' ) ) {
+            \Royal_MCP\MCP\Session_Store::create_tables();
+        } else {
+            $session_store_file = ROYAL_MCP_PLUGIN_DIR . 'includes/MCP/Session_Store.php';
+            if ( file_exists( $session_store_file ) ) {
+                require_once $session_store_file;
+                \Royal_MCP\MCP\Session_Store::create_tables();
+            }
+        }
+
         // Set default options.
         // API key uses lowercase hex (32 chars) instead of mixed-case alphanumeric
         // so customers can transcribe it without uppercase/lowercase ambiguity in
@@ -181,8 +197,14 @@ class Royal_MCP_Plugin {
 
         if (class_exists('\Royal_MCP\OAuth\Token_Store')) {
             \Royal_MCP\OAuth\Token_Store::create_tables();
-            update_option('royal_mcp_db_version', ROYAL_MCP_VERSION);
         }
+
+        // 1.4.27 — heal sessions table on existing installs that upgrade past 1.4.27.
+        if (class_exists('\Royal_MCP\MCP\Session_Store')) {
+            \Royal_MCP\MCP\Session_Store::create_tables();
+        }
+
+        update_option('royal_mcp_db_version', ROYAL_MCP_VERSION);
     }
 
     public function deactivate() {

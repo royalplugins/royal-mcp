@@ -18,7 +18,6 @@ class Settings_Page {
 
         // AJAX handlers
         add_action('wp_ajax_royal_mcp_test_connection', [$this, 'ajax_test_connection']);
-        add_action('wp_ajax_royal_mcp_get_platform_fields', [$this, 'ajax_get_platform_fields']);
         add_action('wp_ajax_royal_mcp_reset_oauth_state', [$this, 'ajax_reset_oauth_state']);
         add_action('wp_ajax_royal_mcp_clear_oauth_field', [$this, 'ajax_clear_oauth_field']);
     }
@@ -368,35 +367,6 @@ class Settings_Page {
     }
 
     /**
-     * AJAX handler to get platform field HTML
-     */
-    public function ajax_get_platform_fields() {
-        check_ajax_referer('royal_mcp_nonce', 'nonce');
-
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => esc_html__('Unauthorized', 'royal-mcp')]);
-        }
-
-        $platform_id = isset($_POST['platform']) ? sanitize_text_field(wp_unslash($_POST['platform'])) : '';
-        $index = isset($_POST['index']) ? absint($_POST['index']) : 0;
-
-        $platform = Registry::get_platform($platform_id);
-
-        if (!$platform) {
-            wp_send_json_error(['message' => esc_html__('Invalid platform', 'royal-mcp')]);
-        }
-
-        ob_start();
-        $this->render_platform_fields($platform, $index);
-        $html = ob_get_clean();
-
-        wp_send_json_success([
-            'html' => $html,
-            'platform' => $platform,
-        ]);
-    }
-
-    /**
      * AJAX handler — wipe all OAuth state (clients, tokens, in-flight auth codes).
      *
      * Used by the "Reset OAuth State" button on the settings page. Replaces the
@@ -483,111 +453,6 @@ class Settings_Page {
             'field'   => $field,
             'message' => esc_html__('Field cleared. Save your settings to confirm.', 'royal-mcp'),
         ]);
-    }
-
-    /**
-     * Render platform-specific fields
-     */
-    public function render_platform_fields($platform, $index, $values = []) {
-        // Inbound vs outbound disambiguation is now handled by the section-level
-        // banner above the providers list (see templates/admin/settings.php),
-        // so the per-Claude-card hint that used to live here is no longer needed.
-        foreach ($platform['fields'] as $field_id => $field) {
-            $field_name = "royal_mcp_settings[platforms][{$index}][{$field_id}]";
-            $field_value = $values[$field_id] ?? ($field['default'] ?? '');
-            $required = !empty($field['required']) ? 'required' : '';
-            ?>
-            <tr class="platform-field platform-field-<?php echo esc_attr($field_id); ?>">
-                <th scope="row">
-                    <label for="platform-<?php echo esc_attr($index); ?>-<?php echo esc_attr($field_id); ?>">
-                        <?php echo esc_html($field['label']); ?>
-                        <?php if (!empty($field['required'])) : ?>
-                            <span class="required">*</span>
-                        <?php endif; ?>
-                    </label>
-                </th>
-                <td>
-                    <?php
-                    switch ($field['type']) {
-                        case 'select':
-                            ?>
-                            <select
-                                name="<?php echo esc_attr($field_name); ?>"
-                                id="platform-<?php echo esc_attr($index); ?>-<?php echo esc_attr($field_id); ?>"
-                                class="regular-text"
-                                <?php echo esc_attr($required); ?>
-                                data-field="<?php echo esc_attr($field_id); ?>"
-                            >
-                                <?php foreach ($field['options'] as $value => $label) : ?>
-                                    <option value="<?php echo esc_attr($value); ?>" <?php selected($field_value, $value); ?>>
-                                        <?php echo esc_html($label); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                            <?php
-                            break;
-
-                        case 'password':
-                            ?>
-                            <input
-                                type="password"
-                                name="<?php echo esc_attr($field_name); ?>"
-                                id="platform-<?php echo esc_attr($index); ?>-<?php echo esc_attr($field_id); ?>"
-                                value="<?php echo esc_attr($field_value); ?>"
-                                class="regular-text"
-                                placeholder="<?php echo esc_attr($field['placeholder'] ?? ''); ?>"
-                                <?php echo esc_attr($required); ?>
-                                data-field="<?php echo esc_attr($field_id); ?>"
-                                autocomplete="new-password"
-                            >
-                            <button type="button" class="button toggle-password" title="<?php esc_attr_e('Show/Hide', 'royal-mcp'); ?>">
-                                <span class="dashicons dashicons-visibility"></span>
-                            </button>
-                            <?php
-                            break;
-
-                        case 'url':
-                            ?>
-                            <input
-                                type="url"
-                                name="<?php echo esc_attr($field_name); ?>"
-                                id="platform-<?php echo esc_attr($index); ?>-<?php echo esc_attr($field_id); ?>"
-                                value="<?php echo esc_attr($field_value); ?>"
-                                class="regular-text"
-                                placeholder="<?php echo esc_attr($field['placeholder'] ?? ''); ?>"
-                                <?php echo esc_attr($required); ?>
-                                data-field="<?php echo esc_attr($field_id); ?>"
-                            >
-                            <?php
-                            break;
-
-                        case 'text':
-                        default:
-                            ?>
-                            <input
-                                type="text"
-                                name="<?php echo esc_attr($field_name); ?>"
-                                id="platform-<?php echo esc_attr($index); ?>-<?php echo esc_attr($field_id); ?>"
-                                value="<?php echo esc_attr($field_value); ?>"
-                                class="regular-text"
-                                placeholder="<?php echo esc_attr($field['placeholder'] ?? ''); ?>"
-                                <?php echo esc_attr($required); ?>
-                                data-field="<?php echo esc_attr($field_id); ?>"
-                            >
-                            <?php
-                            break;
-                    }
-
-                    if (!empty($field['help'])) :
-                        ?>
-                        <p class="description"><?php echo esc_html($field['help']); ?></p>
-                        <?php
-                    endif;
-                    ?>
-                </td>
-            </tr>
-            <?php
-        }
     }
 
     public function admin_footer_text($text) {

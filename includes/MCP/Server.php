@@ -25,11 +25,6 @@ if (!defined('ABSPATH')) {
 class Server {
 
     /**
-     * Store active session IDs (in production, use transients or database)
-     */
-    private $sessions = [];
-
-    /**
      * Rate limit: max requests per window per IP
      */
     private $rate_limit_max = 60;
@@ -324,20 +319,13 @@ class Server {
             return false;
         }
 
-        // Check transient for session validity.
-        $session_data = get_transient('royal_mcp_session_' . $session_id);
-        if ($session_data === false) {
-            return false;
-        }
-
-        // Sliding window: refresh the TTL on every valid hit so an actively-used
-        // session never times out. Pre-1.4.15 the transient had a fixed
-        // HOUR_IN_SECONDS lifetime with no refresh, so Claude Desktop sessions
-        // died exactly 60 minutes after creation regardless of activity, then
-        // auto-reconnected and spawned competing mcp-remote npx processes.
-        set_transient('royal_mcp_session_' . $session_id, $session_data, DAY_IN_SECONDS);
-
-        return true;
+        // 1.4.27 — DB-backed session lookup. Pre-1.4.27 this used transients,
+        // which silently dropped sessions on hosts with an active WordPress
+        // object cache drop-in that evicted keys between requests (LiteSpeed
+        // + SpeedyCache stacks, confirmed). Sliding window is now a single
+        // atomic UPDATE that refreshes expires_at IFF the row exists and
+        // hasn't expired, instead of the pre-1.4.27 GET-then-SET pattern.
+        return Session_Store::touch_session($session_id);
     }
 
     /**
@@ -346,13 +334,10 @@ class Server {
      * @param string $session_id The session ID to store
      */
     private function store_session($session_id, $auth_fingerprint = '') {
-        // Store session with 24-hour expiry, refreshed on every valid hit
-        // (see is_valid_session). Bound to auth credentials.
-        set_transient('royal_mcp_session_' . $session_id, [
-            'created' => time(),
-            'last_event_id' => 0,
-            'auth_fingerprint' => $auth_fingerprint,
-        ], DAY_IN_SECONDS);
+        // 1.4.27 — DB-backed session persistence. 24-hour expiry, refreshed
+        // on every valid hit via Session_Store::touch_session. See
+        // is_valid_session() for the object-cache motivation.
+        Session_Store::create_session($session_id, $auth_fingerprint);
     }
 
     /**
@@ -361,7 +346,7 @@ class Server {
      * @param string $session_id The session ID to delete
      */
     private function delete_session($session_id) {
-        delete_transient('royal_mcp_session_' . $session_id);
+        Session_Store::delete_session($session_id);
     }
 
     private function get_tools() {
@@ -755,9 +740,10 @@ class Server {
                 ], 404);
             }
 
-            // Verify session is bound to the same credentials.
-            $session_data = get_transient('royal_mcp_session_' . $session_id);
-            if (!empty($session_data['auth_fingerprint']) && !hash_equals($session_data['auth_fingerprint'], $auth_fingerprint)) {
+            // Verify session is bound to the same credentials. 1.4.27 — DB-backed
+            // lookup (see Session_Store class doc for the object-cache motivation).
+            $stored_fingerprint = Session_Store::get_fingerprint($session_id);
+            if (!empty($stored_fingerprint) && !hash_equals($stored_fingerprint, $auth_fingerprint)) {
                 return $this->json_response([
                     'jsonrpc' => '2.0',
                     'id' => $id,
@@ -1031,7 +1017,7 @@ class Server {
         switch ($name) {
             // ==================== POSTS ====================
             case 'wp_get_posts':
-                // 1.4.26 — per-tool cap check (WPScan / Erwan Le Rousseau report,
+                // 1.4.26 — per-tool cap check (Alessandro Greco / Aleff report,
                 // CVSS 8.1). Pre-1.4.26 a Subscriber OAuth token could pass a
                 // non-public `status` (draft/private/trash) and receive
                 // admin-owned content. Require `read` to call at all, and
@@ -1056,8 +1042,8 @@ class Server {
                     // else — including 'any', 'private', 'draft', 'pending',
                     // 'future', 'trash', unknown values, or typos — requires
                     // read_private_posts for the relevant post type. Fail closed
-                    // on unexpected values. Erwan Le Rousseau's follow-up finding
-                    // on the original 1.4.26 patch: the prior denylist did not
+                    // on unexpected values. Follow-up finding on the original
+                    // 1.4.26 patch (Alessandro Greco / Aleff): the prior denylist did not
                     // match `status=any`, which let a low-privileged token
                     // enumerate title + excerpt of private and draft posts.
                     $public_statuses = get_post_stati(['public' => true]);
@@ -1652,7 +1638,7 @@ class Server {
                 if (!empty($args['status'])) {
                     $requested_comment_status = sanitize_text_field($args['status']);
                     // 1.4.26 — sibling fix to the wp_get_posts allowlist
-                    // (Erwan Le Rousseau follow-up). Only 'approve' is public;
+                    // (Aleff follow-up). Only 'approve' is public;
                     // anything else ('all', 'hold', 'spam', 'trash', unknown
                     // values) requires moderate_comments. WP_Comment_Query
                     // with status=all returns hold/spam/trash too, so the
@@ -1768,7 +1754,7 @@ class Server {
             case 'wp_get_users':
                 // 1.4.26 — list_users is the cap WordPress core uses for the
                 // Users admin screen + the WP REST users endpoint. This is the
-                // exact tool from Erwan's PoC where a Subscriber could
+                // exact tool from Aleff's PoC where a Subscriber could
                 // enumerate every account on the site.
                 if (!current_user_can('list_users')) {
                     throw new \Exception('You do not have permission to list users.');
@@ -1802,7 +1788,7 @@ class Server {
                 $post_id = intval($args['post_id']);
                 if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
                 // 1.4.26 — read_post on the parent gates meta reads.
-                // Erwan's PoC: pre-1.4.26 a Subscriber could read post meta on
+                // Aleff's PoC: pre-1.4.26 a Subscriber could read post meta on
                 // private admin-owned posts.
                 if (!current_user_can('read_post', $post_id)) {
                     throw new \Exception('You do not have permission to read meta on this post.');
