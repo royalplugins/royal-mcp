@@ -153,6 +153,20 @@ class Server {
 
         $client = Token_Store::register_client( $body );
 
+        // 1.4.29 — defensive self-heal for the silent-migration-failure class
+        // (the 1.4.27 regression — see royal-mcp.php maybe_upgrade_db invariant).
+        // If our tables are reported missing, attempt create_tables() once and
+        // retry. Belt-and-suspenders for installs that updated past 1.4.27 with
+        // the autoloader transiently failing and got latched. Only runs on the
+        // failure path — happy path is unchanged.
+        if ( is_wp_error( $client ) && $client->get_error_code() === 'royal_mcp_register_failed' ) {
+            Token_Store::create_tables();
+            if ( class_exists( '\Royal_MCP\MCP\Session_Store' ) ) {
+                \Royal_MCP\MCP\Session_Store::create_tables();
+            }
+            $client = Token_Store::register_client( $body );
+        }
+
         if ( is_wp_error( $client ) ) {
             $this->json_error( 'server_error', $client->get_error_message(), 500 );
         }
