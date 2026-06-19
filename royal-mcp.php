@@ -195,9 +195,15 @@ class Royal_MCP_Plugin {
      * opcache stale on LiteSpeed, file-deploy race) AND the force-load fallback can't find the
      * file, we leave db_version alone so the next request retries. Latching db_version on
      * partial failure caused the 1.4.27 silent-failure regression (see 1.4.29 changelog).
+     *
+     * INVARIANT (added 1.4.29 after @rula99): db_version matching the plugin version is
+     * necessary but NOT sufficient — we also verify required tables physically exist before
+     * short-circuiting. Stuck states like "uninstall dropped tables but left db_version
+     * intact, then reinstall ran" no longer latch the healer into a permanent no-op.
      */
     public function maybe_upgrade_db() {
-        if (get_option('royal_mcp_db_version') === ROYAL_MCP_VERSION) {
+        if (get_option('royal_mcp_db_version') === ROYAL_MCP_VERSION
+            && $this->required_tables_exist()) {
             return;
         }
 
@@ -231,6 +237,29 @@ class Royal_MCP_Plugin {
             update_option('royal_mcp_db_version', ROYAL_MCP_VERSION);
         }
         // If either failed: db_version stays at the old value, next request retries.
+    }
+
+    /**
+     * Verify the two core tables required for OAuth client registration and MCP session
+     * persistence physically exist. Used by maybe_upgrade_db() as a backstop against the
+     * db_version option lying (see @rula99's wp.org forum report, 1.4.29 changelog).
+     *
+     * Two SHOW TABLES LIKE queries per pageload — negligible cost, and the safe-by-default
+     * payoff is that no external or accidental state mismatch can latch the healer.
+     */
+    private function required_tables_exist() {
+        global $wpdb;
+        $required = [
+            $wpdb->prefix . 'royal_mcp_oauth_clients',
+            $wpdb->prefix . 'royal_mcp_sessions',
+        ];
+        foreach ($required as $table) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Schema probe, no caching layer involved.
+            if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) !== $table) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public function deactivate() {
