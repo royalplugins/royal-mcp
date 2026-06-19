@@ -16,6 +16,13 @@ if (!defined('WP_UNINSTALL_PLUGIN')) {
 // Delete plugin options
 delete_option('royal_mcp_settings');
 
+// 1.4.29 (@rula99 finding) — clear the db_version option too so a future reinstall
+// can't be silently short-circuited by maybe_upgrade_db() seeing a matching version
+// with the tables already dropped. maybe_upgrade_db() also verifies table existence
+// as of 1.4.29, but leaving the option behind on uninstall is the wrong default
+// regardless — fresh installs deserve a clean slate.
+delete_option('royal_mcp_db_version');
+
 // Delete the logs table
 global $wpdb;
 // Table name constructed safely from prefix + hardcoded string, then escaped
