@@ -77,6 +77,15 @@ class RoyalLinks {
 	 * Execute a Royal Links MCP tool.
 	 */
 	public static function execute_tool( $name, $args ) {
+		// 1.4.30 — umbrella cap check fires BEFORE the active-check. Without
+		// this a Subscriber-tier OAuth Bearer would receive "Royal Links is
+		// not active" and learn whether the integration is present. edit_posts
+		// matches the least-restrictive per-case cap; per-handler
+		// publish_posts / edit_post still apply for object-level checks.
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			throw new \Exception( 'You do not have permission to use Royal Links tools.' );
+		}
+
 		if ( ! self::is_available() ) {
 			throw new \Exception( 'Royal Links is not active' );
 		}

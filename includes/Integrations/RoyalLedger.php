@@ -96,6 +96,15 @@ class RoyalLedger {
 	 * @throws \Exception If tool fails.
 	 */
 	public static function execute_tool( $name, $args ) {
+		// 1.4.30 — umbrella cap check fires BEFORE the active-check. Every
+		// Royal Ledger tool gates on manage_options at the per-case level
+		// (financial bookkeeping data is admin-tier), so we hoist the same
+		// check to the umbrella — a Subscriber-tier OAuth Bearer is denied
+		// uniformly instead of leaking integration presence via "not active".
+		if ( ! current_user_can( 'manage_options' ) ) {
+			throw new \Exception( 'You do not have permission to use Royal Ledger tools.' );
+		}
+
 		if ( ! self::is_available() ) {
 			throw new \Exception( 'Royal Ledger is not active' );
 		}
