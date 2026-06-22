@@ -78,20 +78,21 @@ class GuardPress {
 	}
 
 	public static function execute_tool( $name, $args ) {
+		// 1.4.30 — cap check fires BEFORE the active-check. Without this order
+		// a Subscriber-tier OAuth Bearer would get "GuardPress is not active"
+		// and learn whether the integration is present. All GuardPress tools
+		// are admin-tier (security state — failed-login lists, blocked IPs,
+		// audit logs, vulnerability scan results — is sensitive); manage_options
+		// matches GuardPress's own admin-screen gating.
+		if ( ! current_user_can( 'manage_options' ) ) {
+			throw new \Exception( 'You do not have permission to use GuardPress security tools.' );
+		}
+
 		if ( ! self::is_available() ) {
 			throw new \Exception( 'GuardPress is not active' );
 		}
 
 		$guardpress = \GuardPress::get_instance();
-
-		// 1.4.26 — all GuardPress tools are admin-tier. Security state
-		// (failed-login lists, blocked IPs, audit logs, vulnerability scan
-		// results) is sensitive — exposing it to a Subscriber tells an
-		// attacker which surfaces the site is already weak on. manage_options
-		// matches GuardPress's own admin-screen gating.
-		if ( ! current_user_can( 'manage_options' ) ) {
-			throw new \Exception( 'You do not have permission to use GuardPress security tools.' );
-		}
 
 		switch ( $name ) {
 			case 'gp_get_security_status':

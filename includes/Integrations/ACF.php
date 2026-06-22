@@ -94,6 +94,16 @@ class ACF {
 	 * Execute an ACF MCP tool.
 	 */
 	public static function execute_tool( $name, $args ) {
+		// 1.4.30 — umbrella cap check fires BEFORE the active-check. Without
+		// this a Subscriber-tier OAuth Bearer would receive "Advanced Custom
+		// Fields is not active" and learn whether the integration is present.
+		// edit_posts is the least-restrictive cap among the per-case checks
+		// below; per-handler read_post / edit_post / edit_posts still enforce
+		// object-level access for callers who pass the umbrella.
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			throw new \Exception( 'You do not have permission to use ACF tools.' );
+		}
+
 		if ( ! self::is_available() ) {
 			throw new \Exception( 'Advanced Custom Fields is not active' );
 		}

@@ -68,6 +68,15 @@ class ForgeCache {
 	 * @throws \Exception If tool fails.
 	 */
 	public static function execute_tool( $name, $args ) {
+		// 1.4.30 — umbrella cap check fires BEFORE the active-check. Without
+		// this order a Subscriber-tier OAuth Bearer would receive "ForgeCache
+		// is not active" and learn whether the integration is present. The
+		// per-case caps below still enforce the finer-grained gate
+		// (manage_options for site-wide flushes; edit_post for per-post purge).
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			throw new \Exception( 'You do not have permission to use ForgeCache tools.' );
+		}
+
 		if ( ! self::is_available() ) {
 			throw new \Exception( 'ForgeCache is not active' );
 		}
