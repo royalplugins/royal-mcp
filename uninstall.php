@@ -61,3 +61,6 @@ wp_clear_scheduled_hook('royal_mcp_token_cleanup');
 // Clean up any user meta if applicable
 delete_metadata('user', 0, 'royal_mcp_dismissed_notices', '', true);
 delete_metadata('user', 0, 'royal_mcp_founders_dismissed', '', true);
+// 1.4.31 — version-stamped dismissal meta for founders + review banners.
+delete_metadata('user', 0, 'royal_mcp_founders_dismissed_version', '', true);
+delete_metadata('user', 0, 'royal_mcp_review_dismissed_version', '', true);

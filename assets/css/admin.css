@@ -1517,3 +1517,112 @@ input:checked + .slider:before {
     }
 }
 
+/* 1.4.31 — wp.org review-request banner. Lightweight, sits at the top of
+   the settings page above the General Settings postbox. Smaller / less
+   visually loud than the founders banner since the ask is just a review,
+   not a purchase. */
+.royal-mcp-review-banner {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    background: #fffaf0;
+    border: 1px solid #f0d990;
+    border-left: 4px solid #d4a017;
+    border-radius: 8px;
+    /* extra right padding reserves a column for the absolute-positioned X
+       so the Leave-a-Review CTA doesn't crowd up against it */
+    padding: 16px 40px 16px 20px;
+    /* Width matches the founders banner — flow-natural, no max-width.
+       Both banners share the same horizontal extent for visual consistency. */
+    margin: 16px 0 20px 0;
+    color: #3d3522;
+}
+.royal-mcp-review-body {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex: 1;
+    min-width: 0;
+}
+.royal-mcp-review-stars {
+    display: inline-flex;
+    color: #d4a017;
+    flex-shrink: 0;
+}
+.royal-mcp-review-stars .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+    line-height: 1;
+}
+.royal-mcp-review-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.royal-mcp-review-text strong {
+    font-size: 14px;
+    color: #2c2618;
+}
+.royal-mcp-review-text span {
+    font-size: 13px;
+    color: #6b5d3a;
+}
+.royal-mcp-review-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #d4a017;
+    color: #fff;
+    text-decoration: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 13px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background 0.15s ease;
+}
+.royal-mcp-review-cta:hover,
+.royal-mcp-review-cta:focus {
+    background: #b8890f;
+    color: #fff;
+}
+.royal-mcp-review-cta .dashicons {
+    font-size: 14px;
+    width: 14px;
+    height: 14px;
+    line-height: 1;
+}
+.royal-mcp-review-dismiss {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    color: #b8a878;
+    text-decoration: none;
+    line-height: 1;
+}
+.royal-mcp-review-dismiss:hover,
+.royal-mcp-review-dismiss:focus {
+    color: #6b5d3a;
+}
+.royal-mcp-review-dismiss .dashicons {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+    line-height: 1;
+}
+
+@media (max-width: 600px) {
+    .royal-mcp-review-banner {
+        flex-direction: column;
+        align-items: stretch;
+        text-align: left;
+    }
+    .royal-mcp-review-cta {
+        justify-content: center;
+    }
+}
+

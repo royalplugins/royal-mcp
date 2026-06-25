@@ -13,6 +13,7 @@ class Settings_Page {
         add_action('admin_menu', [$this, 'add_menu_page']);
         add_action('admin_init', [$this, 'register_settings']);
         add_action('admin_init', [$this, 'maybe_dismiss_founders_banner']);
+        add_action('admin_init', [$this, 'maybe_dismiss_review_banner']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_scripts']);
         add_filter('admin_footer_text', [$this, 'admin_footer_text']);
 
@@ -24,11 +25,22 @@ class Settings_Page {
 
     /**
      * Output the Royal Plugins Founders Bundle banner if the current user has
-     * not dismissed it. Called from the Royal MCP admin templates only.
+     * not dismissed it for the current plugin version. Called from the Royal
+     * MCP admin templates only.
+     *
+     * 1.4.31 — switched from boolean dismissal to version-stamped: banner
+     * re-appears once on each plugin version update (same shape as the
+     * review banner). The old boolean meta (royal_mcp_founders_dismissed)
+     * is no longer read; uninstall.php cleans up the legacy key too so
+     * existing 1.4.30 dismissers get a fresh impression after upgrading.
      */
     public static function render_founders_banner() {
         $user_id = get_current_user_id();
-        if (!$user_id || get_user_meta($user_id, 'royal_mcp_founders_dismissed', true)) {
+        if (!$user_id) {
+            return;
+        }
+        $dismissed_at = get_user_meta($user_id, 'royal_mcp_founders_dismissed_version', true);
+        if ($dismissed_at && version_compare($dismissed_at, ROYAL_MCP_VERSION, '>=')) {
             return;
         }
 
@@ -90,9 +102,79 @@ class Settings_Page {
             return;
         }
 
-        update_user_meta(get_current_user_id(), 'royal_mcp_founders_dismissed', 1);
+        update_user_meta(get_current_user_id(), 'royal_mcp_founders_dismissed_version', ROYAL_MCP_VERSION);
 
         wp_safe_redirect(remove_query_arg(['royal_mcp_dismiss_founders', '_wpnonce']));
+        exit;
+    }
+
+    /**
+     * Output a lightweight wp.org review-request banner. Same version-stamped
+     * dismissal shape as the founders banner — re-appears once per plugin
+     * version update. Stacks above the founders banner so the (smaller, free)
+     * ask gets visual priority; users can dismiss either independently.
+     * Added 1.4.31.
+     */
+    public static function render_review_banner() {
+        $user_id = get_current_user_id();
+        if (!$user_id || !current_user_can('manage_options')) {
+            return;
+        }
+        $dismissed_at = get_user_meta($user_id, 'royal_mcp_review_dismissed_version', true);
+        if ($dismissed_at && version_compare($dismissed_at, ROYAL_MCP_VERSION, '>=')) {
+            return;
+        }
+
+        $dismiss_url = wp_nonce_url(
+            add_query_arg('royal_mcp_dismiss_review', '1'),
+            'royal_mcp_dismiss_review'
+        );
+        ?>
+        <div class="royal-mcp-review-banner">
+            <a href="<?php echo esc_url($dismiss_url); ?>" class="royal-mcp-review-dismiss" aria-label="<?php esc_attr_e('Dismiss this notice', 'royal-mcp'); ?>">
+                <span class="dashicons dashicons-no-alt" aria-hidden="true"></span>
+            </a>
+            <div class="royal-mcp-review-body">
+                <span class="royal-mcp-review-stars" aria-hidden="true">
+                    <span class="dashicons dashicons-star-filled"></span>
+                    <span class="dashicons dashicons-star-filled"></span>
+                    <span class="dashicons dashicons-star-filled"></span>
+                    <span class="dashicons dashicons-star-filled"></span>
+                    <span class="dashicons dashicons-star-filled"></span>
+                </span>
+                <div class="royal-mcp-review-text">
+                    <strong><?php esc_html_e('Enjoying Royal MCP?', 'royal-mcp'); ?></strong>
+                    <span><?php esc_html_e('Leaving a quick review on WordPress.org helps other admins find it. Takes about a minute.', 'royal-mcp'); ?></span>
+                </div>
+            </div>
+            <a href="https://wordpress.org/support/plugin/royal-mcp/reviews/#new-post" target="_blank" rel="noopener noreferrer" class="royal-mcp-review-cta">
+                <?php esc_html_e('Leave a Review', 'royal-mcp'); ?>
+                <span class="dashicons dashicons-external" aria-hidden="true"></span>
+            </a>
+        </div>
+        <?php
+    }
+
+    /**
+     * Persist a per-user dismissal of the review banner. Mirrors
+     * maybe_dismiss_founders_banner. Version-stamped — banner reappears
+     * on each plugin version update.
+     */
+    public function maybe_dismiss_review_banner() {
+        if (!isset($_GET['royal_mcp_dismiss_review'])) {
+            return;
+        }
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+        if (!isset($_GET['_wpnonce']) ||
+            !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'royal_mcp_dismiss_review')) {
+            return;
+        }
+
+        update_user_meta(get_current_user_id(), 'royal_mcp_review_dismissed_version', ROYAL_MCP_VERSION);
+
+        wp_safe_redirect(remove_query_arg(['royal_mcp_dismiss_review', '_wpnonce']));
         exit;
     }
 

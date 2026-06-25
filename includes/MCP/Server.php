@@ -374,6 +374,19 @@ class Server {
         Session_Store::delete_session($session_id);
     }
 
+    /**
+     * 1.4.31 — Resolve a post identifier from tool args, accepting either
+     * `post_id` (canonical) or `id` (alias). Different tools historically
+     * used different argument names (wp_get_post took `id`, wp_get_post_meta
+     * took `post_id`); AI drivers sometimes swap conventions and got
+     * InputValidationError. Accept both everywhere a single post is
+     * identified. Pages and media (also post types) are included; comments,
+     * terms, and users are separate ID domains and keep their own arg names.
+     */
+    private static function resolve_post_id_arg(array $args): int {
+        return intval($args['post_id'] ?? $args['id'] ?? 0);
+    }
+
     private function get_tools() {
         $tools = [
             // Posts (supports custom post types)
@@ -1097,7 +1110,7 @@ class Server {
                 }, $posts);
 
             case 'wp_get_post':
-                $post = get_post(intval($args['id']));
+                $post = get_post(self::resolve_post_id_arg($args));
                 if (!$post) throw new \Exception('Post not found');
                 // 1.4.26 — per-post read check. read_post via map_meta_cap
                 // resolves to read_private_posts for non-public statuses.
@@ -1176,7 +1189,7 @@ class Server {
                 return ['id' => $post_id, 'message' => ucfirst($post_type) . ' created successfully', 'url' => get_permalink($post_id)];
 
             case 'wp_update_post':
-                $post_id = intval($args['id']);
+                $post_id = self::resolve_post_id_arg($args);
                 // 1.4.26 — object-level edit_post resolves to edit_others_posts
                 // when the target isn't owned by the current user, and to the
                 // PT-specific cap (edit_page etc.) automatically via map_meta_cap.
@@ -1196,11 +1209,17 @@ class Server {
                     }
                 }
                 $data = ['ID' => $post_id];
-                if (isset($args['title'])) $data['post_title'] = sanitize_text_field($args['title']);
+                // 1.4.31 — empty-string-as-omit on text fields. AI drivers
+                // sometimes template-fill optional text args with "" instead
+                // of omitting; treating "" as "preserve" prevents silent
+                // destructive writes (blanked post body, title, excerpt) on
+                // what reads as a partial update. To explicitly clear a
+                // field, edit via wp-admin or future dedicated clear tool.
+                if (isset($args['title']) && $args['title'] !== '') $data['post_title'] = sanitize_text_field($args['title']);
                 // 1.4.21 — see wp_create_post above (issue #15).
-                if (isset($args['content'])) $data['post_content'] = wp_slash($args['content']);
+                if (isset($args['content']) && $args['content'] !== '') $data['post_content'] = wp_slash($args['content']);
                 if (isset($args['status'])) $data['post_status'] = sanitize_text_field($args['status']);
-                if (isset($args['excerpt'])) $data['post_excerpt'] = sanitize_text_field($args['excerpt']);
+                if (isset($args['excerpt']) && $args['excerpt'] !== '') $data['post_excerpt'] = sanitize_text_field($args['excerpt']);
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     $data['post_author'] = intval($args['post_author']);
                 }
@@ -1212,14 +1231,19 @@ class Server {
                 return ['id' => $post_id, 'message' => 'Post updated successfully'];
 
             case 'wp_delete_post':
-                $post_id = intval($args['id']);
-                if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
+                $post_id = self::resolve_post_id_arg($args);
+                if ($post_id <= 0) throw new \Exception('Post not found.');
+                // 1.4.31 — cap check BEFORE existence check so an unauthorized
+                // caller probing nonexistent IDs gets "permission" rather than
+                // "not found" (don't leak existence to non-deleters; audit
+                // expects permission-error response regardless of target ID).
                 // 1.4.26 — object-level delete_post via map_meta_cap resolves
                 // to delete_others_posts when the target isn't owned by the
                 // current user.
                 if (!current_user_can('delete_post', $post_id)) {
                     throw new \Exception('You do not have permission to delete this post.');
                 }
+                if (!get_post($post_id)) throw new \Exception('Post not found.');
                 $force = !empty($args['force']);
                 $result = wp_delete_post($post_id, $force);
                 if (!$result) throw new \Exception('Failed to delete post');
@@ -1291,7 +1315,7 @@ class Server {
                 }, $pages);
 
             case 'wp_get_page':
-                $page = get_post(intval($args['id']));
+                $page = get_post(self::resolve_post_id_arg($args));
                 if (!$page || $page->post_type !== 'page') throw new \Exception('Page not found');
                 if (!current_user_can('read_post', $page->ID)) {
                     throw new \Exception('You do not have permission to read this page.');
@@ -1326,23 +1350,24 @@ class Server {
                 return ['id' => $page_id, 'message' => 'Page created successfully', 'url' => get_permalink($page_id)];
 
             case 'wp_update_page':
-                $page_id = intval($args['id']);
+                $page_id = self::resolve_post_id_arg($args);
                 $existing_page = $page_id > 0 ? get_post($page_id) : null;
                 if (!$existing_page || $existing_page->post_type !== 'page') throw new \Exception('Page not found.');
                 if (!current_user_can('edit_post', $page_id)) {
                     throw new \Exception('You do not have permission to edit this page.');
                 }
                 $data = ['ID' => $page_id];
-                if (isset($args['title'])) $data['post_title'] = sanitize_text_field($args['title']);
+                // 1.4.31 — see wp_update_post: "" preserves existing value.
+                if (isset($args['title']) && $args['title'] !== '') $data['post_title'] = sanitize_text_field($args['title']);
                 // 1.4.21 — see wp_create_post above (issue #15).
-                if (isset($args['content'])) $data['post_content'] = wp_slash($args['content']);
+                if (isset($args['content']) && $args['content'] !== '') $data['post_content'] = wp_slash($args['content']);
                 if (isset($args['status'])) $data['post_status'] = sanitize_text_field($args['status']);
                 $result = wp_update_post($data);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
                 return ['id' => $page_id, 'message' => 'Page updated successfully'];
 
             case 'wp_delete_page':
-                $page_id = intval($args['id']);
+                $page_id = self::resolve_post_id_arg($args);
                 $existing_page = $page_id > 0 ? get_post($page_id) : null;
                 if (!$existing_page || $existing_page->post_type !== 'page') throw new \Exception('Page not found.');
                 if (!current_user_can('delete_post', $page_id)) {
@@ -1376,7 +1401,7 @@ class Server {
                 }, $media);
 
             case 'wp_get_media_item':
-                $media = get_post(intval($args['id']));
+                $media = get_post(self::resolve_post_id_arg($args));
                 if (!$media || $media->post_type !== 'attachment') throw new \Exception('Media not found');
                 if (!current_user_can('read_post', $media->ID)) {
                     throw new \Exception('You do not have permission to read this media item.');
@@ -1469,27 +1494,28 @@ class Server {
                 ];
 
             case 'wp_update_media':
-                $media_id = intval($args['id'] ?? 0);
+                $media_id = self::resolve_post_id_arg($args);
                 $media = $media_id > 0 ? get_post($media_id) : null;
                 if (!$media || $media->post_type !== 'attachment') throw new \Exception('Media not found.');
                 if (!current_user_can('edit_post', $media_id)) {
                     throw new \Exception('You do not have permission to edit this media item.');
                 }
                 $update = ['ID' => $media_id];
-                if (isset($args['title']))       $update['post_title']   = sanitize_text_field($args['title']);
-                if (isset($args['caption']))     $update['post_excerpt'] = sanitize_text_field($args['caption']);
-                if (isset($args['description'])) $update['post_content'] = wp_kses_post($args['description']);
+                // 1.4.31 — see wp_update_post: "" preserves existing value.
+                if (isset($args['title']) && $args['title'] !== '')       $update['post_title']   = sanitize_text_field($args['title']);
+                if (isset($args['caption']) && $args['caption'] !== '')     $update['post_excerpt'] = sanitize_text_field($args['caption']);
+                if (isset($args['description']) && $args['description'] !== '') $update['post_content'] = wp_kses_post($args['description']);
                 if (count($update) > 1) {
                     $res = wp_update_post($update, true);
                     if (is_wp_error($res)) throw new \Exception(esc_html($res->get_error_message()));
                 }
-                if (isset($args['alt_text'])) {
+                if (isset($args['alt_text']) && $args['alt_text'] !== '') {
                     update_post_meta($media_id, '_wp_attachment_image_alt', sanitize_text_field($args['alt_text']));
                 }
                 return ['id' => $media_id, 'message' => 'Media updated successfully'];
 
             case 'wp_delete_media':
-                $media_id = intval($args['id']);
+                $media_id = self::resolve_post_id_arg($args);
                 $existing_media = $media_id > 0 ? get_post($media_id) : null;
                 if (!$existing_media || $existing_media->post_type !== 'attachment') throw new \Exception('Media not found.');
                 if (!current_user_can('delete_post', $media_id)) {
@@ -1555,9 +1581,10 @@ class Server {
                     throw new \Exception('You do not have permission to edit this term.');
                 }
                 $update_args = [];
-                if (isset($args['name'])) $update_args['name'] = sanitize_text_field($args['name']);
-                if (isset($args['slug'])) $update_args['slug'] = sanitize_title($args['slug']);
-                if (isset($args['description'])) $update_args['description'] = sanitize_text_field($args['description']);
+                // 1.4.31 — see wp_update_post: "" preserves existing value.
+                if (isset($args['name']) && $args['name'] !== '') $update_args['name'] = sanitize_text_field($args['name']);
+                if (isset($args['slug']) && $args['slug'] !== '') $update_args['slug'] = sanitize_title($args['slug']);
+                if (isset($args['description']) && $args['description'] !== '') $update_args['description'] = sanitize_text_field($args['description']);
                 if (isset($args['parent'])) {
                     $tax_obj = get_taxonomy($taxonomy);
                     if ($tax_obj && $tax_obj->hierarchical) $update_args['parent'] = intval($args['parent']);
@@ -1584,7 +1611,7 @@ class Server {
             case 'wp_add_post_terms':
                 $taxonomy = sanitize_text_field($args['taxonomy']);
                 if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
-                $post_id = intval($args['post_id']);
+                $post_id = self::resolve_post_id_arg($args);
                 if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
                 // 1.4.26 — assigning terms to a post requires the post's own
                 // edit cap (so a Subscriber can't tag an admin's draft).
@@ -1810,22 +1837,33 @@ class Server {
 
             // ==================== POST META ====================
             case 'wp_get_post_meta':
-                $post_id = intval($args['post_id']);
+                $post_id = self::resolve_post_id_arg($args);
                 if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
-                // 1.4.26 — read_post on the parent gates meta reads.
-                // Aleff's PoC: pre-1.4.26 a Subscriber could read post meta on
-                // private admin-owned posts.
-                if (!current_user_can('read_post', $post_id)) {
+                $key = !empty($args['key']) ? sanitize_text_field($args['key']) : '';
+                // 1.4.31 — protected-meta gating. Mirrors WP core's
+                // is_protected_meta() convention: underscore-prefixed keys
+                // (_yoast_wpseo_*, _edit_lock, _wp_attached_file, ACF
+                // internals, etc.) carry admin/SEO data and require
+                // edit_post. Non-underscored keys keep read_post for
+                // legitimate public-meta consumers. Empty-key requests
+                // (return all meta) require edit_post too since the
+                // response would otherwise leak underscored keys.
+                // 1.4.26 — read_post on the parent gates the public path.
+                // Aleff's PoC: pre-1.4.26 a Subscriber could read post meta
+                // on private admin-owned posts.
+                $needs_edit_cap = ($key === '' || strpos($key, '_') === 0);
+                $cap = $needs_edit_cap ? 'edit_post' : 'read_post';
+                if (!current_user_can($cap, $post_id)) {
                     throw new \Exception('You do not have permission to read meta on this post.');
                 }
-                if (!empty($args['key'])) {
-                    $value = get_post_meta($post_id, sanitize_text_field($args['key']), true);
-                    return ['key' => $args['key'], 'value' => $value];
+                if ($key !== '') {
+                    $value = get_post_meta($post_id, $key, true);
+                    return ['key' => $key, 'value' => $value];
                 }
                 return get_post_meta($post_id);
 
             case 'wp_update_post_meta':
-                $post_id = intval($args['post_id']);
+                $post_id = self::resolve_post_id_arg($args);
                 if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('You do not have permission to edit meta on this post.');
@@ -1840,7 +1878,7 @@ class Server {
                 return ['message' => 'Post meta updated successfully', 'result' => $result];
 
             case 'wp_delete_post_meta':
-                $post_id = intval($args['post_id']);
+                $post_id = self::resolve_post_id_arg($args);
                 if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('You do not have permission to edit meta on this post.');
@@ -2199,8 +2237,8 @@ class Server {
 
             // ==================== SEO META (Yoast / Rank Math auto-detect) ====================
             case 'wp_get_seo_meta':
-                $post_id = intval($args['post_id'] ?? 0);
-                if ($post_id <= 0) throw new \Exception('post_id is required.');
+                $post_id = self::resolve_post_id_arg($args);
+                if ($post_id <= 0) throw new \Exception('post_id (or id) is required.');
                 if (!get_post($post_id)) throw new \Exception('Post not found: ' . esc_html((string) $post_id));
                 // 1.4.26 — read_post on the parent gates SEO-meta reads
                 // (private/draft posts' SEO meta is not public).
@@ -2248,8 +2286,8 @@ class Server {
                 ];
 
             case 'wp_update_seo_meta':
-                $post_id = intval($args['post_id'] ?? 0);
-                if ($post_id <= 0) throw new \Exception('post_id is required.');
+                $post_id = self::resolve_post_id_arg($args);
+                if ($post_id <= 0) throw new \Exception('post_id (or id) is required.');
                 if (!get_post($post_id)) throw new \Exception('Post not found: ' . esc_html((string) $post_id));
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('edit_post capability required for this post.');
@@ -2382,8 +2420,8 @@ class Server {
 
             // ==================== POST REVISIONS ====================
             case 'wp_get_post_revisions':
-                $post_id = intval($args['post_id'] ?? 0);
-                if ($post_id <= 0) throw new \Exception('post_id is required.');
+                $post_id = self::resolve_post_id_arg($args);
+                if ($post_id <= 0) throw new \Exception('post_id (or id) is required.');
                 if (!get_post($post_id)) throw new \Exception('Post not found.');
                 // 1.4.26 — revisions can contain past versions of admin-owned
                 // content; gate behind the parent post's read cap.

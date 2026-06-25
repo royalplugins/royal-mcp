@@ -22,6 +22,8 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
 <div class="wrap royal-mcp-settings">
     <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
 
+    <?php \Royal_MCP\Admin\Settings_Page::render_review_banner(); ?>
+
     <?php settings_errors(); ?>
 
     <form method="post" action="options.php" id="royal-mcp-settings-form">
