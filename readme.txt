@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.30
+Stable tag: 1.4.31
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,6 +15,8 @@ The security-first MCP server for WordPress. Connect Claude, ChatGPT, and Gemini
 == Description ==
 
 https://youtu.be/pf-mdRnXezM
+
+https://youtu.be/6P7TU1Tva3k
 
 Royal MCP is a security-first Model Context Protocol (MCP) server for WordPress. It gives AI platforms like Claude, ChatGPT, and Google Gemini structured access to your WordPress content — with authentication, rate limiting, and audit logging that most MCP implementations skip entirely.
 
@@ -316,6 +318,14 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Changelog ==
 
+= 1.4.31 =
+* Hardening: `wp_delete_post` capability check now runs before the post-existence lookup. Pre-1.4.31, a Subscriber-tier OAuth Bearer calling `wp_delete_post` with a non-existent post ID received "Post not found." rather than a permission error &mdash; effectively a post-ID enumeration surface (the response distinguished "exists but you can't delete" from "doesn't exist"). 1.4.31 inverts the order: unauthorized callers now receive a permission error regardless of whether the target post exists. Same defense-in-depth pattern as the six integration cap-order fixes shipped in 1.4.30.
+* Hardening: `wp_get_post_meta` now requires the `edit_post` capability for underscore-prefixed (protected) meta keys, matching WordPress core&rsquo;s `is_protected_meta()` convention. Pre-1.4.31, a Subscriber-tier OAuth Bearer could read underscore-prefixed post meta on public posts (Yoast SEO `_yoast_wpseo_*`, `_edit_lock`, `_wp_attached_file`, ACF internal fields, custom plugin meta) because the broader `read_post` cap returned true for public content. The non-underscore (developer-visible) meta path keeps the existing `read_post` gate so legitimate public-meta reads continue to work for low-privilege users. Empty-key &ldquo;return all meta&rdquo; requests also require `edit_post` since the response would otherwise expose protected keys.
+* Hardening: `wp_update_post`, `wp_update_page`, `wp_update_media`, and `wp_update_term` now treat empty-string text fields as "preserve existing value" rather than "blank the field." Pre-1.4.31, an AI driver that template-filled an optional text argument with `""` instead of omitting it would silently destroy the existing post body, title, excerpt, caption, alt text, term name, or term description. Field omission already preserved existing values via PHP&rsquo;s `isset()` gate; this extends the same protection to the empty-string case. To explicitly clear a text field, edit through the WP admin.
+* Ergonomics: Every tool that identifies a single post now accepts either `id` or `post_id`. Pre-1.4.31, `wp_get_post` / `wp_update_post` / `wp_delete_post` required `id` while `wp_get_post_meta` / `wp_update_post_meta` / `wp_get_seo_meta` / `wp_update_seo_meta` / `wp_get_post_revisions` / `wp_add_post_terms` required `post_id` &mdash; an AI driver that called a tool with the wrong-named argument received an InputValidationError. Both names are now accepted on every post-identifying tool (pages and media included; comments, terms, and users keep their separate ID domains). No schema changes; existing callers continue to work unchanged.
+* UX: Royal Plugins Founders Bundle banner on the Royal MCP settings page is now version-stamped. Pre-1.4.31, dismissing the banner stored a boolean flag and the banner never re-appeared for that admin user. 1.4.31 stores the plugin version at dismiss-time; the banner re-appears once on each plugin version update. Respects the explicit "no" within a version (no re-prompts on logins, pageloads, or deactivate/reactivate), but treats the user&rsquo;s act of updating the plugin as fresh engagement signal warranting one new impression. Existing 1.4.30 dismissers will see a fresh impression after upgrading.
+* UX: New wp.org review-request banner on the Royal MCP settings page. Lightweight notice with a direct CTA to leave a review on the wp.org plugin page. Stacks above the Founders Bundle banner. Same version-stamped dismissal shape &mdash; appears once per plugin version update, no time-based or pageload-based re-prompts.
+
 = 1.4.30 =
 * New: `elementor_add_widget` MCP tool &mdash; the first structural-write Elementor tool. Programmatically drop widgets or containers into an existing Elementor page. Dual-surface design: the raw path accepts any widget type registered with Elementor (or an Editor V4 atomic prefix) plus a full Elementor settings object; the curated path covers the 11 highest-frequency widget types (container, heading, text-editor, button, image, image-box, icon-box, icon-list, video, divider, spacer) with flat parameters that the tool expands into the canonical settings object internally, saving tokens on every call. Container widgets can include nested children inline (one call drops a parent container with N child widgets, recursive). Atomic widgets (Editor V4) pass through opaquely via the raw path since their JSON schema is not publicly documented. Curated `video` detects host and routes YouTube, Vimeo, and Dailymotion URLs to the correct internal Elementor field. Curated `icon-list` builds the repeater shape with auto-generated item IDs. Cap-checked via `edit_post` per the existing Elementor-tool pattern (1.4.26 hardening still applies). Pre-1.4.30 the Elementor tools covered clone-and-customize (1.4.19) and read (`elementor_get_page_outline`); they did not let an agent build a page widget by widget. 1.4.30 closes that gap with the smallest possible surface.
 * Hardening: `elementor_add_widget` rejects unknown `widget_type` slugs at the boundary rather than serializing them into `_elementor_data` (where Elementor would render them as silent empty placeholders). Validates against Elementor&rsquo;s widget registry, allows Editor V4 atomic prefixes (`a-*` / `e-*`) opaquely, and fails open if the registry is unreachable so a transient autoloader miss can&rsquo;t block writes that would otherwise succeed. Catches typos (`headng`, `text-edtior`) at the API call instead of after an agent thinks the page was built.
@@ -542,6 +552,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release
 
 == Upgrade Notice ==
+
+= 1.4.31 =
+Security hardening + AI-driver ergonomics. Closes two Subscriber-tier OAuth Bearer gaps (`wp_delete_post` permission check now precedes the existence lookup, eliminating a post-ID enumeration surface; `wp_get_post_meta` now requires `edit_post` for underscore-prefixed "protected" meta keys, matching WordPress core&rsquo;s `is_protected_meta()` convention). Protects against AI drivers that template-fill empty-string text arguments &mdash; `wp_update_post` / `wp_update_page` / `wp_update_media` / `wp_update_term` now treat `""` as "preserve existing value" rather than "blank the field." Every post-identifying tool now accepts either `id` or `post_id` (no more InputValidationError on convention mismatch). Settings-page UX: Founders Bundle banner is now version-stamped (re-appears once per plugin version update) and new wp.org review-request banner with the same dismissal shape. No customer action required; all changes are strictly additive or hardening.
 
 = 1.4.30 =
 Adds `elementor_add_widget`, the first structural-write Elementor tool &mdash; agents can now build pages widget by widget, not just clone and customize. Eleven curated shortcuts (container, heading, text, button, image, image-box, icon-box, icon-list, video, divider, spacer) reduce token cost on common operations; raw passthrough handles the long tail and atomic widgets. Also closes a Subscriber-tier capability-ordering gap in six integration tool wrappers (GuardPress, SiteVault, ForgeCache, Royal Ledger, ACF, Royal Links) &mdash; unauthorized OAuth Bearer callers no longer learn which integrations are active on the site via the &ldquo;not active&rdquo; error path.
