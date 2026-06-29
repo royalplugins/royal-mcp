@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.31
+Stable tag: 1.4.32
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -35,28 +35,34 @@ MCP gives AI agents the ability to read, create, update, and delete your WordPre
 
 Royal MCP prevents all of this with API key authentication on session initialization, timing-safe key comparison, per-IP rate limiting (60 requests/minute), and a full activity log of every MCP interaction.
 
-= 67 Core Tools + 59 Integration Tools =
+= Free, Self-Hosted, Fully Featured =
+
+Royal MCP is fully featured in its free, GPL-licensed release. There is no Pro version &mdash; all tools ship in the wp.org plugin, and updates go through the standard WordPress plugin updater.
+
+Your credentials stay on your server. Royal MCP runs entirely inside WordPress: API keys, OAuth tokens, and session state all live in your own database. Royal MCP makes no outbound connections to Royal Plugins&rsquo; own servers &mdash; no license check, no telemetry, no traffic beacon. If you prefer to keep AI inference local too, Ollama and LM Studio are first-class platforms alongside Claude, ChatGPT, and Gemini.
+
+= 67 Core Tools + 60 Integration Tools =
 
 **WordPress Core (67 tools):**
 
-* Posts — create, read, update, delete, search, count (any registered public post type, featured images supported)
-* Pages — full CRUD with parent page support
-* Post Types — discover all registered public post types on the site
-* Post Revisions — list revision history and roll a post back to any prior version
-* Media — browse, upload from URL or base64, update alt text/caption/title/description, set as featured image, delete
-* Comments — create, read, delete; full moderation suite (list pending, approve, mark spam, trash)
-* Users — display names and roles (emails and usernames are not exposed)
-* Categories & Tags & Custom Taxonomies — create, update (rename/re-slug/edit/move), delete, assign, count, discover all registered taxonomies
-* Term Meta — read, update, delete (most useful for term-level SEO meta — titles, descriptions, focus keywords stored against categories and tags)
-* Menus — list menus, list menu items, create / update / delete / reorder menu items
-* Post Meta — read, update, delete custom fields (works with ACF, MetaBox, JetEngine, Pods, CPT UI)
-* SEO Meta — read and write Yoast SEO or Rank Math title/description/focus keyword/robots/OG fields (auto-detects active SEO plugin)
-* Site Info — site name, description, WordPress version, timezone
-* Plugins & Themes — list installed plugins and themes with active status
-* Theme Appearance — get active theme, read/write theme mods (gated by admin toggle + allowlist), read/write Custom CSS
-* Search — full-text content search across post types
-* Permalink Structure — read and update permalink settings (gated by admin toggle)
-* Options — read allowlisted core options, read full plugin settings by slug (sensitive keys redacted), and write to allowlisted options when an admin enables it
+* Posts - create, read, update, delete, search, count (any registered public post type, featured images supported)
+* Pages - full CRUD with parent page support
+* Post Types - discover all registered public post types on the site
+* Post Revisions - list revision history and roll a post back to any prior version
+* Media - browse, upload from URL or base64, update alt text/caption/title/description, set as featured image, delete
+* Comments - create, read, delete; full moderation suite (list pending, approve, mark spam, trash)
+* Users - display names and roles (emails and usernames are not exposed)
+* Categories & Tags & Custom Taxonomies - create, update (rename/re-slug/edit/move), delete, assign, count, discover all registered taxonomies
+* Term Meta - read, update, delete (most useful for term-level SEO meta - titles, descriptions, focus keywords stored against categories and tags)
+* Menus - list menus, list menu items, create / update / delete / reorder menu items
+* Post Meta - read, update, delete custom fields (works with ACF, MetaBox, JetEngine, Pods, CPT UI)
+* SEO Meta - read and write Yoast SEO or Rank Math title/description/focus keyword/robots/OG fields (auto-detects active SEO plugin)
+* Site Info - site name, description, WordPress version, timezone
+* Plugins & Themes - list installed plugins and themes with active status
+* Theme Appearance - get active theme, read/write theme mods (gated by admin toggle + allowlist), read/write Custom CSS
+* Search - full-text content search across post types
+* Permalink Structure - read and update permalink settings (gated by admin toggle)
+* Options - read allowlisted core options, read full plugin settings by slug (sensitive keys redacted), and write to allowlisted options when an admin enables it
 
 = Plugin Integrations (Conditional) =
 
@@ -120,7 +126,7 @@ When ACF (free or Pro) is active, AI agents can read and write ACF fields with t
 * Update an ACF field with type-aware value handling (scalar for text/number, array for repeaters and flex content, post ID for relationships, attachment ID for images)
 * Enumerate ACF field groups on the site, optionally filtered by post type — for AI-driven discovery of available custom fields before reading/writing
 
-**Elementor Integration (6 tools):**
+**Elementor Integration (7 tools):**
 When Elementor (free or Pro) is active, AI agents can clone and customize existing Elementor pages without trying to generate page-builder JSON from scratch:
 
 * Clone an existing Elementor page with a new title and fresh element IDs (so the duplicate opens in the editor without ID collisions)
@@ -134,32 +140,32 @@ When Elementor (free or Pro) is active, AI agents can clone and customize existi
 
 WordPress 6.9 shipped the Abilities API in November 2025 — a primitive that lets plugins register typed capabilities AI agents can call. Core ships three default abilities (site info, user info, environment info) and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol.
 
-Royal MCP is a complete, production-ready MCP server that predates the official adapter. It runs the full Streamable HTTP transport, enforces API key authentication on every request, ships OAuth 2.0 for Claude Desktop's native connector flow, rate-limits per-IP, redacts sensitive data, and logs every interaction. Out of the box it includes 67 tools for WordPress core operations plus 59 integration tools that auto-load when WooCommerce, GuardPress, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, or Advanced Custom Fields (ACF) is active.
+Royal MCP is a complete, production-ready MCP server that predates the official adapter. It runs the full Streamable HTTP transport, enforces API key authentication on every request, ships OAuth 2.0 for Claude Desktop's native connector flow, rate-limits per-IP, redacts sensitive data, and logs every interaction. Out of the box it includes 67 tools for WordPress core operations plus 60 integration tools that auto-load when WooCommerce, GuardPress, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, or Advanced Custom Fields (ACF) is active.
 
 = Supported AI Platforms =
 
-* **Claude (Anthropic)** — Full MCP support via Claude Desktop, Claude Code, and VS Code
-* **OpenAI / ChatGPT** — GPT-5.5, GPT-5, GPT-5 Mini, o3
-* **Google Gemini** — Gemini 3.5 Flash, 3.1 Flash-Lite
-* **Groq** — Llama 3.3, Llama 3.1, GPT-OSS
-* **Azure OpenAI** — Azure-hosted OpenAI deployments
-* **AWS Bedrock** — Claude, Llama, Titan models
-* **Ollama / LM Studio** — Local self-hosted models (no external data transmission)
-* **Custom MCP Servers** — Connect to any MCP-compatible endpoint
+* **Claude (Anthropic)** - Full MCP support via Claude Desktop, Claude Code, and VS Code
+* **OpenAI / ChatGPT** - GPT-5.5, GPT-5, GPT-5 Mini, o3
+* **Google Gemini** - Gemini 3.5 Flash, 3.1 Flash-Lite
+* **Groq** - Llama 3.3, Llama 3.1, GPT-OSS
+* **Azure OpenAI** - Azure-hosted OpenAI deployments
+* **AWS Bedrock** - Claude, Llama, Titan models
+* **Ollama / LM Studio** - Local self-hosted models (no external data transmission)
+* **Custom MCP Servers** - Connect to any MCP-compatible endpoint
 
 = Compatible Clients & Frameworks =
 
 <!-- compliance: technical-context -->
 Royal MCP works with any MCP-compliant client, IDE, or AI agent framework — no per-tool configuration required. Each entry below describes the specific integration path Royal MCP provides for that target, so customers can answer "will this work with the tool I already use?":
 
-* **Desktop AI apps** — Claude Desktop (native MCP connector via OAuth 2.0), ChatGPT Desktop, Gemini Advanced.
-* **AI code IDEs** — Claude Code, VS Code (with MCP extension), Cursor, Windsurf, Continue, Cline, Zed, JetBrains AI Assistant.
-* **API testing tools** — Postman, Bruno, Insomnia (use the API key in the `X-Royal-MCP-API-Key` header).
-* **Custom field plugins** — Advanced Custom Fields (ACF) has dedicated `acf_*` tools that return values formatted per each field's Return Format setting (the same way the ACF UI shows them). MetaBox, JetEngine, Pods, CPT UI, and Custom Field Suite are supported through the `wp_get_post_meta` / `wp_update_post_meta` tools, so AI agents can populate custom fields just like a human editor.
-* **Page builders** — Elementor has dedicated tools for clone-and-customize workflows (clone a page, find/replace text, swap images, get an outline, import templates) — see the Tools list. Widget-level creation from scratch is intentionally out of scope. Divi, Beaver Builder, Bricks, Gutenberg, Spectra, and Stackable store standard post content that is readable and writable by AI; page-builder-specific JSON storage is opaque unless covered by a dedicated tool.
-* **Multilingual** — WPML, Polylang, TranslatePress, qTranslate. Translated posts appear as separate posts and can be read or written via the standard post tools.
-* **AI agent frameworks** — LangChain, AutoGen, CrewAI, LlamaIndex, Haystack — any MCP-compatible framework can call Royal MCP's tools.
-* **AI app platforms** — Anthropic Console, OpenAI Playground, Google AI Studio, Vertex AI, Azure AI Studio, Amazon Bedrock Console.
+* **Desktop AI apps** - Claude Desktop (native MCP connector via OAuth 2.0), ChatGPT Desktop, Gemini Advanced.
+* **AI code IDEs** - Claude Code, VS Code (with MCP extension), Cursor, Windsurf, Continue, Cline, Zed, JetBrains AI Assistant.
+* **API testing tools** - Postman, Bruno, Insomnia (use the API key in the `X-Royal-MCP-API-Key` header).
+* **Custom field plugins** - Advanced Custom Fields (ACF) has dedicated `acf_*` tools that return values formatted per each field's Return Format setting (the same way the ACF UI shows them). MetaBox, JetEngine, Pods, CPT UI, and Custom Field Suite are supported through the `wp_get_post_meta` / `wp_update_post_meta` tools, so AI agents can populate custom fields just like a human editor.
+* **Page builders** - Elementor has dedicated tools for clone-and-customize workflows (clone a page, find/replace text, swap images, get an outline, import templates) - see the Tools list. Widget-level creation from scratch is intentionally out of scope. Divi, Beaver Builder, Bricks, Gutenberg, Spectra, and Stackable store standard post content that is readable and writable by AI; page-builder-specific JSON storage is opaque unless covered by a dedicated tool.
+* **Multilingual** - WPML, Polylang, TranslatePress, qTranslate. Translated posts appear as separate posts and can be read or written via the standard post tools.
+* **AI agent frameworks** - LangChain, AutoGen, CrewAI, LlamaIndex, Haystack - any MCP-compatible framework can call Royal MCP's tools.
+* **AI app platforms** - Anthropic Console, OpenAI Playground, Google AI Studio, Vertex AI, Azure AI Studio, Amazon Bedrock Console.
 
 = MCP Spec Compliance =
 
@@ -227,7 +233,7 @@ Security. Most MCP plugins — and 41% of all public MCP servers — have no aut
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
-No. WordPress 6.9 added the Abilities API — a primitive for registering AI-callable functions — and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 67 ready-to-use WordPress core tools, and 59 integration tools that auto-load for WooCommerce, GuardPress, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, and Advanced Custom Fields.
+No. WordPress 6.9 added the Abilities API — a primitive for registering AI-callable functions — and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 67 ready-to-use WordPress core tools, and 60 integration tools that auto-load for WooCommerce, GuardPress, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, and Advanced Custom Fields.
 
 = Does Royal MCP work with WooCommerce? =
 
@@ -317,6 +323,11 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.4.32 =
+* Feature: `wp_search` now accepts optional `snippet` (int, max 1000 chars) and `per_page` (default 20, max 100) parameters. When `snippet` is set, each result row includes the matched post&rsquo;s `slug` and a content excerpt windowed around the first occurrence of the search term &mdash; lets AI drivers skip a follow-up `wp_get_page` per result on multi-page audits. Snippet extraction strips HTML and registered shortcodes and is multibyte-safe. Strictly additive; existing callers without the new parameters see no behavior change.
+* Feature: `wc_get_orders` now accepts a `page` parameter for stores with more than `per_page` orders. **Response shape change:** the tool now returns `{orders, page, per_page, total, total_pages}` instead of a bare array. AI drivers should iterate `page` until `page >= total_pages`. Pre-1.4.32, orders beyond the first 100 were unreachable.
+* Docs: general readme cleanup and updates.
 
 = 1.4.31 =
 * Hardening: `wp_delete_post` capability check now runs before the post-existence lookup. Pre-1.4.31, a Subscriber-tier OAuth Bearer calling `wp_delete_post` with a non-existent post ID received "Post not found." rather than a permission error &mdash; effectively a post-ID enumeration surface (the response distinguished "exists but you can't delete" from "doesn't exist"). 1.4.31 inverts the order: unauthorized callers now receive a permission error regardless of whether the target post exists. Same defense-in-depth pattern as the six integration cap-order fixes shipped in 1.4.30.
@@ -552,6 +563,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release
 
 == Upgrade Notice ==
+
+= 1.4.32 =
+Adds snippet excerpts to `wp_search` (token saver for multi-page audits) and pagination to `wc_get_orders` (stores beyond 100 orders are now reachable). Note: `wc_get_orders` response shape changes from a bare array to `{orders, page, per_page, total, total_pages}` &mdash; AI driver tooling that iterated the bare array will need to read `result.orders`.
 
 = 1.4.31 =
 Security hardening + AI-driver ergonomics. Closes two Subscriber-tier OAuth Bearer gaps and protects against AI drivers that template-fill empty-string text arguments. Every post-identifying tool now accepts either `id` or `post_id`. Settings page also gets a new wp.org review-request banner and minor Founders Bundle banner tweaks.

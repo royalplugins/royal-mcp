@@ -450,7 +450,7 @@ class Server {
 
             // Site & Search
             ['name' => 'wp_get_site_info', 'description' => 'Get site information', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
-            ['name' => 'wp_search', 'description' => 'Search all content', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string']], 'required' => ['query']]],
+            ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page).', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.']], 'required' => ['query']]],
 
             // Options
             ['name' => 'wp_get_option', 'description' => 'Get a single WordPress option value (allowlisted, sensitive keys redacted)', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string']], 'required' => ['name']]],
@@ -1905,14 +1905,22 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to search.');
                 }
+                $query = sanitize_text_field($args['query']);
+                $per_page = isset($args['per_page']) ? max(1, min(intval($args['per_page']), 100)) : 20;
+                $snippet_len = isset($args['snippet']) ? max(0, min(intval($args['snippet']), 1000)) : 0;
                 $search_args = [
-                    's' => sanitize_text_field($args['query']),
+                    's' => $query,
                     'post_type' => !empty($args['post_type']) ? sanitize_text_field($args['post_type']) : 'any',
-                    'numberposts' => 20,
+                    'numberposts' => $per_page,
                 ];
                 $posts = get_posts($search_args);
-                return array_map(function($p) {
-                    return ['id' => $p->ID, 'title' => $p->post_title, 'type' => $p->post_type, 'url' => get_permalink($p)];
+                return array_map(function($p) use ($query, $snippet_len) {
+                    $row = ['id' => $p->ID, 'title' => $p->post_title, 'type' => $p->post_type, 'url' => get_permalink($p)];
+                    if ($snippet_len > 0) {
+                        $row['slug'] = $p->post_name;
+                        $row['snippet'] = $this->extract_snippet($p->post_content, $query, $snippet_len);
+                    }
+                    return $row;
                 }, $posts);
 
             // ==================== OPTIONS ====================
@@ -2750,6 +2758,37 @@ class Server {
             $result[$row->option_name] = $this->redact_sensitive_keys($value);
         }
         return $result;
+    }
+
+    /**
+     * Extract a snippet of $len chars around the first occurrence of $query in $content.
+     * Strips shortcodes + HTML first. Falls back to leading $len chars if no match
+     * (e.g. when the term only hit the title). Multibyte-safe — WP runs utf8mb4.
+     */
+    private function extract_snippet($content, $query, $len) {
+        $text = trim(preg_replace('/\s+/', ' ', wp_strip_all_tags(strip_shortcodes((string) $content))));
+        if ($text === '') return '';
+        $total = mb_strlen($text);
+        if ($total <= $len) return $text;
+
+        $needle = $query;
+        $pos = ($needle !== '') ? mb_stripos($text, $needle) : false;
+        if ($pos === false) {
+            $first_word = strtok($query, ' ');
+            if ($first_word !== false && $first_word !== '') {
+                $pos = mb_stripos($text, $first_word);
+            }
+        }
+        if ($pos === false) {
+            return rtrim(mb_substr($text, 0, $len)) . '…';
+        }
+
+        $start = max(0, $pos - intval($len / 2));
+        $start = min($start, max(0, $total - $len));
+        $excerpt = mb_substr($text, $start, $len);
+        if ($start > 0) $excerpt = '…' . ltrim($excerpt);
+        if ($start + $len < $total) $excerpt = rtrim($excerpt) . '…';
+        return $excerpt;
     }
 
     /**
