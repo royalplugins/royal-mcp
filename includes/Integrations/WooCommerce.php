@@ -95,11 +95,12 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_get_orders',
-				'description' => 'Get WooCommerce orders',
+				'description' => 'Get WooCommerce orders. Returns {orders, page, per_page, total, total_pages} — iterate page until page >= total_pages.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
-						'per_page' => [ 'type' => 'integer', 'description' => 'Number of orders (max 100)' ],
+						'per_page' => [ 'type' => 'integer', 'description' => 'Number of orders per page (default 10, max 100)' ],
+						'page'     => [ 'type' => 'integer', 'description' => 'Page number, 1-indexed (default 1)' ],
 						'status'   => [ 'type' => 'string', 'description' => 'Order status (processing, completed, on-hold, etc)' ],
 					],
 				],
@@ -594,16 +595,25 @@ class WooCommerce {
 				return [ 'id' => $args['id'], 'message' => 'Product updated successfully' ];
 
 			case 'wc_get_orders':
-				$limit  = min( intval( $args['per_page'] ?? 10 ), 100 );
-				$status = ! empty( $args['status'] ) ? sanitize_text_field( $args['status'] ) : 'any';
-				$orders = wc_get_orders( [
-					'limit'   => $limit,
-					'status'  => $status,
-					'type'    => 'shop_order',
-					'orderby' => 'date',
-					'order'   => 'DESC',
+				$per_page = max( 1, min( intval( $args['per_page'] ?? 10 ), 100 ) );
+				$page     = max( 1, intval( $args['page'] ?? 1 ) );
+				$status   = ! empty( $args['status'] ) ? sanitize_text_field( $args['status'] ) : 'any';
+				$result   = wc_get_orders( [
+					'limit'    => $per_page,
+					'paged'    => $page,
+					'status'   => $status,
+					'type'     => 'shop_order',
+					'orderby'  => 'date',
+					'order'    => 'DESC',
+					'paginate' => true,
 				] );
-				return array_map( [ __CLASS__, 'format_order_summary' ], $orders );
+				return [
+					'orders'      => array_map( [ __CLASS__, 'format_order_summary' ], $result->orders ),
+					'page'        => $page,
+					'per_page'    => $per_page,
+					'total'       => intval( $result->total ),
+					'total_pages' => intval( $result->max_num_pages ),
+				];
 
 			case 'wc_get_order':
 				$order = wc_get_order( intval( $args['id'] ) );
