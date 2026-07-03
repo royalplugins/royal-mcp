@@ -392,8 +392,8 @@ class Server {
             // Posts (supports custom post types)
             ['name' => 'wp_get_posts', 'description' => 'Get WordPress posts (supports custom post types)', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of posts (max 100)'], 'search' => ['type' => 'string', 'description' => 'Search term'], 'status' => ['type' => 'string', 'description' => 'Post status (publish, draft, etc)'], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post). Use wp_get_post_types to discover available types']]]],
             ['name' => 'wp_get_post', 'description' => 'Get single post by ID (any post type)', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID']], 'required' => ['id']]],
-            ['name' => 'wp_create_post', 'description' => 'Create new post (supports custom post types)', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft']], 'excerpt' => ['type' => 'string'], 'categories' => ['type' => 'array', 'items' => ['type' => 'integer']], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post)'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to assign as the post author. Defaults to the authenticated MCP user (admin). Use wp_get_users to discover available author IDs.']], 'required' => ['title', 'content']]],
-            ['name' => 'wp_update_post', 'description' => 'Update existing post (any post type). Use featured_media to change the featured image by attachment ID, or use wp_set_featured_image for a URL-based workflow.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'excerpt' => ['type' => 'string'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image (pass 0 to remove)'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as the post author. Use wp_get_users to discover available author IDs.']], 'required' => ['id']]],
+            ['name' => 'wp_create_post', 'description' => 'Create new post (supports custom post types). Combine status="future" with date to schedule.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule. Past dates auto-publish with that timestamp.'], 'excerpt' => ['type' => 'string'], 'categories' => ['type' => 'array', 'items' => ['type' => 'integer']], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post)'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to assign as the post author. Defaults to the authenticated MCP user (admin). Use wp_get_users to discover available author IDs.']], 'required' => ['title', 'content']]],
+            ['name' => 'wp_update_post', 'description' => 'Update existing post (any post type). Use featured_media to change the featured image by attachment ID, or use wp_set_featured_image for a URL-based workflow. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image (pass 0 to remove)'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as the post author. Use wp_get_users to discover available author IDs.']], 'required' => ['id']]],
             ['name' => 'wp_get_post_types', 'description' => 'Get all registered public post types (including custom post types)', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_delete_post', 'description' => 'Delete post', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean', 'description' => 'Skip trash and permanently delete']], 'required' => ['id']]],
             ['name' => 'wp_count_posts', 'description' => 'Get post counts by status', 'inputSchema' => ['type' => 'object', 'properties' => ['post_type' => ['type' => 'string', 'description' => 'Post type (post, page, etc)']]]],
@@ -401,8 +401,8 @@ class Server {
             // Pages
             ['name' => 'wp_get_pages', 'description' => 'Get WordPress pages', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID']]]],
             ['name' => 'wp_get_page', 'description' => 'Get single page by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Page ID']], 'required' => ['id']]],
-            ['name' => 'wp_create_page', 'description' => 'Create new page', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft']], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID']], 'required' => ['title', 'content']]],
-            ['name' => 'wp_update_page', 'description' => 'Update existing page', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string']], 'required' => ['id']]],
+            ['name' => 'wp_create_page', 'description' => 'Create new page. Combine status="future" with date to schedule.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule.'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID']], 'required' => ['title', 'content']]],
+            ['name' => 'wp_update_page', 'description' => 'Update existing page. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.']], 'required' => ['id']]],
             ['name' => 'wp_delete_page', 'description' => 'Delete page', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean']], 'required' => ['id']]],
 
             // Media
@@ -1049,6 +1049,18 @@ class Server {
             ],
             ['%s', '%s', '%s', '%s', '%s']
         );
+
+        /**
+         * Fires after every MCP tool invocation. Surfaces inbound MCP traffic
+         * to observability plugins (Royal AI Firewall, etc.) so they can
+         * record + classify the calling agent in real-time.
+         *
+         * @param string $tool_name     The MCP tool that was called.
+         * @param string $status        'success' | 'error'
+         * @param string $error_message Empty string on success; the dispatcher
+         *                              error message on failure.
+         */
+        do_action('royal_mcp_tool_called', (string) $tool_name, (string) $status, (string) ($error_message ?? ''));
     }
 
     private function execute_tool($name, $args) {
@@ -1143,7 +1155,16 @@ class Server {
                     throw new \Exception('You do not have permission to create ' . esc_html($post_type) . ' posts.');
                 }
                 $requested_status = isset($args['status']) ? sanitize_text_field($args['status']) : 'draft';
-                if ('publish' === $requested_status) {
+                // 1.4.33 — publish_posts cap now gates future + private in
+                // addition to publish. When the enum expanded from
+                // ['publish', 'draft'] to include future/pending/private the
+                // pre-existing 'publish' check needed matching coverage: WP
+                // core silently downgrades unauthorized future/private to
+                // pending, which would surface as a confusing "why did my
+                // scheduled post become pending" bug rather than a clear
+                // permission error. pending stays uncapped — it's just an
+                // unpublished proposal, no publish-tier trust required.
+                if (in_array($requested_status, ['publish', 'future', 'private'], true)) {
                     $publish_cap = !empty($pto->cap->publish_posts) ? $pto->cap->publish_posts : 'publish_posts';
                     if (!current_user_can($publish_cap)) {
                         throw new \Exception('You do not have permission to publish ' . esc_html($post_type) . ' posts.');
@@ -1170,16 +1191,31 @@ class Server {
                 // otherwise strip the literal backslashes inside escape
                 // sequences (`\n`, `&`) that WP 7.0's per-block `style.css`
                 // depends on.
+                // 1.4.33 — status allowlist expanded to match schema enum.
+                // future/pending/private are all standard WP statuses that
+                // wp_insert_post handles natively. future requires post_date to
+                // be in the future or WP silently downgrades to publish with
+                // that backdate — same behavior as wp-admin scheduling.
                 $post_data = [
                     'post_title' => sanitize_text_field($args['title']),
                     'post_content' => wp_slash($args['content']),
-                    'post_status' => in_array($args['status'] ?? 'draft', ['publish', 'draft']) ? $args['status'] : 'draft',
+                    'post_status' => in_array($args['status'] ?? 'draft', ['publish', 'draft', 'future', 'pending', 'private']) ? $args['status'] : 'draft',
                     'post_type' => $post_type,
                 ];
                 if (!empty($args['excerpt'])) $post_data['post_excerpt'] = sanitize_text_field($args['excerpt']);
                 if (!empty($args['categories'])) $post_data['post_category'] = array_map('intval', $args['categories']);
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     $post_data['post_author'] = intval($args['post_author']);
+                }
+                // 1.4.33 — scheduling support. Parse ISO-8601 in site TZ, derive
+                // GMT from the same timestamp so the two fields never disagree.
+                if (!empty($args['date'])) {
+                    $ts = strtotime((string) $args['date']);
+                    if (false === $ts) {
+                        throw new \Exception('Invalid date: could not parse "' . esc_html((string) $args['date']) . '" as ISO 8601.');
+                    }
+                    $post_data['post_date'] = wp_date('Y-m-d H:i:s', $ts);
+                    $post_data['post_date_gmt'] = gmdate('Y-m-d H:i:s', $ts);
                 }
                 $post_id = wp_insert_post($post_data);
                 if (is_wp_error($post_id)) throw new \Exception(esc_html($post_id->get_error_message()));
@@ -1222,6 +1258,18 @@ class Server {
                 if (isset($args['excerpt']) && $args['excerpt'] !== '') $data['post_excerpt'] = sanitize_text_field($args['excerpt']);
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     $data['post_author'] = intval($args['post_author']);
+                }
+                // 1.4.33 — scheduling support on the update path. edit_date=true
+                // is REQUIRED on wp_update_post() to actually change post_date on
+                // an existing post; without it WP silently ignores post_date args.
+                if (!empty($args['date'])) {
+                    $ts = strtotime((string) $args['date']);
+                    if (false === $ts) {
+                        throw new \Exception('Invalid date: could not parse "' . esc_html((string) $args['date']) . '" as ISO 8601.');
+                    }
+                    $data['post_date'] = wp_date('Y-m-d H:i:s', $ts);
+                    $data['post_date_gmt'] = gmdate('Y-m-d H:i:s', $ts);
+                    $data['edit_date'] = true;
                 }
                 $result = wp_update_post($data);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
@@ -1333,8 +1381,10 @@ class Server {
                 if (!current_user_can('edit_pages')) {
                     throw new \Exception('You do not have permission to create pages.');
                 }
-                $page_status = in_array($args['status'] ?? 'draft', ['publish', 'draft']) ? $args['status'] : 'draft';
-                if ('publish' === $page_status && !current_user_can('publish_pages')) {
+                // 1.4.33 — status allowlist expanded to match schema enum (same as wp_create_post).
+                $page_status = in_array($args['status'] ?? 'draft', ['publish', 'draft', 'future', 'pending', 'private']) ? $args['status'] : 'draft';
+                // 1.4.33 — publish_pages cap gates future + private too. See wp_create_post for rationale.
+                if (in_array($page_status, ['publish', 'future', 'private'], true) && !current_user_can('publish_pages')) {
                     throw new \Exception('You do not have permission to publish pages.');
                 }
                 // 1.4.21 — see wp_create_post above (issue #15).
@@ -1345,6 +1395,15 @@ class Server {
                     'post_type' => 'page',
                 ];
                 if (!empty($args['parent'])) $page_data['post_parent'] = intval($args['parent']);
+                // 1.4.33 — scheduling support. See wp_create_post handler for rationale.
+                if (!empty($args['date'])) {
+                    $ts = strtotime((string) $args['date']);
+                    if (false === $ts) {
+                        throw new \Exception('Invalid date: could not parse "' . esc_html((string) $args['date']) . '" as ISO 8601.');
+                    }
+                    $page_data['post_date'] = wp_date('Y-m-d H:i:s', $ts);
+                    $page_data['post_date_gmt'] = gmdate('Y-m-d H:i:s', $ts);
+                }
                 $page_id = wp_insert_post($page_data);
                 if (is_wp_error($page_id)) throw new \Exception(esc_html($page_id->get_error_message()));
                 return ['id' => $page_id, 'message' => 'Page created successfully', 'url' => get_permalink($page_id)];
@@ -1362,6 +1421,16 @@ class Server {
                 // 1.4.21 — see wp_create_post above (issue #15).
                 if (isset($args['content']) && $args['content'] !== '') $data['post_content'] = wp_slash($args['content']);
                 if (isset($args['status'])) $data['post_status'] = sanitize_text_field($args['status']);
+                // 1.4.33 — scheduling / backdating support on the update path. See wp_update_post handler.
+                if (!empty($args['date'])) {
+                    $ts = strtotime((string) $args['date']);
+                    if (false === $ts) {
+                        throw new \Exception('Invalid date: could not parse "' . esc_html((string) $args['date']) . '" as ISO 8601.');
+                    }
+                    $data['post_date'] = wp_date('Y-m-d H:i:s', $ts);
+                    $data['post_date_gmt'] = gmdate('Y-m-d H:i:s', $ts);
+                    $data['edit_date'] = true;
+                }
                 $result = wp_update_post($data);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
                 return ['id' => $page_id, 'message' => 'Page updated successfully'];

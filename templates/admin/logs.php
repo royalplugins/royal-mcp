@@ -13,6 +13,33 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
 <div class="wrap royal-mcp-logs">
     <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
 
+    <?php
+    /**
+     * Cross-link card to Royal AI Firewall — first-party companion plugin that
+     * captures HTTP-layer AI bot traffic (GPTBot, ClaudeBot, PerplexityBot, etc.)
+     * alongside MCP tool calls. Two states: swap to a deep-link when RAIF is
+     * detected, otherwise show a wp.org install pointer. Not dismissable in v1
+     * (contextual + only shown on this page — see project_royal_mcp_1_4_33_backlog.md).
+     */
+    $royal_mcp_raif_active = defined('ROYAL_AI_FIREWALL_VERSION');
+    ?>
+    <div class="royal-mcp-raif-cta" style="background:#fff;border:1px solid #dcdcde;border-left:4px solid #C9A227;border-radius:6px;padding:1rem 1.25rem;margin:1rem 0 1.5rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;box-shadow:0 1px 2px rgba(0,0,0,0.04)">
+        <div style="flex:1;min-width:280px">
+            <?php if ($royal_mcp_raif_active) : ?>
+                <strong style="display:block;font-size:14px;color:#1d2327;margin-bottom:4px"><?php esc_html_e('Also visible in Royal AI Firewall', 'royal-mcp'); ?></strong>
+                <span style="font-size:13px;color:#50575e;line-height:1.5"><?php esc_html_e('MCP tool calls flow into your Royal AI Firewall dashboard alongside HTTP-layer AI bot traffic.', 'royal-mcp'); ?></span>
+            <?php else : ?>
+                <strong style="display:block;font-size:14px;color:#1d2327;margin-bottom:4px"><?php esc_html_e('See non-MCP AI bots hitting your site too', 'royal-mcp'); ?></strong>
+                <span style="font-size:13px;color:#50575e;line-height:1.5"><?php esc_html_e('Royal AI Firewall (free) surfaces the GPTBot, ClaudeBot, PerplexityBot, ByteSpider and 50+ others hitting your WordPress site outside of MCP tool calls.', 'royal-mcp'); ?></span>
+            <?php endif; ?>
+        </div>
+        <?php if ($royal_mcp_raif_active) : ?>
+            <a href="<?php echo esc_url(admin_url('admin.php?page=royal-ai-firewall')); ?>" class="button button-primary" style="background:#C9A227;border-color:#A88B1F;color:#2C2C2C;text-shadow:none;box-shadow:none"><?php esc_html_e('Open AI Firewall dashboard →', 'royal-mcp'); ?></a>
+        <?php else : ?>
+            <a href="https://wordpress.org/plugins/royal-ai-firewall/" target="_blank" rel="noopener" class="button button-primary" style="background:#C9A227;border-color:#A88B1F;color:#2C2C2C;text-shadow:none;box-shadow:none"><?php esc_html_e('Install Royal AI Firewall →', 'royal-mcp'); ?></a>
+        <?php endif; ?>
+    </div>
+
     <div class="tablenav top">
         <div class="alignleft actions">
             <form method="get">
