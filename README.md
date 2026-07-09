@@ -7,7 +7,7 @@
 [![WordPress](https://img.shields.io/badge/WordPress-5.8+-21759B?style=flat-square&logo=wordpress)](https://wordpress.org/plugins/royal-mcp/)
 [![PHP](https://img.shields.io/badge/PHP-7.4+-777BB4?style=flat-square&logo=php)](https://www.php.net/)
 [![License](https://img.shields.io/badge/License-GPLv2-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-2.0.html)
-[![Version](https://img.shields.io/badge/Version-1.4.33-C9A227?style=flat-square)](https://wordpress.org/plugins/royal-mcp/)
+[![Version](https://img.shields.io/badge/Version-1.4.34-C9A227?style=flat-square)](https://wordpress.org/plugins/royal-mcp/)
 
 [Download on WordPress.org](https://wordpress.org/plugins/royal-mcp/) · [Documentation](https://royalplugins.com/support/royal-mcp/) · [Royal Plugins](https://royalplugins.com)
 
@@ -23,7 +23,7 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 |---|---|
 | **Auth** | API key (`X-Royal-MCP-API-Key`) **or** OAuth 2.1 with PKCE + Dynamic Client Registration (RFC 7591) |
 | **Transport** | MCP 2025-11-25 Streamable HTTP (single `/mcp` endpoint, POST/GET/DELETE) |
-| **Tool count** | Up to 126 (67 WordPress core + 59 conditional plugin integrations) |
+| **Tool count** | Up to 129 (69 WordPress core + 60 conditional plugin integrations) |
 | **Rate limit** | 60 req/min per IP (configurable) |
 | **Session model** | Sliding 24h TTL with refresh-on-access |
 | **Activity log** | Every tool call logged (tool name + arg keys; argument values are never recorded) |
@@ -33,7 +33,7 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 
 ## Capabilities
 
-### WordPress core (67 tools, always available)
+### WordPress core (69 tools, always available)
 
 - **Content** — Posts, pages, custom post types (full CRUD + revisions + featured images)
 - **Taxonomies** — Categories, tags, custom taxonomies, term meta, post-term linking
@@ -46,7 +46,7 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 - **Search** — Cross-content search by query
 - **SEO** — Yoast / Rank Math / AIOSEO meta read/write where the plugin is active
 
-### Plugin integrations (59 tools, conditional)
+### Plugin integrations (60 tools, conditional)
 
 Auto-register only when the integrated plugin is active.
 
@@ -55,7 +55,7 @@ Auto-register only when the integrated plugin is active.
 | WooCommerce | 26 | Products, variations, attributes, coupons, orders, customers, store stats |
 | GuardPress | 7 | Security score, failed logins, blocked IPs, vulnerability scans, audit log |
 | SiteVault | 6 | Trigger backups, monitor progress, list schedules |
-| Elementor | 6 | Clone pages, replace text, swap images, get outline, list templates, import templates |
+| Elementor | 7 | Clone pages, replace text, swap images, get outline, list templates, import templates, add widget |
 | Royal Ledger | 4 | Software costs, renewal dates, license keys (values never exposed) |
 | **Advanced Custom Fields** (new in 1.4.24) | **4** | **Read/write ACF fields with each field's Return Format respected (hydrated post objects, parsed repeater rows, image arrays); enumerate field groups for AI-driven discovery** |
 | Royal Links | 3 | Branded short links, click stats |
