@@ -387,6 +387,53 @@ class Server {
         return intval($args['post_id'] ?? $args['id'] ?? 0);
     }
 
+    /**
+     * Sanitize a meta value received from an MCP client.
+     *
+     * Accepts JSON scalars (string, int, float, bool, null), arrays, and
+     * objects (JSON-decoded stdClass). Arrays and objects are walked
+     * recursively; string leaves go through sanitize_text_field().
+     *
+     * Rejects strings that look like PHP-serialized payloads. get_post_meta()
+     * runs maybe_unserialize() by default, so accepting a hand-crafted 'O:...'
+     * or 'a:...' string here would give a later reader a PHP-object-injection
+     * primitive on the way out. Callers pass arrays and objects directly and
+     * WordPress serializes them safely on write.
+     *
+     * @throws \Exception on a PHP-serialized string.
+     */
+    private static function sanitize_meta_value($value) {
+        // PHP-serialized markers: a:N:{ ... }  O:N:"cls":M:{ ... }  s:N:"..."
+        // i:[-]N;  d:[-]N[.N];  b:[01];  N;   Reject at boundary so
+        // get_post_meta()'s maybe_unserialize() never runs on caller-supplied
+        // input. Broad match — leading marker + digit-or-minus is enough; any
+        // false positive would have to be a plain string that starts with
+        // one of those 2-3 char shapes, which we accept as a fair tradeoff.
+        if (is_string($value) && preg_match('/^(?:a|O|s):\d+[:{"]|^(?:i|d):-?\d+(?:\.\d+)?;|^b:[01];|^N;$/', $value)) {
+            throw new \Exception('Value looks like a PHP-serialized string. Pass the structured value (array/object) directly — WordPress will serialize it for you.');
+        }
+        if (is_array($value)) {
+            $out = [];
+            foreach ($value as $k => $v) {
+                $key = is_string($k) ? sanitize_text_field($k) : $k;
+                $out[$key] = self::sanitize_meta_value($v);
+            }
+            return $out;
+        }
+        if (is_object($value)) {
+            $out = [];
+            foreach (get_object_vars($value) as $k => $v) {
+                $out[sanitize_text_field($k)] = self::sanitize_meta_value($v);
+            }
+            return $out;
+        }
+        if (is_string($value)) {
+            return sanitize_text_field($value);
+        }
+        // Numbers, booleans, nulls pass through unchanged.
+        return $value;
+    }
+
     private function get_tools() {
         $tools = [
             // Posts (supports custom post types)
@@ -422,6 +469,7 @@ class Server {
             ['name' => 'wp_update_term', 'description' => 'Update an existing term in any taxonomy. Use this to rename a tag/category, edit its description, or change its slug. Pair with wp_update_term_meta to edit SEO meta on tags (Yoast/Rank Math/AIOSEO store tag SEO data in wp_termmeta).', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to'], 'name' => ['type' => 'string'], 'slug' => ['type' => 'string'], 'description' => ['type' => 'string'], 'parent' => ['type' => 'integer', 'description' => 'Parent term ID (hierarchical taxonomies only)']], 'required' => ['id', 'taxonomy']]],
             ['name' => 'wp_delete_term', 'description' => 'Delete a term from any registered taxonomy.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to']], 'required' => ['id', 'taxonomy']]],
             ['name' => 'wp_add_post_terms', 'description' => 'Add or replace terms on a post in any taxonomy.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'terms' => ['type' => 'array', 'items' => ['type' => 'integer']], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)']], 'required' => ['post_id', 'terms', 'taxonomy']]],
+            ['name' => 'wp_get_terms', 'description' => 'List terms in any registered taxonomy with paginated output. Returns id, name, slug, description, count, parent. Use to map term names to IDs before wp_add_post_terms, or to walk a taxonomy tree.', 'inputSchema' => ['type' => 'object', 'properties' => ['taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat, any custom taxonomy)'], 'search' => ['type' => 'string', 'description' => 'Optional name-substring filter (case-insensitive).'], 'hide_empty' => ['type' => 'boolean', 'description' => 'Exclude terms with zero attached posts. Default false.'], 'parent' => ['type' => 'integer', 'description' => 'Return only children of this parent term ID (hierarchical taxonomies).'], 'per_page' => ['type' => 'integer', 'description' => 'Results per page. Default 100, max 500.'], 'page' => ['type' => 'integer', 'description' => 'Page number, 1-indexed. Default 1.']], 'required' => ['taxonomy']]],
             ['name' => 'wp_count_terms', 'description' => 'Get term counts in a taxonomy', 'inputSchema' => ['type' => 'object', 'properties' => ['taxonomy' => ['type' => 'string']]]],
             ['name' => 'wp_get_taxonomies', 'description' => 'Get all registered public taxonomies (built-in plus custom taxonomies registered by themes/plugins like product_cat, brand, etc.). Returns the taxonomy slug, label, hierarchical flag, and which post types it applies to.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
 
@@ -445,7 +493,8 @@ class Server {
 
             // Post Meta
             ['name' => 'wp_get_post_meta', 'description' => 'Get post meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['post_id']]],
-            ['name' => 'wp_update_post_meta', 'description' => 'Update post meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['type' => 'string']], 'required' => ['post_id', 'key', 'value']]],
+            ['name' => 'wp_update_post_meta', 'description' => 'Update post meta. Value can be any JSON type (string, number, boolean, array, object). Arrays and objects are serialized by WordPress on write and returned as PHP arrays by wp_get_post_meta on read. Overwrites the existing row for this key (use wp_add_post_meta for multi-row keys).', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['oneOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array'], ['type' => 'object']], 'description' => 'Any JSON value. Do not pass PHP-serialized strings (a:1:{...}) — pass the structured value directly.']], 'required' => ['post_id', 'key', 'value']]],
+            ['name' => 'wp_add_post_meta', 'description' => 'Add a meta row without overwriting existing values under the same key. Use for keys that store multiple rows (e.g. tag one post with several IDs under the same key). Value can be any JSON type; arrays and objects are serialized by WordPress. If unique=true and a row with this key already exists, the call returns created=false.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['oneOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array'], ['type' => 'object']], 'description' => 'Any JSON value. Do not pass PHP-serialized strings.'], 'unique' => ['type' => 'boolean', 'description' => 'If true, fail (return created=false) when a row with this key already exists. Default false.']], 'required' => ['post_id', 'key', 'value']]],
             ['name' => 'wp_delete_post_meta', 'description' => 'Delete post meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['post_id', 'key']]],
 
             // Site & Search
@@ -1677,6 +1726,54 @@ class Server {
                 if (!$result) throw new \Exception('Failed to delete term');
                 return ['message' => 'Term deleted successfully'];
 
+            case 'wp_get_terms':
+                if (!current_user_can('edit_posts')) {
+                    throw new \Exception('You do not have permission to list terms.');
+                }
+                $taxonomy = sanitize_text_field($args['taxonomy'] ?? '');
+                if ($taxonomy === '') throw new \Exception('A taxonomy slug is required.');
+                if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
+                $per_page = isset($args['per_page']) ? max(1, min(intval($args['per_page']), 500)) : 100;
+                $page     = isset($args['page']) ? max(1, intval($args['page'])) : 1;
+                $offset   = ($page - 1) * $per_page;
+                $get_args = [
+                    'taxonomy'   => $taxonomy,
+                    'hide_empty' => !empty($args['hide_empty']),
+                    'number'     => $per_page,
+                    'offset'     => $offset,
+                    'orderby'    => 'name',
+                    'order'      => 'ASC',
+                ];
+                if (!empty($args['search'])) {
+                    $get_args['search'] = sanitize_text_field($args['search']);
+                }
+                if (isset($args['parent'])) {
+                    $get_args['parent'] = intval($args['parent']);
+                }
+                $terms = get_terms($get_args);
+                if (is_wp_error($terms)) throw new \Exception(esc_html($terms->get_error_message()));
+                $total = (int) wp_count_terms([
+                    'taxonomy'   => $taxonomy,
+                    'hide_empty' => !empty($args['hide_empty']),
+                ]);
+                return [
+                    'taxonomy'    => $taxonomy,
+                    'page'        => $page,
+                    'per_page'    => $per_page,
+                    'total'       => $total,
+                    'total_pages' => $per_page > 0 ? (int) ceil($total / $per_page) : 0,
+                    'terms'       => array_map(function ($t) {
+                        return [
+                            'id'          => (int) $t->term_id,
+                            'name'        => $t->name,
+                            'slug'        => $t->slug,
+                            'description' => $t->description,
+                            'count'       => (int) $t->count,
+                            'parent'      => (int) $t->parent,
+                        ];
+                    }, $terms),
+                ];
+
             case 'wp_add_post_terms':
                 $taxonomy = sanitize_text_field($args['taxonomy']);
                 if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
@@ -1937,14 +2034,31 @@ class Server {
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('You do not have permission to edit meta on this post.');
                 }
-                $meta_value = $args['value'];
-                if (is_string($meta_value)) {
-                    $meta_value = sanitize_text_field($meta_value);
-                } elseif (is_array($meta_value)) {
-                    $meta_value = array_map('sanitize_text_field', $meta_value);
+                if (!array_key_exists('value', $args)) {
+                    throw new \Exception('A value is required. To remove a key entirely, use wp_delete_post_meta.');
                 }
+                $meta_value = self::sanitize_meta_value($args['value']);
                 $result = update_post_meta($post_id, sanitize_text_field($args['key']), $meta_value);
                 return ['message' => 'Post meta updated successfully', 'result' => $result];
+
+            case 'wp_add_post_meta':
+                $post_id = self::resolve_post_id_arg($args);
+                if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
+                if (!current_user_can('edit_post', $post_id)) {
+                    throw new \Exception('You do not have permission to edit meta on this post.');
+                }
+                if (!array_key_exists('value', $args)) {
+                    throw new \Exception('A value is required.');
+                }
+                $key = sanitize_text_field($args['key'] ?? '');
+                if ($key === '') throw new \Exception('A meta key is required.');
+                $meta_value = self::sanitize_meta_value($args['value']);
+                $unique = !empty($args['unique']);
+                $meta_id = add_post_meta($post_id, $key, $meta_value, $unique);
+                return [
+                    'meta_id' => $meta_id === false ? null : (int) $meta_id,
+                    'created' => $meta_id !== false,
+                ];
 
             case 'wp_delete_post_meta':
                 $post_id = self::resolve_post_id_arg($args);
