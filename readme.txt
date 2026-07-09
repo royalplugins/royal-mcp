@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.33
+Stable tag: 1.4.34
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -41,9 +41,9 @@ Royal MCP is fully featured in its free, GPL-licensed release. There is no Pro v
 
 Your credentials stay on your server. Royal MCP runs entirely inside WordPress: API keys, OAuth tokens, and session state all live in your own database. Royal MCP makes no outbound connections to Royal Plugins&rsquo; own servers &mdash; no license check, no telemetry, no traffic beacon. If you prefer to keep AI inference local too, Ollama and LM Studio are first-class platforms alongside Claude, ChatGPT, and Gemini.
 
-= 67 Core Tools + 60 Integration Tools =
+= 69 Core Tools + 60 Integration Tools =
 
-**WordPress Core (67 tools):**
+**WordPress Core (69 tools):**
 
 * Posts - create, read, update, delete, search, count (any registered public post type, featured images supported)
 * Pages - full CRUD with parent page support
@@ -323,6 +323,12 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.4.34 =
+* Feature: `wp_update_post_meta` value parameter accepts any JSON type (string, number, boolean, array, object) instead of string-only. Arrays and objects are serialized by WordPress on write and returned as PHP arrays by `wp_get_post_meta` on read. Unlocks meta-write workflows for themes that store nested arrays (photo galleries, floor plans, multi-agent listings) directly, without a client-side workaround. Strictly additive: existing string callers see no behavior change.
+* Feature: New `wp_add_post_meta` tool mirrors WP core `add_post_meta()`. Adds a meta row without overwriting existing values under the same key &mdash; the correct primitive for keys that legitimately store multiple rows. Accepts `unique=true` to fail cleanly (returns `created=false`) when a row with the key already exists. Same JSON-type value support as `wp_update_post_meta`.
+* Feature: New `wp_get_terms` tool lists terms in any registered taxonomy with paginated output (`page`, `per_page`, `total`, `total_pages`). Optional `search`, `hide_empty`, and `parent` filters. Complements `wp_add_post_terms` (which requires integer term IDs) so agents can map term names to IDs on-site instead of round-tripping through the public REST namespace.
+* Security: The two meta-write tools reject strings that look like PHP-serialized payloads (`a:N:{...}`, `O:N:"...":...`) at the schema boundary. `get_post_meta()` runs `maybe_unserialize()` by default, so accepting a hand-crafted serialized string would give a later reader a PHP-object-injection primitive on the way out. Callers pass structured data (arrays/objects) directly; WordPress serializes safely on write.
 
 = 1.4.33 =
 * Feature: `wp_create_post`, `wp_update_post`, `wp_create_page`, and `wp_update_page` accept a new `date` parameter (ISO 8601, site timezone). Combine with `status="future"` to schedule; use alone on the update tools to backdate. Past-dated `future` publishes immediately with the given timestamp, matching wp-admin behavior. Both `post_date` and `post_date_gmt` are derived from the same parsed timestamp so they never disagree; the update tools set `edit_date=true` internally so the change takes effect.
