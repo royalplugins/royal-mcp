@@ -31,6 +31,22 @@ class Server {
     private $rate_limit_window = 60; // seconds
 
     /**
+     * Auth fingerprint for the current request. Populated by the credential
+     * validators (validate_bearer_token / validate_api_key_value) once the
+     * request has been authenticated; read by build_auth_fingerprint().
+     *
+     * Pre-1.4.35 the fingerprint was rebuilt from the Authorization header
+     * inside build_auth_fingerprint(), which hashed the raw bearer token.
+     * OAuth access tokens rotate hourly (Token_Store::ACCESS_TOKEN_TTL),
+     * MCP sessions live 24h (Session_Store::SESSION_TTL), so any long
+     * automation crossing a token refresh produced a fingerprint mismatch
+     * against its own session and got 403 "Session credentials mismatch"
+     * on every subsequent call. See issue #54. Now bound to
+     * client_id + user_id from Token_Store, which are stable across refresh.
+     */
+    private $request_auth_fingerprint = '';
+
+    /**
      * Validate Origin header to prevent DNS rebinding attacks
      * Per MCP spec: Servers MUST validate Origin header
      *
@@ -218,6 +234,9 @@ class Server {
             }
         }
 
+        // API keys don't rotate, so hashing the raw key gives a stable session fingerprint.
+        $this->request_auth_fingerprint = hash('sha256', 'apikey:' . $api_key);
+
         return true;
     }
 
@@ -247,6 +266,14 @@ class Server {
 
         // Set the WordPress user context so downstream permission checks work.
         wp_set_current_user((int) $token_data['user_id']);
+
+        // Bind the session fingerprint to identifiers that survive access-token
+        // rotation. Hashing the raw token (pre-1.4.35 behavior) invalidated the
+        // session on every hourly refresh — see property doc + issue #54.
+        $this->request_auth_fingerprint = hash(
+            'sha256',
+            'oauth:' . (string) $token_data['client_id'] . ':' . (int) $token_data['user_id']
+        );
 
         return true;
     }
@@ -907,24 +934,21 @@ class Server {
     }
 
     /**
-     * Build a fingerprint from the request's auth credentials.
-     * Used to bind sessions to the original authenticator.
+     * Return the fingerprint that binds this request's session to its
+     * authenticated identity. Populated by validate_bearer_token /
+     * validate_api_key_value, both of which run before this is read
+     * (validate_auth is the first gate in handle_post_message).
      *
-     * @param \WP_REST_Request $request The request object.
-     * @return string SHA-256 hash of the credential.
+     * The $request argument is kept for API stability — the fingerprint is
+     * now derived from the *validated* credential rather than the raw header
+     * so a rotating OAuth access token still produces the same fingerprint.
+     *
+     * @param \WP_REST_Request $request The request object (unused; retained for signature stability).
+     * @return string SHA-256 hash bound to stable auth identity, or '' if not authenticated.
      */
     private function build_auth_fingerprint($request) {
-        $auth_header = $request->get_header('Authorization');
-        if (!empty($auth_header) && stripos($auth_header, 'Bearer ') === 0) {
-            return hash('sha256', 'bearer:' . substr($auth_header, 7));
-        }
-
-        $api_key = $request->get_header('X-Royal-MCP-API-Key');
-        if (!empty($api_key)) {
-            return hash('sha256', 'apikey:' . $api_key);
-        }
-
-        return '';
+        unset($request); // Retained in signature; state comes from validate_auth().
+        return $this->request_auth_fingerprint;
     }
 
     /**

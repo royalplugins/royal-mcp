@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.34
+Stable tag: 1.4.35
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -323,6 +323,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.4.35 =
+* Fix: MCP sessions opened over OAuth now survive access-token rotation. Pre-1.4.35, each session was bound to a hash of the raw bearer token; when the OAuth server rotated the short-lived access token (hourly), the fingerprint stored at `initialize` no longer matched the token presented on the next call and the request was rejected with HTTP 403 "Session credentials mismatch." Long automations (bulk edits, navigation-menu rebuilds, anything crossing an hour of activity) hit this reliably and had to reconnect. 1.4.35 binds the session to the OAuth `client_id` + `user_id` returned by the token store &mdash; both stable across refreshes &mdash; so a re-issued access token still resolves to the same session. Static API-key auth was never affected. Sessions opened before 1.4.35 will still 403 on refresh until they expire naturally (24h TTL) or the client re-initializes.
 
 = 1.4.34 =
 * Feature: `wp_update_post_meta` value parameter accepts any JSON type (string, number, boolean, array, object) instead of string-only. Arrays and objects are serialized by WordPress on write and returned as PHP arrays by `wp_get_post_meta` on read. Unlocks meta-write workflows for themes that store nested arrays (photo galleries, floor plans, multi-agent listings) directly, without a client-side workaround. Strictly additive: existing string callers see no behavior change.
