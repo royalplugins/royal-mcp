@@ -273,7 +273,8 @@ class REST_Controller {
         ];
 
         if (isset($params['excerpt'])) {
-            $post_data['post_excerpt'] = sanitize_text_field($params['excerpt']);
+            // 1.4.36 — preserve safe HTML (mirrors MCP tool + wp_insert_post's excerpt_save_pre).
+            $post_data['post_excerpt'] = wp_kses_post($params['excerpt']);
         }
 
         if (isset($params['categories'])) {
@@ -333,7 +334,8 @@ class REST_Controller {
         }
 
         if (isset($params['excerpt'])) {
-            $post_data['post_excerpt'] = sanitize_text_field($params['excerpt']);
+            // 1.4.36 — preserve safe HTML (mirrors MCP tool + wp_update_post's excerpt_save_pre).
+            $post_data['post_excerpt'] = wp_kses_post($params['excerpt']);
         }
 
         if (isset($params['categories'])) {
