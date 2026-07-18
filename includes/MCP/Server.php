@@ -419,7 +419,11 @@ class Server {
      *
      * Accepts JSON scalars (string, int, float, bool, null), arrays, and
      * objects (JSON-decoded stdClass). Arrays and objects are walked
-     * recursively; string leaves go through sanitize_text_field().
+     * recursively; string leaves go through wp_kses_post() so callers can
+     * store the same safe HTML allow-list WordPress uses for post_content
+     * (previously we ran sanitize_text_field(), which flattened
+     * ACF wysiwyg values, meta-box HTML fields, and any custom meta that
+     * legitimately stores markup — Alon Suzy, 2026-07-16).
      *
      * Rejects strings that look like PHP-serialized payloads. get_post_meta()
      * runs maybe_unserialize() by default, so accepting a hand-crafted 'O:...'
@@ -455,10 +459,35 @@ class Server {
             return $out;
         }
         if (is_string($value)) {
-            return sanitize_text_field($value);
+            return wp_kses_post($value);
         }
         // Numbers, booleans, nulls pass through unchanged.
         return $value;
+    }
+
+    /**
+     * Wrap sanitize_meta_value() with the royal_mcp_meta_value_sanitizer filter.
+     *
+     * Filter signature: (mixed $sanitized, mixed $raw, string $meta_key, int $object_id, string $tool_name).
+     * Site owners can return $raw verbatim for keys that store trusted HTML,
+     * tighten the default wp_kses_post to plain text for validation-sensitive
+     * keys, or plug a per-key custom sanitizer without patching the plugin.
+     *
+     * @param mixed  $raw       Raw caller-supplied value.
+     * @param string $meta_key  Meta key being written.
+     * @param int    $object_id Post or term ID.
+     * @param string $tool_name 'wp_update_post_meta' | 'wp_add_post_meta' | 'wp_update_term_meta'.
+     */
+    private static function filter_meta_value($raw, $meta_key, $object_id, $tool_name) {
+        $sanitized = self::sanitize_meta_value($raw);
+        return apply_filters(
+            'royal_mcp_meta_value_sanitizer',
+            $sanitized,
+            $raw,
+            (string) $meta_key,
+            (int) $object_id,
+            (string) $tool_name
+        );
     }
 
     private function get_tools() {
@@ -466,21 +495,21 @@ class Server {
             // Posts (supports custom post types)
             ['name' => 'wp_get_posts', 'description' => 'Get WordPress posts (supports custom post types)', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of posts (max 100)'], 'search' => ['type' => 'string', 'description' => 'Search term'], 'status' => ['type' => 'string', 'description' => 'Post status (publish, draft, etc)'], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post). Use wp_get_post_types to discover available types']]]],
             ['name' => 'wp_get_post', 'description' => 'Get single post by ID (any post type)', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID']], 'required' => ['id']]],
-            ['name' => 'wp_create_post', 'description' => 'Create new post (supports custom post types). Combine status="future" with date to schedule.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule. Past dates auto-publish with that timestamp.'], 'excerpt' => ['type' => 'string'], 'categories' => ['type' => 'array', 'items' => ['type' => 'integer']], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post)'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to assign as the post author. Defaults to the authenticated MCP user (admin). Use wp_get_users to discover available author IDs.']], 'required' => ['title', 'content']]],
-            ['name' => 'wp_update_post', 'description' => 'Update existing post (any post type). Use featured_media to change the featured image by attachment ID, or use wp_set_featured_image for a URL-based workflow. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image (pass 0 to remove)'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as the post author. Use wp_get_users to discover available author IDs.']], 'required' => ['id']]],
+            ['name' => 'wp_create_post', 'description' => 'Create new post (supports custom post types). Combine status="future" with date to schedule. Excerpt may contain safe HTML (same allow-list as post content).', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule. Past dates auto-publish with that timestamp.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'categories' => ['type' => 'array', 'items' => ['type' => 'integer']], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post)'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to assign as the post author. Defaults to the authenticated MCP user (admin). Use wp_get_users to discover available author IDs.']], 'required' => ['title', 'content']]],
+            ['name' => 'wp_update_post', 'description' => 'Update existing post (any post type). Use featured_media to change the featured image by attachment ID, or use wp_set_featured_image for a URL-based workflow. Pass date to reschedule or backdate. Excerpt may contain safe HTML.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image (pass 0 to remove)'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as the post author. Use wp_get_users to discover available author IDs.']], 'required' => ['id']]],
             ['name' => 'wp_get_post_types', 'description' => 'Get all registered public post types (including custom post types)', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_delete_post', 'description' => 'Delete post', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean', 'description' => 'Skip trash and permanently delete']], 'required' => ['id']]],
             ['name' => 'wp_count_posts', 'description' => 'Get post counts by status', 'inputSchema' => ['type' => 'object', 'properties' => ['post_type' => ['type' => 'string', 'description' => 'Post type (post, page, etc)']]]],
 
             // Pages
-            ['name' => 'wp_get_pages', 'description' => 'Get WordPress pages', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID']]]],
+            ['name' => 'wp_get_pages', 'description' => 'List WordPress pages. Returns id, title, status, and URL for each. Filter by parent to walk the page hierarchy.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of pages (default 10, max 100)'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID — returns only direct children of this page']]]],
             ['name' => 'wp_get_page', 'description' => 'Get single page by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Page ID']], 'required' => ['id']]],
-            ['name' => 'wp_create_page', 'description' => 'Create new page. Combine status="future" with date to schedule.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule.'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID']], 'required' => ['title', 'content']]],
+            ['name' => 'wp_create_page', 'description' => 'Create new page. Combine status="future" with date to schedule. Excerpt (via wp_update_post_meta on _excerpt or via wp_create_post fallback) may contain safe HTML.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule.'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID']], 'required' => ['title', 'content']]],
             ['name' => 'wp_update_page', 'description' => 'Update existing page. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.']], 'required' => ['id']]],
             ['name' => 'wp_delete_page', 'description' => 'Delete page', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean']], 'required' => ['id']]],
 
             // Media
-            ['name' => 'wp_get_media', 'description' => 'Get media library items', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer'], 'mime_type' => ['type' => 'string', 'description' => 'Filter by mime type (image, video, etc)']]]],
+            ['name' => 'wp_get_media', 'description' => 'List media library attachments. Returns id, title, source_url, alt_text, mime_type, and date for each. Filter by mime_type to narrow to images / videos / audio / documents.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of items (default 10, max 100)'], 'mime_type' => ['type' => 'string', 'description' => 'Filter by mime type prefix or full type (image, video, audio, application/pdf)']]]],
             ['name' => 'wp_get_media_item', 'description' => 'Get single media item by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer']], 'required' => ['id']]],
             ['name' => 'wp_upload_media_from_url', 'description' => 'Download an image from a public HTTPS URL and add it to the WordPress media library. Use this when you have an image URL (Unsplash, Pexels, client asset, etc) that needs to become a library attachment — for example before setting it as a featured image. Returns the new attachment ID.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Public HTTPS URL of the image to download'], 'filename' => ['type' => 'string', 'description' => 'Optional filename (with extension). Derived from URL if omitted.'], 'alt_text' => ['type' => 'string', 'description' => 'Alt text for accessibility and SEO'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string']], 'required' => ['url']]],
             ['name' => 'wp_upload_media', 'description' => 'Upload an image to the media library from base64-encoded bytes. Use this for AI-generated images or pasted screenshots where you have raw bytes rather than a URL. For images already hosted somewhere, prefer wp_upload_media_from_url.', 'inputSchema' => ['type' => 'object', 'properties' => ['filename' => ['type' => 'string', 'description' => 'Filename with extension (e.g. hero.jpg)'], 'content_base64' => ['type' => 'string', 'description' => 'Base64-encoded file bytes'], 'alt_text' => ['type' => 'string'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string']], 'required' => ['filename', 'content_base64']]],
@@ -490,10 +519,10 @@ class Server {
             ['name' => 'wp_count_media', 'description' => 'Get media counts by type', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
 
             // Categories & Tags (Terms)
-            ['name' => 'wp_get_categories', 'description' => 'Get all categories', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer']]]],
-            ['name' => 'wp_get_tags', 'description' => 'Get all tags', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer']]]],
-            ['name' => 'wp_create_term', 'description' => 'Create a term in any registered taxonomy (category, post_tag, or any custom taxonomy). Use wp_get_taxonomies to discover available taxonomy slugs.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)'], 'description' => ['type' => 'string'], 'parent' => ['type' => 'integer', 'description' => 'Parent term ID (only applies to hierarchical taxonomies)'], 'slug' => ['type' => 'string', 'description' => 'Optional URL-friendly slug. Auto-generated from name if omitted.']], 'required' => ['name', 'taxonomy']]],
-            ['name' => 'wp_update_term', 'description' => 'Update an existing term in any taxonomy. Use this to rename a tag/category, edit its description, or change its slug. Pair with wp_update_term_meta to edit SEO meta on tags (Yoast/Rank Math/AIOSEO store tag SEO data in wp_termmeta).', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to'], 'name' => ['type' => 'string'], 'slug' => ['type' => 'string'], 'description' => ['type' => 'string'], 'parent' => ['type' => 'integer', 'description' => 'Parent term ID (hierarchical taxonomies only)']], 'required' => ['id', 'taxonomy']]],
+            ['name' => 'wp_get_categories', 'description' => 'List blog categories (the `category` taxonomy). Returns id, name, slug, count, and parent for each. For custom taxonomies (product_cat, brand, etc.), use wp_get_terms instead.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of categories (default 100, max 100)']]]],
+            ['name' => 'wp_get_tags', 'description' => 'List blog tags (the `post_tag` taxonomy). Returns id, name, slug, and count for each. For custom taxonomies, use wp_get_terms.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of tags (default 100, max 100)']]]],
+            ['name' => 'wp_create_term', 'description' => 'Create a term in any registered taxonomy (category, post_tag, or any custom taxonomy). Description may contain inline HTML — WordPress permits <a>, <strong>, <em>, <blockquote>, <code>, <cite>, <abbr>, <acronym> in term descriptions; block-level tags (<p>, <h1>-<h6>, <ul>) are stripped by WP core. Use wp_get_taxonomies to discover available taxonomy slugs.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)'], 'description' => ['type' => 'string', 'description' => 'Optional description. May contain inline HTML (<a>, <strong>, <em>, etc.); block-level tags are stripped by WP core.'], 'parent' => ['type' => 'integer', 'description' => 'Parent term ID (only applies to hierarchical taxonomies)'], 'slug' => ['type' => 'string', 'description' => 'Optional URL-friendly slug. Auto-generated from name if omitted.']], 'required' => ['name', 'taxonomy']]],
+            ['name' => 'wp_update_term', 'description' => 'Update an existing term in any taxonomy. Use this to rename a tag/category, edit its description, or change its slug. Description may contain inline HTML (WP core strips block-level tags). Pair with wp_update_term_meta to edit SEO meta on tags (Yoast/Rank Math/AIOSEO store tag SEO data in wp_termmeta).', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to'], 'name' => ['type' => 'string'], 'slug' => ['type' => 'string'], 'description' => ['type' => 'string', 'description' => 'Optional description. May contain inline HTML.'], 'parent' => ['type' => 'integer', 'description' => 'Parent term ID (hierarchical taxonomies only)']], 'required' => ['id', 'taxonomy']]],
             ['name' => 'wp_delete_term', 'description' => 'Delete a term from any registered taxonomy.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to']], 'required' => ['id', 'taxonomy']]],
             ['name' => 'wp_add_post_terms', 'description' => 'Add or replace terms on a post in any taxonomy.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'terms' => ['type' => 'array', 'items' => ['type' => 'integer']], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)']], 'required' => ['post_id', 'terms', 'taxonomy']]],
             ['name' => 'wp_get_terms', 'description' => 'List terms in any registered taxonomy with paginated output. Returns id, name, slug, description, count, parent. Use to map term names to IDs before wp_add_post_terms, or to walk a taxonomy tree.', 'inputSchema' => ['type' => 'object', 'properties' => ['taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat, any custom taxonomy)'], 'search' => ['type' => 'string', 'description' => 'Optional name-substring filter (case-insensitive).'], 'hide_empty' => ['type' => 'boolean', 'description' => 'Exclude terms with zero attached posts. Default false.'], 'parent' => ['type' => 'integer', 'description' => 'Return only children of this parent term ID (hierarchical taxonomies).'], 'per_page' => ['type' => 'integer', 'description' => 'Results per page. Default 100, max 500.'], 'page' => ['type' => 'integer', 'description' => 'Page number, 1-indexed. Default 1.']], 'required' => ['taxonomy']]],
@@ -502,12 +531,12 @@ class Server {
 
             // Term Meta (for SEO-plugin tag/category meta — Yoast, Rank Math, AIOSEO)
             ['name' => 'wp_get_term_meta', 'description' => 'Get term meta data. Useful for reading tag/category SEO meta stored by Yoast, Rank Math, or AIOSEO before editing it.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string', 'description' => 'Specific meta key. Omit to return all meta for the term.']], 'required' => ['term_id']]],
-            ['name' => 'wp_update_term_meta', 'description' => 'Update term meta data. Common keys for SEO plugins: Yoast uses _yoast_wpseo_title / _yoast_wpseo_metadesc; Rank Math uses rank_math_title / rank_math_description; AIOSEO uses _aioseo_title / _aioseo_description.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['type' => 'string']], 'required' => ['term_id', 'key', 'value']]],
+            ['name' => 'wp_update_term_meta', 'description' => 'Update term meta data. Common keys for SEO plugins: Yoast uses _yoast_wpseo_title / _yoast_wpseo_metadesc; Rank Math uses rank_math_title / rank_math_description; AIOSEO uses _aioseo_title / _aioseo_description. String values may contain safe HTML (same allow-list as post content). Use the royal_mcp_meta_value_sanitizer filter to customize per meta key.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['oneOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array'], ['type' => 'object']]]], 'required' => ['term_id', 'key', 'value']]],
             ['name' => 'wp_delete_term_meta', 'description' => 'Delete term meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['term_id', 'key']]],
 
             // Comments
-            ['name' => 'wp_get_comments', 'description' => 'Get comments', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'per_page' => ['type' => 'integer'], 'status' => ['type' => 'string']]]],
-            ['name' => 'wp_create_comment', 'description' => 'Create a comment', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'content' => ['type' => 'string'], 'author' => ['type' => 'string'], 'author_email' => ['type' => 'string']], 'required' => ['post_id', 'content']]],
+            ['name' => 'wp_get_comments', 'description' => 'List comments on the site or a specific post. Returns id, post_id, author, content, date, and status. Requires moderate_comments to list any status other than "approve".', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer', 'description' => 'Limit to comments on this post ID'], 'per_page' => ['type' => 'integer', 'description' => 'Number of comments (default 10, max 100)'], 'status' => ['type' => 'string', 'enum' => ['approve', 'hold', 'spam', 'trash', 'all'], 'description' => 'Comment status filter. "approve" is public; other values require moderate_comments.']]]],
+            ['name' => 'wp_create_comment', 'description' => 'Create a comment. Content may contain WordPress\'s standard comment HTML tags (<a>, <strong>, <em>, <blockquote>, <code>, <cite>, <abbr>, <acronym>) — matches what the WP comment form permits. Other tags are stripped.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'content' => ['type' => 'string'], 'author' => ['type' => 'string'], 'author_email' => ['type' => 'string']], 'required' => ['post_id', 'content']]],
             ['name' => 'wp_delete_comment', 'description' => 'Delete a comment', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean']], 'required' => ['id']]],
             ['name' => 'wp_get_pending_comments', 'description' => 'Get comments awaiting moderation (status=hold). Requires moderate_comments capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'limit' => ['type' => 'integer', 'description' => 'Max comments to return (default 20, max 100)']]]],
             ['name' => 'wp_approve_comment', 'description' => 'Approve a pending comment. Requires moderate_comments capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['comment_id' => ['type' => 'integer']], 'required' => ['comment_id']]],
@@ -515,17 +544,20 @@ class Server {
             ['name' => 'wp_trash_comment', 'description' => 'Move a comment to trash. Requires moderate_comments capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['comment_id' => ['type' => 'integer']], 'required' => ['comment_id']]],
 
             // Users
-            ['name' => 'wp_get_users', 'description' => 'Get users list', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer'], 'role' => ['type' => 'string']]]],
+            ['name' => 'wp_get_users', 'description' => 'List site users. Returns id, display_name, role, and post_count. Emails and usernames are NOT exposed. Filter by role slug (administrator / editor / author / contributor / subscriber, or any custom role).', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of users (default 10, max 100)'], 'role' => ['type' => 'string', 'description' => 'Filter by role slug — use wp_get_user on a specific ID for full profile data.']]]],
             ['name' => 'wp_get_user', 'description' => 'Get user by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer']], 'required' => ['id']]],
 
             // Post Meta
             ['name' => 'wp_get_post_meta', 'description' => 'Get post meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['post_id']]],
-            ['name' => 'wp_update_post_meta', 'description' => 'Update post meta. Value can be any JSON type (string, number, boolean, array, object). Arrays and objects are serialized by WordPress on write and returned as PHP arrays by wp_get_post_meta on read. Overwrites the existing row for this key (use wp_add_post_meta for multi-row keys).', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['oneOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array'], ['type' => 'object']], 'description' => 'Any JSON value. Do not pass PHP-serialized strings (a:1:{...}) — pass the structured value directly.']], 'required' => ['post_id', 'key', 'value']]],
-            ['name' => 'wp_add_post_meta', 'description' => 'Add a meta row without overwriting existing values under the same key. Use for keys that store multiple rows (e.g. tag one post with several IDs under the same key). Value can be any JSON type; arrays and objects are serialized by WordPress. If unique=true and a row with this key already exists, the call returns created=false.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['oneOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array'], ['type' => 'object']], 'description' => 'Any JSON value. Do not pass PHP-serialized strings.'], 'unique' => ['type' => 'boolean', 'description' => 'If true, fail (return created=false) when a row with this key already exists. Default false.']], 'required' => ['post_id', 'key', 'value']]],
+            ['name' => 'wp_update_post_meta', 'description' => 'Update post meta. Value can be any JSON type (string, number, boolean, array, object). String values may contain safe HTML (same allow-list as post content — hook the royal_mcp_meta_value_sanitizer filter to customize per meta key). Arrays and objects are serialized by WordPress on write and returned as PHP arrays by wp_get_post_meta on read. Overwrites the existing row for this key (use wp_add_post_meta for multi-row keys).', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['oneOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array'], ['type' => 'object']], 'description' => 'Any JSON value. Do not pass PHP-serialized strings (a:1:{...}) — pass the structured value directly.']], 'required' => ['post_id', 'key', 'value']]],
+            ['name' => 'wp_add_post_meta', 'description' => 'Add a meta row without overwriting existing values under the same key. Use for keys that store multiple rows (e.g. tag one post with several IDs under the same key). Value can be any JSON type; string values may contain safe HTML (customize per key with royal_mcp_meta_value_sanitizer). Arrays and objects are serialized by WordPress. If unique=true and a row with this key already exists, the call returns created=false.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['oneOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array'], ['type' => 'object']], 'description' => 'Any JSON value. Do not pass PHP-serialized strings.'], 'unique' => ['type' => 'boolean', 'description' => 'If true, fail (return created=false) when a row with this key already exists. Default false.']], 'required' => ['post_id', 'key', 'value']]],
             ['name' => 'wp_delete_post_meta', 'description' => 'Delete post meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['post_id', 'key']]],
 
             // Site & Search
-            ['name' => 'wp_get_site_info', 'description' => 'Get site information', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'wp_get_site_info', 'description' => 'Get user-facing site metadata (name, description, URL, language, timezone, WP version). For operator-facing environment (PHP/MySQL versions, plugin count, memory limits, disk free), use wp_get_site_status.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'wp_get_site_status', 'description' => 'One-shot site diagnostic. Returns WordPress version, PHP version, MySQL/MariaDB version, active plugin count, active theme details, memory limit, max upload size, timezone, WP_DEBUG_LOG state, disk free space, install age, and site/home URLs. Use this at the start of a debugging or environment-inspection conversation instead of piecing it together from wp_get_site_info + wp_get_plugins + wp_get_active_theme. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'wp_get_error_log_tail', 'description' => 'Read the tail of wp-content/debug.log. Returns the last N lines (default 100, max 1000), optionally filtered by a case-insensitive substring. Automatically caps file read at last 1MB to prevent memory blowup on huge logs (truncated=true when this happens). Returns status="disabled" with instructions when WP_DEBUG_LOG is not enabled in wp-config.php. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => ['lines' => ['type' => 'integer', 'description' => 'Number of lines to return from the tail (default 100, max 1000).'], 'filter' => ['type' => 'string', 'description' => 'Optional case-insensitive substring filter applied before the last-N slice (e.g. "Fatal error", "Deprecated", a plugin slug).']]]],
+            ['name' => 'wp_get_cron_schedule', 'description' => 'Enumerate scheduled wp_cron events. Returns each event with hook name, next run (unix + ISO 8601), seconds until next run, is_overdue flag, recurrence (hourly / twicedaily / daily / custom + interval in seconds), and args. Sorted by next-run ascending so overdue events come first. Useful for diagnosing missed schedules, plugin cron conflicts, or unfired hooks. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page).', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.']], 'required' => ['query']]],
 
             // Options
@@ -534,7 +566,7 @@ class Server {
             ['name' => 'wp_update_option', 'description' => 'Update a WordPress option. Requires the "Allow AI to write WordPress options" admin toggle to be enabled, and the option name must be in the allowlist (extend via the royal_mcp_writable_options filter). Sensitive option names are permanently denylisted.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'value' => ['description' => 'New value (any JSON type). Full overwrite — read first, merge in your client, then write back.']], 'required' => ['name', 'value']]],
 
             // Menus
-            ['name' => 'wp_get_menus', 'description' => 'Get navigation menus', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'wp_get_menus', 'description' => 'List all registered navigation menus (nav_menu taxonomy). Returns id, name, slug, and item count for each. Use wp_get_menu_items to enumerate items within a specific menu.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_get_menu_items', 'description' => 'Get menu items', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_id' => ['type' => 'integer']], 'required' => ['menu_id']]],
             ['name' => 'wp_create_menu_item', 'description' => 'Create a menu item in a navigation menu. Requires edit_theme_options capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'url' => ['type' => 'string', 'description' => 'External URL (leave empty if linking to a post/page via object_id)'], 'object_id' => ['type' => 'integer', 'description' => 'WordPress object ID (post, page, or term)'], 'object_type' => ['type' => 'string', 'enum' => ['post', 'page', 'category', 'custom'], 'description' => 'Type of object being linked (default: custom)'], 'parent_id' => ['type' => 'integer', 'description' => 'Parent menu item ID for nested items (0 = top level)'], 'position' => ['type' => 'integer', 'description' => 'Position in menu order (default: end)'], 'target' => ['type' => 'string', 'enum' => ['_self', '_blank'], 'description' => 'Link target']], 'required' => ['menu_id', 'title']]],
             ['name' => 'wp_update_menu_item', 'description' => 'Update an existing menu item. Only the fields you pass will change; unspecified fields are preserved from the existing item. The tool will refuse explicit-empty values for title or url that would destroy a non-empty existing value — to intentionally clear those, use wp_delete_menu_item then wp_create_menu_item. Requires edit_theme_options capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_item_id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'url' => ['type' => 'string'], 'parent_id' => ['type' => 'integer'], 'position' => ['type' => 'integer'], 'target' => ['type' => 'string', 'enum' => ['_self', '_blank']]], 'required' => ['menu_item_id']]],
@@ -542,8 +574,8 @@ class Server {
             ['name' => 'wp_reorder_menu_items', 'description' => 'Reorder menu items by passing an array of menu_item_ids in the desired order. Existing titles, URLs, parents, and other fields are preserved on every item touched. If the response includes a "skipped" array, those items could not be safely reordered (e.g. missing or recently deleted) — the rest were reordered correctly. Safe recovery procedure if a menu ever ends up in an unexpected state: wp_delete_menu_item each item, then wp_create_menu_item with both parent_id and position specified in every call. Requires edit_theme_options capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_id' => ['type' => 'integer'], 'item_order' => ['type' => 'array', 'items' => ['type' => 'integer'], 'description' => 'Array of menu_item_ids in the desired order']], 'required' => ['menu_id', 'item_order']]],
 
             // Plugins & Themes
-            ['name' => 'wp_get_plugins', 'description' => 'Get installed plugins', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
-            ['name' => 'wp_get_themes', 'description' => 'Get installed themes', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'wp_get_plugins', 'description' => 'List all installed plugins. Returns plugin file path, name, version, description, author, and active status for each. Useful for diagnosing plugin conflicts and building a compatibility picture at the start of a debugging conversation.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'wp_get_themes', 'description' => 'List all installed themes. Returns theme slug, name, version, author, and active flag for each. Use wp_get_active_theme for details on the currently-active theme only.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
 
             // Theme & Appearance
             ['name' => 'wp_get_active_theme', 'description' => 'Get the active theme with name, version, parent (if child theme), and screenshot URL', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -1275,7 +1307,10 @@ class Server {
                     'post_status' => in_array($args['status'] ?? 'draft', ['publish', 'draft', 'future', 'pending', 'private']) ? $args['status'] : 'draft',
                     'post_type' => $post_type,
                 ];
-                if (!empty($args['excerpt'])) $post_data['post_excerpt'] = sanitize_text_field($args['excerpt']);
+                // 1.4.36 — wp_kses_post matches what wp_insert_post's excerpt_save_pre
+                // filter would apply; sanitize_text_field flattened any <p>/<a>/<strong>
+                // formatting that legitimately renders on category archives + RSS feeds.
+                if (!empty($args['excerpt'])) $post_data['post_excerpt'] = wp_kses_post($args['excerpt']);
                 if (!empty($args['categories'])) $post_data['post_category'] = array_map('intval', $args['categories']);
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     $post_data['post_author'] = intval($args['post_author']);
@@ -1328,7 +1363,8 @@ class Server {
                 // 1.4.21 — see wp_create_post above (issue #15).
                 if (isset($args['content']) && $args['content'] !== '') $data['post_content'] = wp_slash($args['content']);
                 if (isset($args['status'])) $data['post_status'] = sanitize_text_field($args['status']);
-                if (isset($args['excerpt']) && $args['excerpt'] !== '') $data['post_excerpt'] = sanitize_text_field($args['excerpt']);
+                // 1.4.36 — see wp_create_post above: preserve safe HTML in excerpts.
+                if (isset($args['excerpt']) && $args['excerpt'] !== '') $data['post_excerpt'] = wp_kses_post($args['excerpt']);
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     $data['post_author'] = intval($args['post_author']);
                 }
@@ -1706,7 +1742,10 @@ class Server {
                     throw new \Exception('You do not have permission to create terms in ' . esc_html($taxonomy) . '.');
                 }
                 $term_args = [];
-                if (!empty($args['description'])) $term_args['description'] = sanitize_text_field($args['description']);
+                // 1.4.36 — wp_kses_post preserves the same safe HTML allow-list WP admin
+                // permits in term descriptions; sanitize_text_field flattened links/formatting
+                // that render on category-archive pages under WC / Yoast / theme templates.
+                if (!empty($args['description'])) $term_args['description'] = wp_kses_post($args['description']);
                 if (!empty($args['slug'])) $term_args['slug'] = sanitize_title($args['slug']);
                 if (!empty($args['parent']) && $tax_obj && $tax_obj->hierarchical) $term_args['parent'] = intval($args['parent']);
                 $result = wp_insert_term(sanitize_text_field($args['name']), $taxonomy, $term_args);
@@ -1726,7 +1765,8 @@ class Server {
                 // 1.4.31 — see wp_update_post: "" preserves existing value.
                 if (isset($args['name']) && $args['name'] !== '') $update_args['name'] = sanitize_text_field($args['name']);
                 if (isset($args['slug']) && $args['slug'] !== '') $update_args['slug'] = sanitize_title($args['slug']);
-                if (isset($args['description']) && $args['description'] !== '') $update_args['description'] = sanitize_text_field($args['description']);
+                // 1.4.36 — see wp_create_term above: preserve safe HTML in descriptions.
+                if (isset($args['description']) && $args['description'] !== '') $update_args['description'] = wp_kses_post($args['description']);
                 if (isset($args['parent'])) {
                     $tax_obj = get_taxonomy($taxonomy);
                     if ($tax_obj && $tax_obj->hierarchical) $update_args['parent'] = intval($args['parent']);
@@ -1784,7 +1824,11 @@ class Server {
                     'taxonomy'    => $taxonomy,
                     'page'        => $page,
                     'per_page'    => $per_page,
+                    // 1.4.36 — INVARIANTS.md §8 compliance: list tools return
+                    // total_count. Legacy 'total' kept alongside to avoid a
+                    // breaking rename for existing callers.
                     'total'       => $total,
+                    'total_count' => $total,
                     'total_pages' => $per_page > 0 ? (int) ceil($total / $per_page) : 0,
                     'terms'       => array_map(function ($t) {
                         return [
@@ -1855,10 +1899,14 @@ class Server {
                 if (!current_user_can('edit_term', $term_id)) {
                     throw new \Exception('You do not have permission to edit this term.');
                 }
-                $meta_value = is_string($args['value']) ? sanitize_textarea_field($args['value']) : $args['value'];
-                $result = update_term_meta($term_id, sanitize_text_field($args['key']), $meta_value);
+                if (!array_key_exists('value', $args)) {
+                    throw new \Exception('A value is required.');
+                }
+                $meta_key   = sanitize_text_field($args['key']);
+                $meta_value = self::filter_meta_value($args['value'], $meta_key, $term_id, 'wp_update_term_meta');
+                $result     = update_term_meta($term_id, $meta_key, $meta_value);
                 if ($result === false) throw new \Exception('Failed to update term meta');
-                return ['term_id' => $term_id, 'key' => sanitize_text_field($args['key']), 'message' => 'Term meta updated'];
+                return ['term_id' => $term_id, 'key' => $meta_key, 'message' => 'Term meta updated'];
 
             case 'wp_delete_term_meta':
                 $term_id = intval($args['term_id']);
@@ -1916,9 +1964,13 @@ class Server {
                     && !current_user_can('edit_post', $comment_post_id)) {
                     throw new \Exception('Comments are closed on this post.');
                 }
+                // 1.4.36 — wp_filter_kses uses WP's tight comment-form $allowedtags
+                // (<a>, <strong>, <em>, <blockquote>, <code>, <cite>, <abbr>, <acronym>).
+                // Matches what a user gets when submitting a comment through the standard
+                // WP form; sanitize_text_field stripped all tags including the standard <a>.
                 $comment_data = [
                     'comment_post_ID' => $comment_post_id,
-                    'comment_content' => sanitize_text_field($args['content']),
+                    'comment_content' => wp_filter_kses($args['content']),
                     'comment_author' => sanitize_text_field($args['author'] ?? 'Anonymous'),
                     'comment_author_email' => sanitize_email($args['author_email'] ?? ''),
                 ];
@@ -2061,8 +2113,9 @@ class Server {
                 if (!array_key_exists('value', $args)) {
                     throw new \Exception('A value is required. To remove a key entirely, use wp_delete_post_meta.');
                 }
-                $meta_value = self::sanitize_meta_value($args['value']);
-                $result = update_post_meta($post_id, sanitize_text_field($args['key']), $meta_value);
+                $meta_key   = sanitize_text_field($args['key']);
+                $meta_value = self::filter_meta_value($args['value'], $meta_key, $post_id, 'wp_update_post_meta');
+                $result     = update_post_meta($post_id, $meta_key, $meta_value);
                 return ['message' => 'Post meta updated successfully', 'result' => $result];
 
             case 'wp_add_post_meta':
@@ -2076,7 +2129,7 @@ class Server {
                 }
                 $key = sanitize_text_field($args['key'] ?? '');
                 if ($key === '') throw new \Exception('A meta key is required.');
-                $meta_value = self::sanitize_meta_value($args['value']);
+                $meta_value = self::filter_meta_value($args['value'], $key, $post_id, 'wp_add_post_meta');
                 $unique = !empty($args['unique']);
                 $meta_id = add_post_meta($post_id, $key, $meta_value, $unique);
                 return [
@@ -2106,6 +2159,217 @@ class Server {
                     'language' => get_locale(),
                     'timezone' => wp_timezone_string(),
                     'wp_version' => get_bloginfo('version'),
+                ];
+
+            // 1.4.36 — one-shot site diagnostic. Collapses the WP+PHP+MySQL+plugins+theme
+                // discovery flurry (previously 3-5 separate tool calls at conversation start)
+                // into a single read. Distinct from wp_get_site_info which is user-visible
+                // metadata (name/description/URL); this is operator-visible environment.
+            case 'wp_get_site_status':
+                if (!current_user_can('manage_options')) {
+                    throw new \Exception('You do not have permission to read site status.');
+                }
+                global $wpdb;
+
+                // MySQL / MariaDB version — use $wpdb->db_version() when available (WP 6.3+
+                // returns the numeric server version), fall back to raw SELECT VERSION() so
+                // this works on older WP too.
+                $db_server_info = null;
+                if (method_exists($wpdb, 'db_version')) {
+                    $db_server_info = $wpdb->db_version();
+                }
+                if (empty($db_server_info)) {
+                    $db_server_info = (string) $wpdb->get_var('SELECT VERSION()');
+                }
+
+                // Active plugin count — active_plugins is the primary list; also count
+                // network-active plugins on multisite so the number reflects reality.
+                $active_plugins = (array) get_option('active_plugins', []);
+                if (is_multisite()) {
+                    $network_active = (array) get_site_option('active_sitewide_plugins', []);
+                    $active_plugin_count = count($active_plugins) + count($network_active);
+                } else {
+                    $active_plugin_count = count($active_plugins);
+                }
+
+                $theme = wp_get_theme();
+
+                // Disk usage on ABSPATH — capture just the free-bytes reading. disk_free_space
+                // can be disabled by hosts (returns false) so guard for that.
+                $disk_free_bytes = @disk_free_space(ABSPATH);
+
+                // Uptime days — WP doesn't record install time separately from siteurl, so
+                // use the oldest post_date_gmt as a proxy (nearly always the "Hello World"
+                // seed post from install). Falls back to null if the site has no posts.
+                $oldest_ts = null;
+                $oldest_row = $wpdb->get_var("SELECT UNIX_TIMESTAMP(MIN(post_date_gmt)) FROM {$wpdb->posts} WHERE post_status IN ('publish','private','draft','future','pending')");
+                if ($oldest_row && (int) $oldest_row > 0) {
+                    $oldest_ts = (int) $oldest_row;
+                }
+
+                return [
+                    'wp_version'          => get_bloginfo('version'),
+                    'php_version'         => PHP_VERSION,
+                    'mysql_version'       => $db_server_info,
+                    'is_multisite'        => is_multisite(),
+                    'active_plugin_count' => $active_plugin_count,
+                    'active_theme'        => [
+                        'name'       => $theme->get('Name'),
+                        'stylesheet' => get_stylesheet(),
+                        'template'   => get_template(),
+                        'version'    => $theme->get('Version'),
+                    ],
+                    'memory_limit'        => ini_get('memory_limit'),
+                    'max_upload_size'     => size_format(wp_max_upload_size()),
+                    'max_execution_time'  => (int) ini_get('max_execution_time'),
+                    'timezone'            => wp_timezone_string(),
+                    'debug_log_enabled'   => (defined('WP_DEBUG') && WP_DEBUG) && (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG),
+                    'disk_free_bytes'     => $disk_free_bytes === false ? null : (int) $disk_free_bytes,
+                    'disk_free_human'     => $disk_free_bytes === false ? null : size_format((int) $disk_free_bytes),
+                    'install_age_days'    => $oldest_ts ? (int) floor((time() - $oldest_ts) / DAY_IN_SECONDS) : null,
+                    'site_url'            => site_url(),
+                    'home_url'            => home_url(),
+                ];
+
+            // 1.4.36 — tail wp-content/debug.log for AI-driven diagnosis.
+            // Manage_options gate: log lines routinely contain paths + stack traces
+            // + occasionally sensitive tokens that shouldn't reach read-tier callers.
+            case 'wp_get_error_log_tail':
+                if (!current_user_can('manage_options')) {
+                    throw new \Exception('You do not have permission to read the error log.');
+                }
+                $lines = isset($args['lines']) ? max(1, min(intval($args['lines']), 1000)) : 100;
+                $filter = isset($args['filter']) ? (string) $args['filter'] : '';
+
+                $log_status = 'ok';
+                $log_path   = defined('WP_DEBUG_LOG') && is_string(WP_DEBUG_LOG) && WP_DEBUG_LOG !== ''
+                    ? (string) WP_DEBUG_LOG
+                    : WP_CONTENT_DIR . '/debug.log';
+
+                if (!(defined('WP_DEBUG') && WP_DEBUG) || !(defined('WP_DEBUG_LOG') && WP_DEBUG_LOG)) {
+                    return [
+                        'status'  => 'disabled',
+                        'message' => 'WP_DEBUG_LOG is not enabled in wp-config.php. Add: define(\'WP_DEBUG\', true); define(\'WP_DEBUG_LOG\', true); define(\'WP_DEBUG_DISPLAY\', false);',
+                        'path'    => $log_path,
+                        'filter'  => $filter,
+                        'lines'   => [],
+                        'total_returned' => 0,
+                    ];
+                }
+
+                if (!file_exists($log_path)) {
+                    return [
+                        'status'  => 'no_log_file',
+                        'message' => 'debug.log does not exist yet (no errors logged since it was last cleared).',
+                        'path'    => $log_path,
+                        'filter'  => $filter,
+                        'lines'   => [],
+                        'total_returned' => 0,
+                    ];
+                }
+
+                if (!is_readable($log_path)) {
+                    return [
+                        'status'  => 'unreadable',
+                        'message' => 'debug.log exists but is not readable by PHP (check file permissions).',
+                        'path'    => $log_path,
+                        'filter'  => $filter,
+                        'lines'   => [],
+                        'total_returned' => 0,
+                    ];
+                }
+
+                // Cap read at last 1MB to prevent memory blowup on multi-GB debug.log
+                // files. AI callers get whatever N lines fit in that window.
+                $filesize = filesize($log_path);
+                $chunk_max = 1 * 1024 * 1024;
+                $offset    = ($filesize > $chunk_max) ? ($filesize - $chunk_max) : 0;
+
+                $fh = @fopen($log_path, 'r');
+                if (!$fh) {
+                    throw new \Exception('Could not open debug.log for reading.');
+                }
+                if ($offset > 0) {
+                    fseek($fh, $offset);
+                    // Drop first (partial) line after the seek so we don't return
+                    // half a stack-trace line.
+                    fgets($fh);
+                }
+                $raw = stream_get_contents($fh);
+                fclose($fh);
+
+                $all_lines = $raw === false ? [] : preg_split("/\r\n|\n|\r/", (string) $raw);
+                // Drop trailing empty line from final \n.
+                if (!empty($all_lines) && '' === end($all_lines)) {
+                    array_pop($all_lines);
+                }
+
+                if ($filter !== '') {
+                    $all_lines = array_values(array_filter($all_lines, function ($ln) use ($filter) {
+                        return false !== stripos($ln, $filter);
+                    }));
+                }
+
+                $tail = array_slice($all_lines, -$lines);
+
+                return [
+                    'status'         => $log_status,
+                    'path'           => $log_path,
+                    'filesize_bytes' => (int) $filesize,
+                    'window_bytes'   => (int) ($filesize - $offset),
+                    'truncated'      => $offset > 0,
+                    'filter'         => $filter,
+                    'total_returned' => count($tail),
+                    'lines'          => array_values($tail),
+                ];
+
+            // 1.4.36 — enumerate scheduled cron events. Stuck cron is a routine WP
+            // diagnosis (missed_schedule reports on WP core, unfired hooks on plugin
+            // conflicts) and agents previously had no visibility. Manage_options gate
+            // because cron args occasionally carry token-like identifiers.
+            case 'wp_get_cron_schedule':
+                if (!current_user_can('manage_options')) {
+                    throw new \Exception('You do not have permission to read the cron schedule.');
+                }
+                $crons = _get_cron_array();
+                if (!is_array($crons)) {
+                    return ['events' => [], 'total_count' => 0];
+                }
+                $now = time();
+                $events = [];
+                foreach ($crons as $timestamp => $hooks) {
+                    if (!is_array($hooks)) continue;
+                    foreach ($hooks as $hook => $signatures) {
+                        if (!is_array($signatures)) continue;
+                        foreach ($signatures as $sig_key => $meta) {
+                            $recurrence = null;
+                            if (!empty($meta['schedule'])) {
+                                $schedules = wp_get_schedules();
+                                $recurrence = isset($schedules[$meta['schedule']])
+                                    ? $meta['schedule'] . ' (' . (int) $schedules[$meta['schedule']]['interval'] . 's)'
+                                    : (string) $meta['schedule'];
+                            }
+                            $events[] = [
+                                'hook'          => (string) $hook,
+                                'next_run_ts'   => (int) $timestamp,
+                                'next_run_iso'  => wp_date('c', (int) $timestamp),
+                                'seconds_until' => (int) $timestamp - $now,
+                                'is_overdue'    => (int) $timestamp < $now,
+                                'recurrence'    => $recurrence,
+                                'args'          => $meta['args'] ?? [],
+                            ];
+                        }
+                    }
+                }
+                // Sort by next-run ascending so overdue events + soonest come first.
+                usort($events, function ($a, $b) {
+                    return $a['next_run_ts'] <=> $b['next_run_ts'];
+                });
+                return [
+                    'events'      => $events,
+                    'total_count' => count($events),
+                    'now_ts'      => $now,
+                    'now_iso'     => wp_date('c', $now),
                 ];
 
             case 'wp_search':

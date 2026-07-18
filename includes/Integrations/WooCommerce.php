@@ -118,13 +118,13 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_update_order_status',
-				'description' => 'Update WooCommerce order status',
+				'description' => 'Update WooCommerce order status. Optional note may contain safe HTML — displayed in the WC admin order timeline.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
 						'id'     => [ 'type' => 'integer', 'description' => 'Order ID' ],
 						'status' => [ 'type' => 'string', 'description' => 'New status (processing, completed, on-hold, cancelled, refunded)' ],
-						'note'   => [ 'type' => 'string', 'description' => 'Optional order note' ],
+						'note'   => [ 'type' => 'string', 'description' => 'Optional order note. May contain safe HTML (links, formatting).' ],
 					],
 					'required'   => [ 'id', 'status' ],
 				],
@@ -389,7 +389,7 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_create_coupon',
-				'description' => 'Create a new WooCommerce coupon',
+				'description' => 'Create a new WooCommerce coupon. Description may contain safe HTML.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -417,7 +417,7 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_update_coupon',
-				'description' => 'Update an existing WooCommerce coupon; only supplied fields are changed',
+				'description' => 'Update an existing WooCommerce coupon; only supplied fields are changed. Description may contain safe HTML.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -611,7 +611,9 @@ class WooCommerce {
 					'orders'      => array_map( [ __CLASS__, 'format_order_summary' ], $result->orders ),
 					'page'        => $page,
 					'per_page'    => $per_page,
+					// 1.4.36 — INVARIANTS.md §8 compliance: total_count alongside legacy total.
 					'total'       => intval( $result->total ),
+					'total_count' => intval( $result->total ),
 					'total_pages' => intval( $result->max_num_pages ),
 				];
 
@@ -632,7 +634,11 @@ class WooCommerce {
 				if ( ! in_array( $new_status, $allowed_statuses ) ) {
 					throw new \Exception( 'Invalid order status' );
 				}
-				$note = ! empty( $args['note'] ) ? sanitize_text_field( $args['note'] ) : '';
+				// 1.4.36 — WC_Order::add_order_note() already applies wp_kses_post
+				// internally; sanitize_text_field was both redundant AND lossy (stripped
+				// support-URL links from notes). Explicit wp_kses_post here matches WC
+				// behavior + keeps the tool self-documenting.
+				$note = ! empty( $args['note'] ) ? wp_kses_post( $args['note'] ) : '';
 				$order->update_status( $new_status, $note );
 				return [ 'id' => $args['id'], 'status' => $new_status, 'message' => 'Order status updated' ];
 
@@ -1284,7 +1290,9 @@ class WooCommerce {
 			$coupon->set_amount( sanitize_text_field( $args['amount'] ) );
 		}
 		if ( isset( $args['description'] ) ) {
-			$coupon->set_description( sanitize_text_field( $args['description'] ) );
+			// 1.4.36 — WC admin allows HTML in coupon descriptions; some themes render
+			// them on cart/checkout with formatting preserved. Matches admin behavior.
+			$coupon->set_description( wp_kses_post( $args['description'] ) );
 		}
 		if ( isset( $args['date_expires'] ) ) {
 			$raw = sanitize_text_field( $args['date_expires'] );

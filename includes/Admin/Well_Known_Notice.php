@@ -12,22 +12,31 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class Well_Known_Notice {
 
-    const TRANSIENT_KEY            = 'royal_mcp_well_known_status';
-    const TRANSIENT_TTL            = 12 * HOUR_IN_SECONDS;
-    const USER_DISMISS_KEY         = 'royal_mcp_well_known_dismissed';
-    const STALE_DISMISS_KEY        = 'royal_mcp_well_known_stale_dismissed';
-    const HTML_BODY_DISMISS_KEY    = 'royal_mcp_well_known_html_body_dismissed';
-    const REGISTER_301_TRANSIENT   = 'royal_mcp_register_301_status';
-    const REGISTER_301_DISMISS_KEY = 'royal_mcp_register_301_dismissed';
-    const SUPPORT_URL              = 'https://royalplugins.com/support/royal-mcp/siteground-well-known-404.html';
-    const STALE_SUPPORT_URL        = 'https://royalplugins.com/support/royal-mcp/stale-well-known-static-files.html';
-    const HTML_BODY_SUPPORT_URL    = 'https://royalplugins.com/support/royal-mcp/well-known-served-as-html.html';
-    const REGISTER_301_SUPPORT_URL = 'https://royalplugins.com/support/royal-mcp/oauth-register-trailing-slash-301.html';
+    const TRANSIENT_KEY                = 'royal_mcp_well_known_status';
+    const TRANSIENT_TTL                = 12 * HOUR_IN_SECONDS;
+    const USER_DISMISS_KEY             = 'royal_mcp_well_known_dismissed';
+    const STALE_DISMISS_KEY            = 'royal_mcp_well_known_stale_dismissed';
+    const HTML_BODY_DISMISS_KEY        = 'royal_mcp_well_known_html_body_dismissed';
+    const REGISTER_301_TRANSIENT       = 'royal_mcp_register_301_status';
+    const REGISTER_301_DISMISS_KEY     = 'royal_mcp_register_301_dismissed';
+    const IMUNIFY360_DISMISS_KEY       = 'royal_mcp_imunify360_dismissed';
+    const PLAIN_PERMALINKS_DISMISS_KEY = 'royal_mcp_plain_permalinks_dismissed';
+    const SUPPORT_URL                  = 'https://royalplugins.com/support/royal-mcp/siteground-well-known-404.html';
+    const STALE_SUPPORT_URL            = 'https://royalplugins.com/support/royal-mcp/stale-well-known-static-files.html';
+    const HTML_BODY_SUPPORT_URL        = 'https://royalplugins.com/support/royal-mcp/well-known-served-as-html.html';
+    const REGISTER_301_SUPPORT_URL     = 'https://royalplugins.com/support/royal-mcp/oauth-register-trailing-slash-301.html';
+    const IMUNIFY360_SUPPORT_URL       = 'https://royalplugins.com/support/royal-mcp/imunify360-blocks-mcp.html';
+    const PLAIN_PERMALINKS_SUPPORT_URL = 'https://royalplugins.com/support/royal-mcp/plain-permalinks-blocks-discovery.html';
 
     public function __construct() {
         add_action( 'admin_notices', [ $this, 'maybe_render_notice' ] );
         add_action( 'admin_init', [ $this, 'maybe_dismiss' ] );
         add_action( 'update_option_royal_mcp_settings', [ $this, 'invalidate_check' ] );
+        // 1.4.36 — changing permalink structure changes whether OAuth
+        // discovery routes work at all (plain permalinks skip our rewrites).
+        // Drop cached classification so the notice reflects the new state
+        // immediately after the customer flips Settings → Permalinks.
+        add_action( 'update_option_permalink_structure', [ $this, 'invalidate_check' ] );
     }
 
     /**
@@ -70,7 +79,32 @@ class Well_Known_Notice {
             return;
         }
 
+        // 1.4.36 — plain-permalinks gate runs BEFORE the network probe.
+        // If WordPress is on Plain permalinks, our OAuth rewrite rules
+        // never fire and every downstream classification would misdiagnose
+        // the 404 as a host-level block. This is a pure get_option() check —
+        // no HTTP needed, cheapest possible early exit. See hjemmesikring.dk
+        // 2026-07-14.
+        if ( '' === (string) get_option( 'permalink_structure', '' )
+            && ! get_user_meta( $user_id, self::PLAIN_PERMALINKS_DISMISS_KEY, true )
+        ) {
+            $this->render_plain_permalinks_notice();
+            return;
+        }
+
         $status = $this->check_well_known();
+
+        // 1.4.36 — Imunify360 fires BEFORE 'blocked' because the misdiagnosis
+        // cost is high: 'blocked' notice tells the customer to talk to their
+        // host about SiteGround-style reservations, but Imunify360 needs a
+        // completely different allowlist request (bot-protection Ignore list,
+        // not path reservation). See hjemmesikring.dk 2026-07-14.
+        if ( 'imunify360_blocked' === $status
+            && ! get_user_meta( $user_id, self::IMUNIFY360_DISMISS_KEY, true )
+        ) {
+            $this->render_imunify360_notice();
+            return;
+        }
 
         if ( 'blocked' === $status
             && ! get_user_meta( $user_id, self::USER_DISMISS_KEY, true )
@@ -181,6 +215,23 @@ class Well_Known_Notice {
             }
 
             $data = json_decode( $body, true );
+
+            // 1.4.36 — Imunify360 bot-protection (CloudLinux, common on shared
+            // cPanel hosts) intercepts /.well-known/* and /wp-json/* BEFORE PHP
+            // runs and returns HTTP 200 with a JSON denial body containing a
+            // "message" key. Distinct from 'mismatch' (which is a semantic-issuer
+            // problem) — the host is intercepting pre-PHP so no plugin setting
+            // can fix it; the customer must ask their host to allowlist the paths.
+            // Broad prefix match on "Imunify360" (case-insensitive) — Imunify's
+            // denial-message copy has drifted across versions but always contains
+            // the product name. See hjemmesikring.dk 2026-07-14.
+            if ( is_array( $data )
+                && isset( $data['message'] )
+                && false !== stripos( (string) $data['message'], 'Imunify360' )
+            ) {
+                return 'imunify360_blocked';
+            }
+
             if ( ! is_array( $data ) || empty( $data['issuer'] ) ) {
                 return 'mismatch';
             }
@@ -340,6 +391,24 @@ class Well_Known_Notice {
             wp_safe_redirect( remove_query_arg( [ 'royal_mcp_dismiss_register_301', '_wpnonce' ] ) );
             exit;
         }
+
+        if ( isset( $_GET['royal_mcp_dismiss_imunify360'] )
+            && isset( $_GET['_wpnonce'] )
+            && wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'royal_mcp_dismiss_imunify360' )
+        ) {
+            update_user_meta( get_current_user_id(), self::IMUNIFY360_DISMISS_KEY, time() );
+            wp_safe_redirect( remove_query_arg( [ 'royal_mcp_dismiss_imunify360', '_wpnonce' ] ) );
+            exit;
+        }
+
+        if ( isset( $_GET['royal_mcp_dismiss_plain_permalinks'] )
+            && isset( $_GET['_wpnonce'] )
+            && wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'royal_mcp_dismiss_plain_permalinks' )
+        ) {
+            update_user_meta( get_current_user_id(), self::PLAIN_PERMALINKS_DISMISS_KEY, time() );
+            wp_safe_redirect( remove_query_arg( [ 'royal_mcp_dismiss_plain_permalinks', '_wpnonce' ] ) );
+            exit;
+        }
     }
 
     private function render_blocked_notice() {
@@ -445,6 +514,86 @@ class Well_Known_Notice {
             <p>
                 <a href="<?php echo esc_url( self::HTML_BODY_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
                     <?php esc_html_e( 'See the troubleshooting guide', 'royal-mcp' ); ?>
+                </a>
+                <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
+                    <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
+                </a>
+            </p>
+        </div>
+        <?php
+    }
+
+    private function render_imunify360_notice() {
+        $dismiss_url = wp_nonce_url(
+            add_query_arg( 'royal_mcp_dismiss_imunify360', '1' ),
+            'royal_mcp_dismiss_imunify360'
+        );
+
+        ?>
+        <div class="notice notice-warning royal-mcp-imunify360-notice">
+            <p>
+                <strong><?php esc_html_e( 'Royal MCP: OAuth discovery is being blocked by Imunify360 bot-protection.', 'royal-mcp' ); ?></strong>
+            </p>
+            <p>
+                <?php
+                printf(
+                    /* translators: 1: literal URL path code, 2: literal URL path code */
+                    esc_html__( 'Your host runs Imunify360 (a CloudLinux security layer on many shared cPanel hosts), and it is intercepting %1$s and %2$s before WordPress can respond. Claude.ai and other MCP clients will fail to connect until your host allowlists these paths — no WordPress setting can fix this.', 'royal-mcp' ),
+                    '<code>/.well-known/*</code>',
+                    '<code>/wp-json/*</code>'
+                );
+                ?>
+            </p>
+            <p>
+                <?php esc_html_e( 'Ask your host to allowlist these paths in Imunify360:', 'royal-mcp' ); ?>
+                <code>/.well-known/*</code>, <code>/wp-json/*</code>, <code>/authorize</code>, <code>/token</code>, <code>/register</code>.
+            </p>
+            <p>
+                <a href="<?php echo esc_url( self::IMUNIFY360_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
+                    <?php esc_html_e( 'Copy-paste hosting request', 'royal-mcp' ); ?>
+                </a>
+                <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
+                    <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
+                </a>
+            </p>
+        </div>
+        <?php
+    }
+
+    private function render_plain_permalinks_notice() {
+        $dismiss_url = wp_nonce_url(
+            add_query_arg( 'royal_mcp_dismiss_plain_permalinks', '1' ),
+            'royal_mcp_dismiss_plain_permalinks'
+        );
+
+        $permalinks_admin_url = admin_url( 'options-permalink.php' );
+
+        ?>
+        <div class="notice notice-warning royal-mcp-plain-permalinks-notice">
+            <p>
+                <strong><?php esc_html_e( 'Royal MCP: OAuth discovery requires pretty permalinks.', 'royal-mcp' ); ?></strong>
+            </p>
+            <p>
+                <?php
+                printf(
+                    /* translators: 1: literal URL path code, 2: literal URL path code, 3: literal URL path code, 4: literal URL path code */
+                    esc_html__( 'WordPress is currently set to Plain permalinks. Royal MCP serves its OAuth endpoints (%1$s, %2$s, %3$s, %4$s) from the domain root via rewrite rules, and rewrite rules don\'t fire on Plain. Claude.ai cannot complete the connection until this is changed.', 'royal-mcp' ),
+                    '<code>/.well-known/oauth-authorization-server</code>',
+                    '<code>/authorize</code>',
+                    '<code>/token</code>',
+                    '<code>/register</code>'
+                );
+                ?>
+            </p>
+            <p>
+                <?php esc_html_e( 'The fix takes 10 seconds: open Settings → Permalinks, choose any option except Plain (Post name is a safe default), and Save Changes.', 'royal-mcp' ); ?>
+            </p>
+            <p>
+                <a href="<?php echo esc_url( $permalinks_admin_url ); ?>" class="button button-primary">
+                    <?php esc_html_e( 'Fix in Permalink Settings', 'royal-mcp' ); ?>
+                </a>
+                <a href="<?php echo esc_url( self::PLAIN_PERMALINKS_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button" style="margin-left: 0.5rem;">
+                    <?php esc_html_e( 'Read full explanation', 'royal-mcp' ); ?>
                 </a>
                 <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
                     <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>

@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.35
+Stable tag: 1.4.36
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -80,6 +80,24 @@ When WooCommerce is active, AI agents can manage your store end-to-end:
 * List customers with order count and total spent
 * Get store statistics — revenue, order count, average order value by period
 
+**Elementor Integration (7 tools):**
+When Elementor (free or Pro) is active, AI agents can clone and customize existing Elementor pages without trying to generate page-builder JSON from scratch:
+
+* Clone an existing Elementor page with a new title and fresh element IDs (so the duplicate opens in the editor without ID collisions)
+* Bulk-replace text across heading, text-editor, button, image-box, icon-box, icon-list, testimonial, tabs, accordion, toggle, star-rating, call-to-action, and flip-box widgets
+* Swap image URLs across image, image-box, background_image, and gallery widget settings
+* Get a compact outline of any page (section/container hierarchy, widget types, text snippets) so Claude can reason over a full page in a few KB instead of the raw JSON
+* List saved templates from the Elementor template library and import templates from JSON
+* Atomic widgets (Elementor 4.0+ Editor V4 elements) pass through opaque — we never decode atomic schemas because Elementor itself may shift them. Widget-level creation from scratch is intentionally out of scope; the design commitment is to work from an existing-known-good source.
+
+**Advanced Custom Fields Integration (4 tools):**
+When ACF (free or Pro) is active, AI agents can read and write ACF fields with the field-type-aware formatting the ACF UI uses — instead of the raw serialized values WordPress meta returns:
+
+* Read a single ACF field, formatted per its Return Format setting (hydrated post objects, parsed repeater rows, image arrays, etc.)
+* Read every ACF field on a post in one call, with name/label/type/value bundled — the most efficient way for an AI to discover what fields exist and read them all
+* Update an ACF field with type-aware value handling (scalar for text/number, array for repeaters and flex content, post ID for relationships, attachment ID for images)
+* Enumerate ACF field groups on the site, optionally filtered by post type — for AI-driven discovery of available custom fields before reading/writing
+
 **GuardPress Integration (7 tools):**
 When GuardPress is active, AI agents can monitor your site security:
 
@@ -117,24 +135,6 @@ When Royal Links is active, AI agents can manage your branded short links:
 * List existing links with click counts and target URLs
 * Create new branded short links
 * Get click statistics for any link
-
-**Advanced Custom Fields Integration (4 tools):**
-When ACF (free or Pro) is active, AI agents can read and write ACF fields with the field-type-aware formatting the ACF UI uses — instead of the raw serialized values WordPress meta returns:
-
-* Read a single ACF field, formatted per its Return Format setting (hydrated post objects, parsed repeater rows, image arrays, etc.)
-* Read every ACF field on a post in one call, with name/label/type/value bundled — the most efficient way for an AI to discover what fields exist and read them all
-* Update an ACF field with type-aware value handling (scalar for text/number, array for repeaters and flex content, post ID for relationships, attachment ID for images)
-* Enumerate ACF field groups on the site, optionally filtered by post type — for AI-driven discovery of available custom fields before reading/writing
-
-**Elementor Integration (7 tools):**
-When Elementor (free or Pro) is active, AI agents can clone and customize existing Elementor pages without trying to generate page-builder JSON from scratch:
-
-* Clone an existing Elementor page with a new title and fresh element IDs (so the duplicate opens in the editor without ID collisions)
-* Bulk-replace text across heading, text-editor, button, image-box, icon-box, icon-list, testimonial, tabs, accordion, toggle, star-rating, call-to-action, and flip-box widgets
-* Swap image URLs across image, image-box, background_image, and gallery widget settings
-* Get a compact outline of any page (section/container hierarchy, widget types, text snippets) so Claude can reason over a full page in a few KB instead of the raw JSON
-* List saved templates from the Elementor template library and import templates from JSON
-* Atomic widgets (Elementor 4.0+ Editor V4 elements) pass through opaque — we never decode atomic schemas because Elementor itself may shift them. Widget-level creation from scratch is intentionally out of scope; the design commitment is to work from an existing-known-good source.
 
 = Royal MCP and the WordPress Core Abilities API =
 
@@ -323,6 +323,17 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.4.36 =
+* Feature: New `wp_get_site_status` tool &mdash; a one-shot site diagnostic that returns WordPress + PHP + MySQL versions, active plugin count, active theme, memory limit, max upload size, timezone, disk free space, WP_DEBUG_LOG state, and install age in a single call. Collapses what previously took 3&ndash;5 separate tool calls at the start of a debugging or environment-inspection conversation.
+* Feature: New `wp_get_error_log_tail` tool &mdash; safely tail the last N lines of wp-content/debug.log (default 100, max 1000) with an optional case-insensitive substring filter. Caps file read at the last 1MB automatically so multi-GB debug.log files don&rsquo;t blow up PHP memory. Returns `status="disabled"` with copy-pasteable wp-config.php instructions when WP_DEBUG_LOG is off &mdash; so the AI can tell the user how to enable it in one message.
+* Feature: New `wp_get_cron_schedule` tool &mdash; enumerate every scheduled wp_cron event with hook name, next run (unix + ISO 8601), seconds-until-next-run, an `is_overdue` flag, recurrence + interval, and args. Sorted ascending so overdue events come first. Turns &ldquo;is my cron stuck?&rdquo; from a 15-minute investigation into a single call.
+* Fix: HTML is now preserved across write tools that were previously flattening it &mdash; `wp_update_post_meta`, `wp_add_post_meta`, `wp_update_term_meta`, `wp_create_term` / `wp_update_term` (descriptions), `wp_create_comment`, `wc_update_order_status` (order notes), `wp_create_post` / `wp_update_post` / `wp_create_page` / `wp_update_page` (excerpts), and `wc_create_coupon` / `wc_update_coupon` (descriptions). Each uses the same HTML allow-list its WordPress or WooCommerce admin counterpart uses (comments use WP&rsquo;s tighter comment-form allow-list). Fixes seven places where an AI-authored value was silently stripped down to plain text after write.
+* Feature: New `royal_mcp_meta_value_sanitizer` filter lets site owners customize per-meta-key sanitization on `wp_update_post_meta`, `wp_add_post_meta`, and `wp_update_term_meta`. Receives `(sanitized, raw, meta_key, object_id, tool_name)` so downstream code can loosen or tighten the default `wp_kses_post` treatment on specific keys without patching the plugin.
+* Feature: Admin notice detects when your host&rsquo;s Imunify360 bot-protection (common on shared cPanel hosts) is intercepting `/.well-known/oauth-authorization-server` before WordPress sees the request. Links to a support article with the exact paths to allowlist &mdash; so a customer no longer sees a silent connection failure with no explanation in wp-admin.
+* Feature: Admin notice detects when WordPress is set to Plain permalinks (which prevents the OAuth discovery endpoints from being served at the domain root via rewrite rules). Includes a one-click link to Settings &rarr; Permalinks so the fix takes seconds instead of a support ticket.
+* Ergonomic: Tool-description quality pass across ~10 high-traffic tools (`wp_get_pages`, `wp_get_media`, `wp_get_categories`, `wp_get_tags`, `wp_get_comments`, `wp_get_users`, `wp_get_menus`, `wp_get_plugins`, `wp_get_themes`, `wp_get_site_info`) &mdash; each now describes what fields it returns and when to prefer it over an adjacent tool. Improves AI-agent tool-selection accuracy on real-world conversations. `wp_get_comments` also gained a proper enum for the `status` argument.
+* Ergonomic: `wp_get_terms` and `wc_get_orders` responses now include `total_count` alongside the existing `total` field, matching the pagination convention documented in the plugin&rsquo;s response-envelope spec. Existing `total` field kept unchanged &mdash; no breaking changes to current callers.
 
 = 1.4.35 =
 * Fix: MCP sessions opened over OAuth now survive access-token rotation. Pre-1.4.35, each session was bound to a hash of the raw bearer token; when the OAuth server rotated the short-lived access token (hourly), the fingerprint stored at `initialize` no longer matched the token presented on the next call and the request was rejected with HTTP 403 "Session credentials mismatch." Long automations (bulk edits, navigation-menu rebuilds, anything crossing an hour of activity) hit this reliably and had to reconnect. 1.4.35 binds the session to the OAuth `client_id` + `user_id` returned by the token store &mdash; both stable across refreshes &mdash; so a re-issued access token still resolves to the same session. Static API-key auth was never affected. Sessions opened before 1.4.35 will still 403 on refresh until they expire naturally (24h TTL) or the client re-initializes.
