@@ -7,8 +7,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 /**
  * Detects when the host is blocking /.well-known/oauth-authorization-server
- * (most commonly SiteGround's nginx claiming the .well-known/ path prefix
- * for ACME) and surfaces an admin notice linking to the manual fix.
+ * (typically because the web server has reserved the .well-known/ path prefix
+ * for its own use, e.g. ACME) and surfaces an admin notice linking to the fix.
  */
 class Well_Known_Notice {
 
@@ -32,7 +32,7 @@ class Well_Known_Notice {
         add_action( 'admin_notices', [ $this, 'maybe_render_notice' ] );
         add_action( 'admin_init', [ $this, 'maybe_dismiss' ] );
         add_action( 'update_option_royal_mcp_settings', [ $this, 'invalidate_check' ] );
-        // 1.4.36 — changing permalink structure changes whether OAuth
+        // changing permalink structure changes whether OAuth
         // discovery routes work at all (plain permalinks skip our rewrites).
         // Drop cached classification so the notice reflects the new state
         // immediately after the customer flips Settings → Permalinks.
@@ -79,12 +79,11 @@ class Well_Known_Notice {
             return;
         }
 
-        // 1.4.36 — plain-permalinks gate runs BEFORE the network probe.
-        // If WordPress is on Plain permalinks, our OAuth rewrite rules
-        // never fire and every downstream classification would misdiagnose
-        // the 404 as a host-level block. This is a pure get_option() check —
-        // no HTTP needed, cheapest possible early exit. See hjemmesikring.dk
-        // 2026-07-14.
+        // Plain-permalinks gate runs BEFORE the network probe. If WordPress
+        // is on Plain permalinks, our OAuth rewrite rules never fire and
+        // every downstream classification would misdiagnose the 404 as a
+        // host-level block. Pure get_option() check — cheapest possible
+        // early exit before any HTTP.
         if ( '' === (string) get_option( 'permalink_structure', '' )
             && ! get_user_meta( $user_id, self::PLAIN_PERMALINKS_DISMISS_KEY, true )
         ) {
@@ -94,11 +93,10 @@ class Well_Known_Notice {
 
         $status = $this->check_well_known();
 
-        // 1.4.36 — Imunify360 fires BEFORE 'blocked' because the misdiagnosis
-        // cost is high: 'blocked' notice tells the customer to talk to their
-        // host about SiteGround-style reservations, but Imunify360 needs a
-        // completely different allowlist request (bot-protection Ignore list,
-        // not path reservation). See hjemmesikring.dk 2026-07-14.
+        // Imunify360 fires BEFORE 'blocked' because the misdiagnosis cost
+        // is high: 'blocked' guides the admin toward host path-reservation
+        // adjustments, but Imunify360 needs a completely different allowlist
+        // request (bot-protection Ignore list, not path reservation).
         if ( 'imunify360_blocked' === $status
             && ! get_user_meta( $user_id, self::IMUNIFY360_DISMISS_KEY, true )
         ) {
@@ -147,9 +145,9 @@ class Well_Known_Notice {
      *  - ok            : status 200, body parses as JSON, issuer matches and endpoints are root paths
      *  - blocked       : status 404 with no PHP/WP fingerprint (nginx static 404)
      *  - stale_static  : status 200 with JSON but endpoints advertise REST-namespace paths
-     *                    (/wp-json/royal-mcp/v1/...) — leftover static file from pre-1.4.0 era
+     *                    (/wp-json/royal-mcp/v1/...) — leftover static file from an earlier layout
      *  - body_is_html  : status 200 but body is an HTML document — a membership plugin or
-     *                    theme template intercepted the request (e.g. ARMember login page)
+     *                    theme template intercepted the request (e.g. a login page)
      *  - unknown       : connection error, timeout, or non-2xx/non-404
      *  - mismatch      : status 200 but content unexpected for unrelated reasons (issuer mismatch)
      */
@@ -201,7 +199,7 @@ class Well_Known_Notice {
     public static function classify_response( $code, $body, array $headers, $expected_issuer ) {
         if ( 200 === $code ) {
             // Body-is-HTML detection — a membership plugin or theme template intercepted
-            // the request after rewrite resolution and served its own HTML (e.g. ARMember
+            // the request after rewrite resolution and served its own HTML (e.g. a membership plugin
             // login page, MemberPress access-denied template). Discovery clients that
             // strictly require JSON metadata fail silently here. See autofit-bernau.de
             // 2026-05-21. Anchor checks at position 0 so a valid JSON body containing
@@ -216,15 +214,15 @@ class Well_Known_Notice {
 
             $data = json_decode( $body, true );
 
-            // 1.4.36 — Imunify360 bot-protection (CloudLinux, common on shared
+            // Imunify360 bot-protection (CloudLinux, common on shared
             // cPanel hosts) intercepts /.well-known/* and /wp-json/* BEFORE PHP
             // runs and returns HTTP 200 with a JSON denial body containing a
             // "message" key. Distinct from 'mismatch' (which is a semantic-issuer
             // problem) — the host is intercepting pre-PHP so no plugin setting
             // can fix it; the customer must ask their host to allowlist the paths.
-            // Broad prefix match on "Imunify360" (case-insensitive) — Imunify's
-            // denial-message copy has drifted across versions but always contains
-            // the product name. See hjemmesikring.dk 2026-07-14.
+            // Broad prefix match on "Imunify360" (case-insensitive) — the
+            // denial-message copy has drifted across versions but always
+            // contains the product name.
             if ( is_array( $data )
                 && isset( $data['message'] )
                 && false !== stripos( (string) $data['message'], 'Imunify360' )
@@ -238,10 +236,10 @@ class Well_Known_Notice {
 
             $issuer_ok = rtrim( $data['issuer'], '/' ) === $expected_issuer;
 
-            // Stale-static detection: pre-1.4.0 era files advertised REST-namespace
+            // Stale-static detection: earlier layouts advertised REST-namespace
             // OAuth endpoints (/wp-json/royal-mcp/v1/authorize). Current code serves
-            // them at root (/authorize). If the file is still on disk with old paths,
-            // claude.ai follows the bad URL and 404s. See keyspure.com 2026-05-16.
+            // them at root (/authorize). If a stale file is still on disk with old
+            // paths, discovery clients follow the bad URL and 404.
             $endpoints = [
                 $data['authorization_endpoint'] ?? '',
                 $data['token_endpoint']         ?? '',

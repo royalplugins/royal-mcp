@@ -8,20 +8,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 /**
  * MCP Session Store.
  *
- * DB-backed storage for MCP session state. Replaces the transient-based
- * implementation that was previously inlined in Server.php.
+ * DB-backed storage for MCP session state.
  *
- * Background (1.4.27): a customer on a LiteSpeed-based managed host with an
- * active WordPress object cache drop-in (object-cache.php) reported every
- * MCP request after `initialize` returning 404 "Session not found". Root
- * cause: when an object cache is active, `set_transient()` writes to the
- * cache layer instead of `wp_options`. The cache backend on that stack
- * dropped the key between requests, so the session that wrote successfully
- * read back `false` milliseconds later. Same failure mode that drove the
- * 1.4.17 OAuth-auth-code move off transients onto a dedicated table.
- *
- * Direct DB storage with sha256-hashed lookup gives reliable persistence
- * regardless of which cache backend (if any) is active.
+ * When an object cache drop-in (object-cache.php) is active, set_transient()
+ * writes to the cache layer instead of wp_options. Some cache backends evict
+ * keys between requests, so a session that writes successfully reads back as
+ * `false` milliseconds later — every MCP request after `initialize` returns
+ * 404 "Session not found". Direct DB storage with sha256-hashed lookup gives
+ * reliable persistence regardless of which cache backend (if any) is active.
  */
 class Session_Store {
 

@@ -96,7 +96,7 @@ class RoyalLedger {
 	 * @throws \Exception If tool fails.
 	 */
 	public static function execute_tool( $name, $args ) {
-		// 1.4.30 — umbrella cap check fires BEFORE the active-check. Every
+		// umbrella cap check fires BEFORE the active-check. Every
 		// Royal Ledger tool gates on manage_options at the per-case level
 		// (financial bookkeeping data is admin-tier), so we hoist the same
 		// check to the umbrella — a Subscriber-tier OAuth Bearer is denied
@@ -111,7 +111,7 @@ class RoyalLedger {
 
 		switch ( $name ) {
 			case 'rl_get_costs':
-				// 1.4.26 — Royal Ledger holds financial bookkeeping (costs,
+				// Royal Ledger holds financial bookkeeping (costs,
 				// renewals, licensed-products). manage_options matches the
 				// plugin's own admin-screen gating.
 				if ( ! current_user_can( 'manage_options' ) ) {
@@ -189,7 +189,7 @@ class RoyalLedger {
 				);
 
 			case 'rl_get_keys':
-				// 1.4.26 — license-key listings (even masked) are admin-only.
+				// license-key listings (even masked) are admin-only.
 				// The masked preview still reveals the existence + prefix of
 				// every license key on the site.
 				if ( ! current_user_can( 'manage_options' ) ) {

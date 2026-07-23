@@ -153,12 +153,11 @@ class Server {
 
         $client = Token_Store::register_client( $body );
 
-        // 1.4.29 — defensive self-heal for the silent-migration-failure class
-        // (the 1.4.27 regression — see royal-mcp.php maybe_upgrade_db invariant).
-        // If our tables are reported missing, attempt create_tables() once and
-        // retry. Belt-and-suspenders for installs that updated past 1.4.27 with
-        // the autoloader transiently failing and got latched. Only runs on the
-        // failure path — happy path is unchanged.
+        // Defensive self-heal: if our tables are reported missing, attempt
+        // create_tables() once and retry. Belt-and-suspenders for installs
+        // where the autoloader transiently failed and the healer got latched.
+        // Only runs on the failure path — happy path is unchanged. See
+        // royal-mcp.php maybe_upgrade_db for the full invariant.
         if ( is_wp_error( $client ) && $client->get_error_code() === 'royal_mcp_register_failed' ) {
             Token_Store::create_tables();
             if ( class_exists( '\Royal_MCP\MCP\Session_Store' ) ) {
@@ -457,9 +456,10 @@ class Server {
     /**
      * Send a JSON response and exit.
      *
-     * Default policy: no-store, to defeat aggressive edge caches (PowerBoost,
-     * LiteSpeed, Varnish, Cloudflare APO) that would otherwise key cache by URL
-     * only and serve a stale 4xx response to subsequent requests of any method.
+     * Default policy: no-store, to defeat aggressive edge caches (CDN, host-
+     * level fastcgi cache, generic reverse proxies) that would otherwise key
+     * cache by URL only and serve a stale 4xx response to subsequent requests
+     * of any method.
      * Discovery/metadata endpoints opt-in to public caching by passing their
      * own Cache-Control header in $extra_headers.
      */

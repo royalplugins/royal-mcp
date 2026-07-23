@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & Gemini
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.4.36
+ * Version: 1.4.37
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -20,10 +20,11 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ROYAL_MCP_VERSION', '1.4.36');
+define('ROYAL_MCP_VERSION', '1.4.37');
 define('ROYAL_MCP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ROYAL_MCP_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('ROYAL_MCP_PLUGIN_FILE', __FILE__);
+define('ROYAL_MCP_PLUGIN_BASENAME', plugin_basename(__FILE__));
 
 // Autoloader
 spl_autoload_register(function ($class) {
@@ -87,11 +88,22 @@ class Royal_MCP_Plugin {
         // Scheduled token cleanup.
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'cleanup_expired']);
 
-        // 1.4.27 — sessions cleanup rides on the same daily cron action.
+        // sessions cleanup rides on the same daily cron action.
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Session_Store::class, 'cleanup_expired']);
 
         // Add plugin action links (Settings, Docs)
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), [$this, 'add_action_links']);
+
+        // Elementor MCP module coexistence: admin notice + dismiss handler.
+        // Safe to register unconditionally; the render callback checks native
+        // detection before drawing anything.
+        \Royal_MCP\Integrations\Elementor_Coexistence::register_hooks();
+
+        // Royal Plugins Chrome Pack: custom top header + lightweight footer +
+        // Royal Tools submenu + Founders Bundle callout. Screen-ID-gated to
+        // Royal MCP admin pages only — never touches other WP admin.
+        require_once ROYAL_MCP_PLUGIN_DIR . 'includes/chrome/class-royal-mcp-chrome.php';
+        \Royal_MCP\Chrome\Royal_MCP_Chrome::get_instance();
     }
 
     /**
@@ -146,7 +158,7 @@ class Royal_MCP_Plugin {
             }
         }
 
-        // 1.4.27 — Create sessions table. Same force-load pattern as Token_Store
+        // Create sessions table. Same force-load pattern as Token_Store
         // because register_activation_hook fires before the autoloader on some
         // WP versions, so class_exists() returns false on a fresh activation.
         if ( class_exists( '\Royal_MCP\MCP\Session_Store' ) ) {
@@ -191,15 +203,14 @@ class Royal_MCP_Plugin {
      * This heals any install where the DB version doesn't match the plugin version.
      *
      * INVARIANT: db_version must only advance when EVERY required migration actually ran.
-     * If class_exists() returns false (autoloader transiently failed during wp.org auto-update,
-     * opcache stale on LiteSpeed, file-deploy race) AND the force-load fallback can't find the
-     * file, we leave db_version alone so the next request retries. Latching db_version on
-     * partial failure caused the 1.4.27 silent-failure regression (see 1.4.29 changelog).
+     * If class_exists() returns false (autoloader transiently failed during auto-update,
+     * opcache stale, file-deploy race) AND the force-load fallback can't find the file,
+     * we leave db_version alone so the next request retries.
      *
-     * INVARIANT (added 1.4.29 after @rula99): db_version matching the plugin version is
-     * necessary but NOT sufficient — we also verify required tables physically exist before
-     * short-circuiting. Stuck states like "uninstall dropped tables but left db_version
-     * intact, then reinstall ran" no longer latch the healer into a permanent no-op.
+     * INVARIANT: db_version matching the plugin version is necessary but NOT sufficient —
+     * we also verify required tables physically exist before short-circuiting. Stuck states
+     * like "uninstall dropped tables but left db_version intact, then reinstall ran" cannot
+     * latch the healer into a permanent no-op.
      */
     public function maybe_upgrade_db() {
         if (get_option('royal_mcp_db_version') === ROYAL_MCP_VERSION
@@ -242,7 +253,7 @@ class Royal_MCP_Plugin {
     /**
      * Verify the two core tables required for OAuth client registration and MCP session
      * persistence physically exist. Used by maybe_upgrade_db() as a backstop against the
-     * db_version option lying (see @rula99's wp.org forum report, 1.4.29 changelog).
+     * db_version option lying.
      *
      * Two SHOW TABLES LIKE queries per pageload — negligible cost, and the safe-by-default
      * payoff is that no external or accidental state mismatch can latch the healer.
