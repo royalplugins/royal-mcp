@@ -273,7 +273,7 @@ class REST_Controller {
         ];
 
         if (isset($params['excerpt'])) {
-            // 1.4.36 — preserve safe HTML (mirrors MCP tool + wp_insert_post's excerpt_save_pre).
+            // preserve safe HTML (mirrors MCP tool + wp_insert_post's excerpt_save_pre).
             $post_data['post_excerpt'] = wp_kses_post($params['excerpt']);
         }
 
@@ -334,7 +334,7 @@ class REST_Controller {
         }
 
         if (isset($params['excerpt'])) {
-            // 1.4.36 — preserve safe HTML (mirrors MCP tool + wp_update_post's excerpt_save_pre).
+            // preserve safe HTML (mirrors MCP tool + wp_update_post's excerpt_save_pre).
             $post_data['post_excerpt'] = wp_kses_post($params['excerpt']);
         }
 

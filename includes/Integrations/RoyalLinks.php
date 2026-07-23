@@ -77,7 +77,7 @@ class RoyalLinks {
 	 * Execute a Royal Links MCP tool.
 	 */
 	public static function execute_tool( $name, $args ) {
-		// 1.4.30 — umbrella cap check fires BEFORE the active-check. Without
+		// umbrella cap check fires BEFORE the active-check. Without
 		// this a Subscriber-tier OAuth Bearer would receive "Royal Links is
 		// not active" and learn whether the integration is present. edit_posts
 		// matches the least-restrictive per-case cap; per-handler
@@ -92,7 +92,7 @@ class RoyalLinks {
 
 		switch ( $name ) {
 			case 'rlinks_get_links':
-				// 1.4.26 — Royal Links use the royal_link CPT; map to its
+				// Royal Links use the royal_link CPT; map to its
 				// edit_posts cap so listings respect what the role can see.
 				if ( ! current_user_can( 'edit_posts' ) ) {
 					throw new \Exception( 'You do not have permission to list Royal Links.' );
@@ -121,7 +121,7 @@ class RoyalLinks {
 				return array_map( [ __CLASS__, 'format_link' ], $posts );
 
 			case 'rlinks_create_link':
-				// 1.4.26 — creating a redirect modifies how visitors leave the
+				// creating a redirect modifies how visitors leave the
 				// site; require publish_posts to mirror the create-post pattern.
 				if ( ! current_user_can( 'publish_posts' ) ) {
 					throw new \Exception( 'You do not have permission to create Royal Links.' );
@@ -167,7 +167,7 @@ class RoyalLinks {
 				if ( ! $post || $post->post_type !== 'royal_link' ) {
 					throw new \Exception( 'Royal Link not found for ID ' . esc_html( (string) $link_id ) );
 				}
-				// 1.4.26 — stats can include click counts + referrers; gate
+				// stats can include click counts + referrers; gate
 				// behind the link's own edit_post cap so a Subscriber can't
 				// read another author's link analytics.
 				if ( ! current_user_can( 'edit_post', $link_id ) ) {

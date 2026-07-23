@@ -82,7 +82,7 @@ class SiteVault {
 	}
 
 	public static function execute_tool( $name, $args ) {
-		// 1.4.30 — cap check fires BEFORE the active-check, so a Subscriber-tier
+		// cap check fires BEFORE the active-check, so a Subscriber-tier
 		// OAuth Bearer gets a permission error rather than "SiteVault is not
 		// active" (which leaks integration presence). All SiteVault tools are
 		// admin-tier — backups can contain the entire site (DB + uploads +

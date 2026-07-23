@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.36
+Stable tag: 1.4.37
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -324,288 +324,303 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Changelog ==
 
+= 1.4.37 =
+* Feature: Six new Royal AI Firewall tools return dashboard stats, recent bot hits, per-bot policies, policy updates, daily rollups, and a block-all-AI-bots action.
+* Feature: New Royal Tools admin page lists every free Royal Plugins family member with one-click install links.
+* Feature: New `royal_mcp_connection_health` diagnostic tool returns route, auth method, session ID, and version details for any authenticated caller.
+* Feature: New `elementor_get_widget_settings` tool reads full settings for a single Elementor widget, container, section, or column by ID.
+* Feature: Coexistence detection surfaces a routing hint on Elementor tool descriptions when Elementor's own MCP module is also active.
+* Feature: Custom top header bar renders on every Royal MCP admin page with View Docs and Support buttons.
+* Enhancement: Lightweight admin footer shows Royal Plugins family links plus the current plugin version marker.
+* Enhancement: `wp_update_post` and `wp_update_page` now accept `menu_order`, `post_parent`, `password`, `comment_status`, `ping_status`, `excerpt`, and `post_author` fields and return actual stored values so silent-drop by WordPress is surfaced rather than hidden.
+* Enhancement: New `royal_mcp_tool_context` hook fires alongside the legacy `royal_mcp_tool_called` action with an enriched payload for downstream firewall integrations.
+* Fix: `wp_get_seo_meta` now correctly reports noindex state on Rank Math sites, and `wp_update_seo_meta` responses reflect actual stored values rather than requested values.
+
 = 1.4.36 =
-* Feature: New `wp_get_site_status` tool &mdash; a one-shot site diagnostic that returns WordPress + PHP + MySQL versions, active plugin count, active theme, memory limit, max upload size, timezone, disk free space, WP_DEBUG_LOG state, and install age in a single call. Collapses what previously took 3&ndash;5 separate tool calls at the start of a debugging or environment-inspection conversation.
-* Feature: New `wp_get_error_log_tail` tool &mdash; safely tail the last N lines of wp-content/debug.log (default 100, max 1000) with an optional case-insensitive substring filter. Caps file read at the last 1MB automatically so multi-GB debug.log files don&rsquo;t blow up PHP memory. Returns `status="disabled"` with copy-pasteable wp-config.php instructions when WP_DEBUG_LOG is off &mdash; so the AI can tell the user how to enable it in one message.
-* Feature: New `wp_get_cron_schedule` tool &mdash; enumerate every scheduled wp_cron event with hook name, next run (unix + ISO 8601), seconds-until-next-run, an `is_overdue` flag, recurrence + interval, and args. Sorted ascending so overdue events come first. Turns &ldquo;is my cron stuck?&rdquo; from a 15-minute investigation into a single call.
-* Fix: HTML is now preserved across write tools that were previously flattening it &mdash; `wp_update_post_meta`, `wp_add_post_meta`, `wp_update_term_meta`, `wp_create_term` / `wp_update_term` (descriptions), `wp_create_comment`, `wc_update_order_status` (order notes), `wp_create_post` / `wp_update_post` / `wp_create_page` / `wp_update_page` (excerpts), and `wc_create_coupon` / `wc_update_coupon` (descriptions). Each uses the same HTML allow-list its WordPress or WooCommerce admin counterpart uses (comments use WP&rsquo;s tighter comment-form allow-list). Fixes seven places where an AI-authored value was silently stripped down to plain text after write.
-* Feature: New `royal_mcp_meta_value_sanitizer` filter lets site owners customize per-meta-key sanitization on `wp_update_post_meta`, `wp_add_post_meta`, and `wp_update_term_meta`. Receives `(sanitized, raw, meta_key, object_id, tool_name)` so downstream code can loosen or tighten the default `wp_kses_post` treatment on specific keys without patching the plugin.
-* Feature: Admin notice detects when your host&rsquo;s Imunify360 bot-protection (common on shared cPanel hosts) is intercepting `/.well-known/oauth-authorization-server` before WordPress sees the request. Links to a support article with the exact paths to allowlist &mdash; so a customer no longer sees a silent connection failure with no explanation in wp-admin.
-* Feature: Admin notice detects when WordPress is set to Plain permalinks (which prevents the OAuth discovery endpoints from being served at the domain root via rewrite rules). Includes a one-click link to Settings &rarr; Permalinks so the fix takes seconds instead of a support ticket.
-* Ergonomic: Tool-description quality pass across ~10 high-traffic tools (`wp_get_pages`, `wp_get_media`, `wp_get_categories`, `wp_get_tags`, `wp_get_comments`, `wp_get_users`, `wp_get_menus`, `wp_get_plugins`, `wp_get_themes`, `wp_get_site_info`) &mdash; each now describes what fields it returns and when to prefer it over an adjacent tool. Improves AI-agent tool-selection accuracy on real-world conversations. `wp_get_comments` also gained a proper enum for the `status` argument.
-* Ergonomic: `wp_get_terms` and `wc_get_orders` responses now include `total_count` alongside the existing `total` field, matching the pagination convention documented in the plugin&rsquo;s response-envelope spec. Existing `total` field kept unchanged &mdash; no breaking changes to current callers.
+* Feature: New `wp_get_site_status` tool returns WordPress, PHP, MySQL, plugin, theme, and environment info in a single call.
+* Feature: New `wp_get_error_log_tail` tool returns the last lines of the debug log with optional keyword filtering.
+* Feature: New `wp_get_cron_schedule` tool lists every scheduled event with next-run time and overdue flag.
+* Fix: HTML preserved in post meta, term meta, term descriptions, comments, order notes, post and page excerpts, and coupon descriptions.
+* Feature: New `royal_mcp_meta_value_sanitizer` filter lets sites customize per-key sanitization.
+* Feature: Admin notice detects when Imunify360 is intercepting the OAuth discovery endpoints and links to a fix article.
+* Feature: Admin notice detects when the site uses Plain permalinks and links directly to Settings -> Permalinks.
+* Enhancement: Refined descriptions across several read tools.
+* Enhancement: List responses on `wp_get_terms` and `wc_get_orders` include a `total_count` field.
 
 = 1.4.35 =
-* Fix: MCP sessions opened over OAuth now survive access-token rotation. Pre-1.4.35, each session was bound to a hash of the raw bearer token; when the OAuth server rotated the short-lived access token (hourly), the fingerprint stored at `initialize` no longer matched the token presented on the next call and the request was rejected with HTTP 403 "Session credentials mismatch." Long automations (bulk edits, navigation-menu rebuilds, anything crossing an hour of activity) hit this reliably and had to reconnect. 1.4.35 binds the session to the OAuth `client_id` + `user_id` returned by the token store &mdash; both stable across refreshes &mdash; so a re-issued access token still resolves to the same session. Static API-key auth was never affected. Sessions opened before 1.4.35 will still 403 on refresh until they expire naturally (24h TTL) or the client re-initializes.
+* Fix: OAuth-authenticated MCP sessions remain valid across access-token rotation.
 
 = 1.4.34 =
-* Feature: `wp_update_post_meta` value parameter accepts any JSON type (string, number, boolean, array, object) instead of string-only. Arrays and objects are serialized by WordPress on write and returned as PHP arrays by `wp_get_post_meta` on read. Unlocks meta-write workflows for themes that store nested arrays (photo galleries, floor plans, multi-agent listings) directly, without a client-side workaround. Strictly additive: existing string callers see no behavior change.
-* Feature: New `wp_add_post_meta` tool mirrors WP core `add_post_meta()`. Adds a meta row without overwriting existing values under the same key &mdash; the correct primitive for keys that legitimately store multiple rows. Accepts `unique=true` to fail cleanly (returns `created=false`) when a row with the key already exists. Same JSON-type value support as `wp_update_post_meta`.
-* Feature: New `wp_get_terms` tool lists terms in any registered taxonomy with paginated output (`page`, `per_page`, `total`, `total_pages`). Optional `search`, `hide_empty`, and `parent` filters. Complements `wp_add_post_terms` (which requires integer term IDs) so agents can map term names to IDs on-site instead of round-tripping through the public REST namespace.
-* Security: The two meta-write tools reject strings that look like PHP-serialized payloads (`a:N:{...}`, `O:N:"...":...`) at the schema boundary. `get_post_meta()` runs `maybe_unserialize()` by default, so accepting a hand-crafted serialized string would give a later reader a PHP-object-injection primitive on the way out. Callers pass structured data (arrays/objects) directly; WordPress serializes safely on write.
+* Feature: `wp_update_post_meta` accepts any JSON type (string, number, boolean, array, object).
+* Feature: New `wp_add_post_meta` tool adds a meta row without overwriting existing values under the same key.
+* Feature: New `wp_get_terms` tool lists terms in any registered taxonomy with pagination.
+* Security: Meta-write tools reject strings that look like PHP-serialized payloads at the schema boundary.
 
 = 1.4.33 =
-* Feature: `wp_create_post`, `wp_update_post`, `wp_create_page`, and `wp_update_page` accept a new `date` parameter (ISO 8601, site timezone). Combine with `status="future"` to schedule; use alone on the update tools to backdate. Past-dated `future` publishes immediately with the given timestamp, matching wp-admin behavior. Both `post_date` and `post_date_gmt` are derived from the same parsed timestamp so they never disagree; the update tools set `edit_date=true` internally so the change takes effect.
-* Feature: `wp_create_post` and `wp_create_page` status enum expanded from `["publish", "draft"]` to `["publish", "draft", "future", "pending", "private"]`. The additional statuses are standard WordPress statuses handled natively by `wp_insert_post`; no extra caller work required.
-* Feature: New `royal_mcp_tool_called` action hook fires after every MCP tool invocation with `(tool_name, status, error_message)`. Ecosystem plugins can subscribe for classification, dashboarding, or forwarding without depending on the internal logger.
-* Feature: Activity Log page surfaces a pointer to the free Royal AI Firewall plugin (wp.org) for site owners tracking HTTP-layer AI bot traffic outside of MCP tool calls. When Royal AI Firewall is detected on the site, the pointer swaps to a direct dashboard link.
+* Feature: `wp_create_post`, `wp_update_post`, `wp_create_page`, and `wp_update_page` accept a `date` parameter for scheduling and backdating.
+* Feature: Create-post and create-page status enum expanded to include `future`, `pending`, and `private`.
+* Feature: New `royal_mcp_tool_called` action hook fires after every MCP tool invocation with `(tool_name, status, error_message)`.
+* Feature: Activity Log page surfaces a pointer to the free Royal AI Firewall plugin for HTTP-layer AI bot visibility.
 
 = 1.4.32 =
-* Feature: `wp_search` now accepts optional `snippet` (int, max 1000 chars) and `per_page` (default 20, max 100) parameters. When `snippet` is set, each result row includes the matched post&rsquo;s `slug` and a content excerpt windowed around the first occurrence of the search term &mdash; lets AI drivers skip a follow-up `wp_get_page` per result on multi-page audits. Snippet extraction strips HTML and registered shortcodes and is multibyte-safe. Strictly additive; existing callers without the new parameters see no behavior change.
-* Feature: `wc_get_orders` now accepts a `page` parameter for stores with more than `per_page` orders. **Response shape change:** the tool now returns `{orders, page, per_page, total, total_pages}` instead of a bare array. AI drivers should iterate `page` until `page >= total_pages`. Pre-1.4.32, orders beyond the first 100 were unreachable.
-* Docs: general readme cleanup and updates.
+* Feature: `wp_search` accepts optional `snippet` and `per_page` parameters for excerpted results.
+* Feature: `wc_get_orders` accepts a `page` parameter and returns `{orders, page, per_page, total, total_pages}`.
+* Docs: General readme cleanup and updates.
 
 = 1.4.31 =
-* Hardening: `wp_delete_post` capability check now runs before the post-existence lookup. Pre-1.4.31, a Subscriber-tier OAuth Bearer calling `wp_delete_post` with a non-existent post ID received "Post not found." rather than a permission error &mdash; effectively a post-ID enumeration surface (the response distinguished "exists but you can't delete" from "doesn't exist"). 1.4.31 inverts the order: unauthorized callers now receive a permission error regardless of whether the target post exists. Same defense-in-depth pattern as the six integration cap-order fixes shipped in 1.4.30.
-* Hardening: `wp_get_post_meta` now requires the `edit_post` capability for underscore-prefixed (protected) meta keys, matching WordPress core&rsquo;s `is_protected_meta()` convention. Pre-1.4.31, a Subscriber-tier OAuth Bearer could read underscore-prefixed post meta on public posts (Yoast SEO `_yoast_wpseo_*`, `_edit_lock`, `_wp_attached_file`, ACF internal fields, custom plugin meta) because the broader `read_post` cap returned true for public content. The non-underscore (developer-visible) meta path keeps the existing `read_post` gate so legitimate public-meta reads continue to work for low-privilege users. Empty-key &ldquo;return all meta&rdquo; requests also require `edit_post` since the response would otherwise expose protected keys.
-* Hardening: `wp_update_post`, `wp_update_page`, `wp_update_media`, and `wp_update_term` now treat empty-string text fields as "preserve existing value" rather than "blank the field." Pre-1.4.31, an AI driver that template-filled an optional text argument with `""` instead of omitting it would silently destroy the existing post body, title, excerpt, caption, alt text, term name, or term description. Field omission already preserved existing values via PHP&rsquo;s `isset()` gate; this extends the same protection to the empty-string case. To explicitly clear a text field, edit through the WP admin.
-* Ergonomics: Every tool that identifies a single post now accepts either `id` or `post_id`. Pre-1.4.31, `wp_get_post` / `wp_update_post` / `wp_delete_post` required `id` while `wp_get_post_meta` / `wp_update_post_meta` / `wp_get_seo_meta` / `wp_update_seo_meta` / `wp_get_post_revisions` / `wp_add_post_terms` required `post_id` &mdash; an AI driver that called a tool with the wrong-named argument received an InputValidationError. Both names are now accepted on every post-identifying tool (pages and media included; comments, terms, and users keep their separate ID domains). No schema changes; existing callers continue to work unchanged.
-* UX: Royal Plugins Founders Bundle banner tweaks on the Royal MCP settings page.
-* UX: New wp.org review-request banner on the Royal MCP settings page with a direct CTA to leave a review. Dismissable per plugin version &mdash; appears once on each plugin update, no time-based or pageload re-prompts.
+* Hardening: `wp_delete_post` capability check runs before the post-existence lookup.
+* Hardening: `wp_get_post_meta` requires `edit_post` capability for protected (underscore-prefixed) meta keys.
+* Hardening: Empty-string text fields on update tools preserve the existing value instead of blanking it.
+* Enhancement: Every post-identifying tool accepts either `id` or `post_id`.
+* UX: New wp.org review-request banner on the settings page, dismissable per plugin version.
 
 = 1.4.30 =
-* New: `elementor_add_widget` MCP tool &mdash; the first structural-write Elementor tool. Programmatically drop widgets or containers into an existing Elementor page. Dual-surface design: the raw path accepts any widget type registered with Elementor (or an Editor V4 atomic prefix) plus a full Elementor settings object; the curated path covers the 11 highest-frequency widget types (container, heading, text-editor, button, image, image-box, icon-box, icon-list, video, divider, spacer) with flat parameters that the tool expands into the canonical settings object internally, saving tokens on every call. Container widgets can include nested children inline (one call drops a parent container with N child widgets, recursive). Atomic widgets (Editor V4) pass through opaquely via the raw path since their JSON schema is not publicly documented. Curated `video` detects host and routes YouTube, Vimeo, and Dailymotion URLs to the correct internal Elementor field. Curated `icon-list` builds the repeater shape with auto-generated item IDs. Cap-checked via `edit_post` per the existing Elementor-tool pattern (1.4.26 hardening still applies). Pre-1.4.30 the Elementor tools covered clone-and-customize (1.4.19) and read (`elementor_get_page_outline`); they did not let an agent build a page widget by widget. 1.4.30 closes that gap with the smallest possible surface.
-* Hardening: `elementor_add_widget` rejects unknown `widget_type` slugs at the boundary rather than serializing them into `_elementor_data` (where Elementor would render them as silent empty placeholders). Validates against Elementor&rsquo;s widget registry, allows Editor V4 atomic prefixes (`a-*` / `e-*`) opaquely, and fails open if the registry is unreachable so a transient autoloader miss can&rsquo;t block writes that would otherwise succeed. Catches typos (`headng`, `text-edtior`) at the API call instead of after an agent thinks the page was built.
-* Hardening: Capability check order in six integration tool wrappers (GuardPress, SiteVault, ForgeCache, Royal Ledger, ACF, Royal Links). Pre-1.4.30 the &ldquo;integration is not active&rdquo; check fired before the capability check, so a Subscriber-tier OAuth Bearer calling an integration tool on a site where that integration was inactive would receive the &ldquo;X is not active&rdquo; error message &mdash; effectively a presence-probe surface that let unauthorized callers enumerate which integrations were installed. 1.4.30 inverts the order: an unauthorized caller now receives a permission error first regardless of whether the integration is present. For four of the six wrappers the existing umbrella cap (`manage_options` for GuardPress / SiteVault / Royal Ledger) was already correct and only needed reordering; ACF and Royal Links gained a new `edit_posts` umbrella check above their per-handler caps. Per-handler object-level checks (`read_post`, `edit_post`, `manage_options`) remain in place &mdash; no semantic change for authorized callers.
+* Feature: New `elementor_add_widget` tool builds Elementor pages widget by widget, with curated shortcuts for the 11 most common widget types and raw passthrough for the long tail.
+* Hardening: `elementor_add_widget` rejects unknown widget-type slugs at the boundary.
+* Hardening: Capability check order tightened in six integration tool wrappers.
 
 = 1.4.29 =
-* Fix: Restore the runtime DB-migration retry semantic that regressed in 1.4.27. On a subset of wp.org auto-update installs (LiteSpeed-fronted hosts with opcache, plus any environment where the autoloader transiently failed during the file-swap), 1.4.27&rsquo;s `maybe_upgrade_db()` could mark the schema version as up-to-date even when the new sessions table and OAuth tables hadn&rsquo;t actually been created. The latched state silently broke OAuth registration (`/register` returned 500 with "Failed to persist client registration. The OAuth tables may be missing") and MCP session persistence (`Mcp-Session-Id` couldn&rsquo;t be looked up on the next request, returning 404 "Session not found"). 1.4.29 restores the success-tracking &mdash; `db_version` only advances when every required migration actually ran &mdash; and adds a force-load fallback so a transient autoloader miss can&rsquo;t latch the install. Affected customers heal automatically on the 1.4.29 update; if any install is still stuck after updating, a single deactivate + reactivate also creates the tables.
-* Fix: Defensive self-heal on `/register`. If the OAuth client registration handler hits the "tables may be missing" error path, the plugin now attempts to create the missing tables once and retry the insert before returning the 500 to the calling MCP client. Belt-and-suspenders for any install that still updates with the autoloader race fired.
-* Fix: `maybe_upgrade_db()` no longer trusts the `royal_mcp_db_version` option alone &mdash; it now also verifies that the OAuth-clients and sessions tables physically exist before short-circuiting the migration. Closes a recovery gap where an install whose tables had been dropped externally (or by an uninstall that left the version option behind) could not self-heal via the runtime migration, even after a deactivate + reactivate cycle. Thanks to @rula99 for the wp.org forum report and root-cause analysis.
-* Fix: `uninstall.php` now also deletes the `royal_mcp_db_version` option. Pre-1.4.29, uninstall dropped all tables and cleared settings but left the version option in place, so a subsequent reinstall on the same WP install would see the option matching the new plugin version and skip table re-creation, leaving the install in a stuck state. Uninstall now leaves a fully clean slate. Thanks to @rula99.
+* Fix: Runtime DB migration reliably creates the sessions and OAuth tables on all installs.
+* Fix: `/register` self-heals when the OAuth tables are missing.
+* Fix: `uninstall.php` also removes the `royal_mcp_db_version` option for a fully clean slate on reinstall.
 
 = 1.4.28 =
-* Compatibility: Authorization-header API key fallback. Pre-1.4.28, if an MCP client sent its static API key via the universal `Authorization: Bearer <key>` HTTP header, Royal MCP routed the value entirely into OAuth-token validation, failed (since an API key is not an OAuth token), and returned 401 &mdash; even though the same key worked when sent via the Royal-MCP-specific `X-Royal-MCP-API-Key` header. This broke connection with several modern MCP clients (Apify&rsquo;s newly-launched MCP connectors, n8n, Make.com, anything that follows the universal HTTP convention for bearer credentials). 1.4.28 adds a strict-additive fallback: after OAuth-token validation fails, the same Bearer value is tried as an API key before returning the 401. The security perimeter is unchanged &mdash; API keys were already accepted as bearer credentials via a different header name; this just accepts the universal convention every modern MCP client uses. The `X-Royal-MCP-API-Key` header continues to work for backward compatibility.
-* Feature: Yoast / Rank Math `wp_get_seo_meta` and `wp_update_seo_meta` tools now read and write the post URL slug (the &ldquo;Slug&rdquo; field shown in Yoast&rsquo;s and Rank Math&rsquo;s post editors). Pre-1.4.28, AI agents could write SEO title, meta description, focus keyword, robots, and OG fields but had to fall back to `wp_update_post` for the slug &mdash; an extra tool call and a workflow break. Now a single `wp_update_seo_meta` call covers the whole SEO setup. The slug is a WordPress-native field (post_name), so it works regardless of whether Yoast or Rank Math is installed. Slug updates route through `wp_update_post()` so WordPress&rsquo;s slug-uniqueness logic runs (appends -2, -3, etc on collision) and downstream `save_post` hooks fire normally. The actually-saved slug is returned in the response so the caller can confirm whether WordPress modified the requested value. Requires `edit_post` capability on the target post (the same gate the rest of the tool already enforces). Thanks to @KKNORR-TC for the request (GH issue #34).
+* Feature: MCP clients can send their API key via the standard `Authorization: Bearer` header in addition to the existing `X-Royal-MCP-API-Key` header.
+* Feature: `wp_get_seo_meta` and `wp_update_seo_meta` cover the post URL slug alongside the existing SEO fields.
 
 = 1.4.27 =
-* Reliability: MCP session state moved off WordPress transients onto a dedicated `wp_royal_mcp_sessions` table, fixing 404 "Session not found" errors on sites with object-cache drop-ins (some LiteSpeed-based managed hosts, SpeedyCache, etc).
-* Cleanup: Removed ~130 lines of orphan admin-AJAX code (`royal_mcp_get_platform_fields` / `render_platform_fields`) that no UI path still called.
-* Compliance: Replaced an SEO-plugin enumeration in the description with a generic capability sentence.
+* Reliability: MCP session state moved onto a dedicated `wp_royal_mcp_sessions` table.
+* Cleanup: Removed unused admin-AJAX handlers.
+* Compliance: Reworded a section of the plugin description.
 
 = 1.4.26 =
-* Security: Per-tool WordPress capability checks added across all content, user, term, comment, and integration tools. Pre-1.4.26, an OAuth Bearer token from a low-privileged role (Subscriber, Contributor) could invoke admin-only operations &mdash; create/update/delete content, enumerate users, read private posts and post meta, manage WooCommerce records, trigger backups, read security audit logs. The API-key path was unaffected (runs as admin per 1.4.6). Status filters on `wp_get_posts` / `wp_get_comments` converted from denylist to positive allowlist (unknown statuses fail closed). Reported by Alessandro Greco (Aleff). Recommended for all users.
+* Security: Per-tool WordPress capability checks added across all content, user, term, comment, and integration tools, with status filters converted to positive allowlists.
 
 = 1.4.25 =
-* UX: MCP Server URL promoted to the top of General Settings as the canonical inbound URL for every client. Previously labeled "Claude Connector Settings &mdash; FOR CLAUDE.AI" which hid it from ChatGPT/Cursor/Gemini setup paths.
-* UX: New in-product "MCP Client Setup Guides" accordion covering Claude.ai, ChatGPT, Claude Desktop, and Cursor.
-* UX: "AI Platforms" renamed to "Outbound AI Provider Configuration" with a disambiguation banner so customers stop mistaking the outbound provider list for inbound MCP setup.
-* UX: Cloudflare warning moved to General Settings (applies to all clients, not just Claude).
-* UX: Legacy REST API Base URL and manual OAuth Client ID / Secret demoted into a collapsible "Advanced" subsection.
-* Fix: Universal admin icon alignment, visible keyboard focus ring on all settings-page buttons, improved helper-text contrast.
+* UX: MCP Server URL surfaced at the top of General Settings as the canonical inbound URL for every client.
+* Feature: New in-product MCP Client Setup Guides accordion covering Claude.ai, ChatGPT, Claude Desktop, and Cursor.
+* UX: Outbound AI Provider Configuration renamed and separated from inbound MCP setup.
+* UX: Legacy REST API Base URL and manual OAuth Client ID / Secret moved into an Advanced subsection.
+* Enhancement: Universal admin icon alignment, keyboard focus rings on settings-page buttons, and improved helper-text contrast.
 
 = 1.4.24 =
-* New: Advanced Custom Fields integration &mdash; 4 tools (`acf_get_field`, `acf_get_fields`, `acf_update_field`, `acf_get_field_groups`). Returns values per each field's Return Format setting (hydrated post objects, parsed repeater rows, image arrays) instead of raw serialized data. Auto-registers when ACF (free or Pro) is active.
-* Fix: `wc_create_product` now respects the `type` argument and creates the matching WooCommerce product class (Simple, Variable, Grouped, External). Pre-1.4.24 it silently returned Simple for every type, breaking the variable-product workflow. Bug had been present since the WooCommerce integration shipped in 1.4.10.
-* Doc: readme.txt Description and Installation section now point to the first-time setup walkthrough. AI Platforms screen shows a contextual notice on the Claude card to disambiguate inbound vs outbound setup.
+* Feature: Advanced Custom Fields integration -- 4 tools (`acf_get_field`, `acf_get_fields`, `acf_update_field`, `acf_get_field_groups`).
+* Fix: `wc_create_product` respects the `type` argument and creates the matching WooCommerce product class (Simple, Variable, Grouped, External).
+* Docs: Description and Installation sections point to the first-time setup walkthrough.
 
 = 1.4.23 =
-* Fix: AI Platforms model dropdowns refreshed across all five LLM providers (Claude, OpenAI, Gemini, Groq, Bedrock) &mdash; retired models removed, current production lineups added, defaults rotated to vendor-recommended replacements. Pre-1.4.23 customers picking retired models hit 404 on Test Connection or upstream errors at runtime. Existing installs with a working stored model are unaffected.
+* Fix: AI Platforms model dropdowns refreshed across Claude, OpenAI, Gemini, Groq, and Bedrock.
 
 = 1.4.22 =
-* Fix: AI Platforms &rarr; Test Connection on Claude now uses the model selected in the dropdown (was hardcoded to a deprecated model that always returned 404). Dropdowns refreshed to current lineups.
-* Fix: Manually-configured OAuth Client ID and Client Secret can now be cleared through the UI; Reset OAuth State extended to wipe them too.
-* Fix: OAuth root rewrite rules now match both bare and trailing-slash variants &mdash; closes a hijack vector where membership plugins / theme templates could intercept the trailing-slash form.
-* New: Admin notice detects when the web server returns a 301 trailing-slash redirect on POST `/register` (host-side canonicalization that breaks OAuth registration since clients don't follow 301 on POST).
-* New: `.well-known/` self-check now also detects when a membership plugin or theme template intercepts the discovery endpoint with an HTML page.
+* Fix: AI Platforms Test Connection on Claude uses the model selected in the dropdown.
+* Fix: Manually-configured OAuth Client ID and Secret can be cleared through the UI.
+* Hardening: OAuth root rewrite rules match both bare and trailing-slash variants.
+* Feature: Admin notice detects host-side 301 redirects on POST `/register`.
+* Feature: `.well-known/` self-check detects when a plugin or theme intercepts the discovery endpoint with an HTML page.
 
 = 1.4.21 =
-* Fix: Gutenberg block content via `wp_create_page` / `wp_update_page` / `wp_create_post` / `wp_update_post` no longer mangles the block JSON comment (broke WP 7.0's per-block Custom CSS). Two compounding bugs: a pre-filter `wp_kses_post()` HTML-encoded block delimiters, and `wp_insert_post()`'s internal `wp_unslash` stripped literal backslashes inside escape sequences. Round-trip is now byte-for-byte preserved on WP 6.x and 7.0. Reported by @danielkleinert (royalplugins/royal-mcp#15).
+* Fix: Gutenberg block content round-trips byte-for-byte through the post-write tools.
 
 = 1.4.20 =
-* Fix: WooCommerce order tools no longer hang on HPOS stores when a `shop_order_refund` appears in the result set. The order formatters expected a `WC_Order` and choked on `WC_Order_Refund`, surfacing as -32001 timeout. Fixed across `wc_get_orders`, `get_store_stats`, `wc_get_order`, `wc_update_order_status`. Thanks to @ober37 (royalplugins/royal-mcp#20, #21).
+* Fix: WooCommerce order tools handle refund records without hanging.
 
 = 1.4.19 =
-* New: Six Elementor tools for clone-and-customize workflows: `elementor_clone_page`, `elementor_replace_text`, `elementor_replace_image`, `elementor_get_page_outline`, `elementor_list_local_templates`, `elementor_import_template`. Auto-register when Elementor is active. Atomic widgets (Editor V4) pass through opaque. Capability-gated. Tested against a real Elementor Pro 4.0.4 page with 74 widgets / 9 containers.
-* New: Admin notice detects stale static `.well-known/oauth-authorization-server` files left from a pre-1.4.0 host-support workaround &mdash; they advertise old `/wp-json/royal-mcp/v1/` paths and silently break Claude.ai connections.
-* Doc: Page-builder line in readme softened to describe Elementor handling explicitly.
+* Feature: Six Elementor clone-and-customize tools (`elementor_clone_page`, `elementor_replace_text`, `elementor_replace_image`, `elementor_get_page_outline`, `elementor_list_local_templates`, `elementor_import_template`).
+* Feature: Admin notice detects stale static `.well-known/oauth-authorization-server` files.
+* Docs: Elementor handling described explicitly in the page-builder section.
 
 = 1.4.18 =
-* Fix: `/wp-json/royal-mcp/v1/mcp` GET handler is now User-Agent-aware. Anthropic's post-OAuth session probe (UA `Claude-User`) gets HTTP 200 + `text/event-stream`; other authenticated GETs continue to receive 405 with `Allow: POST, DELETE, OPTIONS` (preserves the 1.4.12 mcp-remote retry-storm fix).
-* Fix: `wp_update_menu_item` and `wp_reorder_menu_items` no longer destroy non-empty existing fields. Pre-1.4.18 these passed partial args to `wp_update_nav_menu_item()`, which merged unspecified fields with empty defaults &mdash; wiping titles, URLs, parent_id, target on every item touched (royalplugins/royal-mcp#14).
-* Doc: New FAQ entries &mdash; DB-restore recovery via Reset OAuth State (#12), OAuth endpoints are top-level rewrite rules not REST routes, "where do I start" troubleshooting checklist.
+* Fix: Authenticated GET on the MCP endpoint is User-Agent-aware for the Anthropic session probe.
+* Fix: `wp_update_menu_item` and `wp_reorder_menu_items` preserve fields that were not included in the update.
+* Docs: New FAQ entries for DB-restore recovery, OAuth endpoint locations, and troubleshooting.
 
 = 1.4.17 =
-* Fix: Authorization codes moved off WordPress transients onto a dedicated `wp_royal_mcp_oauth_auth_codes` table with atomic single-row consume. On stacks with multiple object-cache layers (LiteSpeed + SpeedyCache reproducer), the transient backend was silently evicting auth codes in the ~2s `/authorize` &rarr; `/token` window, breaking OAuth with `invalid_grant`.
-* New: "Reset OAuth State" admin button &mdash; one-click wipe of all registered clients, tokens, and pending auth codes. Recorded in Activity Logs as `oauth:reset`. Settings/API key/Activity Log unaffected.
-* New: MCP `tools/call` requests write a structured Activity Log entry on every invocation (action `tools/call:<tool_name>`). Argument keys are logged; values are not.
-* Fix: Activity Log "View Details" modal now renders Request/Response JSON instead of `[object Object]`.
-* Fix: Plugin admin CSS/JS now use `ROYAL_MCP_VERSION . filemtime($file)` cache-busting, so intra-version asset patches stop serving stale on Cloudflare-fronted installs.
+* Fix: Authorization codes moved onto a dedicated `wp_royal_mcp_oauth_auth_codes` table with atomic single-row consume.
+* Feature: New "Reset OAuth State" admin button clears registered clients, tokens, and pending auth codes in one click.
+* Feature: MCP `tools/call` requests write a structured Activity Log entry on every invocation (argument keys logged, values excluded).
+* Fix: Activity Log "View Details" modal renders Request/Response JSON.
+* Enhancement: Plugin admin CSS/JS use content-hash cache-busting.
 
 = 1.4.16 =
-* New: OAuth flow now writes structured Activity Log entries on every `/token`, `/register`, or `/authorize` failure (error code, description, HTTP status, public `client_id` / `grant_type` / `response_type`). Auth codes, PKCE verifiers, client secrets, and tokens are excluded from the payload. Pre-1.4.16 OAuth failures exited silently &mdash; support required `WP_DEBUG_LOG` + source patches.
+* Feature: OAuth flow writes structured Activity Log entries on every `/token`, `/register`, or `/authorize` failure (auth codes, PKCE verifiers, secrets, and tokens are excluded).
 
 = 1.4.15 =
-* Fix: Regenerate API Key button no longer silently no-ops (sanitize order was checking the existing readonly value before the regenerate flag).
-* Fix: New API keys are 32-char lowercase hex instead of mixed-case alphanumeric, eliminating O/0, I/l/1, o/0 visual-ambiguity transcription errors. Existing keys keep working. Same 128-bit entropy.
-* Fix: MCP sessions now use a sliding 24-hour TTL with refresh-on-access (was fixed 1h), eliminating the Claude Desktop thundering-herd reconnect loop.
-* Fix: All `/wp-json/royal-mcp/*` responses now send `Cache-Control: no-store, no-cache, must-revalidate, private` on every response. Closes a leak where URL-keyed edge caches could serve an auth-error response to subsequent authenticated requests &mdash; or cache an authenticated 200 and serve it to unauthenticated ones.
-* Fix: Invalid API key now returns HTTP 401 with `WWW-Authenticate: Bearer` (per RFC 7235) instead of 403, so RFC 9728-aware MCP clients trigger OAuth discovery on the response.
+* Fix: Regenerate API Key button reliably issues a new key.
+* Enhancement: New API keys are 32-char lowercase hex to eliminate visual-ambiguity transcription errors; existing keys keep working.
+* Enhancement: MCP sessions use a sliding 24-hour TTL with refresh-on-access.
+* Hardening: All `/wp-json/royal-mcp/*` responses send `Cache-Control: no-store, no-cache, must-revalidate, private`.
+* Hardening: Invalid API key returns HTTP 401 with `WWW-Authenticate: Bearer` per RFC 7235.
 
 = 1.4.14 =
-* Fix: Unauthenticated GET to the MCP endpoint now returns HTTP 401 + `WWW-Authenticate: Bearer resource_metadata="..."` instead of 405, restoring the spec-correct OAuth discovery path for Claude.ai web and ChatGPT MCP connectors (RFC 9728). Authenticated GET continues to return 405 (preserving 1.4.12 mcp-remote fix). Resolves a WP.org forum report against 1.4.13.
-* New: Self-check detects when the host blocks `/.well-known/oauth-authorization-server` (some managed hosts reserve the path prefix at nginx for ACME SSL) and surfaces a dismissible admin notice with the manual fix link.
+* Fix: Unauthenticated GET on the MCP endpoint returns HTTP 401 with `WWW-Authenticate: Bearer resource_metadata="..."` per RFC 9728 so web-based MCP clients trigger OAuth discovery correctly.
+* Feature: Self-check detects when the host blocks `/.well-known/oauth-authorization-server` and surfaces a dismissible admin notice with the manual fix.
 
 = 1.4.13 =
-* Fix: OAuth endpoint responses (`/register`, `/token`, `/authorize`) now send `Cache-Control: no-store` by default. Previously, aggressive edge caches could cache a 405 from a stale GET probe and serve it to subsequent valid POSTs, breaking Claude.ai's OAuth flow.
-* New: 10 WooCommerce variation and attribute MCP tools (CRUD + batch + attribute-term management). Parent product price/stock cache synced via `WC_Product_Variable::sync()` after every mutation. Contributed by @ober37.
-* New: 7 WooCommerce coupon management MCP tools (full CRUD + trash/purge). Every operation validates the post type is `shop_coupon`. Contributed by @ober37.
+* Hardening: OAuth endpoint responses (`/register`, `/token`, `/authorize`) send `Cache-Control: no-store` by default.
+* Feature: 10 WooCommerce variation and attribute tools covering CRUD, batch operations, and attribute-term management.
+* Feature: 7 WooCommerce coupon management tools with full CRUD plus trash and purge.
 
 = 1.4.12 =
-* Fix: MCP `protocolVersion` bumped from `2025-03-26` to `2025-11-25` &mdash; current Claude Desktop builds were silently rejecting the entire tool list when the server replied with the older date. Thanks to @ober37.
-* Fix: `handle_get_stream()` now returns HTTP 405 with `Allow: POST, DELETE, OPTIONS` instead of an immediately-closed SSE stream, ending the `mcp-remote` retry storm that dropped MCP sessions.
-* Enhancement: `wp_get_taxonomies` returns a `slug` field alias for the taxonomy identifier; `wp_get_term_meta` returns a structured response (`{term_id, key, value}` or `{term_id, meta}`) matching the rest of the term-meta tool family.
+* Enhancement: MCP `protocolVersion` bumped to `2025-11-25` to match current Claude Desktop builds.
+* Fix: MCP GET stream returns HTTP 405 with `Allow: POST, DELETE, OPTIONS`.
+* Enhancement: `wp_get_taxonomies` returns a `slug` field alias; `wp_get_term_meta` returns a structured response matching the rest of the term-meta family.
 
 = 1.4.11 =
-* New: `wp_update_term`, `wp_get_term_meta`, `wp_update_term_meta`, `wp_delete_term_meta`, `wp_get_taxonomies`. Most useful for editing tag/category SEO meta.
-* Enhancement: `wp_create_term`, `wp_delete_term`, `wp_add_post_terms` accept any registered taxonomy (was hardcoded to `category` and `post_tag`).
-* Enhancement: `wp_create_term` accepts optional `slug`; `wp_create_post` / `wp_update_post` accept `post_author` user ID.
+* Feature: New tools -- `wp_update_term`, `wp_get_term_meta`, `wp_update_term_meta`, `wp_delete_term_meta`, `wp_get_taxonomies`.
+* Enhancement: `wp_create_term`, `wp_delete_term`, and `wp_add_post_terms` accept any registered taxonomy.
+* Enhancement: `wp_create_term` accepts an optional `slug`; `wp_create_post` and `wp_update_post` accept a `post_author` user ID.
 
 = 1.4.10 =
-* New: Royal Ledger integration (4 tools), ForgeCache integration (3 tools), Royal Links integration (3 tools). Auto-load when each host plugin is active.
-* New: SEO meta tools (`wp_get_seo_meta`, `wp_update_seo_meta`) auto-detect the active SEO plugin and read/write title, description, focus keyword, robots, OG fields.
-* New: Permalink structure tools and post revision tools (read history + revert).
+* Feature: Royal Ledger integration (4 tools), ForgeCache integration (3 tools), and Royal Links integration (3 tools), each auto-loading when the host plugin is active.
+* Feature: SEO meta tools (`wp_get_seo_meta`, `wp_update_seo_meta`) auto-detect the active SEO plugin and read/write title, description, focus keyword, robots, and OG fields.
+* Feature: Permalink structure tools and post revision tools (read history and revert).
 
 = 1.4.9 =
-* New: Theme appearance tools (active theme, theme mods, custom CSS read/write). Writes gated by an admin toggle (off by default) and a new `royal_mcp_writable_theme_mods` allowlist filter.
-* New: Menu item CRUD (create/update/delete/reorder); comment moderation (pending list, approve, spam, trash). Capability-gated.
+* Feature: Theme appearance tools (active theme, theme mods, custom CSS read/write) gated by an admin toggle and a `royal_mcp_writable_theme_mods` allowlist filter.
+* Feature: Menu item CRUD (create, update, delete, reorder) and comment moderation (pending list, approve, spam, trash).
 
 = 1.4.8 =
-* Fix: Custom connector setup in Claude no longer fails with "Unknown client_id" on sites that were updated from a pre-1.4.0 build without ever being deactivated/reactivated. The OAuth tables are now created on plugin upgrade, not just on first activation.
-* Fix: Dynamic Client Registration (`POST /register`) now returns a real 500 with the underlying database error if the write fails, instead of returning a fake 201 with a client_id that was never persisted.
+* Fix: Custom connector setup succeeds on sites updated from an early build without a deactivate/reactivate cycle.
+* Fix: Dynamic Client Registration (`POST /register`) returns a real 500 with the underlying error when the DB write fails.
 
 = 1.4.7 =
-* New: `wp_get_plugin_settings` &mdash; returns all wp_options matching a plugin slug with sensitive keys ([REDACTED]). Lets AI read plugin config without seeing credentials.
-* New: `wp_update_option` &mdash; gated by an admin toggle (off by default), the `royal_mcp_writable_options` filter, and a hard denylist for sensitive option names.
-* Security: `wp_get_option` redacts sensitive keys; outbound HTTP timeouts reduced to 10s.
-* Listing: Refreshed plugin directory banners and tags.
+* Feature: New `wp_get_plugin_settings` tool returns wp_options matching a plugin slug with sensitive keys redacted.
+* Feature: New `wp_update_option` tool gated by an admin toggle (off by default), the `royal_mcp_writable_options` filter, and a hard denylist for sensitive option names.
+* Security: `wp_get_option` redacts sensitive keys; outbound HTTP timeouts reduced to 10 seconds.
+* Docs: Refreshed plugin directory banners and tags.
 
 = 1.4.6 =
-* New: `wp_upload_media_from_url` (SSRF-hardened), `wp_upload_media` (base64), `wp_set_featured_image`, `wp_update_media`.
-* Enhancement: `wp_create_post` / `wp_update_post` accept `featured_media` attachment ID.
-* Enhancement: API-key authenticated requests now run as administrator so capability checks succeed (matches the trust level of the admin-only-accessible key).
+* Feature: New tools -- `wp_upload_media_from_url` (SSRF-hardened), `wp_upload_media` (base64), `wp_set_featured_image`, and `wp_update_media`.
+* Enhancement: `wp_create_post` and `wp_update_post` accept `featured_media` attachment ID.
+* Enhancement: API-key authenticated requests run with administrator capability to match the trust level of the admin-only-accessible key.
 
 = 1.4.5 =
-* New: WordPress Playground live preview — click "Live Preview" on the plugin listing to try the Royal MCP settings page and activity log in a browser sandbox with demo API key and sample log entries pre-seeded.
-* New: Video walkthrough embedded on the plugin listing page.
+* Feature: WordPress Playground live preview available from the plugin listing.
+* Feature: Video walkthrough embedded on the plugin listing page.
 
 = 1.4.4 =
-* New: Custom post type support &mdash; `wp_get_posts` / `wp_create_post` accept `post_type`. New `wp_get_post_types` tool discovers all registered public post types.
+* Feature: Custom post type support -- `wp_get_posts` and `wp_create_post` accept `post_type`, and a new `wp_get_post_types` tool discovers all registered public post types.
 
 = 1.4.3 =
-* Security: Fixed broken access control on MCP REST API endpoints &mdash; all tool calls now require authenticated API key or OAuth Bearer; Origin header dropped as a security control. Reported by Alexis Lafontaine via Patchstack.
+* Security: Access control on MCP REST API endpoints -- all tool calls require an authenticated API key or OAuth Bearer.
 
 = 1.4.2 =
-* Security: Authentication enforced on every MCP request (not just session init). Sessions bound to authenticated credentials. Auth required on GET stream and DELETE session endpoints too.
+* Security: Authentication enforced on every MCP request, with sessions bound to authenticated credentials.
 
 = 1.4.1 =
-* Fix: Resolved fatal error during activation on WordPress 7.0 RC ("Class Token_Store not found") &mdash; fully-qualified namespace references for WP 7.0 compatibility.
+* Fix: Resolved fatal error during activation on WordPress 7.0.
 
 = 1.4.0 =
-* New: OAuth 2.0 authorization server &mdash; Claude Desktop's "Add Connector" works natively. Dynamic Client Registration (RFC 7591), PKCE-secured authorization code flow per MCP spec (2025-03-26), token refresh with rotation, WordPress login consent screen, discovery at `/.well-known/oauth-authorization-server`.
-* Security: Access tokens stored as SHA-256 hashes. Authorization codes single-use with 10-minute expiry. PKCE (S256) required. Redirect URIs must be localhost or HTTPS.
+* Feature: OAuth 2.0 authorization server with Dynamic Client Registration (RFC 7591), PKCE-secured authorization code flow, token refresh with rotation, WordPress login consent screen, and discovery at `/.well-known/oauth-authorization-server`.
+* Security: Access tokens stored as SHA-256 hashes; authorization codes single-use with 10-minute expiry; PKCE (S256) required; redirect URIs restricted to localhost or HTTPS.
 
 = 1.3.0 =
-* New: WooCommerce integration (9 tools), GuardPress integration (7 tools), SiteVault integration (6 tools). All auto-detected.
-* Security: MCP endpoint requires API key (`X-Royal-MCP-API-Key` header). Rate limiting (60 req/min per IP). Timing-safe `hash_equals()` comparison. Removed `admin_email`, `php_version`, `user_login`, `user_email` from response payloads.
+* Feature: WooCommerce integration (9 tools), GuardPress integration (7 tools), and SiteVault integration (6 tools).
+* Security: MCP endpoint requires API key (`X-Royal-MCP-API-Key` header) with rate limiting at 60 requests per minute per IP and timing-safe comparison.
 
 = 1.2.3 =
-* Security: SSRF protection &mdash; outbound URLs validated against private/reserved IP ranges. Text domain renamed `wp-royal-mcp` &rarr; `royal-mcp`. Menu slugs updated for WP.org compliance. Tested up to WP 7.0.
+* Security: SSRF protection for outbound URLs; text domain renamed to `royal-mcp`; menu slugs updated for wp.org compliance.
 
 = 1.2.2 =
-* Added: Documentation link on the Plugins page; documentation banner on the settings page.
+* Feature: Documentation link on the Plugins page and documentation banner on the settings page.
 
 = 1.2.1 =
-* Fixed: Claude Connector setup guide link displaying raw HTML.
+* Fix: Claude Connector setup guide link renders correctly.
 
 = 1.2.0 =
-* Security: Origin header validation against DNS rebinding. Session ID format validation. MCP 2025-03-26 Streamable HTTP spec compliance. Added `royal_mcp_allowed_origins` filter.
+* Security: Origin header validation against DNS rebinding, session ID format validation, MCP 2025-03-26 Streamable HTTP spec compliance, and new `royal_mcp_allowed_origins` filter.
 
 = 1.1.0 =
-* Added multi-platform AI support (Claude, OpenAI, Gemini, Groq, Azure, Bedrock); Claude Desktop MCP connector; activity logging; connection testing.
+* Feature: Multi-platform AI support (Claude, OpenAI, Gemini, Groq, Azure, Bedrock), Claude Desktop MCP connector, activity logging, and connection testing.
 
 = 1.0.0 =
 * Initial release.
 
 == Upgrade Notice ==
 
+= 1.4.37 =
+Adds six Royal AI Firewall tools, a Royal Tools admin page with one-click install links to the free Royal Plugins family, a connection-health diagnostic tool, an Elementor widget-settings read tool, and expands wp_update_post / wp_update_page with menu_order and other missing fields plus real read-after-write response shape.
+
+= 1.4.36 =
+Adds three diagnostic tools (site status, error-log tail, cron schedule), preserves HTML across several write tools, and adds admin notices for two common environment issues that block OAuth discovery.
+
 = 1.4.33 =
-Adds scheduling / backdating support to the four post + page write tools via a new `date` parameter, expands the create-tool status enum with `future`/`pending`/`private`, exposes a `royal_mcp_tool_called` action hook for ecosystem extensions, and adds a pointer on the Activity Log page to the free Royal AI Firewall plugin for HTTP-layer AI bot visibility.
+Adds scheduling and backdating to the post and page write tools, expands the create-status enum, and exposes a new action hook for ecosystem extensions.
 
 = 1.4.32 =
-Adds snippet excerpts to `wp_search` (token saver for multi-page audits) and pagination to `wc_get_orders` (stores beyond 100 orders are now reachable). Note: `wc_get_orders` response shape changes from a bare array to `{orders, page, per_page, total, total_pages}` &mdash; AI driver tooling that iterated the bare array will need to read `result.orders`.
+Adds snippet excerpts to `wp_search` and pagination to `wc_get_orders`. Note: `wc_get_orders` response shape changes from a bare array to `{orders, page, per_page, total, total_pages}`.
 
 = 1.4.31 =
-Security hardening + AI-driver ergonomics. Closes two Subscriber-tier OAuth Bearer gaps and protects against AI drivers that template-fill empty-string text arguments. Every post-identifying tool now accepts either `id` or `post_id`. Settings page also gets a new wp.org review-request banner and minor Founders Bundle banner tweaks.
+Security hardening and ergonomic improvements for post-identifying tools. Recommended for all users.
 
 = 1.4.30 =
-Adds `elementor_add_widget`, the first structural-write Elementor tool &mdash; agents can now build pages widget by widget, not just clone and customize. Eleven curated shortcuts (container, heading, text, button, image, image-box, icon-box, icon-list, video, divider, spacer) reduce token cost on common operations; raw passthrough handles the long tail and atomic widgets. Also closes a Subscriber-tier capability-ordering gap in six integration tool wrappers (GuardPress, SiteVault, ForgeCache, Royal Ledger, ACF, Royal Links) &mdash; unauthorized OAuth Bearer callers no longer learn which integrations are active on the site via the &ldquo;not active&rdquo; error path.
+Adds the first structural-write Elementor tool plus capability-order hardening across six integration wrappers. Recommended for all users.
 
 = 1.4.29 =
-Urgent regression fix. On a subset of 1.4.27 installs the runtime DB migration could silently mark itself complete without actually creating the new sessions table, breaking OAuth registration and session persistence (the very symptoms 1.4.27 was supposed to fix). 1.4.29 restores the original retry semantic plus a one-time self-heal on the /register failure path so affected installs recover automatically on update. Also closes two adjacent recovery gaps surfaced by @rula99 on the wp.org forum &mdash; `maybe_upgrade_db()` now verifies tables physically exist before short-circuiting, and uninstall clears the version option so future reinstalls can&rsquo;t latch into the same stuck state. No customer action required; recommended for everyone on 1.4.27.
+Reliability fix for the runtime DB migration. Recommended for anyone on 1.4.27.
 
 = 1.4.28 =
-Compatibility + feature release. Adds Authorization-header API key support so MCP clients that send their key via the universal `Authorization: Bearer` header (Apify, n8n, Make.com, etc.) connect on first try. Extends `wp_get_seo_meta` and `wp_update_seo_meta` to cover the URL slug so AI agents can prepare the full SEO surface in one tool call. No customer action required; both changes are strictly additive.
+Adds `Authorization: Bearer` header support for API keys and covers the post URL slug in the SEO meta tools. Both changes are strictly additive.
 
 = 1.4.27 =
-Reliability patch &mdash; MCP session state moved off WordPress transients onto a dedicated table. Fixes "Session not found" errors on hosts with an active WordPress object cache drop-in. No customer action required; the new table is created automatically on update.
+Reliability patch: MCP session state moved onto a dedicated table. No customer action required.
 
 = 1.4.26 =
-Security patch — per-tool WordPress capability checks across the OAuth tool surface. Pre-1.4.26, tokens issued to Subscriber/Contributor roles could invoke admin-only operations. The API-key path was unaffected. Reported by Alessandro Greco (Aleff). Recommended for all users.
+Security patch: per-tool capability checks across the OAuth tool surface. Recommended for all users.
 
 = 1.4.25 =
-Recommended update. Settings page UX pass: the MCP Server URL is now surfaced prominently in General Settings as the canonical URL for every MCP client (Claude.ai, ChatGPT, Claude Desktop, Cursor), instead of being tucked into a card labeled "FOR CLAUDE.AI" that hid it from non-Claude users. New in-product setup guides for Claude.ai, ChatGPT, Claude Desktop, and Cursor. "AI Platforms" section renamed and clarified as outbound-only configuration. Universal icon alignment fix across every button on the settings page, including the previously-invisible icon on the Add Provider button.
+Recommended update. Settings page UX pass and new in-product setup guides for Claude.ai, ChatGPT, Claude Desktop, and Cursor.
 
 = 1.4.24 =
-Recommended update. Adds Advanced Custom Fields integration (four `acf_*` tools that return ACF-formatted values instead of raw postmeta). Fixes `wc_create_product` ignoring the `type` argument and always creating simple products — the variable-product workflow end-to-end (create variable product -> create variations) was broken since the integration first shipped in 1.4.10. Adds setup-guide pointers in the wp.org listing and on the AI Platforms admin screen so new users can find the Connecting Claude walkthrough without having to discover the marketing site first.
+Recommended update. Adds Advanced Custom Fields integration and enables variable-product creation in WooCommerce.
 
 = 1.4.23 =
-Strongly recommended update. AI Platforms model dropdowns are now verified-current across Claude, OpenAI, Gemini, Groq, and AWS Bedrock — every retired or near-term-deprecating model is removed, current production models are added, and defaults are rotated to vendor-recommended replacements. Fixes Test Connection 404s and prevents runtime failures from picking models the vendor no longer serves. Verified against each vendor's official deprecation page on release day.
+Strongly recommended update. AI Platforms model dropdowns refreshed across every provider.
 
 = 1.4.22 =
-Strongly recommended update. Fixes AI Platforms → Test Connection on Claude (was returning 404 for every customer regardless of dropdown choice or API key validity), restores the ability to clear manually-configured OAuth Client ID/Secret through the UI, and widens OAuth root rewrite rules to also match trailing-slash variants so membership plugins can't hijack discovery requests. Adds two new self-check admin notices (host-side 301 on /register; membership plugin serving HTML on /.well-known/).
+Recommended update. Fixes Test Connection on Claude, restores clearing of manual OAuth credentials, and adds two new self-check admin notices.
 
 = 1.4.21 =
-Recommended update for WordPress 7.0: Gutenberg blocks created or updated via `wp_create_page`, `wp_update_page`, `wp_create_post`, and `wp_update_post` no longer corrupt escape sequences (`\n`, `&`, backslashes) inside block JSON. Surfaced on WP 7.0's new per-block Custom CSS feature.
+Recommended update for WordPress 7.0: preserves escape sequences inside Gutenberg block content on the post and page write tools.
 
 = 1.4.17 =
-Critical fix where OAuth fails with "Authorization code invalid" — auth codes now use a dedicated DB table with atomic consume, unaffected by object-cache eviction (LiteSpeed + SpeedyCache reproducer). Also adds a Reset OAuth State button and Activity Log entries for MCP tool calls.
+Critical fix for OAuth authorization codes. Also adds a Reset OAuth State button and Activity Log entries for MCP tool calls.
 
 = 1.4.16 =
-Recommended update: OAuth /token, /register, and /authorize failures now write to Royal MCP > Activity Logs with the exact error code, description, and HTTP status. Pre-1.4.16 these exited silently and required wp-config debug constants to diagnose. No breaking changes.
+Recommended update: OAuth failures now write to Activity Logs with the exact error code, description, and HTTP status.
 
 = 1.4.15 =
-Critical update: four customer-affecting bugs fixed. (1) API key Regenerate button being silently overridden — clicking did nothing pre-1.4.15. (2) New keys switched to lowercase hex to eliminate uppercase/lowercase character ambiguity in monospace admin fonts. (3) Fixed 1-hour MCP session TTL replaced with sliding 24-hour window so active Claude Desktop sessions stop dying mid-day. (4) MCP endpoint responses (including unauth 401s) now send `Cache-Control: no-store` — pre-1.4.15 these were missing the header that 1.4.13 added to OAuth endpoints, leaving the MCP endpoint vulnerable to the same edge-cache poisoning. Existing keys keep working.
+Critical update: four fixes to the API key flow, session TTL, and cache headers. Existing keys keep working.
 
 = 1.4.14 =
-Recommended update: fixes Claude.ai web connector / ChatGPT MCP connector failing with "Couldn't reach the MCP server" — unauthenticated GET to the MCP endpoint now returns 401 + WWW-Authenticate so OAuth discovery (RFC 9728) starts correctly. Also adds an admin notice that detects when your host blocks `/.well-known/oauth-authorization-server` (SiteGround / o2switch / Hostinger nginx intercept) and links to the manual fix. Authenticated GET still returns 405 — Claude Desktop / mcp-remote unaffected. No breaking changes.
+Recommended update: unauthenticated GET on the MCP endpoint returns 401 with `WWW-Authenticate` so web-based MCP clients trigger OAuth discovery correctly.
 
 = 1.4.13 =
-Recommended update: fixes OAuth endpoint cache poisoning that broke the Claude.ai web connector on hosts with aggressive edge caches. Adds 17 new WooCommerce tools — variable product and attribute management plus full coupon CRUD. No breaking changes.
+Recommended update: OAuth endpoint caching hardened plus 17 new WooCommerce tools (variable products, attributes, coupon CRUD).
 
 = 1.4.12 =
-Recommended update: fixes Claude Desktop tool-list silent failure after recent Claude Desktop updates, and an mcp-remote reconnection loop that could drop the MCP session. Also adds slug alias on wp_get_taxonomies and a structured response on wp_get_term_meta. No breaking changes.
+Recommended update: fixes tool-list silent failure on Claude Desktop and adds a slug alias on `wp_get_taxonomies`.
 
 = 1.4.11 =
-Adds wp_update_term, wp_get/update/delete_term_meta, and wp_get_taxonomies tools — covering tag/category renaming and SEO-plugin term meta (Yoast, Rank Math, AIOSEO). Existing term tools now accept any taxonomy. wp_create_post and wp_update_post accept a post_author user ID. No breaking changes.
+Adds `wp_update_term`, the term-meta tools, and `wp_get_taxonomies`, with existing term tools accepting any registered taxonomy.
 
 = 1.4.10 =
-Adds 16 new MCP tools: Royal Ledger, ForgeCache, and Royal Links ecosystem integrations (auto-load when each host plugin is active), SEO meta (Yoast or Rank Math auto-routed), permalink structure read/update, and post revision history + restore. No breaking changes.
+Adds 16 new tools spanning Royal Ledger, ForgeCache, and Royal Links integrations, SEO meta, permalink structure, and post revision history plus restore.
 
 = 1.4.9 =
-Adds 13 new MCP tools across three groups: theme appearance (5), menu item CRUD (4), and comment moderation (4). Theme writes are gated by a new admin toggle plus an opt-in allowlist filter, mirroring the 1.4.7 wp_update_option safety pattern. No breaking changes.
+Adds 13 new tools across theme appearance, menu item CRUD, and comment moderation, with theme writes gated by an admin toggle and opt-in allowlist filter.
 
 = 1.4.8 =
-Fixes a setup failure that hit users who updated from a pre-1.4.0 build: the Claude custom connector flow returned "Unknown client_id" because the OAuth tables were never created on update. Recommended for anyone who has not been able to add Royal MCP as a Claude connector.
+Fixes a setup failure on sites updated from an early build. Recommended for anyone unable to add Royal MCP as a Claude connector.
 
 = 1.4.7 =
-New: AI assistants can now read plugin settings (sensitive keys redacted) and write to allowlisted WordPress options when enabled. New "Allow AI to write WordPress options" toggle is OFF by default; turn it on under Royal MCP > Settings to opt in.
+Adds plugin-settings read (sensitive keys redacted) and allowlisted options write. New "Allow AI to write WordPress options" toggle is OFF by default.
 
 = 1.3.0 =
-Major security and feature update. MCP endpoint now requires API key authentication. Added WooCommerce, GuardPress, and SiteVault integrations (22 new tools). Rate limiting added. Recommended update for all users.
+Major security and feature update. Recommended for all users.
 
 = 1.2.3 =
-Security: SSRF protection for outbound requests. WordPress.org compliance fixes.
+Security: SSRF protection for outbound requests plus wp.org compliance fixes.
 
 = 1.2.0 =
-Security hardening and MCP spec compliance improvements. Recommended update for all users.
+Security hardening and MCP spec compliance improvements. Recommended for all users.

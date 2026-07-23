@@ -1517,7 +1517,7 @@ input:checked + .slider:before {
     }
 }
 
-/* 1.4.31 — wp.org review-request banner. Lightweight, sits at the top of
+/* wp.org review-request banner. Lightweight, sits at the top of
    the settings page above the General Settings postbox. Smaller / less
    visually loud than the founders banner since the ask is just a review,
    not a purchase. */

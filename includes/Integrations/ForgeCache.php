@@ -68,7 +68,7 @@ class ForgeCache {
 	 * @throws \Exception If tool fails.
 	 */
 	public static function execute_tool( $name, $args ) {
-		// 1.4.30 — umbrella cap check fires BEFORE the active-check. Without
+		// umbrella cap check fires BEFORE the active-check. Without
 		// this order a Subscriber-tier OAuth Bearer would receive "ForgeCache
 		// is not active" and learn whether the integration is present. The
 		// per-case caps below still enforce the finer-grained gate
@@ -83,7 +83,7 @@ class ForgeCache {
 
 		switch ( $name ) {
 			case 'fc_clear_cache':
-				// 1.4.26 — cache management is admin-tier; flushing site cache
+				// cache management is admin-tier; flushing site cache
 				// is destructive (forces re-generation across the whole site).
 				if ( ! current_user_can( 'manage_options' ) ) {
 					throw new \Exception( 'You do not have permission to clear the ForgeCache page cache.' );
@@ -116,7 +116,7 @@ class ForgeCache {
 				if ( ! $post_id ) {
 					throw new \Exception( 'Could not resolve URL to a WordPress post or page on this site: ' . esc_html( $url ) );
 				}
-				// 1.4.26 — purging the cache for a specific post requires
+				// purging the cache for a specific post requires
 				// edit_post on the target (so a Subscriber can't purge an
 				// admin's draft cache).
 				if ( ! current_user_can( 'edit_post', $post_id ) ) {

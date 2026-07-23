@@ -28,7 +28,7 @@ class Settings_Page {
      * not dismissed it for the current plugin version. Called from the Royal
      * MCP admin templates only.
      *
-     * 1.4.31 — switched from boolean dismissal to version-stamped: banner
+     * switched from boolean dismissal to version-stamped: banner
      * re-appears once on each plugin version update (same shape as the
      * review banner). The old boolean meta (royal_mcp_founders_dismissed)
      * is no longer read; uninstall.php cleans up the legacy key too so
@@ -113,7 +113,6 @@ class Settings_Page {
      * dismissal shape as the founders banner — re-appears once per plugin
      * version update. Stacks above the founders banner so the (smaller, free)
      * ask gets visual priority; users can dismiss either independently.
-     * Added 1.4.31.
      */
     public static function render_review_banner() {
         $user_id = get_current_user_id();
@@ -226,8 +225,8 @@ class Settings_Page {
         // Sanitize API key.
         // Order matters: the readonly `api_key` field in the settings form posts the
         // current value on every submit, so we must check `regenerate_api_key` FIRST.
-        // Pre-1.4.15 the order was reversed and the regenerate button was silently
-        // overridden — clicking Regenerate did nothing, customer kept the same key.
+        // With the order reversed, the current-value POST silently overrides the
+        // regenerate signal and clicking Regenerate becomes a no-op.
         if (isset($input['regenerate_api_key'])) {
             $sanitized['api_key'] = bin2hex(random_bytes(16));
         } elseif (isset($input['api_key']) && !empty($input['api_key'])) {
@@ -506,10 +505,11 @@ class Settings_Page {
      * AJAX handler — clear a single OAuth manual-credential field (oauth_client_id
      * or oauth_client_secret) from the royal_mcp_settings option.
      *
-     * Pre-1.4.22 the sanitize callback treated an empty form submission as
-     * "preserve previous value" (defense against accidental blanking), which left
-     * customers with no UI path to switch from manual-credential mode back to
-     * Dynamic Client Registration once they'd generated a static client.
+     * The settings sanitize callback treats an empty form submission as
+     * "preserve previous value" (defense against accidental blanking), which
+     * would otherwise leave admins with no UI path to switch from manual-
+     * credential mode back to Dynamic Client Registration once they had
+     * generated a static client. This AJAX handler is that UI path.
      */
     public function ajax_clear_oauth_field() {
         check_ajax_referer('royal_mcp_nonce', 'nonce');

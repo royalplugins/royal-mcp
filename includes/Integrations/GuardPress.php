@@ -78,7 +78,7 @@ class GuardPress {
 	}
 
 	public static function execute_tool( $name, $args ) {
-		// 1.4.30 — cap check fires BEFORE the active-check. Without this order
+		// cap check fires BEFORE the active-check. Without this order
 		// a Subscriber-tier OAuth Bearer would get "GuardPress is not active"
 		// and learn whether the integration is present. All GuardPress tools
 		// are admin-tier (security state — failed-login lists, blocked IPs,

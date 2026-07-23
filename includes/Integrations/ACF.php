@@ -94,7 +94,7 @@ class ACF {
 	 * Execute an ACF MCP tool.
 	 */
 	public static function execute_tool( $name, $args ) {
-		// 1.4.30 — umbrella cap check fires BEFORE the active-check. Without
+		// umbrella cap check fires BEFORE the active-check. Without
 		// this a Subscriber-tier OAuth Bearer would receive "Advanced Custom
 		// Fields is not active" and learn whether the integration is present.
 		// edit_posts is the least-restrictive cap among the per-case checks
@@ -118,7 +118,7 @@ class ACF {
 				if ( ! get_post( $post_id ) ) {
 					throw new \Exception( 'Post not found for ID ' . esc_html( (string) $post_id ) );
 				}
-				// 1.4.26 — ACF field values live in post meta; gate behind the
+				// ACF field values live in post meta; gate behind the
 				// parent post's read cap (private posts' ACF data is not public).
 				if ( ! current_user_can( 'read_post', $post_id ) ) {
 					throw new \Exception( 'You do not have permission to read ACF fields on this post.' );
@@ -186,7 +186,7 @@ class ACF {
 				if ( ! get_post( $post_id ) ) {
 					throw new \Exception( 'Post not found for ID ' . esc_html( (string) $post_id ) );
 				}
-				// 1.4.26 — writing ACF fields modifies the post; require the
+				// writing ACF fields modifies the post; require the
 				// parent post's edit cap.
 				if ( ! current_user_can( 'edit_post', $post_id ) ) {
 					throw new \Exception( 'You do not have permission to edit ACF fields on this post.' );
@@ -209,7 +209,7 @@ class ACF {
 				];
 
 			case 'acf_get_field_groups':
-				// 1.4.26 — discovery of registered field groups is editor-tier
+				// discovery of registered field groups is editor-tier
 				// metadata (which custom fields exist on which post types).
 				if ( ! current_user_can( 'edit_posts' ) ) {
 					throw new \Exception( 'You do not have permission to discover ACF field groups.' );
