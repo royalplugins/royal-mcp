@@ -92,11 +92,11 @@ class Token_Store {
             UNIQUE KEY client_id (client_id)
         ) $charset_collate;" );
 
-        // Authorization codes — added 1.4.17. Moved off transients because object
-        // cache backends on some host stacks (LiteSpeed + SpeedyCache, confirmed)
-        // silently evict the transient key between /authorize and /token, breaking
-        // the OAuth handshake. Direct DB storage with sha256-hashed lookup gives
-        // us reliable consume semantics regardless of cache backend.
+        // Authorization codes in a dedicated table (not transients). Object-
+        // cache drop-ins on some host stacks silently evict transient keys
+        // between /authorize and /token, breaking the OAuth handshake. Direct
+        // DB storage with sha256-hashed lookup gives reliable consume semantics
+        // regardless of which cache backend is active.
         dbDelta( "CREATE TABLE IF NOT EXISTS $auth_codes_table (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             code_hash varchar(64) NOT NULL,
@@ -361,8 +361,7 @@ class Token_Store {
 
         // Also clear any manually-configured static OAuth client_id / client_secret so the
         // connector falls back to Dynamic Client Registration on the next handshake.
-        // Pre-1.4.22 these settings were not part of the reset, leaving customers unable to
-        // toggle back from manual-creds mode to DCR through the UI.
+        // Without this clear, an admin in manual-creds mode has no UI path back to DCR.
         $static_creds_cleared = 0;
         $settings             = get_option( 'royal_mcp_settings', [] );
         if ( is_array( $settings ) && ( ! empty( $settings['oauth_client_id'] ) || ! empty( $settings['oauth_client_secret'] ) ) ) {

@@ -101,8 +101,8 @@ jQuery(document).ready(function($) {
     });
 
     // Clear OAuth credentials — wipes the stored value via AJAX so the connector
-    // can fall back to Dynamic Client Registration. Pre-1.4.22 there was no UI
-    // path to clear these fields once generated.
+    // can fall back to Dynamic Client Registration. Without this button an admin
+    // in manual-creds mode has no UI path to clear these fields once generated.
     $(document).on('click', '.clear-oauth', function(e) {
         e.preventDefault();
         const $btn = $(this);

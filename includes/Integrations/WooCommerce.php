@@ -480,7 +480,7 @@ class WooCommerce {
 			throw new \Exception( 'WooCommerce is not active' );
 		}
 
-		// 1.4.26 — every WC tool gates behind manage_woocommerce. This is the
+		// every WC tool gates behind manage_woocommerce. This is the
 		// umbrella cap WC's own admin screens require: admins + Shop Manager
 		// role have it; Customer, Subscriber, Contributor, and Editor do NOT.
 		// Per-action additions (publish_products, delete_others_shop_orders,
@@ -611,7 +611,7 @@ class WooCommerce {
 					'orders'      => array_map( [ __CLASS__, 'format_order_summary' ], $result->orders ),
 					'page'        => $page,
 					'per_page'    => $per_page,
-					// 1.4.36 — INVARIANTS.md §8 compliance: total_count alongside legacy total.
+					// INVARIANTS.md §8 compliance: total_count alongside legacy total.
 					'total'       => intval( $result->total ),
 					'total_count' => intval( $result->total ),
 					'total_pages' => intval( $result->max_num_pages ),
@@ -634,7 +634,7 @@ class WooCommerce {
 				if ( ! in_array( $new_status, $allowed_statuses ) ) {
 					throw new \Exception( 'Invalid order status' );
 				}
-				// 1.4.36 — WC_Order::add_order_note() already applies wp_kses_post
+				// WC_Order::add_order_note() already applies wp_kses_post
 				// internally; sanitize_text_field was both redundant AND lossy (stripped
 				// support-URL links from notes). Explicit wp_kses_post here matches WC
 				// behavior + keeps the tool self-documenting.
@@ -1290,7 +1290,7 @@ class WooCommerce {
 			$coupon->set_amount( sanitize_text_field( $args['amount'] ) );
 		}
 		if ( isset( $args['description'] ) ) {
-			// 1.4.36 — WC admin allows HTML in coupon descriptions; some themes render
+			// WC admin allows HTML in coupon descriptions; some themes render
 			// them on cart/checkout with formatting preserved. Matches admin behavior.
 			$coupon->set_description( wp_kses_post( $args['description'] ) );
 		}

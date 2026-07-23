@@ -9,6 +9,8 @@ use Royal_MCP\Integrations\ForgeCache as FCIntegration;
 use Royal_MCP\Integrations\RoyalLinks as RLinksIntegration;
 use Royal_MCP\Integrations\Elementor as ElementorIntegration;
 use Royal_MCP\Integrations\ACF as ACFIntegration;
+use Royal_MCP\Integrations\RoyalAIFirewall as RAIFIntegration;
+use Royal_MCP\Integrations\Elementor_Coexistence;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -35,16 +37,23 @@ class Server {
      * validators (validate_bearer_token / validate_api_key_value) once the
      * request has been authenticated; read by build_auth_fingerprint().
      *
-     * Pre-1.4.35 the fingerprint was rebuilt from the Authorization header
-     * inside build_auth_fingerprint(), which hashed the raw bearer token.
-     * OAuth access tokens rotate hourly (Token_Store::ACCESS_TOKEN_TTL),
-     * MCP sessions live 24h (Session_Store::SESSION_TTL), so any long
-     * automation crossing a token refresh produced a fingerprint mismatch
-     * against its own session and got 403 "Session credentials mismatch"
-     * on every subsequent call. See issue #54. Now bound to
-     * client_id + user_id from Token_Store, which are stable across refresh.
+     * Bound to client_id + user_id from Token_Store — these are stable across
+     * hourly OAuth access-token rotation, so the fingerprint stays consistent
+     * with the session it was minted against for the full 24h session TTL.
+     * Hashing the raw bearer token here would invalidate the session on every
+     * refresh and break long-running automations.
      */
     private $request_auth_fingerprint = '';
+
+    /**
+     * Auth-state context for the current request, populated by validate_bearer_token
+     * / validate_api_key_value and consumed by the royal_mcp_connection_health tool.
+     * Kept separate from request_auth_fingerprint so the fingerprint's hashing
+     * discipline (never expose the raw key/token) stays cleanly enforced.
+     */
+    private $request_auth_method  = null;   // 'api-key' | 'oauth-bearer' | null
+    private $request_token_ttl    = null;   // int seconds until token expiry, or null (api-key never rotates)
+    private $request_session_id   = null;   // MCP session ID from Mcp-Session-Id header, or null (no session for pre-initialize)
 
     /**
      * Validate Origin header to prevent DNS rebinding attacks
@@ -131,16 +140,14 @@ class Server {
 
         // Try OAuth 2.0 Bearer token first. If that fails, fall back to
         // trying the same Bearer value as a static API key — most MCP
-        // clients (Apify, n8n, Make.com, anything that follows the
-        // universal HTTP convention for bearer credentials) send their
-        // static API key via `Authorization: Bearer <key>`, not the
-        // Royal-MCP-specific `X-Royal-MCP-API-Key` header. Pre-1.4.28 the
-        // value got routed entirely into OAuth validation, failed (since
-        // an API key is not an OAuth token), and returned 401 — even
-        // though the same key worked via the X-Royal-MCP-API-Key header.
-        // The fallback is a strict additive change: it doesn't widen the
-        // security perimeter (API keys were ALREADY accepted as bearer
-        // credentials, just under a different header name), it just
+        // clients that follow the universal HTTP convention for bearer
+        // credentials send their static API key via
+        // `Authorization: Bearer <key>`, not the Royal-MCP-specific
+        // `X-Royal-MCP-API-Key` header. Route the Bearer value through
+        // API-key validation as a fallback when OAuth validation rejects
+        // it. This is a strict additive change: API keys were ALREADY
+        // accepted as bearer credentials, just under a different header
+        // name, so the security perimeter does not widen — it just
         // accepts the convention every modern MCP client uses.
         $auth_header = $request->get_header('Authorization');
         if (!empty($auth_header) && stripos($auth_header, 'Bearer ') === 0) {
@@ -169,10 +176,10 @@ class Server {
 
         // Neither provided — return 401 with WWW-Authenticate for OAuth discovery.
         // Per MCP spec (2025-06-18 / RFC 9728), include resource_metadata URL.
-        // Cache-Control: no-store is critical here. Pre-1.4.15 this 401 was
-        // getting cached at edge (URL-keyed) and served to subsequent
-        // authenticated requests, breaking every MCP client that hits GET /mcp
-        // before sending its credentials (Claude.ai web, ChatGPT discovery).
+        // Cache-Control: no-store is critical here. Without it, this 401
+        // gets cached at edge (URL-keyed) and served to subsequent
+        // authenticated requests, breaking every MCP client that hits
+        // GET /mcp before sending its credentials.
         $resource_metadata_url = home_url( '/.well-known/oauth-protected-resource' );
         $response = new \WP_REST_Response([
             'jsonrpc' => '2.0',
@@ -202,9 +209,9 @@ class Server {
         if (empty($settings['api_key']) || !hash_equals($settings['api_key'], $api_key)) {
             // 401, not 403, per RFC 7235 — wrong credentials means "auth failed",
             // which is 401. 403 is reserved for "auth succeeded but lacks
-            // permission". Pre-1.4.15 returned 403 here. Strict MCP clients
-            // (per RFC 9728 OAuth discovery) start the OAuth flow on 401, not
-            // 403, so the wrong status was suppressing legitimate retries.
+            // permission". Strict MCP clients (per RFC 9728 OAuth discovery)
+            // start the OAuth flow on 401 but not 403, so returning 403 here
+            // would suppress legitimate retries.
             $resource_metadata_url = home_url( '/.well-known/oauth-protected-resource' );
             $response = new \WP_REST_Response([
                 'jsonrpc' => '2.0',
@@ -237,6 +244,10 @@ class Server {
         // API keys don't rotate, so hashing the raw key gives a stable session fingerprint.
         $this->request_auth_fingerprint = hash('sha256', 'apikey:' . $api_key);
 
+        // capture auth context for royal_mcp_connection_health diagnostic tool.
+        $this->request_auth_method = 'api-key';
+        $this->request_token_ttl   = null;
+
         return true;
     }
 
@@ -268,12 +279,21 @@ class Server {
         wp_set_current_user((int) $token_data['user_id']);
 
         // Bind the session fingerprint to identifiers that survive access-token
-        // rotation. Hashing the raw token (pre-1.4.35 behavior) invalidated the
-        // session on every hourly refresh — see property doc + issue #54.
+        // rotation — hashing the raw token would invalidate the session on
+        // every hourly refresh. See the request_auth_fingerprint property doc.
         $this->request_auth_fingerprint = hash(
             'sha256',
             'oauth:' . (string) $token_data['client_id'] . ':' . (int) $token_data['user_id']
         );
+
+        // capture auth context for royal_mcp_connection_health diagnostic tool.
+        $this->request_auth_method = 'oauth-bearer';
+        if ( ! empty( $token_data['expires_at'] ) ) {
+            $expires_ts = strtotime( (string) $token_data['expires_at'] . ' UTC' );
+            if ( $expires_ts ) {
+                $this->request_token_ttl = max( 0, $expires_ts - time() );
+            }
+        }
 
         return true;
     }
@@ -371,12 +391,12 @@ class Server {
             return false;
         }
 
-        // 1.4.27 — DB-backed session lookup. Pre-1.4.27 this used transients,
-        // which silently dropped sessions on hosts with an active WordPress
-        // object cache drop-in that evicted keys between requests (LiteSpeed
-        // + SpeedyCache stacks, confirmed). Sliding window is now a single
-        // atomic UPDATE that refreshes expires_at IFF the row exists and
-        // hasn't expired, instead of the pre-1.4.27 GET-then-SET pattern.
+        // DB-backed session lookup. Transient-backed sessions silently
+        // drop on hosts with an active WordPress object-cache drop-in that
+        // evicts keys between requests, so we persist to a real table.
+        // The sliding window is a single atomic UPDATE that refreshes
+        // expires_at IFF the row exists and has not expired — safer than
+        // a GET-then-SET pattern which can race and grant expired sessions.
         return Session_Store::touch_session($session_id);
     }
 
@@ -386,7 +406,7 @@ class Server {
      * @param string $session_id The session ID to store
      */
     private function store_session($session_id, $auth_fingerprint = '') {
-        // 1.4.27 — DB-backed session persistence. 24-hour expiry, refreshed
+        // DB-backed session persistence. 24-hour expiry, refreshed
         // on every valid hit via Session_Store::touch_session. See
         // is_valid_session() for the object-cache motivation.
         Session_Store::create_session($session_id, $auth_fingerprint);
@@ -402,7 +422,7 @@ class Server {
     }
 
     /**
-     * 1.4.31 — Resolve a post identifier from tool args, accepting either
+     * Resolve a post identifier from tool args, accepting either
      * `post_id` (canonical) or `id` (alias). Different tools historically
      * used different argument names (wp_get_post took `id`, wp_get_post_meta
      * took `post_id`); AI drivers sometimes swap conventions and got
@@ -415,15 +435,82 @@ class Server {
     }
 
     /**
+     * Build a read-after-write response for wp_update_post / wp_update_page.
+     *
+     * Reads the post back from DB after mutation so the response reflects
+     * actual stored values, not the requested values. Fields WordPress
+     * silently modified (post_parent coerced to 0 on unknown parent,
+     * status transitions overridden, etc.) are surfaced via a
+     * modified_by_wp entry so an LLM caller can react rather than treating
+     * a hardcoded success string as truth.
+     *
+     * Text fields (title / content / excerpt) skip the diff-check because
+     * sanitize_text_field / wp_kses_post / wp_slash naturally modify the
+     * input; the stored value in saved_fields is the truth signal there
+     * and comparing raw-vs-stored would trigger noisy modified_by_wp
+     * entries on every call that contains any sanitizable input.
+     * Int / enum / password fields participate in the diff-check because
+     * WP-side modifications to those are always meaningful.
+     *
+     * @param int    $post_id  Post ID that was just updated.
+     * @param array  $args     Raw args from the tool call (what the caller sent).
+     * @param array  $data     Array passed to wp_update_post() (post-sanitization).
+     * @param string $message  Human-readable success string (kept for backwards compat).
+     *
+     * @return array Response with id, saved_fields, optional modified_by_wp, message.
+     */
+    private static function build_update_response(int $post_id, array $args, array $data, string $message): array {
+        $saved_post = get_post($post_id);
+        $saved_fields = [];
+        $modified_by_wp = [];
+        // arg_key => [wp_post_property, cast_type, participates_in_diff_check]
+        $map = [
+            'title'          => ['post_title', 'string', false],
+            'content'        => ['post_content', 'string', false],
+            'status'         => ['post_status', 'string', true],
+            'excerpt'        => ['post_excerpt', 'string', false],
+            'post_author'    => ['post_author', 'int', true],
+            'menu_order'     => ['menu_order', 'int', true],
+            'post_parent'    => ['post_parent', 'int', true],
+            'password'       => ['post_password', 'string', true],
+            'comment_status' => ['comment_status', 'string', true],
+            'ping_status'    => ['ping_status', 'string', true],
+        ];
+        foreach ($map as $arg_key => [$prop, $type, $diff_check]) {
+            if (!array_key_exists($arg_key, $args)) continue;
+            $stored = $saved_post->{$prop} ?? '';
+            $stored = $type === 'int' ? (int) $stored : (string) $stored;
+            $saved_fields[$arg_key] = $stored;
+            if (!$diff_check) continue;
+            if (!array_key_exists($prop, $data)) continue;
+            $requested_effective = $type === 'int' ? (int) $data[$prop] : (string) $data[$prop];
+            if ($stored !== $requested_effective) {
+                $modified_by_wp[$arg_key] = [
+                    'requested' => $requested_effective,
+                    'actual'    => $stored,
+                ];
+            }
+        }
+        $response = [
+            'id'           => $post_id,
+            'saved_fields' => $saved_fields,
+            'message'      => $message,
+        ];
+        if (!empty($modified_by_wp)) {
+            $response['modified_by_wp'] = $modified_by_wp;
+        }
+        return $response;
+    }
+
+    /**
      * Sanitize a meta value received from an MCP client.
      *
      * Accepts JSON scalars (string, int, float, bool, null), arrays, and
      * objects (JSON-decoded stdClass). Arrays and objects are walked
      * recursively; string leaves go through wp_kses_post() so callers can
      * store the same safe HTML allow-list WordPress uses for post_content
-     * (previously we ran sanitize_text_field(), which flattened
-     * ACF wysiwyg values, meta-box HTML fields, and any custom meta that
-     * legitimately stores markup — Alon Suzy, 2026-07-16).
+     * (rich-text meta fields — ACF wysiwyg, meta-box HTML fields, and any
+     * custom meta that legitimately stores markup — need this allow-list).
      *
      * Rejects strings that look like PHP-serialized payloads. get_post_meta()
      * runs maybe_unserialize() by default, so accepting a hand-crafted 'O:...'
@@ -496,7 +583,7 @@ class Server {
             ['name' => 'wp_get_posts', 'description' => 'Get WordPress posts (supports custom post types)', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of posts (max 100)'], 'search' => ['type' => 'string', 'description' => 'Search term'], 'status' => ['type' => 'string', 'description' => 'Post status (publish, draft, etc)'], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post). Use wp_get_post_types to discover available types']]]],
             ['name' => 'wp_get_post', 'description' => 'Get single post by ID (any post type)', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID']], 'required' => ['id']]],
             ['name' => 'wp_create_post', 'description' => 'Create new post (supports custom post types). Combine status="future" with date to schedule. Excerpt may contain safe HTML (same allow-list as post content).', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule. Past dates auto-publish with that timestamp.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'categories' => ['type' => 'array', 'items' => ['type' => 'integer']], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post)'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to assign as the post author. Defaults to the authenticated MCP user (admin). Use wp_get_users to discover available author IDs.']], 'required' => ['title', 'content']]],
-            ['name' => 'wp_update_post', 'description' => 'Update existing post (any post type). Use featured_media to change the featured image by attachment ID, or use wp_set_featured_image for a URL-based workflow. Pass date to reschedule or backdate. Excerpt may contain safe HTML.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image (pass 0 to remove)'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as the post author. Use wp_get_users to discover available author IDs.']], 'required' => ['id']]],
+            ['name' => 'wp_update_post', 'description' => 'Update existing post (any post type). Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image (pass 0 to remove)'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as the post author. Use wp_get_users to discover available author IDs.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling posts/pages. Lower = earlier.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent post ID (0 = no parent). Useful for hierarchical CPTs. Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Post password. Empty string removes protection.'], 'comment_status' => ['type' => 'string', 'enum' => ['open', 'closed'], 'description' => 'Allow (open) or disallow (closed) new comments.'], 'ping_status' => ['type' => 'string', 'enum' => ['open', 'closed'], 'description' => 'Allow (open) or disallow (closed) trackbacks / pingbacks.']], 'required' => ['id']]],
             ['name' => 'wp_get_post_types', 'description' => 'Get all registered public post types (including custom post types)', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_delete_post', 'description' => 'Delete post', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean', 'description' => 'Skip trash and permanently delete']], 'required' => ['id']]],
             ['name' => 'wp_count_posts', 'description' => 'Get post counts by status', 'inputSchema' => ['type' => 'object', 'properties' => ['post_type' => ['type' => 'string', 'description' => 'Post type (post, page, etc)']]]],
@@ -505,7 +592,7 @@ class Server {
             ['name' => 'wp_get_pages', 'description' => 'List WordPress pages. Returns id, title, status, and URL for each. Filter by parent to walk the page hierarchy.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of pages (default 10, max 100)'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID — returns only direct children of this page']]]],
             ['name' => 'wp_get_page', 'description' => 'Get single page by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Page ID']], 'required' => ['id']]],
             ['name' => 'wp_create_page', 'description' => 'Create new page. Combine status="future" with date to schedule. Excerpt (via wp_update_post_meta on _excerpt or via wp_create_post fallback) may contain safe HTML.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule.'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID']], 'required' => ['title', 'content']]],
-            ['name' => 'wp_update_page', 'description' => 'Update existing page. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.']], 'required' => ['id']]],
+            ['name' => 'wp_update_page', 'description' => 'Update existing page. Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional page excerpt. May contain safe HTML.'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as page author.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling pages. Lower = earlier in navigation.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent page ID (0 = top-level). Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Page password. Empty string removes protection.']], 'required' => ['id']]],
             ['name' => 'wp_delete_page', 'description' => 'Delete page', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean']], 'required' => ['id']]],
 
             // Media
@@ -558,6 +645,7 @@ class Server {
             ['name' => 'wp_get_site_status', 'description' => 'One-shot site diagnostic. Returns WordPress version, PHP version, MySQL/MariaDB version, active plugin count, active theme details, memory limit, max upload size, timezone, WP_DEBUG_LOG state, disk free space, install age, and site/home URLs. Use this at the start of a debugging or environment-inspection conversation instead of piecing it together from wp_get_site_info + wp_get_plugins + wp_get_active_theme. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_get_error_log_tail', 'description' => 'Read the tail of wp-content/debug.log. Returns the last N lines (default 100, max 1000), optionally filtered by a case-insensitive substring. Automatically caps file read at last 1MB to prevent memory blowup on huge logs (truncated=true when this happens). Returns status="disabled" with instructions when WP_DEBUG_LOG is not enabled in wp-config.php. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => ['lines' => ['type' => 'integer', 'description' => 'Number of lines to return from the tail (default 100, max 1000).'], 'filter' => ['type' => 'string', 'description' => 'Optional case-insensitive substring filter applied before the last-N slice (e.g. "Fatal error", "Deprecated", a plugin slug).']]]],
             ['name' => 'wp_get_cron_schedule', 'description' => 'Enumerate scheduled wp_cron events. Returns each event with hook name, next run (unix + ISO 8601), seconds until next run, is_overdue flag, recurrence (hourly / twicedaily / daily / custom + interval in seconds), and args. Sorted by next-run ascending so overdue events come first. Useful for diagnosing missed schedules, plugin cron conflicts, or unfired hooks. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'royal_mcp_connection_health', 'description' => 'Diagnostic probe for the current MCP connection. Returns MCP endpoint route, authentication method used by this request (api-key or oauth-bearer), OAuth access token time-to-live in seconds (null for api-key), current MCP session ID, active MCP capabilities negotiated at initialize, plus Royal MCP + WordPress + PHP version strings. No arguments. Call at connection start to confirm setup, or when diagnosing 401/403/404 issues. Any authenticated caller.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page).', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.']], 'required' => ['query']]],
 
             // Options
@@ -606,6 +694,13 @@ class Server {
         $tools = array_merge( $tools, RLinksIntegration::get_tools() );
         $tools = array_merge( $tools, ElementorIntegration::get_tools() );
         $tools = array_merge( $tools, ACFIntegration::get_tools() );
+        $tools = array_merge( $tools, RAIFIntegration::get_tools() );
+
+        // 1.4.37 Candidate 5 — when Elementor's own MCP module is present,
+        // prefix our elementor_* tool descriptions with a routing hint so
+        // agents pick the canonical primitive per task. No behavior change
+        // to our tools; opt-in defer only.
+        $tools = Elementor_Coexistence::filter_elementor_tool_descriptions( $tools );
 
         return $tools;
     }
@@ -839,6 +934,9 @@ class Server {
         // Get session ID from header
         $session_id = $request->get_header('Mcp-Session-Id');
 
+        // stash session id for royal_mcp_connection_health diagnostic tool.
+        $this->request_session_id = $session_id ? (string) $session_id : null;
+
         // Authenticate EVERY request — API key or Bearer token required.
         $auth_check = $this->validate_auth($request);
         if ($auth_check !== true) {
@@ -993,14 +1091,12 @@ class Server {
     /**
      * Create JSON response with proper headers.
      *
-     * Cache-Control: no-store is mandatory on every MCP response. Pre-1.4.15 the
-     * 1.4.13 fix that added no-store to OAuth endpoints (OAuth/Server.php)
-     * never propagated here, so MCP responses were getting cached at edge
-     * (Cloudflare, host-level fastcgi cache, intermediaries) — the same root
-     * cause as the OAuth cache poisoning bug, just on a different endpoint.
-     * Customer reproduction: bare GET /mcp returned a stale auth-error response
-     * regardless of whether the Authorization / X-Royal-MCP-API-Key header was
-     * present, until a query string busted the URL-keyed cache.
+     * Cache-Control: no-store is mandatory on every MCP response. Without it,
+     * edge caches (CDN, host-level fastcgi cache, generic intermediaries)
+     * key on URL alone and serve a stale auth-error response regardless of
+     * whether the Authorization / X-Royal-MCP-API-Key header is present on
+     * the second request. This is the same class of cache-poisoning bug
+     * that gates every authenticated JSON-RPC endpoint.
      */
     private function json_response($data, $status = 200) {
         $response = new \WP_REST_Response($data, $status);
@@ -1086,9 +1182,11 @@ class Server {
         $name = $params['name'] ?? '';
         $args = $params['arguments'] ?? [];
 
+        $start = microtime(true);
+
         try {
             $result = $this->execute_tool($name, $args);
-            $this->log_tool_call($name, $args, 'success', null);
+            $this->log_tool_call($name, $args, 'success', null, $start, $result, null);
             return [
                 'jsonrpc' => '2.0',
                 'id' => $id,
@@ -1100,7 +1198,7 @@ class Server {
                 ],
             ];
         } catch (\Exception $e) {
-            $this->log_tool_call($name, $args, 'error', $e->getMessage());
+            $this->log_tool_call($name, $args, 'error', $e->getMessage(), $start, null, $e);
             return [
                 'jsonrpc' => '2.0',
                 'id' => $id,
@@ -1125,11 +1223,11 @@ class Server {
      * without leaking "what data." Error messages from the tool dispatcher are
      * our own strings, safe to log.
      *
-     * Added 1.4.17 to close the observability gap where the modern /mcp endpoint
-     * was producing zero Activity Log entries even when actively serving tool
-     * calls — making customers think the connection was broken.
+     * Closes an observability gap where the modern /mcp endpoint would
+     * otherwise produce zero Activity Log entries even when actively serving
+     * tool calls — making admins think the connection was broken.
      */
-    private function log_tool_call($tool_name, $args, $status, $error_message) {
+    private function log_tool_call($tool_name, $args, $status, $error_message, $start_time = null, $result = null, $exception = null) {
         global $wpdb;
 
         $request_meta = [
@@ -1166,17 +1264,114 @@ class Server {
          *                              error message on failure.
          */
         do_action('royal_mcp_tool_called', (string) $tool_name, (string) $status, (string) ($error_message ?? ''));
+
+        /**
+         * Fires after every MCP tool invocation with an enriched context payload.
+         * Additive to `royal_mcp_tool_called` — that hook stays byte-compatible
+         * for subscribers on older signatures. New subscribers should prefer
+         * this hook for richer observability + risk-classification context.
+         *
+         * The payload NEVER contains raw argument values or raw result content —
+         * `tool_args_hash` (SHA-256 of sanitized args) enables dedupe / replay
+         * detection without leaking argument data; `response_size_bytes` is a
+         * length only, not a body.
+         *
+         * @param string $tool_name The MCP tool that was called.
+         * @param array  $context   Enriched payload:
+         *                          - status: 'success' | 'error'
+         *                          - error_message: string
+         *                          - error_class: string|null — exception class on failure
+         *                          - latency_ms: int
+         *                          - response_size_bytes: int
+         *                          - tool_args_hash: string — sha256 hex of sanitized args
+         *                          - arg_keys: string[] — argument keys (no values)
+         *                          - is_destructive: bool — tool name matches destructive allowlist
+         */
+        $latency_ms = ( null !== $start_time )
+            ? (int) round( ( microtime(true) - (float) $start_time ) * 1000 )
+            : 0;
+
+        $response_size = 0;
+        if ( null !== $result ) {
+            $encoded = wp_json_encode( $result );
+            $response_size = is_string( $encoded ) ? strlen( $encoded ) : 0;
+        }
+
+        $args_hash = '';
+        if ( is_array( $args ) ) {
+            $args_encoded = wp_json_encode( $args );
+            if ( is_string( $args_encoded ) ) {
+                $args_hash = hash( 'sha256', $args_encoded );
+            }
+        }
+
+        $context = [
+            'status'              => (string) $status,
+            'error_message'       => (string) ( $error_message ?? '' ),
+            'error_class'         => ( $exception instanceof \Throwable ) ? get_class( $exception ) : null,
+            'latency_ms'          => $latency_ms,
+            'response_size_bytes' => $response_size,
+            'tool_args_hash'      => $args_hash,
+            'arg_keys'            => is_array( $args ) ? array_keys( $args ) : [],
+            'is_destructive'      => $this->is_destructive_tool( (string) $tool_name ),
+        ];
+
+        do_action( 'royal_mcp_tool_context', (string) $tool_name, $context );
+    }
+
+    /**
+     * Static allowlist of tool names + name-prefix patterns that are considered
+     * destructive for observability / approval-workflow classification.
+     *
+     * Not a security boundary — capability checks in the tool handlers own that.
+     * Purpose is to give downstream subscribers (Royal AI Firewall approval
+     * workflow, audit dashboards) a one-bit signal to distinguish read tools
+     * from tools that mutate or remove state.
+     *
+     * Additions welcome as new destructive surfaces ship.
+     */
+    private function is_destructive_tool( $tool_name ) {
+        static $destructive_prefixes = [
+            'wp_delete_',
+            'wc_delete_',
+            'wp_trash_',
+            'wp_spam_',
+        ];
+
+        static $destructive_exact = [
+            'wp_reorder_menu_items',
+            'wp_restore_revision',
+            'wp_update_permalink_structure',
+            'wp_update_custom_css',
+            'wp_update_option',
+            'raif_set_bot_policy',
+            'raif_block_all_ai_bots',
+            'fc_clear_cache',
+            'fc_purge_url',
+            'rl_create_cost',
+            'sv_create_backup',
+        ];
+
+        if ( in_array( $tool_name, $destructive_exact, true ) ) {
+            return true;
+        }
+        foreach ( $destructive_prefixes as $prefix ) {
+            if ( 0 === strpos( $tool_name, $prefix ) ) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function execute_tool($name, $args) {
         switch ($name) {
             // ==================== POSTS ====================
             case 'wp_get_posts':
-                // 1.4.26 — per-tool cap check (Alessandro Greco / Aleff report,
-                // CVSS 8.1). Pre-1.4.26 a Subscriber OAuth token could pass a
-                // non-public `status` (draft/private/trash) and receive
-                // admin-owned content. Require `read` to call at all, and
-                // strip restricted statuses unless the user can read them.
+                // Per-tool capability gate. Require `read` to call at all;
+                // restricted post statuses (draft / private / trash / etc.)
+                // require read_private_posts on the target post type. Without
+                // these gates, a Subscriber-level OAuth token could pass a
+                // non-public status and receive admin-owned content.
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to list posts.');
                 }
@@ -1197,10 +1392,9 @@ class Server {
                     // else — including 'any', 'private', 'draft', 'pending',
                     // 'future', 'trash', unknown values, or typos — requires
                     // read_private_posts for the relevant post type. Fail closed
-                    // on unexpected values. Follow-up finding on the original
-                    // 1.4.26 patch (Alessandro Greco / Aleff): the prior denylist did not
-                    // match `status=any`, which let a low-privileged token
-                    // enumerate title + excerpt of private and draft posts.
+                    // on unexpected values. Denylists are the wrong shape here:
+                    // `status=any` and typo'd status names slip past denylists
+                    // but are caught cleanly by the public-status allowlist.
                     $public_statuses = get_post_stati(['public' => true]);
                     if (!in_array($requested_status, $public_statuses, true)) {
                         $pto_for_caps = !empty($args['post_type']) ? get_post_type_object(sanitize_text_field($args['post_type'])) : get_post_type_object('post');
@@ -1229,7 +1423,7 @@ class Server {
             case 'wp_get_post':
                 $post = get_post(self::resolve_post_id_arg($args));
                 if (!$post) throw new \Exception('Post not found');
-                // 1.4.26 — per-post read check. read_post via map_meta_cap
+                // per-post read check. read_post via map_meta_cap
                 // resolves to read_private_posts for non-public statuses.
                 if (!current_user_can('read_post', $post->ID)) {
                     throw new \Exception('You do not have permission to read this post.');
@@ -1251,8 +1445,8 @@ class Server {
                 $post_type = sanitize_text_field($args['post_type'] ?? 'post');
                 $pto = get_post_type_object($post_type);
                 if (!$pto || !$pto->public) throw new \Exception('Invalid or non-public post type: ' . esc_html($post_type));
-                // 1.4.26 — per-post-type edit + publish caps. Pre-1.4.26 a
-                // Subscriber OAuth token could create-as-self including
+                // Per-post-type edit + publish capability gate. Without it, a
+                // Subscriber-level OAuth token could create-as-self at
                 // status=publish. The per-PT cap object maps `edit_posts` to
                 // the correct cap for custom post types (e.g. `edit_pages`).
                 $create_cap = !empty($pto->cap->edit_posts) ? $pto->cap->edit_posts : 'edit_posts';
@@ -1260,7 +1454,7 @@ class Server {
                     throw new \Exception('You do not have permission to create ' . esc_html($post_type) . ' posts.');
                 }
                 $requested_status = isset($args['status']) ? sanitize_text_field($args['status']) : 'draft';
-                // 1.4.33 — publish_posts cap now gates future + private in
+                // publish_posts cap now gates future + private in
                 // addition to publish. When the enum expanded from
                 // ['publish', 'draft'] to include future/pending/private the
                 // pre-existing 'publish' check needed matching coverage: WP
@@ -1286,17 +1480,16 @@ class Server {
                         throw new \Exception('post_author user ID not found.');
                     }
                 }
-                // 1.4.21 — Two-part fix for Gutenberg block JSON round-trip
-                // (issue #15). (1) Drop wp_kses_post(): WP's own
-                // `content_save_pre` filter inside wp_insert_post() runs
-                // wp_filter_post_kses for callers without `unfiltered_html`
-                // and is block-aware; pre-calling wp_kses_post() here
-                // HTML-encodes block delimiters. (2) wp_slash() the content:
-                // wp_insert_post() runs wp_unslash() internally, which would
-                // otherwise strip the literal backslashes inside escape
-                // sequences (`\n`, `&`) that WP 7.0's per-block `style.css`
-                // depends on.
-                // 1.4.33 — status allowlist expanded to match schema enum.
+                // Two-part shape required for Gutenberg block JSON round-trip.
+                // (1) Do NOT wrap in wp_kses_post() here: WP's own content_save_pre
+                //     filter inside wp_insert_post() runs wp_filter_post_kses for
+                //     callers without `unfiltered_html` and is block-aware;
+                //     pre-calling wp_kses_post() HTML-encodes block delimiters.
+                // (2) wp_slash() the content: wp_insert_post() runs wp_unslash()
+                //     internally, which would otherwise strip the literal
+                //     backslashes inside escape sequences (`\n`, `&`) that
+                //     per-block `style.css` depends on.
+                // status allowlist expanded to match schema enum.
                 // future/pending/private are all standard WP statuses that
                 // wp_insert_post handles natively. future requires post_date to
                 // be in the future or WP silently downgrades to publish with
@@ -1307,7 +1500,7 @@ class Server {
                     'post_status' => in_array($args['status'] ?? 'draft', ['publish', 'draft', 'future', 'pending', 'private']) ? $args['status'] : 'draft',
                     'post_type' => $post_type,
                 ];
-                // 1.4.36 — wp_kses_post matches what wp_insert_post's excerpt_save_pre
+                // wp_kses_post matches what wp_insert_post's excerpt_save_pre
                 // filter would apply; sanitize_text_field flattened any <p>/<a>/<strong>
                 // formatting that legitimately renders on category archives + RSS feeds.
                 if (!empty($args['excerpt'])) $post_data['post_excerpt'] = wp_kses_post($args['excerpt']);
@@ -1315,7 +1508,7 @@ class Server {
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     $post_data['post_author'] = intval($args['post_author']);
                 }
-                // 1.4.33 — scheduling support. Parse ISO-8601 in site TZ, derive
+                // scheduling support. Parse ISO-8601 in site TZ, derive
                 // GMT from the same timestamp so the two fields never disagree.
                 if (!empty($args['date'])) {
                     $ts = strtotime((string) $args['date']);
@@ -1334,7 +1527,7 @@ class Server {
 
             case 'wp_update_post':
                 $post_id = self::resolve_post_id_arg($args);
-                // 1.4.26 — object-level edit_post resolves to edit_others_posts
+                // object-level edit_post resolves to edit_others_posts
                 // when the target isn't owned by the current user, and to the
                 // PT-specific cap (edit_page etc.) automatically via map_meta_cap.
                 if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
@@ -1352,23 +1545,42 @@ class Server {
                         throw new \Exception('post_author user ID not found.');
                     }
                 }
+                // Pre-validate post_parent: fail loudly on unknown parent rather
+                // than let WP silently coerce to 0.
+                if (isset($args['post_parent']) && intval($args['post_parent']) > 0) {
+                    if (!get_post(intval($args['post_parent']))) {
+                        throw new \Exception('post_parent post ID not found.');
+                    }
+                }
+                // Validate comment_status / ping_status enums up-front.
+                if (array_key_exists('comment_status', $args) && !in_array($args['comment_status'], ['open', 'closed'], true)) {
+                    throw new \Exception('comment_status must be "open" or "closed".');
+                }
+                if (array_key_exists('ping_status', $args) && !in_array($args['ping_status'], ['open', 'closed'], true)) {
+                    throw new \Exception('ping_status must be "open" or "closed".');
+                }
                 $data = ['ID' => $post_id];
-                // 1.4.31 — empty-string-as-omit on text fields. AI drivers
+                // empty-string-as-omit on text fields. AI drivers
                 // sometimes template-fill optional text args with "" instead
                 // of omitting; treating "" as "preserve" prevents silent
                 // destructive writes (blanked post body, title, excerpt) on
                 // what reads as a partial update. To explicitly clear a
                 // field, edit via wp-admin or future dedicated clear tool.
                 if (isset($args['title']) && $args['title'] !== '') $data['post_title'] = sanitize_text_field($args['title']);
-                // 1.4.21 — see wp_create_post above (issue #15).
+                // See wp_create_post above for the wp_slash + no-wp_kses_post rationale.
                 if (isset($args['content']) && $args['content'] !== '') $data['post_content'] = wp_slash($args['content']);
                 if (isset($args['status'])) $data['post_status'] = sanitize_text_field($args['status']);
-                // 1.4.36 — see wp_create_post above: preserve safe HTML in excerpts.
+                // see wp_create_post above: preserve safe HTML in excerpts.
                 if (isset($args['excerpt']) && $args['excerpt'] !== '') $data['post_excerpt'] = wp_kses_post($args['excerpt']);
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     $data['post_author'] = intval($args['post_author']);
                 }
-                // 1.4.33 — scheduling support on the update path. edit_date=true
+                if (array_key_exists('menu_order', $args)) $data['menu_order'] = intval($args['menu_order']);
+                if (array_key_exists('post_parent', $args)) $data['post_parent'] = intval($args['post_parent']);
+                if (array_key_exists('password', $args)) $data['post_password'] = (string) $args['password'];
+                if (array_key_exists('comment_status', $args)) $data['comment_status'] = $args['comment_status'];
+                if (array_key_exists('ping_status', $args)) $data['ping_status'] = $args['ping_status'];
+                // scheduling support on the update path. edit_date=true
                 // is REQUIRED on wp_update_post() to actually change post_date on
                 // an existing post; without it WP silently ignores post_date args.
                 if (!empty($args['date'])) {
@@ -1385,16 +1597,16 @@ class Server {
                 if (isset($args['featured_media'])) {
                     $this->apply_featured_media($post_id, intval($args['featured_media']));
                 }
-                return ['id' => $post_id, 'message' => 'Post updated successfully'];
+                return self::build_update_response($post_id, $args, $data, 'Post updated successfully');
 
             case 'wp_delete_post':
                 $post_id = self::resolve_post_id_arg($args);
                 if ($post_id <= 0) throw new \Exception('Post not found.');
-                // 1.4.31 — cap check BEFORE existence check so an unauthorized
+                // cap check BEFORE existence check so an unauthorized
                 // caller probing nonexistent IDs gets "permission" rather than
                 // "not found" (don't leak existence to non-deleters; audit
                 // expects permission-error response regardless of target ID).
-                // 1.4.26 — object-level delete_post via map_meta_cap resolves
+                // object-level delete_post via map_meta_cap resolves
                 // to delete_others_posts when the target isn't owned by the
                 // current user.
                 if (!current_user_can('delete_post', $post_id)) {
@@ -1436,7 +1648,7 @@ class Server {
                 }
                 $taxonomies = get_taxonomies(['public' => true], 'objects');
                 return array_values(array_map(function($tax) {
-                    // 1.4.12 — `slug` added as a clearer alias for the taxonomy
+                    // `slug` added as a clearer alias for the taxonomy
                     // identifier. WP_Taxonomy uses `name` for the slug for
                     // historical reasons, which surprises AI agents that
                     // expect a `slug` field on something called a "taxonomy".
@@ -1490,13 +1702,13 @@ class Server {
                 if (!current_user_can('edit_pages')) {
                     throw new \Exception('You do not have permission to create pages.');
                 }
-                // 1.4.33 — status allowlist expanded to match schema enum (same as wp_create_post).
+                // status allowlist expanded to match schema enum (same as wp_create_post).
                 $page_status = in_array($args['status'] ?? 'draft', ['publish', 'draft', 'future', 'pending', 'private']) ? $args['status'] : 'draft';
-                // 1.4.33 — publish_pages cap gates future + private too. See wp_create_post for rationale.
+                // publish_pages cap gates future + private too. See wp_create_post for rationale.
                 if (in_array($page_status, ['publish', 'future', 'private'], true) && !current_user_can('publish_pages')) {
                     throw new \Exception('You do not have permission to publish pages.');
                 }
-                // 1.4.21 — see wp_create_post above (issue #15).
+                // See wp_create_post above for the wp_slash + no-wp_kses_post rationale.
                 $page_data = [
                     'post_title' => sanitize_text_field($args['title']),
                     'post_content' => wp_slash($args['content']),
@@ -1504,7 +1716,7 @@ class Server {
                     'post_type' => 'page',
                 ];
                 if (!empty($args['parent'])) $page_data['post_parent'] = intval($args['parent']);
-                // 1.4.33 — scheduling support. See wp_create_post handler for rationale.
+                // scheduling support. See wp_create_post handler for rationale.
                 if (!empty($args['date'])) {
                     $ts = strtotime((string) $args['date']);
                     if (false === $ts) {
@@ -1524,13 +1736,32 @@ class Server {
                 if (!current_user_can('edit_post', $page_id)) {
                     throw new \Exception('You do not have permission to edit this page.');
                 }
+                // pre-validate post_author (new field).
+                if (isset($args['post_author']) && intval($args['post_author']) > 0) {
+                    if (!get_userdata(intval($args['post_author']))) {
+                        throw new \Exception('post_author user ID not found.');
+                    }
+                }
+                // pre-validate post_parent (new field).
+                if (isset($args['post_parent']) && intval($args['post_parent']) > 0) {
+                    if (!get_post(intval($args['post_parent']))) {
+                        throw new \Exception('post_parent page ID not found.');
+                    }
+                }
                 $data = ['ID' => $page_id];
-                // 1.4.31 — see wp_update_post: "" preserves existing value.
+                // see wp_update_post: "" preserves existing value.
                 if (isset($args['title']) && $args['title'] !== '') $data['post_title'] = sanitize_text_field($args['title']);
-                // 1.4.21 — see wp_create_post above (issue #15).
+                // See wp_create_post above for the wp_slash + no-wp_kses_post rationale.
                 if (isset($args['content']) && $args['content'] !== '') $data['post_content'] = wp_slash($args['content']);
                 if (isset($args['status'])) $data['post_status'] = sanitize_text_field($args['status']);
-                // 1.4.33 — scheduling / backdating support on the update path. See wp_update_post handler.
+                if (isset($args['excerpt']) && $args['excerpt'] !== '') $data['post_excerpt'] = wp_kses_post($args['excerpt']);
+                if (isset($args['post_author']) && intval($args['post_author']) > 0) {
+                    $data['post_author'] = intval($args['post_author']);
+                }
+                if (array_key_exists('menu_order', $args)) $data['menu_order'] = intval($args['menu_order']);
+                if (array_key_exists('post_parent', $args)) $data['post_parent'] = intval($args['post_parent']);
+                if (array_key_exists('password', $args)) $data['post_password'] = (string) $args['password'];
+                // scheduling / backdating support on the update path. See wp_update_post handler.
                 if (!empty($args['date'])) {
                     $ts = strtotime((string) $args['date']);
                     if (false === $ts) {
@@ -1542,7 +1773,7 @@ class Server {
                 }
                 $result = wp_update_post($data);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
-                return ['id' => $page_id, 'message' => 'Page updated successfully'];
+                return self::build_update_response($page_id, $args, $data, 'Page updated successfully');
 
             case 'wp_delete_page':
                 $page_id = self::resolve_post_id_arg($args);
@@ -1679,7 +1910,7 @@ class Server {
                     throw new \Exception('You do not have permission to edit this media item.');
                 }
                 $update = ['ID' => $media_id];
-                // 1.4.31 — see wp_update_post: "" preserves existing value.
+                // see wp_update_post: "" preserves existing value.
                 if (isset($args['title']) && $args['title'] !== '')       $update['post_title']   = sanitize_text_field($args['title']);
                 if (isset($args['caption']) && $args['caption'] !== '')     $update['post_excerpt'] = sanitize_text_field($args['caption']);
                 if (isset($args['description']) && $args['description'] !== '') $update['post_content'] = wp_kses_post($args['description']);
@@ -1734,7 +1965,7 @@ class Server {
                 $taxonomy = sanitize_text_field($args['taxonomy']);
                 if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
                 $tax_obj = get_taxonomy($taxonomy);
-                // 1.4.26 — per-taxonomy edit_terms cap (resolves to
+                // per-taxonomy edit_terms cap (resolves to
                 // manage_categories for the category taxonomy, manage_post_tags
                 // for tags, custom caps for custom taxonomies).
                 $edit_terms_cap = $tax_obj && !empty($tax_obj->cap->edit_terms) ? $tax_obj->cap->edit_terms : 'manage_categories';
@@ -1742,7 +1973,7 @@ class Server {
                     throw new \Exception('You do not have permission to create terms in ' . esc_html($taxonomy) . '.');
                 }
                 $term_args = [];
-                // 1.4.36 — wp_kses_post preserves the same safe HTML allow-list WP admin
+                // wp_kses_post preserves the same safe HTML allow-list WP admin
                 // permits in term descriptions; sanitize_text_field flattened links/formatting
                 // that render on category-archive pages under WC / Yoast / theme templates.
                 if (!empty($args['description'])) $term_args['description'] = wp_kses_post($args['description']);
@@ -1757,15 +1988,15 @@ class Server {
                 if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
                 $term_id = intval($args['id']);
                 if (!get_term($term_id, $taxonomy)) throw new \Exception('Term not found in taxonomy ' . esc_html($taxonomy));
-                // 1.4.26 — object-level edit_term cap.
+                // object-level edit_term cap.
                 if (!current_user_can('edit_term', $term_id)) {
                     throw new \Exception('You do not have permission to edit this term.');
                 }
                 $update_args = [];
-                // 1.4.31 — see wp_update_post: "" preserves existing value.
+                // see wp_update_post: "" preserves existing value.
                 if (isset($args['name']) && $args['name'] !== '') $update_args['name'] = sanitize_text_field($args['name']);
                 if (isset($args['slug']) && $args['slug'] !== '') $update_args['slug'] = sanitize_title($args['slug']);
-                // 1.4.36 — see wp_create_term above: preserve safe HTML in descriptions.
+                // see wp_create_term above: preserve safe HTML in descriptions.
                 if (isset($args['description']) && $args['description'] !== '') $update_args['description'] = wp_kses_post($args['description']);
                 if (isset($args['parent'])) {
                     $tax_obj = get_taxonomy($taxonomy);
@@ -1781,7 +2012,7 @@ class Server {
                 if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
                 $term_id = intval($args['id']);
                 if (!get_term($term_id, $taxonomy)) throw new \Exception('Term not found in taxonomy ' . esc_html($taxonomy));
-                // 1.4.26 — object-level delete_term cap.
+                // object-level delete_term cap.
                 if (!current_user_can('delete_term', $term_id)) {
                     throw new \Exception('You do not have permission to delete this term.');
                 }
@@ -1824,7 +2055,7 @@ class Server {
                     'taxonomy'    => $taxonomy,
                     'page'        => $page,
                     'per_page'    => $per_page,
-                    // 1.4.36 — INVARIANTS.md §8 compliance: list tools return
+                    // INVARIANTS.md §8 compliance: list tools return
                     // total_count. Legacy 'total' kept alongside to avoid a
                     // breaking rename for existing callers.
                     'total'       => $total,
@@ -1847,7 +2078,7 @@ class Server {
                 if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
                 $post_id = self::resolve_post_id_arg($args);
                 if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
-                // 1.4.26 — assigning terms to a post requires the post's own
+                // assigning terms to a post requires the post's own
                 // edit cap (so a Subscriber can't tag an admin's draft).
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('You do not have permission to edit this post.');
@@ -1876,7 +2107,7 @@ class Server {
                 if (!current_user_can('manage_categories')) {
                     throw new \Exception('You do not have permission to read term meta.');
                 }
-                // 1.4.12 — wrap return in a structured object for consistency
+                // wrap return in a structured object for consistency
                 // with wp_update_term_meta / wp_delete_term_meta which return
                 // structured arrays. Single-key get returns {term_id, key,
                 // value}; full-meta get returns {term_id, meta: {...}}.
@@ -1927,12 +2158,11 @@ class Server {
                 if (!empty($args['post_id'])) $comment_args['post_id'] = intval($args['post_id']);
                 if (!empty($args['status'])) {
                     $requested_comment_status = sanitize_text_field($args['status']);
-                    // 1.4.26 — sibling fix to the wp_get_posts allowlist
-                    // (Aleff follow-up). Only 'approve' is public;
-                    // anything else ('all', 'hold', 'spam', 'trash', unknown
-                    // values) requires moderate_comments. WP_Comment_Query
-                    // with status=all returns hold/spam/trash too, so the
-                    // prior denylist let status=all bypass the check.
+                    // Only 'approve' is public. Anything else ('all', 'hold',
+                    // 'spam', 'trash', unknown values) requires moderate_comments.
+                    // WP_Comment_Query with status=all returns hold/spam/trash
+                    // too, so an allowlist here is the only shape that catches
+                    // status=all without a special case.
                     if (!in_array($requested_comment_status, ['approve'], true)
                         && !current_user_can('moderate_comments')) {
                         throw new \Exception('You do not have permission to list ' . esc_html($requested_comment_status) . ' comments.');
@@ -1958,13 +2188,13 @@ class Server {
                 $comment_post_id = intval($args['post_id']);
                 $comment_target_post = $comment_post_id > 0 ? get_post($comment_post_id) : null;
                 if (!$comment_target_post) throw new \Exception('Post not found.');
-                // 1.4.26 — block commenting on closed/private posts unless the
+                // block commenting on closed/private posts unless the
                 // user has the relevant edit cap on the target post.
                 if ('open' !== $comment_target_post->comment_status
                     && !current_user_can('edit_post', $comment_post_id)) {
                     throw new \Exception('Comments are closed on this post.');
                 }
-                // 1.4.36 — wp_filter_kses uses WP's tight comment-form $allowedtags
+                // wp_filter_kses uses WP's tight comment-form $allowedtags
                 // (<a>, <strong>, <em>, <blockquote>, <code>, <cite>, <abbr>, <acronym>).
                 // Matches what a user gets when submitting a comment through the standard
                 // WP form; sanitize_text_field stripped all tags including the standard <a>.
@@ -1984,7 +2214,7 @@ class Server {
             case 'wp_delete_comment':
                 $comment_id = intval($args['id']);
                 if ($comment_id <= 0 || !get_comment($comment_id)) throw new \Exception('Comment not found.');
-                // 1.4.26 — object-level edit_comment via map_meta_cap resolves
+                // object-level edit_comment via map_meta_cap resolves
                 // to moderate_comments for cross-author deletes.
                 if (!current_user_can('edit_comment', $comment_id)) {
                     throw new \Exception('You do not have permission to delete this comment.');
@@ -2046,10 +2276,10 @@ class Server {
 
             // ==================== USERS ====================
             case 'wp_get_users':
-                // 1.4.26 — list_users is the cap WordPress core uses for the
-                // Users admin screen + the WP REST users endpoint. This is the
-                // exact tool from Aleff's PoC where a Subscriber could
-                // enumerate every account on the site.
+                // list_users is the cap WordPress core uses for the Users
+                // admin screen and the WP REST users endpoint. Without this
+                // gate a Subscriber-level OAuth token could enumerate every
+                // account on the site.
                 if (!current_user_can('list_users')) {
                     throw new \Exception('You do not have permission to list users.');
                 }
@@ -2082,7 +2312,7 @@ class Server {
                 $post_id = self::resolve_post_id_arg($args);
                 if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
                 $key = !empty($args['key']) ? sanitize_text_field($args['key']) : '';
-                // 1.4.31 — protected-meta gating. Mirrors WP core's
+                // protected-meta gating. Mirrors WP core's
                 // is_protected_meta() convention: underscore-prefixed keys
                 // (_yoast_wpseo_*, _edit_lock, _wp_attached_file, ACF
                 // internals, etc.) carry admin/SEO data and require
@@ -2090,9 +2320,9 @@ class Server {
                 // legitimate public-meta consumers. Empty-key requests
                 // (return all meta) require edit_post too since the
                 // response would otherwise leak underscored keys.
-                // 1.4.26 — read_post on the parent gates the public path.
-                // Aleff's PoC: pre-1.4.26 a Subscriber could read post meta
-                // on private admin-owned posts.
+                // read_post on the parent gates the public path so a
+                // Subscriber-level OAuth token cannot read meta on private
+                // admin-owned posts.
                 $needs_edit_cap = ($key === '' || strpos($key, '_') === 0);
                 $cap = $needs_edit_cap ? 'edit_post' : 'read_post';
                 if (!current_user_can($cap, $post_id)) {
@@ -2161,10 +2391,27 @@ class Server {
                     'wp_version' => get_bloginfo('version'),
                 ];
 
-            // 1.4.36 — one-shot site diagnostic. Collapses the WP+PHP+MySQL+plugins+theme
+            // one-shot site diagnostic. Collapses the WP+PHP+MySQL+plugins+theme
                 // discovery flurry (previously 3-5 separate tool calls at conversation start)
                 // into a single read. Distinct from wp_get_site_info which is user-visible
                 // metadata (name/description/URL); this is operator-visible environment.
+            // 1.4.37 Candidate 1 — connection health probe. Any authenticated caller.
+            // Every field is self-attributable (my auth method, my session, my token TTL),
+            // no cap check needed — reaching execute_tool already required valid auth.
+            case 'royal_mcp_connection_health':
+                global $wp_version;
+                return [
+                    'route'          => rest_url('royal-mcp/v1/mcp'),
+                    'auth_method'    => $this->request_auth_method ?? 'unauthenticated',
+                    'relay'          => null,
+                    'token_ttl'      => $this->request_token_ttl,
+                    'session_id'     => $this->request_session_id,
+                    'active_scopes'  => ['tools'],
+                    'server_version' => defined('ROYAL_MCP_VERSION') ? ROYAL_MCP_VERSION : 'unknown',
+                    'wp_version'     => isset($wp_version) ? (string) $wp_version : (string) get_bloginfo('version'),
+                    'php_version'    => PHP_VERSION,
+                ];
+
             case 'wp_get_site_status':
                 if (!current_user_can('manage_options')) {
                     throw new \Exception('You do not have permission to read site status.');
@@ -2231,7 +2478,7 @@ class Server {
                     'home_url'            => home_url(),
                 ];
 
-            // 1.4.36 — tail wp-content/debug.log for AI-driven diagnosis.
+            // tail wp-content/debug.log for AI-driven diagnosis.
             // Manage_options gate: log lines routinely contain paths + stack traces
             // + occasionally sensitive tokens that shouldn't reach read-tier callers.
             case 'wp_get_error_log_tail':
@@ -2323,7 +2570,7 @@ class Server {
                     'lines'          => array_values($tail),
                 ];
 
-            // 1.4.36 — enumerate scheduled cron events. Stuck cron is a routine WP
+            // enumerate scheduled cron events. Stuck cron is a routine WP
             // diagnosis (missed_schedule reports on WP core, unfired hooks on plugin
             // conflicts) and agents previously had no visibility. Manage_options gate
             // because cron args occasionally carry token-like identifiers.
@@ -2719,7 +2966,7 @@ class Server {
                 $post_id = self::resolve_post_id_arg($args);
                 if ($post_id <= 0) throw new \Exception('post_id (or id) is required.');
                 if (!get_post($post_id)) throw new \Exception('Post not found: ' . esc_html((string) $post_id));
-                // 1.4.26 — read_post on the parent gates SEO-meta reads
+                // read_post on the parent gates SEO-meta reads
                 // (private/draft posts' SEO meta is not public).
                 if (!current_user_can('read_post', $post_id)) {
                     throw new \Exception('You do not have permission to read SEO meta on this post.');
@@ -2728,7 +2975,6 @@ class Server {
                 // returned regardless of whether an SEO plugin is detected.
                 // Yoast and Rank Math both expose the slug in their post editors
                 // alongside the SEO meta fields, so callers expect it here.
-                // Added in 1.4.28 in response to GH issue #34.
                 $slug = (string) get_post_field('post_name', $post_id);
                 $detected = $this->detect_seo_plugin();
                 if ($detected === 'yoast') {
@@ -2751,7 +2997,7 @@ class Server {
                         'title'          => (string) get_post_meta($post_id, 'rank_math_title', true),
                         'description'    => (string) get_post_meta($post_id, 'rank_math_description', true),
                         'focus_keyword'  => (string) get_post_meta($post_id, 'rank_math_focus_keyword', true),
-                        'noindex'        => strpos((string) get_post_meta($post_id, 'rank_math_robots', true), 'noindex') !== false,
+                        'noindex'        => in_array('noindex', (array) get_post_meta($post_id, 'rank_math_robots', true), true),
                         'og_title'       => (string) get_post_meta($post_id, 'rank_math_facebook_title', true),
                         'og_description' => (string) get_post_meta($post_id, 'rank_math_facebook_description', true),
                         'slug'           => $slug,
@@ -2772,11 +3018,10 @@ class Server {
                     throw new \Exception('edit_post capability required for this post.');
                 }
                 // Slug is a WordPress-native field; it works regardless of which
-                // (or whether any) SEO plugin is active. Pre-1.4.28 we threw on
-                // detected==='none' before even checking the fields — that would
-                // have rejected a slug-only update on sites without Yoast or Rank
-                // Math. Now: only throw "no SEO plugin" when the caller is
-                // actually trying to update an SEO-plugin-routed field.
+                // (or whether any) SEO plugin is active. Only throw "no SEO
+                // plugin" when the caller is actually trying to update an
+                // SEO-plugin-routed field — a slug-only update on a site
+                // without Yoast or Rank Math should succeed cleanly.
                 $detected = $this->detect_seo_plugin();
                 $seo_field_keys = ['title', 'description', 'focus_keyword', 'og_title', 'og_description', 'noindex'];
                 $wants_seo_field = false;
@@ -2814,24 +3059,26 @@ class Server {
                         $noindex = (bool) $args['noindex'];
                         if ($detected === 'yoast') {
                             update_post_meta($post_id, '_yoast_wpseo_meta-robots-noindex', $noindex ? '1' : '0');
+                            $updated['noindex'] = get_post_meta($post_id, '_yoast_wpseo_meta-robots-noindex', true) === '1';
                         } else {
-                            $robots = (array) get_post_meta($post_id, 'rank_math_robots', true);
-                            if (!is_array($robots)) $robots = [];
-                            $robots = array_filter($robots, fn($r) => $r !== 'noindex' && $r !== 'index');
+                            $robots = get_post_meta($post_id, 'rank_math_robots', true);
+                            $robots = is_array($robots) ? $robots : [];
+                            $robots = array_filter($robots, fn($r) => $r !== '' && $r !== 'noindex' && $r !== 'index');
                             $robots[] = $noindex ? 'noindex' : 'index';
-                            update_post_meta($post_id, 'rank_math_robots', array_values(array_unique($robots)));
+                            $robots = array_values(array_unique($robots));
+                            update_post_meta($post_id, 'rank_math_robots', $robots);
+                            $stored = get_post_meta($post_id, 'rank_math_robots', true);
+                            $updated['noindex'] = is_array($stored) && in_array('noindex', $stored, true);
                         }
-                        $updated['noindex'] = $noindex;
                     }
                 }
-                // Slug (post_name) handling — added 1.4.28 in response to GH
-                // issue #34. We route through wp_update_post() rather than a
-                // direct DB write so WordPress runs its slug-uniqueness logic
-                // (appends -2, -3, etc on collision) and fires the standard
-                // save_post hooks downstream tools (caches, search indexes,
-                // sitemap generators) listen on. The actually-saved slug is
-                // read back and returned so the caller knows whether
-                // WordPress modified the requested value.
+                // Slug (post_name) handling: we route through wp_update_post()
+                // rather than a direct DB write so WordPress runs its slug-
+                // uniqueness logic (appends -2, -3, etc on collision) and
+                // fires the standard save_post hooks downstream tools (caches,
+                // search indexes, sitemap generators) listen on. The actually-
+                // saved slug is read back and returned so the caller knows
+                // whether WordPress modified the requested value.
                 if (array_key_exists('slug', $args)) {
                     $requested_slug = sanitize_title((string) $args['slug']);
                     if ($requested_slug === '') {
@@ -2902,7 +3149,7 @@ class Server {
                 $post_id = self::resolve_post_id_arg($args);
                 if ($post_id <= 0) throw new \Exception('post_id (or id) is required.');
                 if (!get_post($post_id)) throw new \Exception('Post not found.');
-                // 1.4.26 — revisions can contain past versions of admin-owned
+                // revisions can contain past versions of admin-owned
                 // content; gate behind the parent post's read cap.
                 if (!current_user_can('read_post', $post_id)) {
                     throw new \Exception('You do not have permission to read revisions on this post.');
@@ -2963,6 +3210,9 @@ class Server {
                 if ( strpos( $name, 'acf_' ) === 0 ) {
                     return ACFIntegration::execute_tool( $name, $args );
                 }
+                if ( strpos( $name, 'raif_' ) === 0 ) {
+                    return RAIFIntegration::execute_tool( $name, $args );
+                }
                 throw new \Exception('Unknown tool: ' . esc_html($name));
         }
     }
@@ -2971,8 +3221,8 @@ class Server {
      * Build menu-item update args that preserve existing values for any field
      * not in $overrides. Without this read-merge-write pattern, callers passing
      * partial args to wp_update_nav_menu_item() silently zero title/url/parent
-     * on the existing item — the destructive bug reported in
-     * royalplugins/royal-mcp issue #14 (dmcaughtry-photo, 2026-05-12).
+     * on the existing item — a destructive class of bug where a well-intentioned
+     * partial update erases fields the caller never touched.
      *
      * Returns an array suitable for wp_update_nav_menu_item(), or WP_Error if
      * the item doesn't exist, the merge would still destroy a non-empty

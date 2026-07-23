@@ -1,0 +1,410 @@
+/**
+ * Royal MCP Chrome Pack styles.
+ *
+ * Custom top header + lightweight footer + Royal Tools page + Founders callout.
+ * Scoped to Royal MCP admin pages via body class (see Royal_MCP_Chrome::admin_body_class).
+ *
+ * Design tokens mirror Royal Plugins brand: gold #C9A227, charcoal #2C2C2C.
+ */
+
+/* --- Design tokens (scoped so we don't leak into WP admin globals) --- */
+.royal-mcp-chrome-scope {
+    --rmc-gold:         #C9A227;
+    --rmc-gold-light:   #D4AF37;
+    --rmc-gold-dark:    #B8960F;
+    --rmc-gold-subtle:  rgba(201, 162, 39, 0.08);
+    --rmc-cream:        #FAF8F5;
+    --rmc-white:        #ffffff;
+    --rmc-charcoal:     #2C2C2C;
+    --rmc-charcoal-light: #4A4A4A;
+    --rmc-charcoal-muted: #6B6B6B;
+    --rmc-border-light: rgba(44, 44, 44, 0.1);
+    --rmc-green:        #22c55e;
+    --rmc-wp-blue:      #2271b1;
+}
+
+/* ======================================================================
+   1. Custom top header — renders on every Royal MCP admin page
+   ====================================================================== */
+.royal-mcp-chrome-header {
+    background: var(--rmc-white);
+    border-bottom: 1px solid var(--rmc-border-light);
+    padding: 14px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 0 0 0 -20px;
+}
+.royal-mcp-chrome-header-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.royal-mcp-chrome-logo {
+    width: 32px;
+    height: 32px;
+    background: var(--rmc-gold);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--rmc-charcoal);
+    font-family: 'Cormorant Garamond', 'Times New Roman', serif;
+    font-weight: 700;
+    font-size: 17px;
+}
+.royal-mcp-chrome-wordmark {
+    font-family: 'Cormorant Garamond', 'Times New Roman', serif;
+    font-weight: 600;
+    font-size: 17px;
+    letter-spacing: 0.03em;
+    color: var(--rmc-charcoal);
+}
+.royal-mcp-chrome-header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.royal-mcp-chrome-header-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: var(--rmc-white);
+    border: 1px solid var(--rmc-border-light);
+    border-radius: 4px;
+    color: var(--rmc-charcoal-light);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.15s;
+}
+.royal-mcp-chrome-header-btn:hover,
+.royal-mcp-chrome-header-btn:focus {
+    border-color: var(--rmc-gold);
+    color: var(--rmc-gold-dark);
+    box-shadow: none;
+    outline: none;
+}
+.royal-mcp-chrome-header-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* ======================================================================
+   2. Lightweight footer (via admin_footer_text filter)
+   ====================================================================== */
+.royal-mcp-chrome-footer {
+    display: inline-flex;
+    gap: 14px;
+    align-items: center;
+    font-size: 12px;
+    color: var(--rmc-charcoal-muted);
+}
+.royal-mcp-chrome-footer a {
+    color: var(--rmc-charcoal-muted);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: color 0.15s;
+}
+.royal-mcp-chrome-footer a:hover,
+.royal-mcp-chrome-footer a:focus {
+    color: var(--rmc-gold-dark);
+    outline: none;
+}
+.royal-mcp-chrome-footer svg {
+    width: 13px;
+    height: 13px;
+    opacity: 0.65;
+}
+.royal-mcp-chrome-footer a:hover svg,
+.royal-mcp-chrome-footer a:focus svg {
+    opacity: 1;
+}
+.royal-mcp-chrome-footer-sep {
+    color: var(--rmc-border-light);
+}
+
+/* ======================================================================
+   3. Royal Tools page
+   ====================================================================== */
+.royal-mcp-tools-wrap {
+    max-width: 1180px;
+    padding: 28px 32px 40px;
+    background: transparent;
+}
+.royal-mcp-tools-title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 24px;
+}
+.royal-mcp-tools-title {
+    font-family: 'Cormorant Garamond', 'Times New Roman', serif;
+    font-weight: 600;
+    font-size: 30px;
+    color: var(--rmc-charcoal);
+    margin: 0;
+    letter-spacing: -0.01em;
+    padding: 0;
+}
+.royal-mcp-tools-subtitle {
+    color: var(--rmc-charcoal-muted);
+    font-size: 14px;
+    margin-top: 4px;
+}
+
+/* ======================================================================
+   4. Founders Bundle callout
+   ====================================================================== */
+.royal-mcp-founders {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 20px;
+    align-items: center;
+    padding: 20px 24px;
+    margin-bottom: 28px;
+    background: linear-gradient(135deg, #2C2C2C 0%, #1a1a1a 100%);
+    color: var(--rmc-white);
+    border-radius: 8px;
+    position: relative;
+}
+.royal-mcp-founders-crown {
+    width: 48px;
+    height: 48px;
+    background: var(--rmc-gold);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    color: var(--rmc-charcoal);
+}
+.royal-mcp-founders-body h3 {
+    font-family: 'Cormorant Garamond', 'Times New Roman', serif;
+    font-weight: 600;
+    font-size: 20px;
+    margin: 0 0 4px 0;
+    color: var(--rmc-white);
+}
+.royal-mcp-founders-body h3 .gold {
+    color: var(--rmc-gold);
+}
+.royal-mcp-founders-body p {
+    font-size: 13px;
+    opacity: 0.75;
+    margin: 0;
+    line-height: 1.55;
+    color: var(--rmc-white);
+}
+.royal-mcp-founders-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 22px;
+    background: var(--rmc-gold);
+    color: var(--rmc-charcoal);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 14px;
+    border-radius: 4px;
+    letter-spacing: 0.02em;
+    transition: all 0.2s;
+}
+.royal-mcp-founders-cta:hover,
+.royal-mcp-founders-cta:focus {
+    background: var(--rmc-gold-light);
+    transform: translateY(-1px);
+    color: var(--rmc-charcoal);
+    outline: none;
+    box-shadow: none;
+}
+.royal-mcp-founders-dismiss {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.4);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    padding: 4px 8px;
+    text-decoration: none;
+}
+.royal-mcp-founders-dismiss:hover,
+.royal-mcp-founders-dismiss:focus {
+    color: rgba(255, 255, 255, 0.8);
+    outline: none;
+}
+
+/* ======================================================================
+   Section head
+   ====================================================================== */
+.royal-mcp-tools-section-head {
+    margin-bottom: 16px;
+}
+.royal-mcp-tools-section-head h2 {
+    font-family: 'Cormorant Garamond', 'Times New Roman', serif;
+    font-weight: 600;
+    font-size: 20px;
+    color: var(--rmc-charcoal);
+    margin: 0 0 4px 0;
+    padding: 0;
+}
+.royal-mcp-tools-section-head p {
+    color: var(--rmc-charcoal-muted);
+    font-size: 13px;
+    margin: 0;
+}
+
+/* ======================================================================
+   5-card grid
+   ====================================================================== */
+.royal-mcp-tools-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 16px;
+    margin-bottom: 0;
+}
+.royal-mcp-tools-card {
+    background: var(--rmc-white);
+    border: 1px solid var(--rmc-border-light);
+    border-radius: 8px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    transition: box-shadow 0.15s, transform 0.15s;
+}
+.royal-mcp-tools-card:hover {
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.05);
+    transform: translateY(-1px);
+}
+.royal-mcp-tools-card--active,
+.royal-mcp-tools-card--here {
+    border-color: var(--rmc-green);
+    background: linear-gradient(135deg, #f0fdf4 0%, var(--rmc-white) 40%);
+}
+.royal-mcp-tools-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+.royal-mcp-tools-card-icon {
+    width: 36px;
+    height: 36px;
+    background: var(--rmc-gold-subtle);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+}
+.royal-mcp-tools-card-badge {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    background: rgba(34, 197, 94, 0.12);
+    color: #166534;
+    padding: 3px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+}
+.royal-mcp-tools-card-badge--free {
+    background: var(--rmc-gold-subtle);
+    color: var(--rmc-gold-dark);
+}
+.royal-mcp-tools-card h3 {
+    font-family: 'Cormorant Garamond', 'Times New Roman', serif;
+    font-weight: 600;
+    font-size: 17px;
+    color: var(--rmc-charcoal);
+    margin: 0 0 6px 0;
+    padding: 0;
+}
+.royal-mcp-tools-card p {
+    color: var(--rmc-charcoal-muted);
+    font-size: 12.5px;
+    line-height: 1.55;
+    margin: 0 0 16px 0;
+    flex-grow: 1;
+}
+.royal-mcp-tools-card-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: auto;
+}
+.royal-mcp-tools-btn-install,
+.royal-mcp-tools-btn-activate {
+    flex: 1;
+    text-align: center;
+    padding: 8px 12px;
+    background: var(--rmc-wp-blue);
+    color: var(--rmc-white);
+    text-decoration: none;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: 500;
+    transition: background 0.15s;
+}
+.royal-mcp-tools-btn-install:hover,
+.royal-mcp-tools-btn-install:focus,
+.royal-mcp-tools-btn-activate:hover,
+.royal-mcp-tools-btn-activate:focus {
+    background: #135e96;
+    color: var(--rmc-white);
+    outline: none;
+}
+.royal-mcp-tools-btn-learn {
+    padding: 8px 10px;
+    background: var(--rmc-white);
+    color: var(--rmc-charcoal-light);
+    border: 1px solid var(--rmc-border-light);
+    text-decoration: none;
+    border-radius: 3px;
+    font-size: 12px;
+    transition: all 0.15s;
+}
+.royal-mcp-tools-btn-learn:hover,
+.royal-mcp-tools-btn-learn:focus {
+    border-color: var(--rmc-charcoal-muted);
+    color: var(--rmc-charcoal);
+    outline: none;
+}
+.royal-mcp-tools-badge-active {
+    background: rgba(34, 197, 94, 0.15);
+    color: #166534;
+    padding: 8px 12px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: 500;
+    text-align: center;
+    flex: 1;
+}
+
+/* ======================================================================
+   Responsive
+   ====================================================================== */
+@media (max-width: 782px) {
+    .royal-mcp-chrome-header {
+        padding: 12px 16px;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .royal-mcp-tools-wrap {
+        padding: 20px 16px;
+    }
+    .royal-mcp-founders {
+        grid-template-columns: 1fr;
+        text-align: center;
+    }
+    .royal-mcp-founders-crown {
+        margin: 0 auto;
+    }
+}

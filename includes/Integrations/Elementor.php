@@ -93,6 +93,18 @@ class Elementor {
 				],
 			],
 			[
+				'name'        => 'elementor_get_widget_settings',
+				'description' => 'Read the full settings object for a single Elementor element (widget, container, section, or column) by its ID. Use after elementor_get_page_outline to inspect a specific element before proposing a modification. Returns element_type, widget_type (widgets only), depth in the tree, has_children flag, child_count, and the raw settings object. If the element is not found, returns found=false with the count of elements searched (helps diagnose wrong IDs). Requires read_post on the parent post_id.',
+				'inputSchema' => [
+					'type'       => 'object',
+					'properties' => [
+						'post_id'    => [ 'type' => 'integer', 'description' => 'The Elementor page/post to search within.' ],
+						'element_id' => [ 'type' => 'string',  'description' => 'The Elementor element ID (short hex string, e.g. "a1b2c3d"). Obtained from elementor_get_page_outline or via editing the element.' ],
+					],
+					'required'   => [ 'post_id', 'element_id' ],
+				],
+			],
+			[
 				'name'        => 'elementor_list_local_templates',
 				'description' => 'Enumerate saved templates from the Elementor Library (the elementor_library custom post type). Returns id, name, type (page/section/widget/popup/etc.), and date_modified for each. Filter by type if needed. Use this before elementor_import_template to discover available templates.',
 				'inputSchema' => [
@@ -181,6 +193,9 @@ class Elementor {
 
 			case 'elementor_get_page_outline':
 				return self::get_page_outline( $args );
+
+			case 'elementor_get_widget_settings':
+				return self::get_widget_settings( $args );
 
 			case 'elementor_list_local_templates':
 				return self::list_local_templates( $args );
@@ -578,6 +593,95 @@ class Elementor {
 			'template_type'  => get_post_meta( $post_id, '_elementor_template_type', true ) ?: null,
 			'outline'        => $outline,
 		];
+	}
+
+	/**
+	 * 1.4.37 Candidate 2 — read the full settings object for a single Elementor element.
+	 *
+	 * Read-only half of the widget CRUD trio; the write halves (update_widget /
+	 * delete_widget) remain deferred to post-WCUS pending assessment of what
+	 * Elementor's own MCP module ends up covering.
+	 */
+	private static function get_widget_settings( $args ) {
+		$post_id    = (int) ( $args['post_id'] ?? 0 );
+		$element_id = isset( $args['element_id'] ) ? (string) $args['element_id'] : '';
+
+		if ( $post_id <= 0 ) {
+			throw new \Exception( 'post_id is required.' );
+		}
+		if ( '' === $element_id ) {
+			throw new \Exception( 'element_id is required.' );
+		}
+		if ( ! current_user_can( 'read_post', $post_id ) ) {
+			throw new \Exception( 'read_post capability required.' );
+		}
+
+		$elementor_data = get_post_meta( $post_id, '_elementor_data', true );
+		if ( empty( $elementor_data ) ) {
+			throw new \Exception( 'Target post does not have Elementor data.' );
+		}
+		$tree = is_string( $elementor_data ) ? json_decode( $elementor_data, true ) : $elementor_data;
+		if ( ! is_array( $tree ) ) {
+			throw new \Exception( 'Could not parse _elementor_data as a JSON array.' );
+		}
+
+		$searched_count = 0;
+		$found = self::find_element_with_depth( $tree, $element_id, 0, $searched_count );
+
+		if ( null === $found ) {
+			return [
+				'post_id'        => $post_id,
+				'element_id'     => $element_id,
+				'found'          => false,
+				'searched_count' => $searched_count,
+			];
+		}
+
+		$el       = $found['element'];
+		$depth    = $found['depth'];
+		$el_type  = (string) ( $el['elType'] ?? 'unknown' );
+		$children = ( isset( $el['elements'] ) && is_array( $el['elements'] ) ) ? $el['elements'] : [];
+
+		return [
+			'post_id'      => $post_id,
+			'element_id'   => $element_id,
+			'found'        => true,
+			'element_type' => $el_type,
+			'widget_type'  => ( 'widget' === $el_type ) ? (string) ( $el['widgetType'] ?? '' ) : null,
+			'depth'        => $depth,
+			'has_children' => count( $children ) > 0,
+			'child_count'  => count( $children ),
+			'settings'     => isset( $el['settings'] ) ? $el['settings'] : new \stdClass(),
+		];
+	}
+
+	/**
+	 * DFS-search an Elementor element tree for a matching element ID.
+	 * Returns [ 'element' => array, 'depth' => int ] on hit, null on miss.
+	 * Counts every element inspected into &$searched_count for diagnostic
+	 * "wrong-ID" reporting on miss.
+	 *
+	 * Distinct from find_element_by_id (2-arg simple lookup used by
+	 * add_widget's parent-resolution path) — this one carries the extra
+	 * bookkeeping needed for the widget-settings diagnostic.
+	 */
+	private static function find_element_with_depth( $elements, $target_id, $depth = 0, &$searched_count = 0 ) {
+		foreach ( (array) $elements as $el ) {
+			if ( ! is_array( $el ) ) {
+				continue;
+			}
+			$searched_count++;
+			if ( isset( $el['id'] ) && (string) $el['id'] === $target_id ) {
+				return [ 'element' => $el, 'depth' => $depth ];
+			}
+			if ( isset( $el['elements'] ) && is_array( $el['elements'] ) && count( $el['elements'] ) > 0 ) {
+				$hit = self::find_element_with_depth( $el['elements'], $target_id, $depth + 1, $searched_count );
+				if ( null !== $hit ) {
+					return $hit;
+				}
+			}
+		}
+		return null;
 	}
 
 	/**
