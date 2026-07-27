@@ -40,6 +40,8 @@ class WooCommerce {
 						'category' => [ 'type' => 'string', 'description' => 'Category slug to filter by' ],
 						'search'   => [ 'type' => 'string', 'description' => 'Search term' ],
 						'type'     => [ 'type' => 'string', 'description' => 'Product type (simple, variable, grouped, external)' ],
+						'attribute'      => [ 'type' => 'string', 'description' => 'Global attribute taxonomy slug to filter by, e.g. pa_color (returned by wc_get_product_attributes)' ],
+						'attribute_term' => [ 'type' => 'string', 'description' => 'Term slug or term_id within the attribute to filter by, e.g. black-color (returned by wc_get_attribute_terms). Requires attribute to also be set.' ],
 					],
 				],
 			],
@@ -505,6 +507,22 @@ class WooCommerce {
 				if ( ! empty( $args['type'] ) ) {
 					$query_args['type'] = sanitize_text_field( $args['type'] );
 				}
+
+				if ( ! empty( $args['attribute'] ) && ! empty( $args['attribute_term'] ) ) {
+				    $taxonomy   = sanitize_text_field( $args['attribute'] );
+				    $term_value = sanitize_text_field( $args['attribute_term'] );
+				    if ( ! taxonomy_exists( $taxonomy ) ) {
+				        throw new \Exception( 'Unknown attribute taxonomy: ' . $taxonomy );
+				    }
+				    $query_args['tax_query'] = [
+				        [
+				            'taxonomy' => $taxonomy,
+				            'field'    => is_numeric( $term_value ) ? 'term_id' : 'slug',
+				            'terms'    => is_numeric( $term_value ) ? intval( $term_value ) : $term_value,
+				        ],
+				    ];
+				}
+			
 				$products = wc_get_products( $query_args );
 				return array_map( [ __CLASS__, 'format_product_summary' ], $products );
 
