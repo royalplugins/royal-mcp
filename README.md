@@ -7,7 +7,7 @@
 [![WordPress](https://img.shields.io/badge/WordPress-5.8+-21759B?style=flat-square&logo=wordpress)](https://wordpress.org/plugins/royal-mcp/)
 [![PHP](https://img.shields.io/badge/PHP-7.4+-777BB4?style=flat-square&logo=php)](https://www.php.net/)
 [![License](https://img.shields.io/badge/License-GPLv2-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-2.0.html)
-[![Version](https://img.shields.io/badge/Version-1.4.37-C9A227?style=flat-square)](https://wordpress.org/plugins/royal-mcp/)
+[![Version](https://img.shields.io/badge/Version-1.4.38-C9A227?style=flat-square)](https://wordpress.org/plugins/royal-mcp/)
 
 [Download on WordPress.org](https://wordpress.org/plugins/royal-mcp/) · [Documentation](https://royalplugins.com/support/royal-mcp/) · [Royal Plugins](https://royalplugins.com)
 
@@ -23,7 +23,8 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 |---|---|
 | **Auth** | API key (`X-Royal-MCP-API-Key`) **or** OAuth 2.1 with PKCE + Dynamic Client Registration (RFC 7591) |
 | **Transport** | MCP 2025-11-25 Streamable HTTP (single `/mcp` endpoint, POST/GET/DELETE) |
-| **Tool count** | Up to 129 (69 WordPress core + 60 conditional plugin integrations) |
+| **Tool count** | Up to 144 (73 WordPress core + 71 conditional plugin integrations) |
+| **Abilities API** | WP 6.9+ — every tool also registers as a WordPress ability, reachable via WP core REST at `/wp-json/wp-abilities/v1/abilities/{name}/run` and via the WordPress MCP Adapter's named `royal-mcp-server` |
 | **Rate limit** | 60 req/min per IP (configurable) |
 | **Session model** | Sliding 24h TTL with refresh-on-access |
 | **Activity log** | Every tool call logged (tool name + arg keys; argument values are never recorded) |
@@ -33,7 +34,7 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 
 ## Capabilities
 
-### WordPress core (69 tools, always available)
+### WordPress core (73 tools, always available)
 
 - **Content** — Posts, pages, custom post types (full CRUD + revisions + featured images)
 - **Taxonomies** — Categories, tags, custom taxonomies, term meta, post-term linking
@@ -45,21 +46,34 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 - **Site** — Permalink structure, options (allowlisted), site info
 - **Search** — Cross-content search by query
 - **SEO** — Yoast / Rank Math / AIOSEO meta read/write where the plugin is active
+- **Diagnostics** — Site status (WP/PHP/MySQL/plugins/themes/cron in one call), PHP error-log tail, WP cron schedule, and MCP `royal_mcp_connection_health` (returns route, auth method, session ID, plugin version, and active page-builder versions for Divi + Elementor + Gutenberg)
 
-### Plugin integrations (60 tools, conditional)
+### Plugin integrations (71 tools, conditional)
 
 Auto-register only when the integrated plugin is active.
 
 | Plugin | Tools | What's covered |
 |---|---|---|
 | WooCommerce | 26 | Products, variations, attributes, coupons, orders, customers, store stats |
+| Elementor | 8 | Clone pages, replace text, swap images, get outline, read single element, list templates, import templates, add widget |
 | GuardPress | 7 | Security score, failed logins, blocked IPs, vulnerability scans, audit log |
+| Royal AI Firewall | 6 | Dashboard stats, recent bot hits, per-bot policies (allow / block / challenge), daily rollups, one-call emergency lockdown |
 | SiteVault | 6 | Trigger backups, monitor progress, list schedules |
-| Elementor | 7 | Clone pages, replace text, swap images, get outline, list templates, import templates, add widget |
+| **Redirection** (new in 1.4.38) | **4** | **List redirects with group + URL-substring filters, create + update redirects (301 / 302 / 307 / regex / groups), list redirect groups** |
+| Advanced Custom Fields | 4 | Read/write ACF fields with each field's Return Format respected (hydrated post objects, parsed repeater rows, image arrays); enumerate field groups for AI-driven discovery |
 | Royal Ledger | 4 | Software costs, renewal dates, license keys (values never exposed) |
-| **Advanced Custom Fields** (new in 1.4.24) | **4** | **Read/write ACF fields with each field's Return Format respected (hydrated post objects, parsed repeater rows, image arrays); enumerate field groups for AI-driven discovery** |
 | Royal Links | 3 | Branded short links, click stats |
 | ForgeCache | 3 | Cache stats, clear cache, purge URL |
+
+## WordPress Abilities API bridge (WP 6.9+)
+
+WordPress 6.9 shipped the [Abilities API](https://developer.wordpress.org/plugins/abilities-api/) — a primitive that lets plugins register typed capabilities AI agents can call. As of 1.4.38, every Royal MCP tool also registers as a WordPress ability, giving you three ways to reach the same handlers:
+
+1. **Native** — Royal MCP's `/wp-json/royal-mcp/v1/mcp` Streamable HTTP endpoint (unchanged, always available).
+2. **WP MCP Adapter** — if the [`wordpress/mcp-adapter`](https://github.com/WordPress/mcp-adapter) package is installed, Royal MCP registers a named `royal-mcp-server` on the `mcp_adapter_init` hook alongside adapter's default server.
+3. **WP core REST** — direct ability invocation at `/wp-json/wp-abilities/v1/abilities/{name}/run` for callers that prefer the core WP endpoint.
+
+Same handlers, three transports, one set of per-tool capability gates. Bridge can be disabled with the `royal_mcp_abilities_registration_enabled` option (default: on).
 
 ## What we don't do
 
@@ -87,6 +101,16 @@ Easiest path — no config file edits, no API key in your client.
 1. In Claude.ai → **Settings → Connectors → Add Custom Connector**.
 2. URL: `https://yoursite.com/wp-json/royal-mcp/v1/mcp`
 3. Approve the OAuth consent screen when prompted. Claude.ai handles dynamic client registration + PKCE flow against your site.
+
+### Claude Desktop (.mcpb one-click bundle — new in 1.4.38)
+
+Easiest Claude Desktop path — no `mcp-remote`, no npx, no config-file editing.
+
+1. Download `royal-mcp-1.4.38.mcpb` from the [latest GitHub release](https://github.com/royalplugins/royal-mcp/releases/latest).
+2. Double-click the `.mcpb` file — Claude Desktop opens the install prompt.
+3. Enter your site URL + API key when prompted. Connection is live.
+
+The bundle ships a zero-dependency stdio-to-HTTPS bridge in Node ≥18, which Claude Desktop already includes. See [Claude Desktop MCP Bundles](https://modelcontextprotocol.io/) for the .mcpb spec.
 
 ### Claude Desktop (OAuth via mcp-remote)
 

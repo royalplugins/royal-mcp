@@ -35,11 +35,13 @@ class WooCommerce {
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
-						'per_page' => [ 'type' => 'integer', 'description' => 'Number of products (max 100)' ],
-						'status'   => [ 'type' => 'string', 'description' => 'Product status (publish, draft, etc)' ],
-						'category' => [ 'type' => 'string', 'description' => 'Category slug to filter by' ],
-						'search'   => [ 'type' => 'string', 'description' => 'Search term' ],
-						'type'     => [ 'type' => 'string', 'description' => 'Product type (simple, variable, grouped, external)' ],
+						'per_page'       => [ 'type' => 'integer', 'description' => 'Number of products (max 100)' ],
+						'status'         => [ 'type' => 'string', 'description' => 'Product status (publish, draft, etc)' ],
+						'category'       => [ 'type' => 'string', 'description' => 'Category slug to filter by' ],
+						'search'         => [ 'type' => 'string', 'description' => 'Search term' ],
+						'type'           => [ 'type' => 'string', 'description' => 'Product type (simple, variable, grouped, external)' ],
+						'attribute'      => [ 'type' => 'string', 'description' => 'Global attribute taxonomy slug (e.g. pa_color from wc_get_product_attributes). Requires attribute_term.' ],
+						'attribute_term' => [ 'type' => 'string', 'description' => 'Term slug or term_id within the attribute (e.g. black-color from wc_get_attribute_terms). Requires attribute.' ],
 					],
 				],
 			],
@@ -476,17 +478,19 @@ class WooCommerce {
 	 * @throws \Exception If tool fails.
 	 */
 	public static function execute_tool( $name, $args ) {
-		if ( ! self::is_available() ) {
-			throw new \Exception( 'WooCommerce is not active' );
-		}
-
-		// every WC tool gates behind manage_woocommerce. This is the
-		// umbrella cap WC's own admin screens require: admins + Shop Manager
-		// role have it; Customer, Subscriber, Contributor, and Editor do NOT.
-		// Per-action additions (publish_products, delete_others_shop_orders,
-		// etc.) layer on top below where the action is destructive.
+		// Cap check runs BEFORE is_available for anti-fingerprint: unprivileged callers
+		// get "no permission" not "WooCommerce is not active", so plugin presence is not
+		// leaked to callers who couldn't use the tool anyway. Every WC tool gates behind
+		// manage_woocommerce (the umbrella cap WC's own admin screens require: admins +
+		// Shop Manager role have it; Customer, Subscriber, Contributor, and Editor do
+		// NOT). Per-action additions (publish_products, delete_others_shop_orders, etc.)
+		// layer on top below where the action is destructive.
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
 			throw new \Exception( 'You do not have permission to use WooCommerce tools.' );
+		}
+
+		if ( ! self::is_available() ) {
+			throw new \Exception( 'WooCommerce is not active' );
 		}
 
 		switch ( $name ) {
@@ -504,6 +508,25 @@ class WooCommerce {
 				}
 				if ( ! empty( $args['type'] ) ) {
 					$query_args['type'] = sanitize_text_field( $args['type'] );
+				}
+				$has_attr = ! empty( $args['attribute'] );
+				$has_term = ! empty( $args['attribute_term'] );
+				if ( $has_attr xor $has_term ) {
+					throw new \Exception( 'attribute and attribute_term must be provided together.' );
+				}
+				if ( $has_attr && $has_term ) {
+					$taxonomy = sanitize_text_field( $args['attribute'] );
+					$term     = sanitize_text_field( $args['attribute_term'] );
+					if ( ! taxonomy_exists( $taxonomy ) ) {
+						throw new \Exception( 'Unknown attribute taxonomy: ' . $taxonomy );
+					}
+					$query_args['tax_query'] = [
+						[
+							'taxonomy' => $taxonomy,
+							'field'    => is_numeric( $term ) ? 'term_id' : 'slug',
+							'terms'    => is_numeric( $term ) ? intval( $term ) : $term,
+						],
+					];
 				}
 				$products = wc_get_products( $query_args );
 				return array_map( [ __CLASS__, 'format_product_summary' ], $products );

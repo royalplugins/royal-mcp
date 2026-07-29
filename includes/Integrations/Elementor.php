@@ -177,6 +177,15 @@ class Elementor {
 	 * @throws \Exception If tool fails.
 	 */
 	public static function execute_tool( $name, $args ) {
+		// Umbrella cap check runs BEFORE is_available for anti-fingerprint: unprivileged
+		// callers get "no permission" not "Elementor is not active", so plugin presence
+		// is not leaked to callers who couldn't use any tool anyway. Every Elementor tool
+		// requires at least edit_posts (per-tool cap checks below tighten further for
+		// object-level ops like read_post / edit_post on a specific ID).
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			throw new \Exception( 'You do not have permission to use Elementor tools.' );
+		}
+
 		if ( ! self::is_available() ) {
 			throw new \Exception( 'Elementor is not active' );
 		}
@@ -819,7 +828,7 @@ class Elementor {
 			$elements = $decoded;
 		}
 
-		// Regenerate IDs to avoid collisions if the template was exported from the same site.
+		// Regenerate element IDs so re-importing on the origin site doesn't collide with existing IDs.
 		$elements = self::regenerate_element_ids( $elements );
 
 		// Create the template post in the elementor_library CPT.

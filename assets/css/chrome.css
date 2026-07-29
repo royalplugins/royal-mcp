@@ -241,6 +241,95 @@
 }
 
 /* ======================================================================
+   4b. Royal MCP Pro Founding Members card (P5a)
+   Sibling of Founders Bundle callout — same visual language, different
+   content. Sits directly below it on the Royal Tools page.
+   ====================================================================== */
+.royal-mcp-founding {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 20px;
+    align-items: center;
+    padding: 20px 24px;
+    margin-bottom: 28px;
+    background: linear-gradient(135deg, #1a1438 0%, #2c1e5a 60%, #3a1f6b 100%);
+    color: var(--rmc-white);
+    border-radius: 8px;
+    position: relative;
+}
+.royal-mcp-founding-icon {
+    width: 48px;
+    height: 48px;
+    background: var(--rmc-gold);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    color: var(--rmc-charcoal);
+}
+.royal-mcp-founding-body h3 {
+    font-family: 'Cormorant Garamond', 'Times New Roman', serif;
+    font-weight: 600;
+    font-size: 20px;
+    margin: 0 0 4px 0;
+    color: var(--rmc-white);
+}
+.royal-mcp-founding-body p {
+    font-size: 13px;
+    opacity: 0.82;
+    margin: 0;
+    line-height: 1.55;
+    color: var(--rmc-white);
+}
+.royal-mcp-founding-body p .gold {
+    color: var(--rmc-gold);
+    opacity: 1;
+    font-weight: 600;
+}
+.royal-mcp-founding-body p .regular {
+    color: rgba(255, 255, 255, 0.55);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+}
+.royal-mcp-founding-scarcity {
+    display: inline-block;
+    margin-top: 8px !important;
+    padding: 3px 10px;
+    background: rgba(240, 200, 58, 0.15);
+    border: 1px solid rgba(240, 200, 58, 0.35);
+    border-radius: 100px;
+    color: var(--rmc-gold) !important;
+    font-size: 11px !important;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    opacity: 1 !important;
+}
+.royal-mcp-founding-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 22px;
+    background: var(--rmc-gold);
+    color: var(--rmc-charcoal);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 14px;
+    border-radius: 4px;
+    letter-spacing: 0.02em;
+    transition: all 0.2s;
+}
+.royal-mcp-founding-cta:hover,
+.royal-mcp-founding-cta:focus {
+    background: var(--rmc-gold-light);
+    transform: translateY(-1px);
+    color: var(--rmc-charcoal);
+    outline: none;
+    box-shadow: none;
+}
+
+/* ======================================================================
    Section head
    ====================================================================== */
 .royal-mcp-tools-section-head {

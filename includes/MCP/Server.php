@@ -10,6 +10,7 @@ use Royal_MCP\Integrations\RoyalLinks as RLinksIntegration;
 use Royal_MCP\Integrations\Elementor as ElementorIntegration;
 use Royal_MCP\Integrations\ACF as ACFIntegration;
 use Royal_MCP\Integrations\RoyalAIFirewall as RAIFIntegration;
+use Royal_MCP\Integrations\Redirection as RedirectionIntegration;
 use Royal_MCP\Integrations\Elementor_Coexistence;
 
 if (!defined('ABSPATH')) {
@@ -17,12 +18,12 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * MCP Server - Streamable HTTP Transport (2025-11-25 spec)
+ * MCP Server — Streamable HTTP Transport.
  *
  * Single endpoint that accepts POST for all JSON-RPC messages
  * and returns either JSON or SSE stream based on Accept header.
  *
- * This replaces the deprecated HTTP+SSE transport (2024-11-05).
+ * This replaces the deprecated HTTP+SSE transport.
  */
 class Server {
 
@@ -175,7 +176,7 @@ class Server {
         }
 
         // Neither provided — return 401 with WWW-Authenticate for OAuth discovery.
-        // Per MCP spec (2025-06-18 / RFC 9728), include resource_metadata URL.
+        // Per the MCP spec + RFC 9728, include resource_metadata URL.
         // Cache-Control: no-store is critical here. Without it, this 401
         // gets cached at edge (URL-keyed) and served to subsequent
         // authenticated requests, breaking every MCP client that hits
@@ -695,6 +696,7 @@ class Server {
         $tools = array_merge( $tools, ElementorIntegration::get_tools() );
         $tools = array_merge( $tools, ACFIntegration::get_tools() );
         $tools = array_merge( $tools, RAIFIntegration::get_tools() );
+        $tools = array_merge( $tools, RedirectionIntegration::get_tools() );
 
         // 1.4.37 Candidate 5 — when Elementor's own MCP module is present,
         // prefix our elementor_* tool descriptions with a routing hint so
@@ -1361,6 +1363,23 @@ class Server {
             }
         }
         return false;
+    }
+
+    /**
+     * Public accessor for the tool registry. Used by the Abilities API Registrar
+     * to walk the full tool list without duplicating the tool definitions.
+     */
+    public function get_all_tools(): array {
+        return $this->get_tools();
+    }
+
+    /**
+     * Public entry point for tool invocation. Used by the Abilities API Registrar
+     * to route ability calls through the same handler stack + per-tool capability
+     * gates as MCP + REST calls.
+     */
+    public function invoke( string $name, array $args ) {
+        return $this->execute_tool( $name, $args );
     }
 
     private function execute_tool($name, $args) {
@@ -2400,6 +2419,15 @@ class Server {
             // no cap check needed — reaching execute_tool already required valid auth.
             case 'royal_mcp_connection_health':
                 global $wp_version;
+                // builders block lets an agent plan multi-step edits without probing.
+                // Knowing "site is on Divi 5" or "Elementor 4.0.8" at connection time
+                // means the agent can pick the right JSON block / widget schema path
+                // up front instead of running a discovery call before every write.
+                $builders = [
+                    'divi_version'      => defined('ET_BUILDER_VERSION') ? (string) constant('ET_BUILDER_VERSION') : null,
+                    'elementor_version' => defined('ELEMENTOR_VERSION') ? (string) constant('ELEMENTOR_VERSION') : null,
+                    'gutenberg_version' => defined('GUTENBERG_VERSION') ? (string) constant('GUTENBERG_VERSION') : (string) get_bloginfo('version'),
+                ];
                 return [
                     'route'          => rest_url('royal-mcp/v1/mcp'),
                     'auth_method'    => $this->request_auth_method ?? 'unauthenticated',
@@ -2410,6 +2438,7 @@ class Server {
                     'server_version' => defined('ROYAL_MCP_VERSION') ? ROYAL_MCP_VERSION : 'unknown',
                     'wp_version'     => isset($wp_version) ? (string) $wp_version : (string) get_bloginfo('version'),
                     'php_version'    => PHP_VERSION,
+                    'builders'       => $builders,
                 ];
 
             case 'wp_get_site_status':
@@ -2646,7 +2675,10 @@ class Server {
                 if (!current_user_can('manage_options')) {
                     throw new \Exception('You do not have permission to read site options.');
                 }
-                $allowed = ['blogname', 'blogdescription', 'siteurl', 'home', 'admin_email', 'posts_per_page', 'date_format', 'time_format', 'timezone_string'];
+                // Site Kit GA4 config (property ID, measurement ID, web data stream ID) — no
+                // secrets; redact_sensitive_keys() below runs on the return in case Site Kit
+                // ever adds one. Site Kit has ~4M installs; this is a common read-tier lookup.
+                $allowed = ['blogname', 'blogdescription', 'siteurl', 'home', 'admin_email', 'posts_per_page', 'date_format', 'time_format', 'timezone_string', 'googlesitekit_analytics-4_settings'];
                 $name = sanitize_text_field($args['name']);
                 if (!in_array($name, $allowed)) throw new \Exception('Option not allowed: ' . esc_html($name));
                 return ['name' => $name, 'value' => $this->redact_sensitive_keys(get_option($name))];
@@ -3212,6 +3244,9 @@ class Server {
                 }
                 if ( strpos( $name, 'raif_' ) === 0 ) {
                     return RAIFIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'redirection_' ) === 0 ) {
+                    return RedirectionIntegration::execute_tool( $name, $args );
                 }
                 throw new \Exception('Unknown tool: ' . esc_html($name));
         }
