@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & Gemini
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.4.37
+ * Version: 1.4.38
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ROYAL_MCP_VERSION', '1.4.37');
+define('ROYAL_MCP_VERSION', '1.4.38');
 define('ROYAL_MCP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ROYAL_MCP_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('ROYAL_MCP_PLUGIN_FILE', __FILE__);
@@ -104,15 +104,35 @@ class Royal_MCP_Plugin {
         // Royal MCP admin pages only — never touches other WP admin.
         require_once ROYAL_MCP_PLUGIN_DIR . 'includes/chrome/class-royal-mcp-chrome.php';
         \Royal_MCP\Chrome\Royal_MCP_Chrome::get_instance();
+
+        // WordPress Abilities API registration (WP 6.9+). function_exists() guard makes this a
+        // silent no-op on older WP. The option flag lets an admin flip the feature off in one
+        // call for rollback without a plugin update.
+        //
+        // WP core exposes two separate hooks: wp_abilities_api_categories_init runs first
+        // (categories registry init), wp_abilities_api_init runs after (ability registry init,
+        // by which point categories must already exist). Registering an ability against a
+        // non-registered category throws.
+        if ( function_exists( 'wp_register_ability_category' ) && (bool) get_option( 'royal_mcp_abilities_registration_enabled', true ) ) {
+            add_action( 'wp_abilities_api_categories_init', array( \Royal_MCP\Abilities\Categories::class, 'register' ) );
+            add_action( 'wp_abilities_api_init', array( \Royal_MCP\Abilities\Registrar::class, 'register' ) );
+
+            // MCP Adapter server registration (Option C — own named server, explicit ability
+            // list, our abilities do NOT auto-enroll on the adapter's default server). Guarded
+            // on adapter presence; silent no-op when MCP Adapter isn't installed.
+            if ( class_exists( '\\WP\\MCP\\Core\\McpAdapter' ) ) {
+                add_action( 'mcp_adapter_init', array( \Royal_MCP\Abilities\MCP_Adapter_Server::class, 'register' ) );
+            }
+        }
     }
 
     /**
      * Force no-store cache headers on every response under royal-mcp/* namespace.
      *
      * Hooked late on rest_post_dispatch so it overrides any cache headers a
-     * route callback may have set. Audited on 2026-05-09 — required to prevent
-     * Cloudflare/host-level caches from URL-keying responses and serving them
-     * back to subsequent requests with different auth state.
+     * route callback may have set. Prevents edge/host caches from URL-keying
+     * responses and serving them back to subsequent requests with different
+     * auth state.
      *
      * @param \WP_REST_Response $response The dispatch result.
      * @param \WP_REST_Server   $server   The REST server instance.
@@ -383,7 +403,7 @@ class Royal_MCP_Plugin {
     public function register_mcp_endpoint() {
         $server = new Royal_MCP\MCP\Server();
 
-        // Streamable HTTP endpoint (2025-11-25 spec)
+        // Streamable HTTP endpoint.
         // Single endpoint for all MCP communication - no SSE connection needed
         // MCP protocol requires public REST endpoints — auth enforced inside
         // Server::validate_auth() on every request (API key or Bearer token).

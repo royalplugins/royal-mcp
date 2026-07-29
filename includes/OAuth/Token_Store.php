@@ -132,7 +132,7 @@ class Token_Store {
     }
 
     /* ------------------------------------------------------------------
-     *  Authorization codes  (DB-backed since 1.4.17 — see create_tables comment)
+     *  Authorization codes  (DB-backed — see create_tables comment)
      * ----------------------------------------------------------------*/
 
     /**
@@ -356,7 +356,7 @@ class Token_Store {
         $clients    = (int) $wpdb->query( "DELETE FROM `{$clients_table}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
         $auth_codes = (int) $wpdb->query( "DELETE FROM `{$auth_codes_table}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 
-        // Belt-and-suspenders: clear any legacy transients from <1.4.17 installs that upgraded mid-flow. New auth codes since 1.4.17 are DB-backed, but a pre-upgrade in-flight transient could still exist on the first run.
+        // Belt-and-suspenders: clear any legacy in-flight authcode transients from earlier storage backends.
         $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_authcode_%' OR option_name LIKE '_transient_timeout_royal_mcp_authcode_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 
         // Also clear any manually-configured static OAuth client_id / client_secret so the

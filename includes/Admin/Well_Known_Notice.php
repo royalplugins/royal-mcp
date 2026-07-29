@@ -35,7 +35,7 @@ class Well_Known_Notice {
         // changing permalink structure changes whether OAuth
         // discovery routes work at all (plain permalinks skip our rewrites).
         // Drop cached classification so the notice reflects the new state
-        // immediately after the customer flips Settings → Permalinks.
+        // immediately after an admin changes Settings → Permalinks.
         add_action( 'update_option_permalink_structure', [ $this, 'invalidate_check' ] );
     }
 
@@ -201,9 +201,9 @@ class Well_Known_Notice {
             // Body-is-HTML detection — a membership plugin or theme template intercepted
             // the request after rewrite resolution and served its own HTML (e.g. a membership plugin
             // login page, MemberPress access-denied template). Discovery clients that
-            // strictly require JSON metadata fail silently here. See autofit-bernau.de
-            // 2026-05-21. Anchor checks at position 0 so a valid JSON body containing
-            // `<html>` as a string value doesn't false-positive.
+            // strictly require JSON metadata fail silently here. Anchor checks at
+            // position 0 so a valid JSON body containing `<html>` as a string value
+            // doesn't false-positive.
             $body_head = strtolower( ltrim( $body ) );
             $html_prefixes = [ '<!doctype html', '<html', '<head', '<?xml' ];
             foreach ( $html_prefixes as $prefix ) {
@@ -219,7 +219,7 @@ class Well_Known_Notice {
             // runs and returns HTTP 200 with a JSON denial body containing a
             // "message" key. Distinct from 'mismatch' (which is a semantic-issuer
             // problem) — the host is intercepting pre-PHP so no plugin setting
-            // can fix it; the customer must ask their host to allowlist the paths.
+            // can fix it; site admins must ask their host to allowlist the paths.
             // Broad prefix match on "Imunify360" (case-insensitive) — the
             // denial-message copy has drifted across versions but always
             // contains the product name.
@@ -301,7 +301,7 @@ class Well_Known_Notice {
      * /authorize, /token. OAuth clients don't follow 301 on POST, so the request
      * dies pre-PHP. claude.ai web hardcodes the bare path /register and ignores
      * registration_endpoint in our discovery doc, so we can't route around this
-     * via metadata. Detection lets the customer see the host-level config issue
+     * via metadata. Detection lets admins see the host-level config issue
      * without piecing it together from a "couldn't reach the MCP server" error.
      *
      * Returns true when /register returns a 301 Location pointing at /register/.

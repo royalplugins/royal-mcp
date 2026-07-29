@@ -29,6 +29,18 @@ class Royal_MCP_Chrome {
     const CSS_HANDLE                   = 'royal-mcp-chrome';
     const BODY_CLASS                   = 'royal-mcp-chrome-scope';
 
+    // Royal MCP Pro launch — hardcoded date + waitlist URL. Date-aware content
+    // in the Chrome card + admin notice + submenu label switches automatically
+    // on/after this date. If the launch date changes, update this constant and
+    // all three surfaces flip in one commit.
+    const PRO_LAUNCH_DATE              = '2026-08-25';
+    const PRO_WAITLIST_URL_BASE        = 'https://royalplugins.com/royal-mcp-pro/founding-members/';
+    const PRO_POST_LAUNCH_URL_BASE     = 'https://royalplugins.com/royal-mcp-pro/';
+    const FM_NOTICE_DISMISS_META       = 'royal_mcp_founding_members_notice_dismissed';
+    const PRO_LAUNCH_NOTICE_DISMISS_META = 'royal_mcp_pro_launch_notice_dismissed';
+    const FM_NOTICE_DISMISS_ACTION     = 'royal_mcp_dismiss_founding_members_notice';
+    const FM_MENU_SLUG                 = 'royal-mcp-pro-external';
+
     /** @var self|null */
     private static $instance = null;
 
@@ -41,12 +53,16 @@ class Royal_MCP_Chrome {
 
     private function __construct() {
         add_action( 'admin_menu',            [ $this, 'register_royal_tools_menu' ], 20 );
+        add_action( 'admin_menu',            [ $this, 'register_founding_members_menu' ], 21 );
         add_action( 'in_admin_header',       [ $this, 'render_top_header' ] );
         add_filter( 'admin_footer_text',     [ $this, 'filter_admin_footer_text' ], 999 );
         add_filter( 'update_footer',         [ $this, 'filter_update_footer' ], 999 );
         add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
         add_filter( 'admin_body_class',      [ $this, 'filter_admin_body_class' ] );
         add_action( 'admin_post_' . self::FOUNDERS_DISMISS_ACTION, [ $this, 'handle_founders_dismiss' ] );
+        add_action( 'admin_post_' . self::FM_NOTICE_DISMISS_ACTION, [ $this, 'handle_founding_members_dismiss' ] );
+        add_action( 'admin_notices',         [ $this, 'render_founding_members_notice' ] );
+        add_action( 'admin_enqueue_scripts', [ $this, 'inject_founding_members_menu_target_blank' ], 100 );
     }
 
     /* ==================================================================
@@ -206,6 +222,8 @@ class Royal_MCP_Chrome {
                 <?php $this->render_founders_callout(); ?>
             <?php endif; ?>
 
+            <?php $this->render_founding_members_card(); ?>
+
             <div class="royal-mcp-tools-section-head">
                 <h2><?php esc_html_e( 'Free companion plugins', 'royal-mcp' ); ?></h2>
                 <p><?php esc_html_e( 'All available on WordPress.org. Every feature ships free.', 'royal-mcp' ); ?></p>
@@ -275,6 +293,236 @@ class Royal_MCP_Chrome {
         update_user_meta( get_current_user_id(), self::FOUNDERS_DISMISS_USER_META, 1 );
         wp_safe_redirect( wp_get_referer() ?: admin_url( 'admin.php?page=' . self::ROYAL_TOOLS_MENU_SLUG ) );
         exit;
+    }
+
+    /* ==================================================================
+     *  5. Royal MCP Pro Founding Members — Chrome Pack card (P5a)
+     * ================================================================ */
+
+    /**
+     * True on/after the hardcoded Pro launch date.
+     */
+    private function is_pro_launched(): bool {
+        // Use site timezone rather than server for admin-facing UI consistency.
+        $now       = current_datetime()->format( 'Y-m-d' );
+        return $now >= self::PRO_LAUNCH_DATE;
+    }
+
+    /**
+     * Compose the UTM-tagged URL for a given surface (chrome_pack, admin_notice,
+     * admin_menu). Switches base URL depending on pre-/post-launch.
+     *
+     * @param array  $utm_parts    {source: string, content: string}
+     * @param string $utm_campaign campaign identifier
+     */
+    private function pro_url_for( array $utm_parts, string $utm_campaign ): string {
+        $base = $this->is_pro_launched() ? self::PRO_POST_LAUNCH_URL_BASE : self::PRO_WAITLIST_URL_BASE;
+        return add_query_arg(
+            array(
+                'utm_source'   => $utm_parts['source'] ?? 'royal_mcp_free',
+                'utm_medium'   => 'free_plugin',
+                'utm_content'  => $utm_parts['content'] ?? 'founding_members',
+                'utm_campaign' => $utm_campaign,
+            ),
+            $base
+        );
+    }
+
+    /**
+     * Render the Founding Members Pro promotional card on the Royal Tools page.
+     * Content switches automatically pre-/post-launch based on PRO_LAUNCH_DATE.
+     */
+    private function render_founding_members_card(): void {
+        $post_launch = $this->is_pro_launched();
+        $url_args    = array(
+            'source'  => 'chrome_pack',
+            'content' => $post_launch ? 'post_launch' : 'founding_members',
+        );
+        $campaign    = $post_launch ? '1438_postlaunch' : 'waitlist_1438';
+        $cta_url     = $this->pro_url_for( $url_args, $campaign );
+        ?>
+        <div class="royal-mcp-founding">
+            <div class="royal-mcp-founding-icon" aria-hidden="true">&#127873;</div>
+            <div class="royal-mcp-founding-body">
+                <h3>
+                    <?php if ( $post_launch ) : ?>
+                        <?php esc_html_e( 'Royal MCP Pro is live', 'royal-mcp' ); ?>
+                    <?php else : ?>
+                        <?php esc_html_e( 'Royal MCP Pro Founding Members', 'royal-mcp' ); ?>
+                    <?php endif; ?>
+                </h3>
+                <p>
+                    <?php if ( $post_launch ) : ?>
+                        <?php esc_html_e( 'Upgrade for 25-30 agency-scale AI tools — Divi Pro depth, Elementor Pro depth, WooCommerce bulk ops, undo tokens, universal audit log, and cross-plugin workflow composers.', 'royal-mcp' ); ?>
+                    <?php else : ?>
+                        <?php
+                        printf(
+                            /* translators: %1$s: highlighted "$79/yr" text, %2$s: highlighted regular price */
+                            esc_html__( 'Royal MCP Pro launches Aug 25! Agency-scale tools for AI workflows. First 100 waitlist members lock %1$s FOR LIFE (regular price %2$s).', 'royal-mcp' ),
+                            '<span class="gold">' . esc_html__( '$79/yr', 'royal-mcp' ) . '</span>',
+                            '<span class="regular">' . esc_html__( '$149/yr', 'royal-mcp' ) . '</span>'
+                        );
+                        ?>
+                    <?php endif; ?>
+                </p>
+                <?php if ( ! $post_launch ) : ?>
+                    <p class="royal-mcp-founding-scarcity"><?php esc_html_e( '100 spots only', 'royal-mcp' ); ?></p>
+                <?php endif; ?>
+            </div>
+            <a href="<?php echo esc_url( $cta_url ); ?>" target="_blank" rel="noopener noreferrer" class="royal-mcp-founding-cta">
+                <?php if ( $post_launch ) : ?>
+                    <?php esc_html_e( 'See Royal MCP Pro &rarr;', 'royal-mcp' ); ?>
+                <?php else : ?>
+                    <?php esc_html_e( 'Reserve My Spot &rarr;', 'royal-mcp' ); ?>
+                <?php endif; ?>
+            </a>
+        </div>
+        <?php
+    }
+
+    /* ==================================================================
+     *  6. Founding Members admin notice (P5b)
+     * ================================================================ */
+
+    /**
+     * One-time admin notice pointing admins to the Pro waitlist. Fires ONCE per
+     * user (dismissed = never returns). Pre-/post-launch content differs and
+     * uses separate dismiss keys so a user who dismissed the pre-launch notice
+     * still sees the post-launch one when Pro ships.
+     */
+    public function render_founding_members_notice(): void {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            return;
+        }
+        $post_launch  = $this->is_pro_launched();
+        $dismiss_meta = $post_launch ? self::PRO_LAUNCH_NOTICE_DISMISS_META : self::FM_NOTICE_DISMISS_META;
+        if ( get_user_meta( get_current_user_id(), $dismiss_meta, true ) ) {
+            return;
+        }
+
+        $url_args    = array(
+            'source'  => 'admin_notice',
+            'content' => $post_launch ? 'post_launch' : 'founding_members',
+        );
+        $campaign    = $post_launch ? '1438_postlaunch_notice' : 'waitlist_1438_notice';
+        $cta_url     = $this->pro_url_for( $url_args, $campaign );
+        $dismiss_url = wp_nonce_url(
+            admin_url( 'admin-post.php?action=' . self::FM_NOTICE_DISMISS_ACTION . '&launched=' . ( $post_launch ? '1' : '0' ) ),
+            self::FM_NOTICE_DISMISS_ACTION
+        );
+        ?>
+        <div class="notice notice-info royal-mcp-fm-notice" style="padding: 14px 18px;">
+            <p style="margin: 0 0 8px; font-size: 14px;">
+                <strong>
+                    <?php if ( $post_launch ) : ?>
+                        &#128640; <?php esc_html_e( 'Royal MCP Pro is live', 'royal-mcp' ); ?>
+                    <?php else : ?>
+                        &#127881; <?php esc_html_e( 'Royal MCP Pro launches Aug 25 — Join the Founding Members waitlist', 'royal-mcp' ); ?>
+                    <?php endif; ?>
+                </strong>
+            </p>
+            <p style="margin: 0 0 12px;">
+                <?php if ( $post_launch ) : ?>
+                    <?php esc_html_e( 'Upgrade for 25-30 agency-scale AI tools — Divi Pro depth, Elementor Pro depth, WooCommerce bulk ops, undo tokens, universal audit log, and cross-plugin workflow composers.', 'royal-mcp' ); ?>
+                <?php else : ?>
+                    <?php esc_html_e( 'Lock in $79/yr LIFETIME pricing (going to $149/yr after launch). Limited to 100 spots. No obligation until launch day.', 'royal-mcp' ); ?>
+                <?php endif; ?>
+            </p>
+            <p style="margin: 0;">
+                <a href="<?php echo esc_url( $cta_url ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
+                    <?php if ( $post_launch ) : ?>
+                        <?php esc_html_e( 'See Royal MCP Pro', 'royal-mcp' ); ?>
+                    <?php else : ?>
+                        <?php esc_html_e( 'Reserve My Spot &rarr;', 'royal-mcp' ); ?>
+                    <?php endif; ?>
+                </a>
+                &nbsp;
+                <a href="<?php echo esc_url( $dismiss_url ); ?>" style="margin-left: 6px;">
+                    <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
+                </a>
+            </p>
+        </div>
+        <?php
+    }
+
+    public function handle_founding_members_dismiss(): void {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_die( esc_html__( 'You do not have permission to dismiss this notice.', 'royal-mcp' ) );
+        }
+        check_admin_referer( self::FM_NOTICE_DISMISS_ACTION );
+        // Which variant was dismissed? Query arg tells us.
+        $launched     = ! empty( $_GET['launched'] );
+        $dismiss_meta = $launched ? self::PRO_LAUNCH_NOTICE_DISMISS_META : self::FM_NOTICE_DISMISS_META;
+        update_user_meta( get_current_user_id(), $dismiss_meta, 1 );
+        wp_safe_redirect( wp_get_referer() ?: admin_url() );
+        exit;
+    }
+
+    /* ==================================================================
+     *  7. Founding Members submenu item (P5c)
+     * ================================================================ */
+
+    /**
+     * Register the Founding Members submenu under Royal MCP. Label switches
+     * based on launch date. Uses a placeholder slug that inject_founding_members_menu_target_blank
+     * rewrites in $submenu to the external URL + JS adds target=_blank.
+     */
+    public function register_founding_members_menu(): void {
+        // Sidebar-length constraint: "Founding Members" doesn't fit — use short
+        // "Founders" (matches existing Founders Bundle branding). Card + admin
+        // notice still use the full "Founding Members" name where prose has room.
+        $label = $this->is_pro_launched()
+            ? '&#11014;&#65039; ' . __( 'Get Pro', 'royal-mcp' )
+            : '&#127873; ' . __( 'Founders', 'royal-mcp' );
+
+        add_submenu_page(
+            'royal-mcp',
+            $this->is_pro_launched() ? __( 'Royal MCP Pro', 'royal-mcp' ) : __( 'Royal MCP Pro Founding Members', 'royal-mcp' ),
+            $label,
+            'manage_options',
+            self::FM_MENU_SLUG,
+            '__return_true'
+        );
+
+        // Rewrite the submenu's href in $submenu to the external URL. WP admin
+        // submenu items are internal by convention; rewriting the URL directly
+        // + adding target=_blank via JS below sends users out to the waitlist /
+        // Pro landing without loading an intermediate WP admin page.
+        global $submenu;
+        if ( isset( $submenu['royal-mcp'] ) ) {
+            $url_args = array(
+                'source'  => 'admin_menu',
+                'content' => $this->is_pro_launched() ? 'get_pro_menu' : 'founding_members_menu',
+            );
+            $campaign = $this->is_pro_launched() ? '1438_postlaunch_menu' : 'waitlist_1438_menu';
+            $cta_url  = $this->pro_url_for( $url_args, $campaign );
+            foreach ( $submenu['royal-mcp'] as $idx => $item ) {
+                if ( isset( $item[2] ) && $item[2] === self::FM_MENU_SLUG ) {
+                    $submenu['royal-mcp'][ $idx ][2] = $cta_url;
+                }
+            }
+        }
+    }
+
+    /**
+     * Add target="_blank" + rel="noopener noreferrer" to the Founding Members
+     * submenu link. WordPress submenu API doesn't support link attributes natively;
+     * a tiny JS shim finds the link by its royalplugins.com href pattern and
+     * rewrites the attrs. Attached via wp_add_inline_script on the always-loaded
+     * `common` handle for CSP-friendly delivery.
+     */
+    public function inject_founding_members_menu_target_blank(): void {
+        if ( ! is_admin() ) {
+            return;
+        }
+        $waitlist_host = wp_parse_url( self::PRO_WAITLIST_URL_BASE, PHP_URL_HOST );
+        $post_host     = wp_parse_url( self::PRO_POST_LAUNCH_URL_BASE, PHP_URL_HOST );
+        $js = sprintf(
+            '(function(){var links=document.querySelectorAll("#adminmenu a");for(var i=0;i<links.length;i++){var href=links[i].getAttribute("href")||"";if(href.indexOf(%1$s)!==-1||href.indexOf(%2$s)!==-1){links[i].setAttribute("target","_blank");links[i].setAttribute("rel","noopener noreferrer");}}})();',
+            wp_json_encode( '//' . $waitlist_host ),
+            wp_json_encode( '//' . $post_host )
+        );
+        wp_add_inline_script( 'common', $js );
     }
 
     /* ==================================================================
