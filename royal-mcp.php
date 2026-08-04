@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & Gemini
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.4.38
+ * Version: 1.4.39
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ROYAL_MCP_VERSION', '1.4.38');
+define('ROYAL_MCP_VERSION', '1.4.39');
 define('ROYAL_MCP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ROYAL_MCP_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('ROYAL_MCP_PLUGIN_FILE', __FILE__);
@@ -87,6 +87,7 @@ class Royal_MCP_Plugin {
 
         // Scheduled token cleanup.
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'cleanup_expired']);
+        add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Undo_Store::class, 'cleanup_expired']);
 
         // sessions cleanup rides on the same daily cron action.
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Session_Store::class, 'cleanup_expired']);
@@ -163,6 +164,29 @@ class Royal_MCP_Plugin {
     }
 
     public function activate() {
+        // Refuse activation if the Pro plugin is active. Pro bundles the free
+        // codebase; running both simultaneously double-registers every hook
+        // and REST route. wp_die during activation rolls the activation back
+        // and shows the message to the user in wp-admin.
+        //
+        // The `! defined( 'ROYAL_MCP_LOADED_BY_PRO' )` gate skips this check
+        // when Free is running vendored inside Pro (Pro's bootstrap defines
+        // that constant before requiring the vendored royal-mcp.php). In that
+        // context Free's activate() is the mechanism that creates OAuth +
+        // session tables Pro needs — refusing it would leave Pro half-installed.
+        if ( ! defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) {
+            if ( ! function_exists( 'is_plugin_active' ) ) {
+                include_once ABSPATH . 'wp-admin/includes/plugin.php';
+            }
+            if ( is_plugin_active( 'royal-mcp-pro/royal-mcp-pro.php' ) ) {
+                wp_die(
+                    esc_html__( 'Royal MCP Pro is already active. It includes every Royal MCP feature — you don\'t need the free plugin alongside it. Deactivate Royal MCP Pro first if you want to use the free plugin instead.', 'royal-mcp' ),
+                    esc_html__( 'Royal MCP already active as part of Royal MCP Pro', 'royal-mcp' ),
+                    array( 'back_link' => true )
+                );
+            }
+        }
+
         // Create necessary database tables and options
         $this->create_tables();
 
@@ -387,6 +411,9 @@ class Royal_MCP_Plugin {
     public function init() {
         // Text domain is automatically loaded by WordPress 4.6+ for plugins hosted on WordPress.org
         // No need to call load_plugin_textdomain() manually
+
+        // Endpoint tool-profile filter — trims tools/list by ?tools=<profile>.
+        Royal_MCP\MCP\Tool_Profiles::register();
 
         // Initialize components
         if (is_admin()) {

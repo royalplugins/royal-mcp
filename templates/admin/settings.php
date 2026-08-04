@@ -78,6 +78,27 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                         </tr>
                         <tr>
                             <th scope="row">
+                                <label for="writable_options_admin"><?php esc_html_e('Allowlisted plugin options', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <?php
+                                $wo_admin_arr = isset($royal_mcp_settings['writable_options_admin']) && is_array($royal_mcp_settings['writable_options_admin'])
+                                    ? $royal_mcp_settings['writable_options_admin']
+                                    : [];
+                                $wo_admin_str = implode("\n", $wo_admin_arr);
+                                ?>
+                                <textarea name="royal_mcp_settings[writable_options_admin]"
+                                          id="writable_options_admin"
+                                          rows="5"
+                                          class="large-text code"
+                                          placeholder="my_plugin_settings&#10;another_option_key&#10;rank-math-options-general"><?php echo esc_textarea($wo_admin_str); ?></textarea>
+                                <p class="description">
+                                    <?php esc_html_e('One option name per line. Requires the master toggle above to be on. Each line is normalized via sanitize_key() and merged with the defaults + the royal_mcp_writable_options filter. Sensitive keys (siteurl, credentials, license keys, etc.) remain permanently denylisted regardless of what appears here.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
                                 <label for="allow_theme_writes"><?php esc_html_e('Allow AI to modify theme appearance', 'royal-mcp'); ?></label>
                             </th>
                             <td>
@@ -136,8 +157,19 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                                    value="<?php echo esc_attr($royal_mcp_url_https); ?>"
                                    class="large-text code"
                                    readonly>
-                            <button type="button" class="button button-primary copy-btn" data-target="mcp-server-url">
-                                <span class="dashicons dashicons-clipboard"></span>
+                            <?php
+                            // Inline SVG with currentColor + inline flex — per CLAUDE.md rule 8.
+                            $btn_style_copy = 'display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;';
+                            $svg_style_copy = 'width:14px;height:14px;flex-shrink:0;';
+                            ?>
+                            <button type="button" class="button button-primary copy-btn" data-target="mcp-server-url"
+                                    style="<?php echo esc_attr( $btn_style_copy ); ?>">
+                                <svg style="<?php echo esc_attr( $svg_style_copy ); ?>" viewBox="0 0 24 24" fill="none"
+                                     stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                     stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                                    <rect x="8" y="2" width="8" height="4" rx="1"/>
+                                </svg>
                                 <?php esc_html_e('Copy', 'royal-mcp'); ?>
                             </button>
                         </div>
@@ -595,8 +627,19 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                                 </optgroup>
                                 <?php endforeach; ?>
                             </select>
-                            <button type="button" class="button button-primary" id="add-platform-btn">
-                                <span class="dashicons dashicons-plus-alt2"></span>
+                            <?php
+                            // Inline SVG with currentColor + inline flex — per CLAUDE.md rule 8.
+                            $btn_style_add = 'display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;';
+                            $svg_style_add = 'width:14px;height:14px;flex-shrink:0;';
+                            ?>
+                            <button type="button" class="button button-primary" id="add-platform-btn"
+                                    style="<?php echo esc_attr( $btn_style_add ); ?>">
+                                <svg style="<?php echo esc_attr( $svg_style_add ); ?>" viewBox="0 0 24 24" fill="none"
+                                     stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                     stroke-linejoin="round" aria-hidden="true">
+                                    <line x1="12" y1="5" x2="12" y2="19"/>
+                                    <line x1="5" y1="12" x2="19" y2="12"/>
+                                </svg>
                                 <?php esc_html_e('Add Provider', 'royal-mcp'); ?>
                             </button>
                         </div>
@@ -653,6 +696,75 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
             </div>
         </div>
 
+        <!-- OAuth Sessions -->
+        <div class="postbox royal-mcp-oauth-sessions" style="margin-top: 20px;">
+            <div class="postbox-header">
+                <h2><?php esc_html_e('OAuth Sessions', 'royal-mcp'); ?></h2>
+            </div>
+            <div class="inside">
+                <?php
+                $ttl_choices = [
+                    3600   => __('1 hour', 'royal-mcp'),
+                    28800  => __('8 hours', 'royal-mcp'),
+                    86400  => __('24 hours (default)', 'royal-mcp'),
+                    604800 => __('7 days', 'royal-mcp'),
+                ];
+                $ttl_current = (int) ($royal_mcp_settings['access_token_ttl_seconds'] ?? \Royal_MCP\OAuth\Token_Store::ACCESS_TOKEN_TTL);
+                if (!array_key_exists($ttl_current, $ttl_choices)) {
+                    $ttl_current = \Royal_MCP\OAuth\Token_Store::ACCESS_TOKEN_TTL;
+                }
+                ?>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">
+                            <label for="access_token_ttl_seconds"><?php esc_html_e('Session length', 'royal-mcp'); ?></label>
+                        </th>
+                        <td>
+                            <select name="royal_mcp_settings[access_token_ttl_seconds]" id="access_token_ttl_seconds">
+                                <?php foreach ($ttl_choices as $seconds => $label) : ?>
+                                    <option value="<?php echo esc_attr($seconds); ?>" <?php selected($ttl_current, $seconds); ?>>
+                                        <?php echo esc_html($label); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <p class="description">
+                                <?php esc_html_e('How long an AI client stays connected before it must re-authorize. Applies to new sessions. Existing sessions expire at their original time — use Revoke all active sessions below to force new-length sessions immediately.', 'royal-mcp'); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label><?php esc_html_e('Revoke all sessions', 'royal-mcp'); ?></label>
+                        </th>
+                        <td>
+                            <?php
+                            // Inline SVG with currentColor + inline flex — per CLAUDE.md rule 8.
+                            // Dashicons inside .button rot across WP admin CSS releases; inline SVG
+                            // inherits button text color and survives cascade churn.
+                            $btn_style = 'display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;';
+                            $svg_style = 'width:14px;height:14px;flex-shrink:0;';
+                            ?>
+                            <button type="button"
+                                    class="button button-secondary"
+                                    id="royal-mcp-revoke-all-sessions"
+                                    style="<?php echo esc_attr( $btn_style ); ?>">
+                                <svg style="<?php echo esc_attr( $svg_style ); ?>" viewBox="0 0 24 24" fill="none"
+                                     stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                     stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                                </svg>
+                                <?php esc_html_e('Revoke all active sessions', 'royal-mcp'); ?>
+                            </button>
+                            <span id="royal-mcp-revoke-all-sessions-status" style="margin-left: 10px;"></span>
+                            <p class="description">
+                                <?php esc_html_e('Disconnects every AI client currently connected via OAuth. Registered clients and settings are preserved — only issued tokens are revoked. Useful after changing session length or during security incident response.', 'royal-mcp'); ?>
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+
         <?php submit_button(); ?>
     </form>
 
@@ -671,10 +783,24 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                 <?php esc_html_e('All currently-connected MCP clients will need to re-authorize after running this. Only use this if you\'re actively troubleshooting a stuck connection.', 'royal-mcp'); ?>
             </p>
             <p>
+                <?php
+                // Inline SVG with currentColor + inline flex — per CLAUDE.md rule 8.
+                $btn_style_reset = 'display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;';
+                $svg_style_reset = 'width:14px;height:14px;flex-shrink:0;';
+                ?>
                 <button type="button"
                         class="button button-secondary"
-                        id="royal-mcp-reset-oauth-state">
-                    <span class="dashicons dashicons-trash"></span>
+                        id="royal-mcp-reset-oauth-state"
+                        style="<?php echo esc_attr( $btn_style_reset ); ?>">
+                    <svg style="<?php echo esc_attr( $svg_style_reset ); ?>" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                         stroke-linejoin="round" aria-hidden="true">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                        <path d="M10 11v6"/>
+                        <path d="M14 11v6"/>
+                        <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>
+                    </svg>
                     <?php esc_html_e('Reset OAuth State', 'royal-mcp'); ?>
                 </button>
                 <span id="royal-mcp-reset-oauth-state-status" style="margin-left: 10px;"></span>
@@ -682,7 +808,6 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
         </div>
     </div>
 
-    <?php \Royal_MCP\Admin\Settings_Page::render_founders_banner(); ?>
 </div>
 
 <!-- Platform Item Template -->

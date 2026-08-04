@@ -14,9 +14,45 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Token_Store {
 
     /** Token lifetimes in seconds. */
-    const ACCESS_TOKEN_TTL  = 3600;       // 1 hour
+    const ACCESS_TOKEN_TTL  = 86400;      // 24 hours — default fallback; site-configurable via get_access_token_ttl()
     const REFRESH_TOKEN_TTL = 2592000;    // 30 days
     const AUTH_CODE_TTL     = 600;        // 10 minutes
+
+    /** Whitelist of access token TTL values selectable in Settings → OAuth. */
+    const ACCESS_TOKEN_TTL_CHOICES = [ 3600, 28800, 86400, 604800 ];
+
+    /**
+     * Return the effective access-token TTL in seconds.
+     *
+     * Reads royal_mcp_settings['access_token_ttl_seconds'] (whitelist-guarded),
+     * falls back to ACCESS_TOKEN_TTL when unset or invalid, then exposes a
+     * royal_mcp_access_token_ttl filter for per-role / per-client policies.
+     * The filter has final say — matches WP convention where filters override
+     * options.
+     *
+     * @return int TTL in seconds.
+     */
+    public static function get_access_token_ttl() {
+        $settings   = get_option( 'royal_mcp_settings', [] );
+        // Guard against a corrupted option value (string, null, object). Any non-array
+        // shape falls back to the constant default rather than blowing up on array access.
+        if ( ! is_array( $settings ) ) {
+            $settings = [];
+        }
+        $configured = isset( $settings['access_token_ttl_seconds'] ) ? (int) $settings['access_token_ttl_seconds'] : 0;
+        $ttl        = in_array( $configured, self::ACCESS_TOKEN_TTL_CHOICES, true ) ? $configured : self::ACCESS_TOKEN_TTL;
+
+        /**
+         * Filter the access-token TTL in seconds.
+         *
+         * Overrides the site-owner UI selection. Return any positive integer.
+         *
+         * @param int $ttl Effective TTL after option lookup + whitelist check.
+         */
+        $filtered = (int) apply_filters( 'royal_mcp_access_token_ttl', $ttl );
+
+        return $filtered > 0 ? $filtered : self::ACCESS_TOKEN_TTL;
+    }
 
     /* ------------------------------------------------------------------
      *  Table helpers
@@ -224,14 +260,15 @@ class Token_Store {
     public static function create_token_pair( $client_id, $user_id, $scope = '' ) {
         $access_token  = bin2hex( random_bytes( 32 ) );
         $refresh_token = bin2hex( random_bytes( 32 ) );
+        $access_ttl    = self::get_access_token_ttl();
 
-        self::store_token( $access_token, 'access', $client_id, $user_id, $scope, self::ACCESS_TOKEN_TTL );
+        self::store_token( $access_token, 'access', $client_id, $user_id, $scope, $access_ttl );
         self::store_token( $refresh_token, 'refresh', $client_id, $user_id, $scope, self::REFRESH_TOKEN_TTL );
 
         return [
             'access_token'  => $access_token,
             'token_type'    => 'Bearer',
-            'expires_in'    => self::ACCESS_TOKEN_TTL,
+            'expires_in'    => $access_ttl,
             'refresh_token' => $refresh_token,
             'scope'         => $scope,
         ];
@@ -317,6 +354,26 @@ class Token_Store {
         );
 
         return $row;
+    }
+
+    /**
+     * Soft-delete every unrevoked access + refresh token in one operation.
+     *
+     * Powers the "Revoke all active sessions" button on Settings → OAuth.
+     * Uses soft-delete (revoked = 1) rather than hard truncate so future
+     * audit-log surfaces can still inspect what was revoked. Does not touch
+     * registered clients or in-flight authorization codes.
+     *
+     * @return int Number of token rows revoked.
+     */
+    public static function revoke_all_tokens() {
+        global $wpdb;
+        $table = self::tokens_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+        $count = (int) $wpdb->query(
+            "UPDATE `{$table}` SET revoked = 1 WHERE revoked = 0"
+        );
+        return $count;
     }
 
     /**

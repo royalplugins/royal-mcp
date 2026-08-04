@@ -337,6 +337,52 @@ jQuery(document).ready(function($) {
     });
 
     // ==========================================
+    // Revoke all active sessions button (OAuth Sessions section)
+    // ==========================================
+    $(document).on('click', '#royal-mcp-revoke-all-sessions', function(e) {
+        e.preventDefault();
+
+        const confirmMsg = 'This will disconnect all connected AI clients including your current session. You\'ll need to reconnect. Continue?';
+        if (!window.confirm(confirmMsg)) {
+            return;
+        }
+
+        const $btn = $(this);
+        const $status = $('#royal-mcp-revoke-all-sessions-status');
+        const originalHtml = $btn.html();
+
+        $btn.prop('disabled', true);
+        $status.css('color', '').text('Revoking...');
+
+        $.ajax({
+            url: royalMcp.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'royal_mcp_revoke_all_sessions',
+                nonce: royalMcp.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    $status.css('color', '#00a32a').text(response.data.message);
+                    $btn.css({ 'background-color': '#00a32a', 'color': '#fff', 'border-color': '#00a32a' });
+                    setTimeout(function() {
+                        $btn.css({ 'background-color': '', 'color': '', 'border-color': '' });
+                    }, 3000);
+                } else {
+                    $status.css('color', '#d63638').text((response.data && response.data.message) || 'Revoke failed');
+                }
+            },
+            error: function() {
+                $status.css('color', '#d63638').text('Revoke request failed (network or server error)');
+            },
+            complete: function() {
+                $btn.prop('disabled', false);
+                $btn.html(originalHtml);
+            }
+        });
+    });
+
+    // ==========================================
     // Helper Functions
     // ==========================================
 

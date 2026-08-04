@@ -6,7 +6,6 @@
  *   1. Custom top header (logo + wordmark + View Docs / Support buttons)
  *   2. Lightweight footer (Royal Plugins family links + version marker)
  *   3. Royal Tools submenu page (5-card grid of free Royal Plugins family members)
- *   4. Founders Bundle callout on the Royal Tools page
  *
  * Screen-ID-gated to Royal MCP admin pages only — never touches other WP admin.
  *
@@ -24,8 +23,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Royal_MCP_Chrome {
 
     const ROYAL_TOOLS_MENU_SLUG        = 'royal-mcp-tools';
-    const FOUNDERS_DISMISS_USER_META   = 'royal_plugins_dismissed_founders_callout';
-    const FOUNDERS_DISMISS_ACTION      = 'royal_mcp_dismiss_founders_callout';
     const CSS_HANDLE                   = 'royal-mcp-chrome';
     const BODY_CLASS                   = 'royal-mcp-chrome-scope';
 
@@ -59,7 +56,6 @@ class Royal_MCP_Chrome {
         add_filter( 'update_footer',         [ $this, 'filter_update_footer' ], 999 );
         add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
         add_filter( 'admin_body_class',      [ $this, 'filter_admin_body_class' ] );
-        add_action( 'admin_post_' . self::FOUNDERS_DISMISS_ACTION, [ $this, 'handle_founders_dismiss' ] );
         add_action( 'admin_post_' . self::FM_NOTICE_DISMISS_ACTION, [ $this, 'handle_founding_members_dismiss' ] );
         add_action( 'admin_notices',         [ $this, 'render_founding_members_notice' ] );
         add_action( 'admin_enqueue_scripts', [ $this, 'inject_founding_members_menu_target_blank' ], 100 );
@@ -207,8 +203,7 @@ class Royal_MCP_Chrome {
         if ( ! current_user_can( 'manage_options' ) ) {
             wp_die( esc_html__( 'You do not have permission to view Royal Tools.', 'royal-mcp' ) );
         }
-        $family      = $this->get_family_plugins_with_state();
-        $show_bundle = ! $this->founders_callout_dismissed();
+        $family = $this->get_family_plugins_with_state();
         ?>
         <div class="wrap royal-mcp-tools-wrap">
             <div class="royal-mcp-tools-title-row">
@@ -217,10 +212,6 @@ class Royal_MCP_Chrome {
                     <p class="royal-mcp-tools-subtitle"><?php esc_html_e( 'Free WordPress plugins from Royal Plugins — one-click install, no signup.', 'royal-mcp' ); ?></p>
                 </div>
             </div>
-
-            <?php if ( $show_bundle ) : ?>
-                <?php $this->render_founders_callout(); ?>
-            <?php endif; ?>
 
             <?php $this->render_founding_members_card(); ?>
 
@@ -234,65 +225,10 @@ class Royal_MCP_Chrome {
                     <?php $this->render_plugin_card( $slug, $plugin ); ?>
                 <?php endforeach; ?>
             </div>
+
+            <?php \Royal_MCP\Admin\Settings_Page::render_founders_banner(); ?>
         </div>
         <?php
-    }
-
-    /* ==================================================================
-     *  4. Founders Bundle callout
-     * ================================================================ */
-
-    private function render_founders_callout(): void {
-        $dismiss_url = wp_nonce_url(
-            admin_url( 'admin-post.php?action=' . self::FOUNDERS_DISMISS_ACTION ),
-            self::FOUNDERS_DISMISS_ACTION
-        );
-        ?>
-        <div class="royal-mcp-founders">
-            <div class="royal-mcp-founders-crown" aria-hidden="true">&#128081;</div>
-            <div class="royal-mcp-founders-body">
-                <h3>
-                    <?php
-                    printf(
-                        /* translators: %s: gold-highlighted "$49/yr" text */
-                        esc_html__( 'All 6 Pro plugins from %s — Founders Bundle', 'royal-mcp' ),
-                        '<span class="gold">' . esc_html__( '$49/yr', 'royal-mcp' ) . '</span>'
-                    );
-                    ?>
-                </h3>
-                <p>
-                    <?php
-                    echo esc_html__(
-                        'GuardPress Pro · SiteVault Pro · ForgeCache · SEObolt Pro · Royal Affiliate Pro · FormForge Pro. 12 tiers, 200 seats total. Each tier that sells out, the price goes up — but whatever tier you land on is your renewal rate forever.',
-                        'royal-mcp'
-                    );
-                    ?>
-                </p>
-            </div>
-            <a href="https://royalplugins.com/founders/" target="_blank" rel="noopener noreferrer" class="royal-mcp-founders-cta">
-                <?php esc_html_e( 'See live tiers &rarr;', 'royal-mcp' ); ?>
-            </a>
-            <a href="<?php echo esc_url( $dismiss_url ); ?>" class="royal-mcp-founders-dismiss" title="<?php esc_attr_e( 'Dismiss this bundle callout', 'royal-mcp' ); ?>" aria-label="<?php esc_attr_e( 'Dismiss this bundle callout', 'royal-mcp' ); ?>">&times;</a>
-        </div>
-        <?php
-    }
-
-    private function founders_callout_dismissed(): bool {
-        $user_id = get_current_user_id();
-        if ( ! $user_id ) {
-            return false;
-        }
-        return (bool) get_user_meta( $user_id, self::FOUNDERS_DISMISS_USER_META, true );
-    }
-
-    public function handle_founders_dismiss(): void {
-        if ( ! current_user_can( 'manage_options' ) ) {
-            wp_die( esc_html__( 'You do not have permission to dismiss this notice.', 'royal-mcp' ) );
-        }
-        check_admin_referer( self::FOUNDERS_DISMISS_ACTION );
-        update_user_meta( get_current_user_id(), self::FOUNDERS_DISMISS_USER_META, 1 );
-        wp_safe_redirect( wp_get_referer() ?: admin_url( 'admin.php?page=' . self::ROYAL_TOOLS_MENU_SLUG ) );
-        exit;
     }
 
     /* ==================================================================
@@ -385,10 +321,12 @@ class Royal_MCP_Chrome {
      * ================================================================ */
 
     /**
-     * One-time admin notice pointing admins to the Pro waitlist. Fires ONCE per
-     * user (dismissed = never returns). Pre-/post-launch content differs and
-     * uses separate dismiss keys so a user who dismissed the pre-launch notice
-     * still sees the post-launch one when Pro ships.
+     * Admin notice pointing admins to the Pro waitlist. Version-stamped —
+     * dismissal stores the current plugin version, and the notice re-appears
+     * once on each plugin version update (same pattern as the Founders Bundle
+     * banner). Pre-/post-launch content differs and uses separate dismiss keys
+     * so a user who dismissed the pre-launch notice still sees the post-launch
+     * one when Pro ships.
      */
     public function render_founding_members_notice(): void {
         if ( ! current_user_can( 'manage_options' ) ) {
@@ -396,7 +334,8 @@ class Royal_MCP_Chrome {
         }
         $post_launch  = $this->is_pro_launched();
         $dismiss_meta = $post_launch ? self::PRO_LAUNCH_NOTICE_DISMISS_META : self::FM_NOTICE_DISMISS_META;
-        if ( get_user_meta( get_current_user_id(), $dismiss_meta, true ) ) {
+        $dismissed_at = get_user_meta( get_current_user_id(), $dismiss_meta, true );
+        if ( $dismissed_at && version_compare( (string) $dismissed_at, ROYAL_MCP_VERSION, '>=' ) ) {
             return;
         }
 
@@ -453,7 +392,7 @@ class Royal_MCP_Chrome {
         // Which variant was dismissed? Query arg tells us.
         $launched     = ! empty( $_GET['launched'] );
         $dismiss_meta = $launched ? self::PRO_LAUNCH_NOTICE_DISMISS_META : self::FM_NOTICE_DISMISS_META;
-        update_user_meta( get_current_user_id(), $dismiss_meta, 1 );
+        update_user_meta( get_current_user_id(), $dismiss_meta, ROYAL_MCP_VERSION );
         wp_safe_redirect( wp_get_referer() ?: admin_url() );
         exit;
     }
@@ -536,7 +475,7 @@ class Royal_MCP_Chrome {
                 'basename'    => 'royal-ai-firewall/royal-ai-firewall.php',
                 'icon'        => '&#128737;',
                 'search_slug' => 'royal-ai-firewall',
-                'learn_url'   => 'https://royalplugins.com/royal-ai-firewall/',
+                'learn_url'   => 'https://royalplugins.com/founders/',
                 'pitch'       => __( 'See every AI agent hitting your site and decide who gets in. Blocks GPTBot, ClaudeBot, PerplexityBot and 60+ others at the WordPress layer.', 'royal-mcp' ),
             ],
             'royal-mcp' => [
@@ -544,7 +483,7 @@ class Royal_MCP_Chrome {
                 'basename'    => 'royal-mcp/royal-mcp.php',
                 'icon'        => '&#128268;',
                 'search_slug' => 'royal-mcp',
-                'learn_url'   => 'https://royalplugins.com/royal-mcp/',
+                'learn_url'   => 'https://royalplugins.com/founders/',
                 'pitch'       => __( 'Connect Claude, ChatGPT, and Cursor directly to your WordPress site via MCP. Full-stack tools for AI-driven content and store management.', 'royal-mcp' ),
             ],
             'sitevault' => [
@@ -552,7 +491,7 @@ class Royal_MCP_Chrome {
                 'basename'    => 'sitevault-backup-restore-migration/sitevault.php',
                 'icon'        => '&#128190;',
                 'search_slug' => 'sitevault backup',
-                'learn_url'   => 'https://royalplugins.com/sitevault-lite/',
+                'learn_url'   => 'https://royalplugins.com/founders/',
                 'pitch'       => __( 'Full-site backup, restore, and migration in your WordPress admin. WP-CLI commands for automation. No cloud upsell, no seat limits.', 'royal-mcp' ),
             ],
             'royal-access' => [
@@ -560,7 +499,7 @@ class Royal_MCP_Chrome {
                 'basename'    => 'royal-access/royal-access.php',
                 'icon'        => '&#9855;',
                 'search_slug' => 'royal-access',
-                'learn_url'   => 'https://royalplugins.com/royal-access/',
+                'learn_url'   => 'https://royalplugins.com/founders/',
                 'pitch'       => __( 'Accessibility toolbar, contrast checker, and WCAG-fix suggestions for your WordPress site. Every setting free.', 'royal-mcp' ),
             ],
             'royal-links' => [
@@ -568,7 +507,7 @@ class Royal_MCP_Chrome {
                 'basename'    => 'royal-links/royal-links.php',
                 'icon'        => '&#128279;',
                 'search_slug' => 'royal-links',
-                'learn_url'   => 'https://royalplugins.com/royal-links/',
+                'learn_url'   => 'https://royalplugins.com/founders/',
                 'pitch'       => __( 'Link cloaking, click tracking, geo-targeting, A/B testing, QR codes, and 404 redirect manager.', 'royal-mcp' ),
             ],
         ];

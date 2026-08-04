@@ -20,12 +20,14 @@ class Well_Known_Notice {
     const REGISTER_301_TRANSIENT       = 'royal_mcp_register_301_status';
     const REGISTER_301_DISMISS_KEY     = 'royal_mcp_register_301_dismissed';
     const IMUNIFY360_DISMISS_KEY       = 'royal_mcp_imunify360_dismissed';
+    const BITNINJA_DISMISS_KEY         = 'royal_mcp_bitninja_dismissed';
     const PLAIN_PERMALINKS_DISMISS_KEY = 'royal_mcp_plain_permalinks_dismissed';
     const SUPPORT_URL                  = 'https://royalplugins.com/support/royal-mcp/siteground-well-known-404.html';
     const STALE_SUPPORT_URL            = 'https://royalplugins.com/support/royal-mcp/stale-well-known-static-files.html';
     const HTML_BODY_SUPPORT_URL        = 'https://royalplugins.com/support/royal-mcp/well-known-served-as-html.html';
     const REGISTER_301_SUPPORT_URL     = 'https://royalplugins.com/support/royal-mcp/oauth-register-trailing-slash-301.html';
     const IMUNIFY360_SUPPORT_URL       = 'https://royalplugins.com/support/royal-mcp/imunify360-blocks-mcp.html';
+    const BITNINJA_SUPPORT_URL         = 'https://royalplugins.com/support/royal-mcp/bitninja-webshield-blocks-mcp.html';
     const PLAIN_PERMALINKS_SUPPORT_URL = 'https://royalplugins.com/support/royal-mcp/plain-permalinks-blocks-discovery.html';
 
     public function __construct() {
@@ -101,6 +103,21 @@ class Well_Known_Notice {
             && ! get_user_meta( $user_id, self::IMUNIFY360_DISMISS_KEY, true )
         ) {
             $this->render_imunify360_notice();
+            return;
+        }
+
+        // BitNinja WebShield is a host-level bot-protection product that
+        // stacks on top of Imunify360 on many CloudLinux/cPanel installs.
+        // It serves a JavaScript CAPTCHA challenge for GET requests to
+        // /.well-known/*, /authorize, /register — the OAuth discovery paths.
+        // MCP clients can't execute JS, so the handshake dies at discovery.
+        // Fires before 'body_is_html' because the BitNinja challenge starts
+        // with an HTML doctype that would otherwise route into the generic
+        // membership-plugin classifier and produce the wrong fix guidance.
+        if ( 'bitninja_blocked' === $status
+            && ! get_user_meta( $user_id, self::BITNINJA_DISMISS_KEY, true )
+        ) {
+            $this->render_bitninja_notice();
             return;
         }
 
@@ -198,6 +215,20 @@ class Well_Known_Notice {
      */
     public static function classify_response( $code, $body, array $headers, $expected_issuer ) {
         if ( 200 === $code ) {
+            // BitNinja WebShield JS challenge — host-level bot protection that
+            // returns HTTP 200 with an obfuscated JS interstitial ("One moment,
+            // please..." title, auto-reload after 5s). Runs BEFORE the generic
+            // HTML detection because the response IS HTML but the fix guidance
+            // is completely different (host must disable WebShield for OAuth
+            // paths — no in-plugin remedy). Signature is two markers that
+            // co-occur only in WebShield's obfuscated JS: the wsidchk form
+            // parameter and the webdriverCheck fingerprinting function name.
+            if ( false !== stripos( $body, 'wsidchk' )
+                && false !== strpos( $body, 'webdriverCheck' )
+            ) {
+                return 'bitninja_blocked';
+            }
+
             // Body-is-HTML detection — a membership plugin or theme template intercepted
             // the request after rewrite resolution and served its own HTML (e.g. a membership plugin
             // login page, MemberPress access-denied template). Discovery clients that
@@ -399,6 +430,15 @@ class Well_Known_Notice {
             exit;
         }
 
+        if ( isset( $_GET['royal_mcp_dismiss_bitninja'] )
+            && isset( $_GET['_wpnonce'] )
+            && wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'royal_mcp_dismiss_bitninja' )
+        ) {
+            update_user_meta( get_current_user_id(), self::BITNINJA_DISMISS_KEY, time() );
+            wp_safe_redirect( remove_query_arg( [ 'royal_mcp_dismiss_bitninja', '_wpnonce' ] ) );
+            exit;
+        }
+
         if ( isset( $_GET['royal_mcp_dismiss_plain_permalinks'] )
             && isset( $_GET['_wpnonce'] )
             && wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'royal_mcp_dismiss_plain_permalinks' )
@@ -548,6 +588,46 @@ class Well_Known_Notice {
             </p>
             <p>
                 <a href="<?php echo esc_url( self::IMUNIFY360_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
+                    <?php esc_html_e( 'Copy-paste hosting request', 'royal-mcp' ); ?>
+                </a>
+                <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
+                    <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
+                </a>
+            </p>
+        </div>
+        <?php
+    }
+
+    private function render_bitninja_notice() {
+        $dismiss_url = wp_nonce_url(
+            add_query_arg( 'royal_mcp_dismiss_bitninja', '1' ),
+            'royal_mcp_dismiss_bitninja'
+        );
+
+        ?>
+        <div class="notice notice-warning royal-mcp-bitninja-notice">
+            <p>
+                <strong><?php esc_html_e( 'Royal MCP: OAuth discovery is being blocked by BitNinja WebShield.', 'royal-mcp' ); ?></strong>
+            </p>
+            <p>
+                <?php
+                printf(
+                    /* translators: 1: literal URL path code, 2: literal URL path code */
+                    esc_html__( 'Your host runs BitNinja WebShield, a bot-protection layer that serves a JavaScript challenge page in place of %1$s and %2$s. MCP clients (Claude, ChatGPT, Cursor) do not execute JavaScript and cannot solve the challenge, so the OAuth handshake fails at discovery. No WordPress setting can fix this — the exclusion must happen at the host layer.', 'royal-mcp' ),
+                    '<code>/.well-known/*</code>',
+                    '<code>/authorize</code>'
+                );
+                ?>
+            </p>
+            <p>
+                <?php esc_html_e( 'Ask your host to disable BitNinja WebShield for these paths — or for the whole domain if per-path exclusion isn\'t offered:', 'royal-mcp' ); ?>
+                <code>/.well-known/*</code>, <code>/wp-json/*</code>, <code>/authorize</code>, <code>/token</code>, <code>/register</code>.
+            </p>
+            <p>
+                <em><?php esc_html_e( 'Insist on a path-based or domain-level exclusion, not an IP allowlist. Claude.ai\'s outbound IPs rotate, so an IP-only rule silently breaks again in weeks.', 'royal-mcp' ); ?></em>
+            </p>
+            <p>
+                <a href="<?php echo esc_url( self::BITNINJA_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
                     <?php esc_html_e( 'Copy-paste hosting request', 'royal-mcp' ); ?>
                 </a>
                 <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
