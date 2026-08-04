@@ -132,6 +132,57 @@ class WooCommerce {
 				],
 			],
 			[
+				'name'        => 'wc_create_order',
+				'description' => 'Create a WooCommerce order programmatically. Use for B2B, wholesale, phone orders, manual invoicing. Stock is decremented only when status transitions into processing/completed — create as pending, then update status to processing to trigger stock reduction. Order emails are NOT auto-fired; pass send_emails=true to trigger the New Order email.',
+				'inputSchema' => [
+					'type'       => 'object',
+					'properties' => [
+						'customer_id'    => [ 'type' => 'integer', 'description' => 'Optional WP user ID for the customer. Omit to create a guest order.' ],
+						'billing'        => [ 'type' => 'object', 'description' => 'Billing address: first_name, last_name, address_1, address_2, city, state, postcode, country, email, phone.' ],
+						'shipping'       => [ 'type' => 'object', 'description' => 'Shipping address (same shape as billing, minus email/phone).' ],
+						'line_items'     => [ 'type' => 'array', 'description' => 'Array of {product_id, quantity, variation_id?}. variation_id must belong to product_id.' ],
+						'status'         => [ 'type' => 'string', 'description' => 'Initial order status (default pending). Accepted: pending, processing, on-hold, completed, cancelled.' ],
+						'payment_method' => [ 'type' => 'string', 'description' => 'Payment method ID (e.g. bacs, cheque, cod, stripe).' ],
+						'shipping_lines' => [ 'type' => 'array', 'description' => 'Optional shipping lines. Array of {method_id, method_title, total}.' ],
+						'fee_lines'      => [ 'type' => 'array', 'description' => 'Optional fee lines. Array of {name, total}.' ],
+						'meta_data'      => [ 'type' => 'array', 'description' => 'Optional custom order meta. Array of {key, value}.' ],
+						'customer_note'  => [ 'type' => 'string', 'description' => 'Customer-facing note attached to the order.' ],
+						'send_emails'    => [ 'type' => 'boolean', 'description' => 'If true, fire the WC New Order email after creation. Default false.' ],
+					],
+					'required'   => [ 'line_items' ],
+				],
+			],
+			[
+				'name'        => 'wc_update_order',
+				'description' => 'Update an existing WooCommerce order. All fields except order_id are optional. line_items with an id update or remove (quantity 0) existing items; line_items without an id add new items. Recalculates totals after mutation.',
+				'inputSchema' => [
+					'type'       => 'object',
+					'properties' => [
+						'order_id'      => [ 'type' => 'integer', 'description' => 'Order ID to update.' ],
+						'billing'       => [ 'type' => 'object', 'description' => 'Partial billing address — only provided keys are updated.' ],
+						'shipping'      => [ 'type' => 'object', 'description' => 'Partial shipping address — only provided keys are updated.' ],
+						'customer_note' => [ 'type' => 'string', 'description' => 'Replace customer-facing order note.' ],
+						'status'        => [ 'type' => 'string', 'description' => 'New order status.' ],
+						'meta_data'     => [ 'type' => 'array', 'description' => 'Array of {key, value} to add/replace on the order meta.' ],
+						'line_items'    => [ 'type' => 'array', 'description' => 'Array of {product_id, quantity, variation_id?, id?}. id present + quantity 0 = remove; id present + quantity > 0 = update; no id = add.' ],
+					],
+					'required'   => [ 'order_id' ],
+				],
+			],
+			[
+				'name'        => 'wc_add_order_note',
+				'description' => 'Add a note to a WooCommerce order. Private notes are internal (staff timeline only). Customer notes are emailed to the customer and shown on their order view. Content may contain safe HTML (links, formatting) — sanitized via wp_kses_post.',
+				'inputSchema' => [
+					'type'       => 'object',
+					'properties' => [
+						'order_id'      => [ 'type' => 'integer', 'description' => 'Order ID.' ],
+						'note'          => [ 'type' => 'string', 'description' => 'Note content. May contain safe HTML.' ],
+						'customer_note' => [ 'type' => 'boolean', 'description' => 'If true, note is emailed to the customer. Default false (private/internal note).' ],
+					],
+					'required'   => [ 'order_id', 'note' ],
+				],
+			],
+			[
 				'name'        => 'wc_get_customers',
 				'description' => 'Get WooCommerce customers',
 				'inputSchema' => [
@@ -665,6 +716,186 @@ class WooCommerce {
 				$order->update_status( $new_status, $note );
 				return [ 'id' => $args['id'], 'status' => $new_status, 'message' => 'Order status updated' ];
 
+			case 'wc_create_order':
+				if ( ! current_user_can( 'edit_shop_orders' ) ) {
+					throw new \Exception( 'edit_shop_orders capability required.' );
+				}
+				$line_items = isset( $args['line_items'] ) && is_array( $args['line_items'] ) ? $args['line_items'] : [];
+				if ( empty( $line_items ) ) {
+					throw new \Exception( 'line_items is required and must be a non-empty array.' );
+				}
+				$new_order = wc_create_order();
+				if ( is_wp_error( $new_order ) ) {
+					throw new \Exception( 'wc_create_order failed: ' . esc_html( $new_order->get_error_message() ) );
+				}
+				// Add line items with pre-validation on variation_id belonging to product_id.
+				foreach ( $line_items as $item ) {
+					$product_id   = isset( $item['product_id'] ) ? (int) $item['product_id'] : 0;
+					$quantity     = isset( $item['quantity'] ) ? max( 1, (int) $item['quantity'] ) : 1;
+					$variation_id = isset( $item['variation_id'] ) ? (int) $item['variation_id'] : 0;
+					if ( $product_id <= 0 ) {
+						throw new \Exception( 'line_items entry missing product_id.' );
+					}
+					$product = wc_get_product( $variation_id > 0 ? $variation_id : $product_id );
+					if ( ! $product ) {
+						throw new \Exception( 'Product not found: ' . esc_html( (string) ( $variation_id > 0 ? $variation_id : $product_id ) ) );
+					}
+					if ( $variation_id > 0 && (int) $product->get_parent_id() !== $product_id ) {
+						throw new \Exception( 'variation_id ' . esc_html( (string) $variation_id ) . ' does not belong to product_id ' . esc_html( (string) $product_id ) . '.' );
+					}
+					$new_order->add_product( $product, $quantity );
+				}
+				// Optional shipping / fee lines.
+				if ( ! empty( $args['shipping_lines'] ) && is_array( $args['shipping_lines'] ) ) {
+					foreach ( $args['shipping_lines'] as $sl ) {
+						$shipping_item = new \WC_Order_Item_Shipping();
+						if ( ! empty( $sl['method_id'] ) )    { $shipping_item->set_method_id( sanitize_text_field( (string) $sl['method_id'] ) ); }
+						if ( ! empty( $sl['method_title'] ) ) { $shipping_item->set_method_title( sanitize_text_field( (string) $sl['method_title'] ) ); }
+						if ( isset( $sl['total'] ) )          { $shipping_item->set_total( (string) wc_format_decimal( $sl['total'] ) ); }
+						$new_order->add_item( $shipping_item );
+					}
+				}
+				if ( ! empty( $args['fee_lines'] ) && is_array( $args['fee_lines'] ) ) {
+					foreach ( $args['fee_lines'] as $fee ) {
+						$fee_item = new \WC_Order_Item_Fee();
+						if ( ! empty( $fee['name'] ) ) { $fee_item->set_name( sanitize_text_field( (string) $fee['name'] ) ); }
+						if ( isset( $fee['total'] ) )  { $fee_item->set_total( (string) wc_format_decimal( $fee['total'] ) ); }
+						$new_order->add_item( $fee_item );
+					}
+				}
+				// Billing / shipping / customer / payment_method / customer_note.
+				if ( ! empty( $args['billing'] )  && is_array( $args['billing'] ) )  { $new_order->set_address( self::sanitize_address_fields( $args['billing'] ),  'billing' ); }
+				if ( ! empty( $args['shipping'] ) && is_array( $args['shipping'] ) ) { $new_order->set_address( self::sanitize_address_fields( $args['shipping'] ), 'shipping' ); }
+				if ( ! empty( $args['customer_id'] ) ) {
+					$new_order->set_customer_id( (int) $args['customer_id'] );
+				}
+				if ( ! empty( $args['payment_method'] ) ) {
+					$new_order->set_payment_method( sanitize_text_field( (string) $args['payment_method'] ) );
+				}
+				if ( ! empty( $args['customer_note'] ) ) {
+					$new_order->set_customer_note( wp_kses_post( (string) $args['customer_note'] ) );
+				}
+				// Meta data.
+				if ( ! empty( $args['meta_data'] ) && is_array( $args['meta_data'] ) ) {
+					foreach ( $args['meta_data'] as $meta ) {
+						if ( isset( $meta['key'] ) ) {
+							$new_order->update_meta_data( sanitize_text_field( (string) $meta['key'] ), $meta['value'] ?? '' );
+						}
+					}
+				}
+				$new_order->calculate_totals();
+				$initial_status = ! empty( $args['status'] ) ? sanitize_text_field( (string) $args['status'] ) : 'pending';
+				$allowed_initial = [ 'pending', 'processing', 'on-hold', 'completed', 'cancelled' ];
+				if ( ! in_array( $initial_status, $allowed_initial, true ) ) {
+					$initial_status = 'pending';
+				}
+				$new_order->set_status( $initial_status );
+				$new_order->save();
+				if ( ! empty( $args['send_emails'] ) ) {
+					$mailer = \WC()->mailer();
+					if ( $mailer && isset( $mailer->emails['WC_Email_New_Order'] ) ) {
+						$mailer->emails['WC_Email_New_Order']->trigger( $new_order->get_id() );
+					}
+				}
+				return [
+					'order_id'  => $new_order->get_id(),
+					'order_key' => $new_order->get_order_key(),
+					'total'     => $new_order->get_total(),
+					'status'    => $new_order->get_status(),
+				];
+
+			case 'wc_update_order':
+				$upd_order_id = isset( $args['order_id'] ) ? (int) $args['order_id'] : 0;
+				$upd_order    = wc_get_order( $upd_order_id );
+				if ( ! $upd_order || ! $upd_order instanceof \WC_Order ) {
+					throw new \Exception( 'Order not found: ' . esc_html( (string) $upd_order_id ) );
+				}
+				if ( ! current_user_can( 'edit_shop_order', $upd_order_id ) ) {
+					throw new \Exception( 'edit_shop_order capability required on this order.' );
+				}
+				if ( ! empty( $args['billing'] ) && is_array( $args['billing'] ) ) {
+					$upd_order->set_address( array_merge( self::current_address( $upd_order, 'billing' ), self::sanitize_address_fields( $args['billing'] ) ), 'billing' );
+				}
+				if ( ! empty( $args['shipping'] ) && is_array( $args['shipping'] ) ) {
+					$upd_order->set_address( array_merge( self::current_address( $upd_order, 'shipping' ), self::sanitize_address_fields( $args['shipping'] ) ), 'shipping' );
+				}
+				if ( isset( $args['customer_note'] ) ) {
+					$upd_order->set_customer_note( wp_kses_post( (string) $args['customer_note'] ) );
+				}
+				if ( ! empty( $args['meta_data'] ) && is_array( $args['meta_data'] ) ) {
+					foreach ( $args['meta_data'] as $meta ) {
+						if ( isset( $meta['key'] ) ) {
+							$upd_order->update_meta_data( sanitize_text_field( (string) $meta['key'] ), $meta['value'] ?? '' );
+						}
+					}
+				}
+				if ( ! empty( $args['line_items'] ) && is_array( $args['line_items'] ) ) {
+					foreach ( $args['line_items'] as $item ) {
+						$item_id     = isset( $item['id'] ) ? (int) $item['id'] : 0;
+						$product_id  = isset( $item['product_id'] ) ? (int) $item['product_id'] : 0;
+						$variation_id = isset( $item['variation_id'] ) ? (int) $item['variation_id'] : 0;
+						$quantity    = isset( $item['quantity'] ) ? (int) $item['quantity'] : 1;
+						if ( $item_id > 0 && $quantity === 0 ) {
+							// Remove existing line item.
+							$upd_order->remove_item( $item_id );
+							continue;
+						}
+						if ( $item_id > 0 ) {
+							// Update existing line item quantity.
+							$existing = $upd_order->get_item( $item_id );
+							if ( $existing ) {
+								$existing->set_quantity( max( 1, $quantity ) );
+								$existing->save();
+							}
+							continue;
+						}
+						// Add new line item.
+						if ( $product_id <= 0 ) {
+							throw new \Exception( 'line_items entry without id must include product_id.' );
+						}
+						$product = wc_get_product( $variation_id > 0 ? $variation_id : $product_id );
+						if ( ! $product ) {
+							throw new \Exception( 'Product not found: ' . esc_html( (string) ( $variation_id > 0 ? $variation_id : $product_id ) ) );
+						}
+						if ( $variation_id > 0 && (int) $product->get_parent_id() !== $product_id ) {
+							throw new \Exception( 'variation_id ' . esc_html( (string) $variation_id ) . ' does not belong to product_id ' . esc_html( (string) $product_id ) . '.' );
+						}
+						$upd_order->add_product( $product, max( 1, $quantity ) );
+					}
+				}
+				if ( ! empty( $args['status'] ) ) {
+					$new_status_upd = sanitize_text_field( (string) $args['status'] );
+					$allowed_upd = [ 'pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' ];
+					if ( ! in_array( $new_status_upd, $allowed_upd, true ) ) {
+						throw new \Exception( 'Invalid order status: ' . esc_html( $new_status_upd ) );
+					}
+					$upd_order->set_status( $new_status_upd );
+				}
+				$upd_order->calculate_totals();
+				$upd_order->save();
+				return [
+					'updated' => true,
+					'total'   => $upd_order->get_total(),
+					'status'  => $upd_order->get_status(),
+				];
+
+			case 'wc_add_order_note':
+				$note_order_id = isset( $args['order_id'] ) ? (int) $args['order_id'] : 0;
+				$note_order    = wc_get_order( $note_order_id );
+				if ( ! $note_order || ! $note_order instanceof \WC_Order ) {
+					throw new \Exception( 'Order not found: ' . esc_html( (string) $note_order_id ) );
+				}
+				if ( ! current_user_can( 'edit_shop_order', $note_order_id ) ) {
+					throw new \Exception( 'edit_shop_order capability required on this order.' );
+				}
+				$note_text = isset( $args['note'] ) ? wp_kses_post( (string) $args['note'] ) : '';
+				if ( $note_text === '' ) {
+					throw new \Exception( 'note is required.' );
+				}
+				$is_customer_note = ! empty( $args['customer_note'] );
+				$note_id = $note_order->add_order_note( $note_text, $is_customer_note ? 1 : 0 );
+				return [ 'note_id' => (int) $note_id ];
+
 			case 'wc_get_customers':
 				$limit = min( intval( $args['per_page'] ?? 10 ), 100 );
 				$customer_args = [
@@ -1098,6 +1329,43 @@ class WooCommerce {
 			'tags'              => wp_get_post_terms( $product->get_id(), 'product_tag', [ 'fields' => 'names' ] ),
 			'url'               => get_permalink( $product->get_id() ),
 			'date_created'      => $product->get_date_created() ? $product->get_date_created()->format( 'Y-m-d H:i:s' ) : null,
+		];
+	}
+
+	/**
+	 * Sanitize an incoming address payload (billing or shipping) to the WC-expected shape.
+	 * Only the address keys WC recognises are kept — arbitrary caller input is dropped.
+	 */
+	private static function sanitize_address_fields( array $address ): array {
+		$allowed = [ 'first_name', 'last_name', 'company', 'address_1', 'address_2', 'city', 'state', 'postcode', 'country', 'email', 'phone' ];
+		$out = [];
+		foreach ( $allowed as $key ) {
+			if ( isset( $address[ $key ] ) ) {
+				$val = (string) $address[ $key ];
+				$out[ $key ] = ( $key === 'email' ) ? sanitize_email( $val ) : sanitize_text_field( $val );
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Return the order's current billing or shipping address as an associative array —
+	 * used by wc_update_order to merge partial address updates with existing values.
+	 */
+	private static function current_address( \WC_Order $order, string $type ): array {
+		$getter_prefix = 'get_' . $type . '_';
+		return [
+			'first_name' => $order->{$getter_prefix . 'first_name'}(),
+			'last_name'  => $order->{$getter_prefix . 'last_name'}(),
+			'company'    => $order->{$getter_prefix . 'company'}(),
+			'address_1'  => $order->{$getter_prefix . 'address_1'}(),
+			'address_2'  => $order->{$getter_prefix . 'address_2'}(),
+			'city'       => $order->{$getter_prefix . 'city'}(),
+			'state'      => $order->{$getter_prefix . 'state'}(),
+			'postcode'   => $order->{$getter_prefix . 'postcode'}(),
+			'country'    => $order->{$getter_prefix . 'country'}(),
+			'email'      => ( $type === 'billing' ) ? $order->get_billing_email() : '',
+			'phone'      => ( $type === 'billing' ) ? $order->get_billing_phone() : '',
 		];
 	}
 

@@ -53,6 +53,10 @@ $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_ro
 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_session_%' OR option_name LIKE '_transient_timeout_royal_mcp_session_%'");
 
+// Clean up undo-snapshot options (populated by Undo_Store for reversible tools like wp_reorder_menu_items).
+// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+$wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal_mcp_undo_%'");
+
 // Clear scheduled events.
 wp_clear_scheduled_hook('royal_mcp_token_cleanup');
 
@@ -62,3 +66,6 @@ delete_metadata('user', 0, 'royal_mcp_founders_dismissed', '', true);
 // version-stamped dismissal meta for founders + review banners.
 delete_metadata('user', 0, 'royal_mcp_founders_dismissed_version', '', true);
 delete_metadata('user', 0, 'royal_mcp_review_dismissed_version', '', true);
+// Legacy chrome-callout dismissal meta (retired in 1.4.39 when the Founders Bundle
+// ad was consolidated onto a single admin surface).
+delete_metadata('user', 0, 'royal_plugins_dismissed_founders_callout', '', true);

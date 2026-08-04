@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.0
-Stable tag: 1.4.38
+Stable tag: 1.4.39
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -40,6 +40,12 @@ Royal MCP prevents all of this with API key authentication on session initializa
 Royal MCP is fully featured in its free, GPL-licensed release. There is no Pro version &mdash; all tools ship in the wp.org plugin, and updates go through the standard WordPress plugin updater.
 
 Your credentials stay on your server. Royal MCP runs entirely inside WordPress: API keys, OAuth tokens, and session state all live in your own database. Royal MCP makes no outbound connections to Royal Plugins&rsquo; own servers &mdash; no license check, no telemetry, no traffic beacon. If you prefer to keep AI inference local too, Ollama and LM Studio are first-class platforms alongside Claude, ChatGPT, and Gemini.
+
+= See What AI Agents Do With Your Site =
+
+Royal MCP connects AI agents to WordPress. The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) companion shows you every AI agent hitting your site at the HTTP layer &mdash; training crawlers, retrieval bots, AI search engines &mdash; not just the ones connected through Royal MCP.
+
+Install both for a unified audit trail: MCP tool calls and HTTP-layer bot hits appear side by side in one dashboard, with per-bot allow / block / log-only controls for 60+ recognized AI agents. Royal AI Firewall is free forever, no upgrade prompt.
 
 = 73 Core Tools + 71 Integration Tools =
 
@@ -113,7 +119,7 @@ When GuardPress is active, AI agents can monitor your site security:
 * Browse the security audit log filtered by severity
 
 **Royal AI Firewall Integration (6 tools):**
-When Royal AI Firewall is active, AI agents can review AI bot traffic and manage per-bot policies:
+When the free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) companion is installed, Royal MCP gets full observability over every AI agent hitting your site &mdash; not just MCP callers. AI agents connected through Royal MCP can also review bot traffic and update policies via 6 additional tools:
 
 * View dashboard statistics — total hits, unique bots, top bots, top paths across the site
 * Get recent bot hits with per-bot detail, timestamps, and requested paths
@@ -348,6 +354,23 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.4.39 =
+* New: Free plugin refuses activation when Royal MCP Pro is already active.
+* New: OAuth session-length setting lets site owners choose how long AI sessions stay connected before requiring re-authorization.
+* New: Revoke all active AI sessions from Settings → OAuth.
+* New: Endpoint profiles let MCP clients request a curated subset of tools by appending ?tools=core to the endpoint URL.
+* New: royal_mcp_tools filter lets developers programmatically trim or extend the tool list.
+* Enhancement: OAuth sessions now default to 24 hours.
+* Enhancement: Admin auto-detects BitNinja WebShield interference with OAuth discovery and shows targeted host-support instructions.
+* Fix: `elementor_replace_text` now walks Blockquote widget fields (author name and quote content).
+* New: Settings-page section to allowlist third-party plugin options for `wp_update_option` without writing filter code.
+* New: Widget tools — list widget instances (optionally filtered by sidebar), list sidebars, and update widget content; writes gated by the theme-appearance admin toggle.
+* New: wp_reorder_menu_items now returns an undo token that mcp_undo_last_operation can consume within 72 hours to restore the prior order.
+* New: mcp_undo_last_operation tool consumes an undo token and reverses the operation that generated it.
+* New: seo_audit_meta_tags fetches a post's actual rendered HTML and reports title, meta description, canonical, viewport, Open Graph and Twitter Card tags — catches conflicts that only appear in served output.
+* New: WooCommerce order write tools — wc_create_order, wc_update_order, wc_add_order_note — for B2B, wholesale, phone orders, and support-note trails.
+* Enhancement: Readme highlights Royal AI Firewall as the companion plugin for HTTP-layer AI bot visibility alongside Royal MCP.
 
 = 1.4.38 =
 * Feature: All tools register as WordPress abilities on WP 6.9+, accessible via the WP Abilities REST API and the WordPress MCP Adapter alongside the native MCP endpoint.

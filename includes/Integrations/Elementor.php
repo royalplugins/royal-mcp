@@ -412,6 +412,7 @@ class Elementor {
 			'star-rating'    => [ 'title' ],
 			'call-to-action' => [ 'title', 'description', 'button' ],
 			'flip-box'       => [ 'title_text_a', 'description_text_a', 'title_text_b', 'description_text_b', 'button_text' ],
+			'blockquote'     => [ 'author_name', 'blockquote_content' ],
 		];
 
 		$out = [];
