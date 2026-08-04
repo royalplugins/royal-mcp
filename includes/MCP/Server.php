@@ -503,6 +503,99 @@ class Server {
         return $response;
     }
 
+
+    /**
+     * Shared implementation for wp_replace_in_post / wp_replace_in_page.
+     *
+     * Literal (case-sensitive) find/replace on post_content, so callers can
+     * make surgical edits to large documents without re-transmitting the
+     * full body through the MCP transport. All occurrences are replaced in
+     * one call (str_replace semantics).
+     *
+     * Safety rails, in evaluation order:
+     *   - find must be non-empty; replace must be present (may be "").
+     *   - expected_count, when provided, aborts BEFORE writing unless the
+     *     occurrence count matches exactly — protects against a stale
+     *     mental model of the content (e.g. the post changed since the
+     *     caller last read it).
+     *   - dry_run reports the count and writes nothing.
+     *   - zero occurrences is an error, not a silent no-op, so LLM callers
+     *     cannot mistake a typo'd needle for success.
+     *
+     * The response is read-after-write in the same spirit as
+     * build_update_response(): stored content is re-read and compared to
+     * the computed replacement; a mismatch (kses stripping for callers
+     * without unfiltered_html, content filters, etc.) is surfaced via
+     * modified_by_wp rather than hidden behind a success message.
+     *
+     * @param int    $post_id Target post ID (existence checked by caller).
+     * @param array  $args    Raw tool args (find, replace, expected_count, dry_run).
+     * @param string $noun    'post' or 'page' — only used in messages.
+     *
+     * @return array Response with id, occurrences, replaced, verified, lengths, message.
+     */
+    private static function replace_in_post_content(int $post_id, array $args, string $noun): array {
+        // object-level edit_post resolves to the PT-specific cap
+        // (edit_page etc.) automatically via map_meta_cap — same gate as
+        // wp_update_post / wp_update_page.
+        if (!current_user_can('edit_post', $post_id)) {
+            throw new \Exception('You do not have permission to edit this ' . esc_html($noun) . '.');
+        }
+        if (!isset($args['find']) || !is_string($args['find']) || $args['find'] === '') {
+            throw new \Exception('find must be a non-empty string.');
+        }
+        if (!array_key_exists('replace', $args) || !is_string($args['replace'])) {
+            throw new \Exception('replace must be a string (empty string deletes the matched text).');
+        }
+        $find = $args['find'];
+        $replace = $args['replace'];
+        // Raw stored content, NOT filtered output — replacement operates on
+        // exactly what wp_update_post would receive back.
+        $content = (string) get_post($post_id)->post_content;
+        $occurrences = substr_count($content, $find);
+        if (array_key_exists('expected_count', $args) && intval($args['expected_count']) !== $occurrences) {
+            throw new \Exception(sprintf('expected_count is %d but %d occurrence(s) found; content unchanged.', intval($args['expected_count']), $occurrences));
+        }
+        if (!empty($args['dry_run'])) {
+            return [
+                'id' => $post_id,
+                'dry_run' => true,
+                'occurrences' => $occurrences,
+                'content_length' => strlen($content),
+                'message' => sprintf('Dry run: %d occurrence(s) found; nothing written.', $occurrences),
+            ];
+        }
+        if ($occurrences === 0) {
+            throw new \Exception('find string not found in ' . esc_html($noun) . ' content; nothing to replace. Use dry_run=true to probe safely.');
+        }
+        if ($find === $replace) {
+            throw new \Exception('find and replace are identical; nothing to do.');
+        }
+        $new_content = str_replace($find, $replace, $content);
+        // See wp_create_post for the wp_slash + no-wp_kses_post rationale;
+        // kses still applies inside wp_update_post for callers without
+        // unfiltered_html, which the verification below surfaces.
+        $result = wp_update_post(['ID' => $post_id, 'post_content' => wp_slash($new_content)], true);
+        if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
+        $stored = (string) get_post($post_id)->post_content;
+        $verified = ($stored === $new_content);
+        $response = [
+            'id' => $post_id,
+            'occurrences' => $occurrences,
+            'replaced' => $occurrences,
+            'verified' => $verified,
+            'content_length_before' => strlen($content),
+            'content_length_after' => strlen($stored),
+            'message' => sprintf('%s content updated: %d occurrence(s) replaced.', ucfirst($noun), $occurrences),
+        ];
+        if (!$verified) {
+            $response['modified_by_wp'] = [
+                'content' => 'Stored content differs from the computed replacement (sanitization or a content filter modified it on save). Re-read the ' . $noun . ' to inspect the stored result.',
+            ];
+        }
+        return $response;
+    }
+
     /**
      * Sanitize a meta value received from an MCP client.
      *
@@ -585,6 +678,7 @@ class Server {
             ['name' => 'wp_get_post', 'description' => 'Get single post by ID (any post type)', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID']], 'required' => ['id']]],
             ['name' => 'wp_create_post', 'description' => 'Create new post (supports custom post types). Combine status="future" with date to schedule. Excerpt may contain safe HTML (same allow-list as post content).', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule. Past dates auto-publish with that timestamp.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'categories' => ['type' => 'array', 'items' => ['type' => 'integer']], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post)'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to assign as the post author. Defaults to the authenticated MCP user (admin). Use wp_get_users to discover available author IDs.']], 'required' => ['title', 'content']]],
             ['name' => 'wp_update_post', 'description' => 'Update existing post (any post type). Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image (pass 0 to remove)'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as the post author. Use wp_get_users to discover available author IDs.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling posts/pages. Lower = earlier.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent post ID (0 = no parent). Useful for hierarchical CPTs. Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Post password. Empty string removes protection.'], 'comment_status' => ['type' => 'string', 'enum' => ['open', 'closed'], 'description' => 'Allow (open) or disallow (closed) new comments.'], 'ping_status' => ['type' => 'string', 'enum' => ['open', 'closed'], 'description' => 'Allow (open) or disallow (closed) trackbacks / pingbacks.']], 'required' => ['id']]],
+            ['name' => 'wp_replace_in_post', 'description' => 'Find/replace a literal string inside a post\'s content (any post type) without resending the full body. Use for surgical edits to large posts (page-builder content, embedded base64 payloads) where wp_update_post\'s full-content replacement is impractical. Case-sensitive literal match, no regex. All occurrences are replaced. Response includes occurrence count and read-after-write verification. Set dry_run=true to preview the match count without writing; set expected_count to abort unless exactly that many matches exist.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'find' => ['type' => 'string', 'minLength' => 1, 'description' => 'Literal text to find in post_content (case-sensitive, no regex).'], 'replace' => ['type' => 'string', 'description' => 'Literal replacement text. Empty string deletes the matched text.'], 'expected_count' => ['type' => 'integer', 'description' => 'Optional guard: abort without writing unless the number of occurrences equals this value.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Report the occurrence count without writing. Default false.']], 'required' => ['id', 'find', 'replace']]],
             ['name' => 'wp_get_post_types', 'description' => 'Get all registered public post types (including custom post types)', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_delete_post', 'description' => 'Delete post', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean', 'description' => 'Skip trash and permanently delete']], 'required' => ['id']]],
             ['name' => 'wp_count_posts', 'description' => 'Get post counts by status', 'inputSchema' => ['type' => 'object', 'properties' => ['post_type' => ['type' => 'string', 'description' => 'Post type (post, page, etc)']]]],
@@ -594,6 +688,7 @@ class Server {
             ['name' => 'wp_get_page', 'description' => 'Get single page by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Page ID']], 'required' => ['id']]],
             ['name' => 'wp_create_page', 'description' => 'Create new page. Combine status="future" with date to schedule. Excerpt (via wp_update_post_meta on _excerpt or via wp_create_post fallback) may contain safe HTML.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule.'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID']], 'required' => ['title', 'content']]],
             ['name' => 'wp_update_page', 'description' => 'Update existing page. Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional page excerpt. May contain safe HTML.'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as page author.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling pages. Lower = earlier in navigation.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent page ID (0 = top-level). Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Page password. Empty string removes protection.']], 'required' => ['id']]],
+            ['name' => 'wp_replace_in_page', 'description' => 'Find/replace a literal string inside a page\'s content without resending the full body. Page-typed variant of wp_replace_in_post — same semantics: case-sensitive literal match, all occurrences replaced, dry_run preview, expected_count guard, read-after-write verification.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'find' => ['type' => 'string', 'minLength' => 1, 'description' => 'Literal text to find in the page content (case-sensitive, no regex).'], 'replace' => ['type' => 'string', 'description' => 'Literal replacement text. Empty string deletes the matched text.'], 'expected_count' => ['type' => 'integer', 'description' => 'Optional guard: abort without writing unless the number of occurrences equals this value.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Report the occurrence count without writing. Default false.']], 'required' => ['id', 'find', 'replace']]],
             ['name' => 'wp_delete_page', 'description' => 'Delete page', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean']], 'required' => ['id']]],
 
             // Media
@@ -1634,6 +1729,11 @@ class Server {
                 }
                 return self::build_update_response($post_id, $args, $data, 'Post updated successfully');
 
+            case 'wp_replace_in_post':
+                $post_id = self::resolve_post_id_arg($args);
+                if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
+                return self::replace_in_post_content($post_id, $args, 'post');
+
             case 'wp_delete_post':
                 $post_id = self::resolve_post_id_arg($args);
                 if ($post_id <= 0) throw new \Exception('Post not found.');
@@ -1809,6 +1909,12 @@ class Server {
                 $result = wp_update_post($data);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
                 return self::build_update_response($page_id, $args, $data, 'Page updated successfully');
+
+            case 'wp_replace_in_page':
+                $page_id = self::resolve_post_id_arg($args);
+                $existing_page = $page_id > 0 ? get_post($page_id) : null;
+                if (!$existing_page || $existing_page->post_type !== 'page') throw new \Exception('Page not found.');
+                return self::replace_in_post_content($page_id, $args, 'page');
 
             case 'wp_delete_page':
                 $page_id = self::resolve_post_id_arg($args);

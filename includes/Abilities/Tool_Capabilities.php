@@ -87,6 +87,12 @@ class Tool_Capabilities {
 			'wp_update_page' => 'edit_pages',
 			'wp_delete_page' => 'edit_pages',
 
+			// ==================== Core: content find/replace ====================
+			// 'replace' is not a verb infer_cap() knows, so both tools would
+			// otherwise fall through to the manage_options fallback.
+			'wp_replace_in_post' => 'edit_posts',
+			'wp_replace_in_page' => 'edit_pages',
+
 			// ==================== Core: connection health — any authenticated caller ====================
 			'royal_mcp_connection_health' => 'read',
 
