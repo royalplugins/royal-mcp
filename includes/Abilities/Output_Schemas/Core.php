@@ -37,8 +37,9 @@ class Core {
 				'items' => self::post_summary_schema(),
 			),
 			'wp_get_post'       => self::post_full_schema(),
-			'wp_create_post'    => self::post_write_response_schema(),
-			'wp_update_post'    => self::post_write_response_schema(),
+			'wp_create_post'     => self::post_write_response_schema(),
+			'wp_update_post'     => self::post_write_response_schema(),
+			'wp_replace_in_post' => self::replace_in_content_response_schema(),
 			'wp_get_post_types' => array(
 				'type'  => 'array',
 				'items' => array(
@@ -63,8 +64,9 @@ class Core {
 				'items' => self::post_summary_schema(),
 			),
 			'wp_get_page'     => self::post_full_schema(),
-			'wp_create_page'  => self::post_write_response_schema(),
-			'wp_update_page'  => self::post_write_response_schema(),
+			'wp_create_page'     => self::post_write_response_schema(),
+			'wp_update_page'     => self::post_write_response_schema(),
+			'wp_replace_in_page' => self::replace_in_content_response_schema(),
 			'wp_delete_page'  => self::message_schema(),
 
 			// ==================== MEDIA ====================
@@ -572,6 +574,25 @@ class Core {
 				'saved_fields'    => array( 'type' => 'object', 'additionalProperties' => true ),
 				'modified_by_wp'  => array( 'type' => 'object', 'additionalProperties' => true ),
 				'message'         => array( 'type' => 'string' ),
+			),
+		);
+	}
+
+	private static function replace_in_content_response_schema(): array {
+		return array(
+			'type'                 => 'object',
+			'additionalProperties' => true,
+			'properties'           => array(
+				'id'                    => array( 'type' => 'integer' ),
+				'occurrences'           => array( 'type' => 'integer' ),
+				'replaced'              => array( 'type' => 'integer' ),
+				'verified'              => array( 'type' => 'boolean' ),
+				'dry_run'               => array( 'type' => 'boolean' ),
+				'content_length'        => array( 'type' => 'integer' ),
+				'content_length_before' => array( 'type' => 'integer' ),
+				'content_length_after'  => array( 'type' => 'integer' ),
+				'modified_by_wp'        => array( 'type' => 'object', 'additionalProperties' => true ),
+				'message'               => array( 'type' => 'string' ),
 			),
 		);
 	}
