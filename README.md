@@ -86,6 +86,18 @@ Explicit scope boundaries — the integration model is "narrow tools that work r
 - **No plugin installation or upgrades via MCP.** Discovery yes; install/activate/deactivate no.
 - **No raw SQL.** Queries go through `WP_Query` and `$wpdb->prepare()` only.
 
+## Royal MCP Pro (paid)
+
+The Free plugin is fully featured for individual site owners. Royal MCP Pro extends it for agencies and multi-site operators:
+
+- **Divi Pro suite** — page clone, image swap, template import, full library CRUD, D4→D5 Migrator, global preset bulk-apply (8 tools)
+- **Elementor Pro depth** — additional Elementor tools beyond the Free integration
+- **Universal audit log** — every AI operation logged with attribution + export
+- **72-hour undo on every write** — every destructive Pro tool returns an undo token; reverse any operation within the window
+- **License-gated updates** through the standard WordPress updater — no runtime dependencies on external license servers
+
+[Learn more at royalplugins.com/royal-mcp-pro](https://royalplugins.com/royal-mcp-pro/)
+
 ## Connect
 
 ### Install
