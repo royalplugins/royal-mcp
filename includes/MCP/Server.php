@@ -783,6 +783,8 @@ class Server {
 
             // Post Revisions
             ['name' => 'wp_get_post_revisions', 'description' => 'Get the revision history for a post — list of all saved revisions with author, date, and revision ID. Useful for "what changed?" or "revert to yesterday\'s version" workflows.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'limit' => ['type' => 'integer', 'description' => 'Max revisions to return (default 20)']], 'required' => ['post_id']]],
+            ['name' => 'wp_get_revision_content', 'description' => 'Read the full stored content of a single post revision by revision ID. Use with wp_get_post_revisions to inspect what a past version actually contained, or to recover content lost in a page-builder or plugin migration. Read-only.', 'inputSchema' => ['type' => 'object', 'properties' => ['revision_id' => ['type' => 'integer', 'description' => 'Revision ID from wp_get_post_revisions.']], 'required' => ['revision_id']]],
+            ['name' => 'wp_diff_revisions', 'description' => 'Unified diff between two states of a post, computed server-side. Defaults to comparing the most recent revision against the current live content, which answers "what did my last write actually change?" without transferring both full bodies. Pass from_revision_id / to_revision_id to compare any two revisions of the same post. Output capped by max_lines; truncation is reported. Read-only.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'from_revision_id' => ['type' => 'integer', 'description' => 'Optional. Defaults to the most recent revision.'], 'to_revision_id' => ['type' => 'integer', 'description' => 'Optional. Defaults to the current live post content.'], 'max_lines' => ['type' => 'integer', 'description' => 'Maximum diff lines to return (default 500, max 5000).']], 'required' => ['post_id']]],
             ['name' => 'wp_restore_revision', 'description' => 'Restore a post to a specific revision. The current post content becomes the previous revision (so it can still be reverted again). Requires edit_post capability on the parent post.', 'inputSchema' => ['type' => 'object', 'properties' => ['revision_id' => ['type' => 'integer']], 'required' => ['revision_id']]],
         ];
 
@@ -3597,6 +3599,112 @@ class Server {
                         'word_count'   => str_word_count(wp_strip_all_tags((string) $r->post_content)),
                     ];
                 }, array_values($revisions));
+
+            case 'wp_get_revision_content':
+                $revision_id = intval($args['revision_id'] ?? 0);
+                if ($revision_id <= 0) throw new \Exception('revision_id is required.');
+                $revision = wp_get_post_revision($revision_id);
+                if (!$revision) throw new \Exception('Revision not found.');
+                // Gate on the PARENT post's read cap, not the revision's own
+                // ID — a revision inherits the sensitivity of the post it
+                // belongs to. Same gate as wp_get_post_revisions above.
+                if (!current_user_can('read_post', (int) $revision->post_parent)) {
+                    throw new \Exception('You do not have permission to read revisions on this post.');
+                }
+                return [
+                    'revision_id'    => (int) $revision->ID,
+                    'parent_id'      => (int) $revision->post_parent,
+                    'date'           => $revision->post_date,
+                    'author_name'    => get_the_author_meta('display_name', $revision->post_author),
+                    'title'          => $revision->post_title,
+                    'content'        => $revision->post_content,
+                    'excerpt'        => $revision->post_excerpt,
+                    'content_length' => strlen((string) $revision->post_content),
+                ];
+
+            case 'wp_diff_revisions':
+                $post_id = self::resolve_post_id_arg($args);
+                if ($post_id <= 0) throw new \Exception('post_id (or id) is required.');
+                $parent = get_post($post_id);
+                if (!$parent) throw new \Exception('Post not found.');
+                if (!current_user_can('read_post', $post_id)) {
+                    throw new \Exception('You do not have permission to read revisions on this post.');
+                }
+                $max_lines = min(max(intval($args['max_lines'] ?? 500), 1), 5000);
+                // "from" side: explicit revision, else the newest revision.
+                $from_id = intval($args['from_revision_id'] ?? 0);
+                if ($from_id > 0) {
+                    $from_rev = wp_get_post_revision($from_id);
+                    if (!$from_rev || (int) $from_rev->post_parent !== $post_id) {
+                        throw new \Exception('from_revision_id does not belong to this post.');
+                    }
+                    $from_content = (string) $from_rev->post_content;
+                    $from_label   = 'revision ' . (int) $from_rev->ID . ' (' . $from_rev->post_date . ')';
+                } else {
+                    $newest = wp_get_post_revisions($post_id, ['number' => 1]);
+                    if (empty($newest)) throw new \Exception('This post has no stored revisions to compare against.');
+                    $newest = array_values($newest)[0];
+                    $from_content = (string) $newest->post_content;
+                    $from_label   = 'revision ' . (int) $newest->ID . ' (' . $newest->post_date . ')';
+                }
+                // "to" side: explicit revision, else the current live content.
+                $to_id = intval($args['to_revision_id'] ?? 0);
+                if ($to_id > 0) {
+                    $to_rev = wp_get_post_revision($to_id);
+                    if (!$to_rev || (int) $to_rev->post_parent !== $post_id) {
+                        throw new \Exception('to_revision_id does not belong to this post.');
+                    }
+                    $to_content = (string) $to_rev->post_content;
+                    $to_label   = 'revision ' . (int) $to_rev->ID . ' (' . $to_rev->post_date . ')';
+                } else {
+                    $to_content = (string) $parent->post_content;
+                    $to_label   = 'current content';
+                }
+                if ($from_content === $to_content) {
+                    return [
+                        'from' => $from_label, 'to' => $to_label, 'identical' => true,
+                        'diff' => '', 'lines_added' => 0, 'lines_removed' => 0, 'truncated' => false,
+                    ];
+                }
+                // Text_Diff ships with WordPress but is not loaded on REST requests.
+                if (!class_exists('Text_Diff')) {
+                    require_once ABSPATH . WPINC . '/wp-diff.php';
+                }
+                if (!class_exists('Text_Diff')) {
+                    throw new \Exception('Diff engine unavailable on this installation.');
+                }
+                // Normalise line endings for comparison only — both tools are
+                // read-only, so stored content is untouched. This keeps a pure
+                // CRLF/LF difference from rendering as a whole-file rewrite.
+                $norm = static function ($text) {
+                    return explode("\n", str_replace(["\r\n", "\r"], "\n", (string) $text));
+                };
+                $engine = new \Text_Diff('auto', [$norm($from_content), $norm($to_content)]);
+                $out = '';
+                $added = 0;
+                $removed = 0;
+                $emitted = 0;
+                $truncated = false;
+                foreach ($engine->getDiff() as $op) {
+                    $orig  = is_array($op->orig)  ? $op->orig  : [];
+                    $final = is_array($op->final) ? $op->final : [];
+                    // Copy ops have identical sides — skip by value rather than
+                    // relying on Text_Diff_Op_* subclass names.
+                    if ($orig && $final && $orig === $final) continue;
+                    foreach ($orig as $line) {
+                        if ($emitted >= $max_lines) { $truncated = true; break 2; }
+                        $out .= '-' . $line . "\n"; $removed++; $emitted++;
+                    }
+                    foreach ($final as $line) {
+                        if ($emitted >= $max_lines) { $truncated = true; break 2; }
+                        $out .= '+' . $line . "\n"; $added++; $emitted++;
+                    }
+                }
+                return [
+                    'from' => $from_label, 'to' => $to_label, 'identical' => false,
+                    'diff' => $out, 'lines_added' => $added, 'lines_removed' => $removed,
+                    'truncated' => $truncated,
+                ];
 
             case 'wp_restore_revision':
                 $revision_id = intval($args['revision_id'] ?? 0);
