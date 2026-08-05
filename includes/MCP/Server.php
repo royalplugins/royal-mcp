@@ -692,7 +692,7 @@ class Server {
             ['name' => 'wp_delete_page', 'description' => 'Delete page', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean']], 'required' => ['id']]],
 
             // Media
-            ['name' => 'wp_get_media', 'description' => 'List media library attachments. Returns id, title, source_url, alt_text, mime_type, and date for each. Filter by mime_type to narrow to images / videos / audio / documents.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of items (default 10, max 100)'], 'mime_type' => ['type' => 'string', 'description' => 'Filter by mime type prefix or full type (image, video, audio, application/pdf)']]]],
+            ['name' => 'wp_get_media', 'description' => 'List media library attachments. Returns id, title, source_url, alt_text, mime_type, and date for each. Filter by mime_type to narrow to images / videos / audio / documents. Pass search to find a specific attachment by title, filename, or alt text instead of paging the whole library.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of items (default 10, max 100)'], 'mime_type' => ['type' => 'string', 'description' => 'Filter by mime type prefix or full type (image, video, audio, application/pdf)'], 'search' => ['type' => 'string', 'description' => 'Optional. Matches attachment title, filename, or alt text (case-insensitive, partial match).']]]],
             ['name' => 'wp_get_media_item', 'description' => 'Get single media item by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer']], 'required' => ['id']]],
             ['name' => 'wp_upload_media_from_url', 'description' => 'Download an image from a public HTTPS URL and add it to the WordPress media library. Use this when you have an image URL (Unsplash, Pexels, client asset, etc) that needs to become a library attachment — for example before setting it as a featured image. Returns the new attachment ID.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Public HTTPS URL of the image to download'], 'filename' => ['type' => 'string', 'description' => 'Optional filename (with extension). Derived from URL if omitted.'], 'alt_text' => ['type' => 'string', 'description' => 'Alt text for accessibility and SEO'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string']], 'required' => ['url']]],
             ['name' => 'wp_upload_media', 'description' => 'Upload an image to the media library from base64-encoded bytes. Use this for AI-generated images or pasted screenshots where you have raw bytes rather than a URL. For images already hosted somewhere, prefer wp_upload_media_from_url.', 'inputSchema' => ['type' => 'object', 'properties' => ['filename' => ['type' => 'string', 'description' => 'Filename with extension (e.g. hero.jpg)'], 'content_base64' => ['type' => 'string', 'description' => 'Base64-encoded file bytes'], 'alt_text' => ['type' => 'string'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string']], 'required' => ['filename', 'content_base64']]],
@@ -1939,6 +1939,49 @@ class Server {
                     'post_status' => 'inherit',
                 ];
                 if (!empty($args['mime_type'])) $media_args['post_mime_type'] = sanitize_text_field($args['mime_type']);
+                $media_search = sanitize_text_field($args['search'] ?? '');
+                if ($media_search !== '') {
+                    // WP_Query's `s` does not reach attachment filenames or alt
+                    // text, and a keyword search cannot be OR'd against a
+                    // meta_query inside one WP_Query. Run the meta side (alt
+                    // text + filename) and the keyword side (title/content) as
+                    // separate ID-only lookups and merge. WP_Meta_Query applies
+                    // $wpdb->esc_like() to LIKE values, so % and _ in the search
+                    // term are matched literally, not as wildcards.
+                    $media_limit = $media_args['numberposts'];
+                    $meta_ids = get_posts([
+                        'post_type'      => 'attachment',
+                        'post_status'    => 'inherit',
+                        'posts_per_page' => $media_limit,
+                        'fields'         => 'ids',
+                        'meta_query'     => [
+                            'relation' => 'OR',
+                            [
+                                'key'     => '_wp_attachment_image_alt',
+                                'value'   => $media_search,
+                                'compare' => 'LIKE',
+                            ],
+                            [
+                                'key'     => '_wp_attached_file',
+                                'value'   => $media_search,
+                                'compare' => 'LIKE',
+                            ],
+                        ],
+                    ]);
+                    $title_ids = get_posts([
+                        'post_type'      => 'attachment',
+                        'post_status'    => 'inherit',
+                        'posts_per_page' => $media_limit,
+                        'fields'         => 'ids',
+                        's'              => $media_search,
+                    ]);
+                    $media_ids = array_slice(array_unique(array_merge($title_ids, $meta_ids)), 0, $media_limit);
+                    if (empty($media_ids)) return [];
+                    // post__in intersects with post_mime_type in the main query,
+                    // so search combines correctly with the mime_type filter.
+                    $media_args['post__in'] = $media_ids;
+                    $media_args['orderby']  = 'post__in';
+                }
                 $media = get_posts($media_args);
                 return array_map(function($m) {
                     return [
