@@ -8,6 +8,7 @@ use Royal_MCP\Integrations\RoyalLedger as RLIntegration;
 use Royal_MCP\Integrations\ForgeCache as FCIntegration;
 use Royal_MCP\Integrations\RoyalLinks as RLinksIntegration;
 use Royal_MCP\Integrations\Elementor as ElementorIntegration;
+use Royal_MCP\Integrations\Fusion as FusionIntegration;
 use Royal_MCP\Integrations\ACF as ACFIntegration;
 use Royal_MCP\Integrations\RoyalAIFirewall as RAIFIntegration;
 use Royal_MCP\Integrations\Redirection as RedirectionIntegration;
@@ -794,6 +795,7 @@ class Server {
         $tools = array_merge( $tools, FCIntegration::get_tools() );
         $tools = array_merge( $tools, RLinksIntegration::get_tools() );
         $tools = array_merge( $tools, ElementorIntegration::get_tools() );
+        $tools = array_merge( $tools, FusionIntegration::get_tools() );
         $tools = array_merge( $tools, ACFIntegration::get_tools() );
         $tools = array_merge( $tools, RAIFIntegration::get_tools() );
         $tools = array_merge( $tools, RedirectionIntegration::get_tools() );
@@ -3636,6 +3638,9 @@ class Server {
                 }
                 if ( strpos( $name, 'elementor_' ) === 0 ) {
                     return ElementorIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'fusion_' ) === 0 ) {
+                    return FusionIntegration::execute_tool( $name, $args );
                 }
                 if ( strpos( $name, 'acf_' ) === 0 ) {
                     return ACFIntegration::execute_tool( $name, $args );

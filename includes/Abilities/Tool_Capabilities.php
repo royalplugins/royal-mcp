@@ -129,6 +129,7 @@ class Tool_Capabilities {
 		// Integration-namespace defaults inherit each integration's baseline.
 		if ( strpos( $tool_name, 'wc_' ) === 0 )        return 'manage_woocommerce';
 		if ( strpos( $tool_name, 'elementor_' ) === 0 ) return 'edit_posts';
+		if ( strpos( $tool_name, 'fusion_' ) === 0 )    return 'edit_posts';
 		if ( strpos( $tool_name, 'fc_' ) === 0 )        return 'edit_posts';
 		if ( strpos( $tool_name, 'sv_' ) === 0 )        return 'manage_options';
 		if ( strpos( $tool_name, 'gp_' ) === 0 )        return 'manage_options';

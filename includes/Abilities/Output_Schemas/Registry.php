@@ -26,6 +26,7 @@ class Registry {
 		// Integration prefixes come first — longest / most specific first.
 		if ( strpos( $tool_name, 'wc_' ) === 0 )         return WooCommerce::get( $tool_name );
 		if ( strpos( $tool_name, 'elementor_' ) === 0 )  return Elementor::get( $tool_name );
+		if ( strpos( $tool_name, 'fusion_' ) === 0 )     return Fusion::get( $tool_name );
 		if ( strpos( $tool_name, 'fc_' ) === 0 )         return ForgeCache::get( $tool_name );
 		if ( strpos( $tool_name, 'sv_' ) === 0 )         return SiteVault::get( $tool_name );
 		if ( strpos( $tool_name, 'gp_' ) === 0 )         return GuardPress::get( $tool_name );
