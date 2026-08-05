@@ -689,6 +689,7 @@ class Server {
             ['name' => 'wp_create_page', 'description' => 'Create new page. Combine status="future" with date to schedule. Excerpt (via wp_update_post_meta on _excerpt or via wp_create_post fallback) may contain safe HTML.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule.'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID']], 'required' => ['title', 'content']]],
             ['name' => 'wp_update_page', 'description' => 'Update existing page. Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional page excerpt. May contain safe HTML.'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as page author.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling pages. Lower = earlier in navigation.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent page ID (0 = top-level). Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Page password. Empty string removes protection.']], 'required' => ['id']]],
             ['name' => 'wp_replace_in_page', 'description' => 'Find/replace a literal string inside a page\'s content without resending the full body. Page-typed variant of wp_replace_in_post — same semantics: case-sensitive literal match, all occurrences replaced, dry_run preview, expected_count guard, read-after-write verification.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'find' => ['type' => 'string', 'minLength' => 1, 'description' => 'Literal text to find in the page content (case-sensitive, no regex).'], 'replace' => ['type' => 'string', 'description' => 'Literal replacement text. Empty string deletes the matched text.'], 'expected_count' => ['type' => 'integer', 'description' => 'Optional guard: abort without writing unless the number of occurrences equals this value.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Report the occurrence count without writing. Default false.']], 'required' => ['id', 'find', 'replace']]],
+            ['name' => 'wp_replace_sitewide', 'description' => 'Literal find/replace across ALL posts/pages whose content contains the string. SAFE BY DEFAULT: dry_run defaults to true and returns the full match list (per-post occurrence counts) WITHOUT writing; pass dry_run=false after reviewing that list to write. expected_count guards the write: it must equal the site-wide total occurrence count or nothing is written. The write path is all-or-nothing - if any matched post is not editable by the caller, or the match list was truncated, no post is modified. Case-sensitive, no regex. Each modified post gets a normal WordPress revision.', 'inputSchema' => ['type' => 'object', 'properties' => ['find' => ['type' => 'string', 'minLength' => 1, 'description' => 'Literal text to find in post_content (case-sensitive, no regex).'], 'replace' => ['type' => 'string', 'description' => 'Literal replacement text. Empty string deletes the matched text.'], 'post_types' => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => 'Post types to search. Default: all public types except attachment.'], 'post_status' => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => 'Statuses to search. Default: ["publish"].'], 'dry_run' => ['type' => 'boolean', 'description' => 'Default TRUE. Set false explicitly to write.'], 'expected_count' => ['type' => 'integer', 'description' => 'Required to write: abort unless the site-wide total occurrence count equals this value. Take it from the dry run.']], 'required' => ['find', 'replace']]],
             ['name' => 'wp_delete_page', 'description' => 'Delete page', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean']], 'required' => ['id']]],
 
             // Media
@@ -1915,6 +1916,146 @@ class Server {
                 $existing_page = $page_id > 0 ? get_post($page_id) : null;
                 if (!$existing_page || $existing_page->post_type !== 'page') throw new \Exception('Page not found.');
                 return self::replace_in_post_content($page_id, $args, 'page');
+
+            case 'wp_replace_sitewide':
+                global $wpdb;
+                if (!isset($args['find']) || !is_string($args['find']) || $args['find'] === '') {
+                    throw new \Exception('find must be a non-empty string.');
+                }
+                if (!array_key_exists('replace', $args) || !is_string($args['replace'])) {
+                    throw new \Exception('replace must be a string (empty string deletes the matched text).');
+                }
+                $find = $args['find'];
+                $replace = $args['replace'];
+                if ($find === $replace) throw new \Exception('find and replace are identical; nothing to do.');
+                // dry_run DEFAULTS TO TRUE - the blast radius is the whole
+                // site, so the destructive path requires an explicit
+                // dry_run=false after the caller has seen the match list.
+                $dry_run = !array_key_exists('dry_run', $args) || !empty($args['dry_run']);
+
+                // Post types: default all public types except attachment.
+                if (!empty($args['post_types']) && is_array($args['post_types'])) {
+                    $types = [];
+                    foreach ($args['post_types'] as $t) {
+                        $t = sanitize_key($t);
+                        $pto = get_post_type_object($t);
+                        if (!$pto || !$pto->public) throw new \Exception('Invalid or non-public post type: ' . esc_html($t));
+                        $types[] = $t;
+                    }
+                } else {
+                    $types = array_values(array_diff(get_post_types(['public' => true]), ['attachment']));
+                }
+                // Statuses: default publish only. Non-public statuses require
+                // read_private_posts, mirroring wp_get_posts.
+                if (!empty($args['post_status']) && is_array($args['post_status'])) {
+                    $statuses = array_map('sanitize_key', $args['post_status']);
+                    $public_statuses = get_post_stati(['public' => true]);
+                    foreach ($statuses as $st) {
+                        if (!in_array($st, $public_statuses, true) && !current_user_can('read_private_posts')) {
+                            throw new \Exception('You do not have permission to search ' . esc_html($st) . ' posts.');
+                        }
+                    }
+                } else {
+                    $statuses = ['publish'];
+                }
+
+                // Literal substring match via prepared LIKE. Search is capped:
+                // an uncapped match list is exactly the runaway this tool is
+                // trying to prevent, and a truncated list must never be written
+                // against (silent partial completion is the failure mode).
+                $search_cap = 500;
+                $type_ph = implode(',', array_fill(0, count($types), '%s'));
+                $status_ph = implode(',', array_fill(0, count($statuses), '%s'));
+                $like = '%' . $wpdb->esc_like($find) . '%';
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- placeholders built from counts, all values passed through prepare().
+                $sql = $wpdb->prepare(
+                    "SELECT ID FROM {$wpdb->posts} WHERE post_content LIKE %s AND post_type IN ($type_ph) AND post_status IN ($status_ph) ORDER BY ID ASC LIMIT %d",
+                    array_merge([$like], $types, $statuses, [$search_cap + 1])
+                );
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- prepared above.
+                $ids = array_map('intval', (array) $wpdb->get_col($sql));
+                $truncated_search = count($ids) > $search_cap;
+                if ($truncated_search) $ids = array_slice($ids, 0, $search_cap);
+
+                $total_matches = 0;
+                $rows = [];
+                $not_editable = 0;
+                foreach ($ids as $pid) {
+                    $post_obj = get_post($pid);
+                    if (!$post_obj) continue;
+                    $n = substr_count((string) $post_obj->post_content, $find);
+                    if ($n === 0) continue; // LIKE is case-insensitive on most collations; substr_count is the case-sensitive truth
+                    $editable = current_user_can('edit_post', $pid);
+                    if (!$editable) $not_editable++;
+                    $total_matches += $n;
+                    $rows[] = [
+                        'id' => $pid,
+                        'title' => $post_obj->post_title,
+                        'type' => $post_obj->post_type,
+                        'url' => get_permalink($post_obj),
+                        'match_count' => $n,
+                        'editable' => $editable,
+                    ];
+                }
+
+                $response = [
+                    'dry_run' => $dry_run,
+                    'total_matches' => $total_matches,
+                    'total_posts' => count($rows),
+                    'truncated_search' => $truncated_search,
+                    'posts' => $rows,
+                    'written' => false,
+                ];
+                if ($dry_run) {
+                    $response['message'] = sprintf('Dry run: %d occurrence(s) across %d post(s). To write, call again with dry_run=false and expected_count=%d.', $total_matches, count($rows), $total_matches);
+                    return $response;
+                }
+
+                // ---- write path: all-or-nothing preconditions ----
+                if ($truncated_search) {
+                    throw new \Exception(sprintf('Match list truncated at %d posts - refusing to write against an incomplete set. Narrow post_types/post_status or split the change.', $search_cap));
+                }
+                if ($total_matches === 0) {
+                    throw new \Exception('find string not found in any searched post; nothing to replace.');
+                }
+                if (!array_key_exists('expected_count', $args)) {
+                    throw new \Exception(sprintf('expected_count is required to write. Current site-wide total is %d - re-run with expected_count=%d after reviewing the dry run.', $total_matches, $total_matches));
+                }
+                if (intval($args['expected_count']) !== $total_matches) {
+                    throw new \Exception(sprintf('expected_count is %d but the site-wide total is %d; nothing written.', intval($args['expected_count']), $total_matches));
+                }
+                if ($not_editable > 0) {
+                    throw new \Exception(sprintf('%d matched post(s) are not editable by the current user - refusing a partial write. Nothing written.', $not_editable));
+                }
+
+                $posts_written = 0;
+                $replaced = 0;
+                $verified = true;
+                foreach ($rows as $k => $row) {
+                    $post_obj = get_post($row['id']);
+                    $new_content = str_replace($find, $replace, (string) $post_obj->post_content);
+                    $result = wp_update_post(['ID' => $row['id'], 'post_content' => wp_slash($new_content)], true);
+                    if (is_wp_error($result)) {
+                        // Surface exactly how far we got - posts before this one ARE written.
+                        $response['written'] = true;
+                        $response['posts_written'] = $posts_written;
+                        $response['error'] = 'Write failed on post ' . $row['id'] . ': ' . $result->get_error_message() . '. Re-run a dry run to see the remaining state.';
+                        return $response;
+                    }
+                    $stored = (string) get_post($row['id'])->post_content;
+                    $row_verified = ($stored === $new_content);
+                    if (!$row_verified) $verified = false;
+                    $rows[$k]['verified'] = $row_verified;
+                    $posts_written++;
+                    $replaced += $row['match_count'];
+                }
+                $response['posts'] = $rows;
+                $response['written'] = true;
+                $response['posts_written'] = $posts_written;
+                $response['total_replaced'] = $replaced;
+                $response['verified'] = $verified;
+                $response['message'] = sprintf('%d occurrence(s) replaced across %d post(s).%s', $replaced, $posts_written, $verified ? '' : ' Some stored content differs from the computed replacement (sanitization/filters) - see per-post verified flags.');
+                return $response;
 
             case 'wp_delete_page':
                 $page_id = self::resolve_post_id_arg($args);

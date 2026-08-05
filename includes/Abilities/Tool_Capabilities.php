@@ -92,6 +92,9 @@ class Tool_Capabilities {
 			// otherwise fall through to the manage_options fallback.
 			'wp_replace_in_post' => 'edit_posts',
 			'wp_replace_in_page' => 'edit_pages',
+			// Sitewide variant: same verb problem; ability-level edit_posts,
+			// with per-post edit_post enforced (all-or-nothing) in the handler.
+			'wp_replace_sitewide' => 'edit_posts',
 
 			// ==================== Core: connection health — any authenticated caller ====================
 			'royal_mcp_connection_health' => 'read',

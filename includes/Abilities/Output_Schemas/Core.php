@@ -67,6 +67,7 @@ class Core {
 			'wp_create_page'     => self::post_write_response_schema(),
 			'wp_update_page'     => self::post_write_response_schema(),
 			'wp_replace_in_page' => self::replace_in_content_response_schema(),
+			'wp_replace_sitewide' => self::replace_sitewide_response_schema(),
 			'wp_delete_page'  => self::message_schema(),
 
 			// ==================== MEDIA ====================
@@ -574,6 +575,40 @@ class Core {
 				'saved_fields'    => array( 'type' => 'object', 'additionalProperties' => true ),
 				'modified_by_wp'  => array( 'type' => 'object', 'additionalProperties' => true ),
 				'message'         => array( 'type' => 'string' ),
+			),
+		);
+	}
+
+	private static function replace_sitewide_response_schema(): array {
+		return array(
+			'type'                 => 'object',
+			'additionalProperties' => true,
+			'properties'           => array(
+				'dry_run'          => array( 'type' => 'boolean' ),
+				'total_matches'    => array( 'type' => 'integer' ),
+				'total_posts'      => array( 'type' => 'integer' ),
+				'truncated_search' => array( 'type' => 'boolean' ),
+				'posts'            => array(
+					'type'  => 'array',
+					'items' => array(
+						'type'       => 'object',
+						'properties' => array(
+							'id'          => array( 'type' => 'integer' ),
+							'title'       => array( 'type' => 'string' ),
+							'type'        => array( 'type' => 'string' ),
+							'url'         => array( 'type' => 'string' ),
+							'match_count' => array( 'type' => 'integer' ),
+							'editable'    => array( 'type' => 'boolean' ),
+							'verified'    => array( 'type' => 'boolean' ),
+						),
+						'additionalProperties' => true,
+					),
+				),
+				'written'        => array( 'type' => 'boolean' ),
+				'posts_written'  => array( 'type' => 'integer' ),
+				'total_replaced' => array( 'type' => 'integer' ),
+				'verified'       => array( 'type' => 'boolean' ),
+				'message'        => array( 'type' => 'string' ),
 			),
 		);
 	}
