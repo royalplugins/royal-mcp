@@ -93,6 +93,13 @@ class Tool_Capabilities {
 			'wp_replace_in_post' => 'edit_posts',
 			'wp_replace_in_page' => 'edit_pages',
 
+			// ==================== Core: revisions ====================
+			// wp_get_revision_content needs no entry (wp_get_* infers 'read');
+			// wp_diff_revisions has no verb infer_cap() knows and would fall
+			// through to manage_options. Object-level read_post is enforced
+			// inside the handler, matching wp_get_post_revisions.
+			'wp_diff_revisions' => 'read',
+
 			// ==================== Core: connection health — any authenticated caller ====================
 			'royal_mcp_connection_health' => 'read',
 
