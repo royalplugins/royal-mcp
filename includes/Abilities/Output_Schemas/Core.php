@@ -310,6 +310,7 @@ class Core {
 						'url'     => array( 'type' => 'string' ),
 						'slug'    => array( 'type' => 'string' ),
 						'snippet' => array( 'type' => 'string' ),
+						'content_length' => array( 'type' => 'integer' ),
 					),
 				),
 			),
@@ -538,6 +539,7 @@ class Core {
 				'status' => array( 'type' => 'string' ),
 				'url'    => array( 'type' => 'string' ),
 				'date'   => array( 'type' => 'string' ),
+				'content_length' => array( 'type' => 'integer' ),
 			),
 		);
 	}
