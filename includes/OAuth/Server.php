@@ -170,6 +170,7 @@ class Server {
             $this->json_error( 'server_error', $client->get_error_message(), 500 );
         }
 
+        $this->log_event( 'client_registered', 'Dynamic client registered.', 201, 'success' );
         $this->json_response( $client, 201 );
     }
 
@@ -332,6 +333,8 @@ class Server {
             $redirect_uri
         );
 
+        $this->log_event( 'code_issued', 'Authorization code issued; redirecting to client callback.', 302, 'success' );
+
         // phpcs:ignore WordPress.Security.SafeRedirect.wp_redirect_wp_redirect -- OAuth callback URI is external (e.g. claude.ai).
         wp_redirect( $redirect );
         exit;
@@ -417,6 +420,8 @@ class Server {
             $tokens['resource'] = $resource;
         }
 
+        $this->log_event( 'token_issued', 'Access + refresh tokens issued via authorization_code grant.', 200, 'success' );
+
         $this->json_response( $tokens, 200, [ 'Cache-Control' => 'no-store', 'Pragma' => 'no-cache' ] );
     }
 
@@ -444,6 +449,8 @@ class Server {
 
         // Issue new token pair.
         $tokens = Token_Store::create_token_pair( $client_id, (int) $token_data['user_id'], $token_data['scope'] ?? '' );
+
+        $this->log_event( 'token_refreshed', 'Access + refresh tokens rotated via refresh_token grant.', 200, 'success' );
 
         $this->json_response( $tokens, 200, [ 'Cache-Control' => 'no-store', 'Pragma' => 'no-cache' ] );
         // phpcs:enable WordPress.Security.NonceVerification.Missing
@@ -498,15 +505,20 @@ class Server {
      * Log an OAuth event to the royal_mcp_logs table.
      *
      * STRICT SAFELIST: this method only logs values that are already public
-     * (client_id is in URLs, grant_type is a fixed enum, our error strings
+     * (client_id is in URLs, grant_type is a fixed enum, our code strings
      * are hardcoded) plus the request metadata WP already exposes (IP, UA,
      * REQUEST_URI). If a future change needs more context, expand this
-     * safelist deliberately — DO NOT add the raw POST body, code,
-     * code_verifier, client_secret, refresh_token, or access_token here
-     * under any circumstance. These are credentials in flight and must
-     * never reach the logs table.
+     * safelist deliberately — DO NOT add the raw POST body, authorization
+     * code, code_verifier, client_secret, refresh_token, or access_token
+     * here under any circumstance. These are credentials in flight and
+     * must never reach the logs table.
+     *
+     * @param string $code        Short machine-readable code (error name or success verb).
+     * @param string $description Human-readable message.
+     * @param int    $http_status HTTP status code returned to the client.
+     * @param string $log_status  'error' (default) or 'success'.
      */
-    private function log_event( $error_code, $description, $status ) {
+    private function log_event( $code, $description, $http_status, $log_status = 'error' ) {
         global $wpdb;
 
         // Read public OAuth identifiers from POST first (token/register/authorize-POST),
@@ -527,8 +539,8 @@ class Server {
         ];
 
         $response_meta = [
-            'http_status' => (int) $status,
-            'error'       => $error_code,
+            'http_status' => (int) $http_status,
+            'code'        => $code,
             'description' => $description,
         ];
 
@@ -540,7 +552,7 @@ class Server {
                 'action'        => 'oauth:' . $this->current_action,
                 'request_data'  => wp_json_encode( $request_meta ),
                 'response_data' => wp_json_encode( $response_meta ),
-                'status'        => 'error',
+                'status'        => 'success' === $log_status ? 'success' : 'error',
             ],
             [ '%s', '%s', '%s', '%s', '%s' ]
         );

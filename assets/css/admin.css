@@ -918,7 +918,7 @@ input:checked + .slider:before {
     background: linear-gradient(135deg, #14102e 0%, #241a52 50%, #3a1f6b 100%);
     border-radius: 12px;
     padding: 32px 36px;
-    margin: 32px 0 0 0;
+    margin: 32px 0 32px 0;
     overflow: hidden;
     color: #fff;
     display: grid;
