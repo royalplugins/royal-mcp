@@ -1,0 +1,101 @@
+name: Bug report
+description: Report a bug or unexpected behavior in Royal MCP.
+title: "[Bug]: "
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Bug reports with a clear reproducer are usually confirmed within 48 hours and fixed in the next patch release.
+
+        If you're not sure whether what you're seeing is a bug or a configuration issue, the [troubleshooting guide](https://royalplugins.com/support/royal-mcp/troubleshooting-start-here.html) walks through the 30-second checks that narrow it down.
+
+  - type: input
+    id: rmcp-version
+    attributes:
+      label: Royal MCP version
+      description: Please include the exact patch level (e.g. `1.4.39`, not "latest"). Found in Plugins → Installed Plugins or the plugin header.
+      placeholder: "1.4.39"
+    validations:
+      required: true
+
+  - type: input
+    id: wp-version
+    attributes:
+      label: WordPress version
+      placeholder: "6.7.2"
+    validations:
+      required: true
+
+  - type: input
+    id: php-version
+    attributes:
+      label: PHP version
+      placeholder: "8.2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: client
+    attributes:
+      label: AI client
+      description: Which client were you using when the bug occurred?
+      options:
+        - Claude Desktop
+        - Claude.ai (web / custom connector)
+        - ChatGPT
+        - Cursor
+        - Claude Code CLI
+        - Custom / mcp-remote
+        - Other (please specify below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the unexpected behavior. Include the exact error message if there is one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps that get from a clean state to the bug.
+      placeholder: |
+        1. Go to ...
+        2. Send prompt "..."
+        3. Observed: ...
+        4. Expected: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: activity-log
+    attributes:
+      label: Royal MCP Activity Log
+      description: |
+        Paste any relevant rows from **Royal MCP → Activity Log** around the failure.
+
+        If the log is empty after reproducing the failure, please say so. An empty log tells us the request never reached WordPress (usually a host, CDN, or WAF layer intercepting), which is a completely different diagnostic path than a plugin bug.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Hosting environment
+      description: Optional but often helpful. Host name (Hostinger, SiteGround, Kinsta, etc.), CDN in use (Cloudflare, StackCDN, etc.), security plugins (Wordfence, iThemes, etc.), and cache plugins (LiteSpeed, WP Rocket, etc.).
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Anything else?
+      description: Screenshots, PHP error log excerpts, related plugins, or anything else that might help.
+    validations:
+      required: false

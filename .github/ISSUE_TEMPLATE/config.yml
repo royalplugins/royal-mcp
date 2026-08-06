@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Usage questions and setup help
+    url: https://royalplugins.com/support/royal-mcp/
+    about: Documentation, troubleshooting guides, and step-by-step setup walkthroughs. Faster than filing an issue.
+  - name: WordPress.org support forum
+    url: https://wordpress.org/support/plugin/royal-mcp/
+    about: Community-facing support and general questions.
