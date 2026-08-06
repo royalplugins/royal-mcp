@@ -47,9 +47,9 @@ Royal MCP connects AI agents to WordPress. The free [Royal AI Firewall](https://
 
 Install both for a unified audit trail: MCP tool calls and HTTP-layer bot hits appear side by side in one dashboard, with per-bot allow / block / log-only controls for 60+ recognized AI agents. Royal AI Firewall is free forever, no upgrade prompt.
 
-= 73 Core Tools + 71 Integration Tools =
+= 78 Core Tools + 74 Integration Tools =
 
-**WordPress Core (73 tools):**
+**WordPress Core (78 tools):**
 
 * Posts - create, read, update, delete, search, count (any registered public post type, featured images supported)
 * Pages - full CRUD with parent page support
@@ -171,7 +171,7 @@ WordPress 6.9 shipped the Abilities API in November 2025 — a primitive that le
 
 **As of 1.4.38, every Royal MCP tool also registers as a WordPress ability.** You get three ways to reach the same tools: (1) Royal MCP's native `/wp-json/royal-mcp/v1/mcp` endpoint (unchanged and always available), (2) the WordPress MCP Adapter if you install it — Royal MCP registers a named `royal-mcp-server` alongside adapter's default server, or (3) WordPress core REST directly at `/wp-json/wp-abilities/v1/abilities/{name}/run`. Same handlers, three transports, one set of per-tool capability gates. The abilities layer can be disabled with a single option flag if needed.
 
-Royal MCP is a complete, production-ready MCP server that predates the official adapter. It runs the full Streamable HTTP transport, enforces API key authentication on every request, ships OAuth 2.0 for Claude Desktop's native connector flow, rate-limits per-IP, redacts sensitive data, and logs every interaction. Out of the box it includes 73 tools for WordPress core operations plus 71 integration tools that auto-load when WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Advanced Custom Fields (ACF), or Redirection is active.
+Royal MCP is a complete, production-ready MCP server that predates the official adapter. It runs the full Streamable HTTP transport, enforces API key authentication on every request, ships OAuth 2.0 for Claude Desktop's native connector flow, rate-limits per-IP, redacts sensitive data, and logs every interaction. Out of the box it includes 78 tools for WordPress core operations plus 74 integration tools that auto-load when WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Advanced Custom Fields (ACF), or Redirection is active.
 
 = Supported AI Platforms =
 
@@ -264,7 +264,7 @@ Security. Most MCP plugins — and 41% of all public MCP servers — have no aut
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
-No. WordPress 6.9 added the Abilities API — a primitive for registering AI-callable functions — and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 73 ready-to-use WordPress core tools, and 71 integration tools that auto-load for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Advanced Custom Fields, and Redirection.
+No. WordPress 6.9 added the Abilities API — a primitive for registering AI-callable functions — and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 78 ready-to-use WordPress core tools, and 74 integration tools that auto-load for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Advanced Custom Fields, and Redirection.
 
 = Does Royal MCP work with WooCommerce? =
 
@@ -361,15 +361,17 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * New: Revoke all active AI sessions from Settings → OAuth.
 * New: Endpoint profiles let MCP clients request a curated subset of tools by appending ?tools=core to the endpoint URL.
 * New: royal_mcp_tools filter lets developers programmatically trim or extend the tool list.
-* Enhancement: OAuth sessions now default to 24 hours.
-* Enhancement: Admin auto-detects BitNinja WebShield interference with OAuth discovery and shows targeted host-support instructions.
-* Fix: `elementor_replace_text` now walks Blockquote widget fields (author name and quote content).
+* New: wp_replace_in_post and wp_replace_in_page tools for literal find/replace inside post content with dry-run, expected-count safety, and read-after-write verification.
 * New: Settings-page section to allowlist third-party plugin options for `wp_update_option` without writing filter code.
 * New: Widget tools — list widget instances (optionally filtered by sidebar), list sidebars, and update widget content; writes gated by the theme-appearance admin toggle.
 * New: wp_reorder_menu_items now returns an undo token that mcp_undo_last_operation can consume within 72 hours to restore the prior order.
 * New: mcp_undo_last_operation tool consumes an undo token and reverses the operation that generated it.
 * New: seo_audit_meta_tags fetches a post's actual rendered HTML and reports title, meta description, canonical, viewport, Open Graph and Twitter Card tags — catches conflicts that only appear in served output.
 * New: WooCommerce order write tools — wc_create_order, wc_update_order, wc_add_order_note — for B2B, wholesale, phone orders, and support-note trails.
+* Fix: `elementor_replace_text` now walks Blockquote widget fields (author name and quote content).
+* Enhancement: OAuth sessions now default to 24 hours.
+* Enhancement: Admin auto-detects BitNinja WebShield interference with OAuth discovery and shows targeted host-support instructions.
+* Enhancement: Additional /authorize, /token, and /register diagnostics in Activity Log.
 * Enhancement: Readme highlights Royal AI Firewall as the companion plugin for HTTP-layer AI bot visibility alongside Royal MCP.
 
 = 1.4.38 =

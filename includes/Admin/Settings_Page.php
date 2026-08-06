@@ -36,20 +36,30 @@ class Settings_Page {
      * is no longer read; uninstall.php cleans up the legacy key too so
      * existing 1.4.30 dismissers get a fresh impression after upgrading.
      */
-    public static function render_founders_banner() {
+    public static function render_founders_banner( $permanent = false ) {
+        // Cross-plugin bundle promo — the bundle covers 6 premium plugins
+        // (GuardPress, ForgeCache, SiteVault Pro, SEObolt Pro, FormForge
+        // Pro, Royal Affiliate Pro) and excludes Royal MCP Pro, so it's a
+        // valid cross-sell to Royal MCP Pro customers too.
+        //
+        // $permanent (Pro): skip dismiss X + skip per-user dismissal check.
+        // Everything else about the banner is IDENTICAL to Free so CSS and
+        // spacing stay in lockstep.
         $user_id = get_current_user_id();
         if (!$user_id) {
             return;
         }
-        $dismissed_at = get_user_meta($user_id, 'royal_mcp_founders_dismissed_version', true);
-        if ($dismissed_at && version_compare($dismissed_at, ROYAL_MCP_VERSION, '>=')) {
-            return;
+        if (!$permanent) {
+            $dismissed_at = get_user_meta($user_id, 'royal_mcp_founders_dismissed_version', true);
+            if ($dismissed_at && version_compare($dismissed_at, ROYAL_MCP_VERSION, '>=')) {
+                return;
+            }
         }
 
-        $dismiss_url = wp_nonce_url(
+        $dismiss_url = ! $permanent ? wp_nonce_url(
             add_query_arg('royal_mcp_dismiss_founders', '1'),
             'royal_mcp_dismiss_founders'
-        );
+        ) : '';
 
         $bundle_url = 'https://royalplugins.com/founders/';
         $plugins    = [
@@ -62,9 +72,11 @@ class Settings_Page {
         ];
         ?>
         <div class="royal-mcp-founders-banner">
-            <a href="<?php echo esc_url($dismiss_url); ?>" class="royal-mcp-founders-dismiss" aria-label="<?php esc_attr_e('Dismiss this notice', 'royal-mcp'); ?>">
-                <span class="dashicons dashicons-no-alt" aria-hidden="true"></span>
-            </a>
+            <?php if ( ! $permanent ) : ?>
+                <a href="<?php echo esc_url($dismiss_url); ?>" class="royal-mcp-founders-dismiss" aria-label="<?php esc_attr_e('Dismiss this notice', 'royal-mcp'); ?>">
+                    <span class="dashicons dashicons-no-alt" aria-hidden="true"></span>
+                </a>
+            <?php endif; ?>
             <div class="royal-mcp-founders-left">
                 <span class="royal-mcp-founders-eyebrow">
                     <span class="dashicons dashicons-star-filled" aria-hidden="true"></span>
@@ -72,7 +84,7 @@ class Settings_Page {
                 </span>
                 <h2 class="royal-mcp-founders-title"><?php esc_html_e('Royal Plugins Founders Bundle', 'royal-mcp'); ?></h2>
                 <p class="royal-mcp-founders-subtitle"><?php esc_html_e('All 6 premium plugins. Lifetime updates. One bundle, one purchase. Built by the team behind Royal MCP.', 'royal-mcp'); ?></p>
-                <a href="https://royalplugins.com/founders/" target="_blank" rel="noopener noreferrer" class="royal-mcp-founders-cta-primary">
+                <a href="<?php echo esc_url($bundle_url); ?>" target="_blank" rel="noopener noreferrer" class="royal-mcp-founders-cta-primary">
                     <?php esc_html_e('View bundle', 'royal-mcp'); ?>
                     <span class="dashicons dashicons-arrow-right-alt" aria-hidden="true"></span>
                 </a>
@@ -118,6 +130,11 @@ class Settings_Page {
      * ask gets visual priority; users can dismiss either independently.
      */
     public static function render_review_banner() {
+        // wp.org review ask is a Free-plugin funnel — Pro customers shouldn't
+        // see a "Leave a Review" banner in their paid-tier admin.
+        if ( defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) {
+            return;
+        }
         $user_id = get_current_user_id();
         if (!$user_id || !current_user_can('manage_options')) {
             return;
