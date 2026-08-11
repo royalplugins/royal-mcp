@@ -61,7 +61,7 @@ class Elementor {
 						'post_id'          => [ 'type' => 'integer' ],
 						'find'             => [ 'type' => 'string', 'description' => 'Text to find' ],
 						'replace'          => [ 'type' => 'string', 'description' => 'Text to substitute' ],
-						'case_insensitive' => [ 'type' => 'boolean', 'description' => 'Default false' ],
+						'case_insensitive' => [ 'type' => 'boolean', 'description' => 'Default false. When true, uses multi-byte-aware case-insensitive matching (handles accented characters like é/É and other unicode case pairs, not just ASCII).' ],
 					],
 					'required'   => [ 'post_id', 'find', 'replace' ],
 				],
@@ -467,16 +467,39 @@ class Elementor {
 
 	/**
 	 * Count-aware string replace. Increments $counter['count'] by the number of replacements.
+	 * Case-insensitive path is multi-byte-aware (accented characters like é/É and other
+	 * unicode case pairs match cross-case); falls back to native str_ireplace on invalid
+	 * UTF-8 subject so Western behavior never regresses.
 	 */
 	private static function str_replace_count( $find, $replace, $subject, $case_insensitive, &$counter ) {
 		$c = 0;
 		if ( $case_insensitive ) {
-			$out = str_ireplace( $find, $replace, $subject, $c );
+			$out = self::mb_str_ireplace( $find, $replace, $subject, $c );
 		} else {
 			$out = str_replace( $find, $replace, $subject, $c );
 		}
 		$counter['count'] += $c;
 		return $out;
+	}
+
+	/**
+	 * Multi-byte-aware case-insensitive string replace. Signature matches
+	 * native str_ireplace including byref $count.
+	 */
+	private static function mb_str_ireplace( $find, $replace, $subject, &$count = 0 ) {
+		$count = 0;
+		if ( $find === '' || $subject === '' ) {
+			return $subject;
+		}
+		$pattern = '/' . preg_quote( $find, '/' ) . '/iu';
+		$escaped_replace = str_replace( [ '\\', '$' ], [ '\\\\', '\\$' ], $replace );
+		$result = preg_replace( $pattern, $escaped_replace, $subject, -1, $count );
+		if ( $result === null ) {
+			$count = 0;
+			// mb-check-ignore: safe fallback for the mb-aware shim above.
+			return str_ireplace( $find, $replace, $subject, $count );
+		}
+		return $result;
 	}
 
 	/**

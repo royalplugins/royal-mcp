@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & Gemini
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.4.39
+ * Version: 1.4.40
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -42,7 +42,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 }
 
 // Define plugin constants
-define('ROYAL_MCP_VERSION', '1.4.39');
+define('ROYAL_MCP_VERSION', '1.4.40');
 define('ROYAL_MCP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ROYAL_MCP_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('ROYAL_MCP_PLUGIN_FILE', __FILE__);
@@ -110,10 +110,25 @@ class Royal_MCP_Plugin {
         // per-response edits in MCP/Server.php are kept as belt-and-suspenders.
         add_filter('rest_post_dispatch', [$this, 'force_no_store_on_namespace'], 10, 3);
 
+        // JSON-RPC envelope integrity guard. Some host-layer transformers
+        // (edge JSON minifiers, WAF response optimizers, plugin conflicts)
+        // coerce our "jsonrpc":"2.0" string via a float cast which drops the
+        // trailing zero, producing "jsonrpc":"2". Strict MCP clients
+        // (Claude Desktop, mcp-remote) reject the response with
+        // ZodError: expected "2.0". Priority 999 re-forces the correct
+        // value AFTER any other filter, scoped to our namespace so we don't
+        // touch sibling REST plugins' responses.
+        add_filter('rest_pre_echo_response', [$this, 'force_jsonrpc_version'], 999, 3);
+
         // OAuth 2.0 endpoints (served at domain root, not under /wp-json/).
         add_action('init', [$this, 'register_oauth_rewrites']);
         add_filter('query_vars', [$this, 'register_oauth_query_vars']);
         add_action('parse_request', [$this, 'handle_oauth_request']);
+
+        // Strip POST-only OAuth rewrite rules (/register, /token) on GET/HEAD
+        // so browser visits fall through to any page at those slugs.
+        // POST-only per RFC 7591 §3.1 (DCR) + RFC 6749 §3.2 (token).
+        add_filter('option_rewrite_rules', [__CLASS__, 'strip_oauth_get_only_rules']);
 
         // Scheduled token cleanup.
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'cleanup_expired']);
@@ -180,6 +195,31 @@ class Royal_MCP_Plugin {
             $response->header( 'Pragma', 'no-cache' );
         }
         return $response;
+    }
+
+    /**
+     * Re-force jsonrpc="2.0" on responses from our namespace.
+     *
+     * Fires on rest_pre_echo_response (after rest_post_dispatch, before
+     * wp_json_encode) at priority 999 so any upstream transformer that
+     * coerces our jsonrpc string via float cast gets overwritten before
+     * serialization. Scoped to /royal-mcp/ prefix so sibling plugins'
+     * REST responses are untouched.
+     *
+     * @param array|mixed        $result  The response data about to be JSON-encoded.
+     * @param \WP_REST_Server    $server  The REST server instance.
+     * @param \WP_REST_Request   $request The original request.
+     * @return array|mixed
+     */
+    public function force_jsonrpc_version( $result, $server, $request ) {
+        $route = $request->get_route();
+        if ( ! is_string( $route ) || 0 !== strpos( $route, '/royal-mcp/' ) ) {
+            return $result;
+        }
+        if ( is_array( $result ) && isset( $result['jsonrpc'] ) ) {
+            $result['jsonrpc'] = '2.0';
+        }
+        return $result;
     }
 
     /**
@@ -383,14 +423,74 @@ class Royal_MCP_Plugin {
      * ----------------------------------------------------------------*/
 
     /**
+     * OAuth endpoint URL slugs (no leading slash, no regex suffix). Filterable
+     * for customers whose site has an existing page at one of the default slugs
+     * (common on membership sites — /register conflicts with MemberPress, Paid
+     * Memberships Pro, Restrict Content Pro, Ultimate Member defaults).
+     *
+     * Return value shape: [ action => slug ]. Action matches the query var
+     * royal_mcp_oauth value. Slug is a URL path segment; customers can nest,
+     * e.g. return [ 'register' => 'royal-mcp-oauth/register' ] to relocate.
+     * metadata() reads from this same source so OAuth discovery advertises
+     * whatever the site actually serves.
+     */
+    public static function get_oauth_rewrite_paths() {
+        return apply_filters( 'royal_mcp_oauth_rewrite_paths', [
+            'authorize' => 'authorize',
+            'token'     => 'token',
+            'register'  => 'register',
+        ] );
+    }
+
+    /**
      * Register rewrite rules for OAuth endpoints at domain root.
      */
     public function register_oauth_rewrites() {
         add_rewrite_rule( '\.well-known/oauth-protected-resource(/.*)?$', 'index.php?royal_mcp_oauth=protected_resource', 'top' );
         add_rewrite_rule( '\.well-known/oauth-authorization-server/?$', 'index.php?royal_mcp_oauth=metadata', 'top' );
-        add_rewrite_rule( 'authorize/?$', 'index.php?royal_mcp_oauth=authorize', 'top' );
-        add_rewrite_rule( 'token/?$', 'index.php?royal_mcp_oauth=token', 'top' );
-        add_rewrite_rule( 'register/?$', 'index.php?royal_mcp_oauth=register', 'top' );
+        foreach ( self::get_oauth_rewrite_paths() as $action => $slug ) {
+            $slug = ltrim( trim( (string) $slug ), '/' );
+            if ( $slug === '' ) continue;
+            add_rewrite_rule( $slug . '/?$', 'index.php?royal_mcp_oauth=' . $action, 'top' );
+        }
+    }
+
+    /**
+     * Strip OAuth rewrite rules on GET/HEAD for endpoints that are POST-only
+     * per spec (/register per RFC 7591 §3.1, /token per RFC 6749 §3.2). This
+     * lets the WP page router take over for browser visits to those paths on
+     * sites where the customer has a real page at the same slug — most commonly
+     * a membership-plugin /register page. /authorize is spec-required to accept
+     * GET (RFC 6749 §3.1) so it is NOT stripped.
+     *
+     * IMPORTANT: hooks option_rewrite_rules NOT rewrite_rules_array. The latter
+     * feeds update_option() during a flush; filtering there would persist the
+     * removal and permanently break POST /register.
+     *
+     * @param mixed $rules
+     * @return mixed
+     */
+    public static function strip_oauth_get_only_rules( $rules ) {
+        if ( ! is_array( $rules ) ) {
+            return $rules;
+        }
+        $method = isset( $_SERVER['REQUEST_METHOD'] )
+            ? strtoupper( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) )
+            : 'GET';
+        if ( $method !== 'GET' && $method !== 'HEAD' ) {
+            return $rules;
+        }
+        $paths = self::get_oauth_rewrite_paths();
+        foreach ( [ 'register', 'token' ] as $action ) {
+            $slug = isset( $paths[ $action ] ) ? ltrim( trim( (string) $paths[ $action ] ), '/' ) : '';
+            if ( $slug === '' ) continue;
+            $rule_key = $slug . '/?$';
+            if ( isset( $rules[ $rule_key ] )
+                && false !== strpos( (string) $rules[ $rule_key ], 'royal_mcp_oauth=' . $action ) ) {
+                unset( $rules[ $rule_key ] );
+            }
+        }
+        return $rules;
     }
 
     /**
