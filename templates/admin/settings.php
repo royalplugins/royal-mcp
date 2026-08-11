@@ -331,19 +331,19 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                             <button type="button" class="setup-guide-header" aria-expanded="false">
                                 <span class="setup-guide-icon icon-chatgpt">O</span>
                                 <span class="setup-guide-name">
-                                    <?php esc_html_e('ChatGPT (Connectors)', 'royal-mcp'); ?>
-                                    <small><?php esc_html_e('Connect via OpenAI ChatGPT custom connectors', 'royal-mcp'); ?></small>
+                                    <?php esc_html_e('ChatGPT (Plugins)', 'royal-mcp'); ?>
+                                    <small><?php esc_html_e('Connect via OpenAI ChatGPT plugins', 'royal-mcp'); ?></small>
                                 </span>
                                 <span class="dashicons dashicons-arrow-down-alt2 setup-guide-chevron"></span>
                             </button>
                             <div class="setup-guide-body">
                                 <ol>
-                                    <li><?php echo wp_kses(__('Open <a href="https://chatgpt.com" target="_blank" rel="noopener noreferrer">chatgpt.com</a> → <strong>Settings</strong> → <strong>Connectors</strong>', 'royal-mcp'), ['a' => ['href' => [], 'target' => [], 'rel' => []], 'strong' => []]); ?></li>
-                                    <li><?php echo wp_kses(__('Click <strong>+ Add</strong> and choose <strong>Custom connector</strong> (or "MCP Server")', 'royal-mcp'), ['strong' => []]); ?></li>
+                                    <li><?php echo wp_kses(__('Open <a href="https://chatgpt.com" target="_blank" rel="noopener noreferrer">chatgpt.com</a> → <strong>Settings</strong> → <strong>Plugins</strong>', 'royal-mcp'), ['a' => ['href' => [], 'target' => [], 'rel' => []], 'strong' => []]); ?></li>
+                                    <li><?php echo wp_kses(__('Click <strong>+ Add</strong> and choose <strong>Plugin</strong> (or "MCP Server")', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php esc_html_e('Enter a name (e.g., "My WordPress Site")', 'royal-mcp'); ?></li>
                                     <li><?php echo wp_kses(__('Paste the <strong>MCP Server URL</strong> from General Settings above', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php esc_html_e('Authorize when prompted — ChatGPT will run the OAuth handshake against your WordPress site', 'royal-mcp'); ?></li>
-                                    <li><?php esc_html_e('The connector becomes available across new ChatGPT conversations', 'royal-mcp'); ?></li>
+                                    <li><?php esc_html_e('The plugin becomes available across new ChatGPT conversations', 'royal-mcp'); ?></li>
                                 </ol>
                                 <a href="https://royalplugins.com/support/royal-mcp/connecting-to-chatgpt/" target="_blank" rel="noopener noreferrer" class="setup-guide-full-link">
                                     <?php esc_html_e('Full walkthrough with screenshots', 'royal-mcp'); ?>
@@ -776,7 +776,7 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
         <div class="inside">
             <h3><?php esc_html_e('Reset OAuth State', 'royal-mcp'); ?></h3>
             <p class="description">
-                <?php esc_html_e('Wipes all registered OAuth clients, issued access/refresh tokens, and pending authorization codes. Use this when a Claude.ai, Claude Desktop, or ChatGPT connector gets stuck mid-handshake and won\'t complete authorization. Your Royal MCP settings, API key, and Activity Log are NOT affected.', 'royal-mcp'); ?>
+                <?php esc_html_e('Wipes all registered OAuth clients, issued access/refresh tokens, and pending authorization codes. Use this when a Claude.ai, Claude Desktop, or ChatGPT plugin gets stuck mid-handshake and won\'t complete authorization. Your Royal MCP settings, API key, and Activity Log are NOT affected.', 'royal-mcp'); ?>
             </p>
             <p class="description warning-text">
                 <strong><?php esc_html_e('Warning:', 'royal-mcp'); ?></strong>

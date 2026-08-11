@@ -1,13 +1,13 @@
 <?php
 /**
- * Registers "royal-mcp-server" with the WordPress MCP Adapter (Option C from
- * SCOPE_1.4.38.md). Enables customers running MCP Adapter to reach Royal MCP tools
- * over MCP Adapter's HTTP transport in addition to our native /wp-json/royal-mcp/mcp
- * endpoint and WP core /wp-json/wp-abilities/v1/* REST.
+ * Registers "royal-mcp-server" with the WordPress MCP Adapter. Enables customers
+ * running MCP Adapter to reach Royal MCP tools over MCP Adapter's HTTP transport
+ * in addition to our native /wp-json/royal-mcp/mcp endpoint and WP core
+ * /wp-json/wp-abilities/v1/* REST.
  *
  * Named-server registration + explicit ability list means our abilities do NOT
- * auto-enroll on MCP Adapter's default server (that path requires meta.mcp.public=true,
- * which we intentionally do not set — see Meta_Config.php + SCOPE addendum).
+ * auto-enroll on MCP Adapter's default server (that path requires
+ * meta.mcp.public=true, which we intentionally do not set — see Meta_Config.php).
  *
  * Silent no-op if the MCP Adapter plugin isn't installed or hasn't loaded yet.
  */

@@ -9,8 +9,6 @@
  *
  * Screen-ID-gated to Royal MCP admin pages only — never touches other WP admin.
  *
- * Design source of truth: _internal/_shared/CHROME_PACK.md
- *
  * @package Royal_MCP
  */
 

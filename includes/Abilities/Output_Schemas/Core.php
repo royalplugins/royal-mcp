@@ -597,8 +597,8 @@ class Core {
 	}
 
 	/**
-	 * Post write response — carries the actual saved values per INVARIANTS.md §11
-	 * (read-after-write verification catches silent-drop / silent-modify).
+	 * Post write response — carries the actual saved values from a read-after-write
+	 * verification to catch silent-drop / silent-modify failure classes.
 	 */
 	private static function post_write_response_schema(): array {
 		return array(

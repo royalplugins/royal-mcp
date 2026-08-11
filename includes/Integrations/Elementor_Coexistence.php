@@ -8,9 +8,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 /**
  * Elementor MCP module coexistence layer.
  *
- * When Elementor's own `modules/mcp` ships (currently under active daily
- * development in the elementor/elementor repo, tracked in
- * _internal/royal-mcp/monitoring-log.md), Royal MCP's Elementor tools and
+ * When Elementor's own `modules/mcp` ships, Royal MCP's Elementor tools and
  * Elementor's own abilities will both be advertised to MCP clients on any
  * site with both plugins active.
  *
@@ -25,7 +23,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  *   - Deregister Royal MCP's elementor_* tools (they keep working; downstream
  *     clients that already know about them continue functioning)
  *   - Auto-proxy calls to Elementor's abilities (that's the WP MCP Adapter's
- *     job — see SCOPE_1.4.38.md for the abilities registration ship)
+ *     job — the abilities registration lives in MCP_Adapter_Server)
  *   - Modify capability gates or per-tool behavior
  */
 class Elementor_Coexistence {

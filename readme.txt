@@ -3,8 +3,8 @@ Contributors: royalpluginsteam
 Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
-Tested up to: 7.0
-Stable tag: 1.4.39
+Tested up to: 7.1
+Stable tag: 1.4.40
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -278,7 +278,7 @@ Yes, with safety controls. Royal MCP exposes two tools for plugin configuration:
 
 * `wp_update_option` lets AI write to WordPress options, but only after passing three security gates:
     1. The site admin must enable the "Allow AI to write WordPress options" toggle on the Royal MCP settings page (off by default)
-    2. The option name must be in a runtime allowlist. The default allowlist is intentionally tiny — `blogname`, `blogdescription`, `posts_per_page`, `date_format`, `time_format`. Plugin authors opt their own settings in via the `royal_mcp_writable_options` filter.
+    2. The option name must be in a runtime allowlist. The default allowlist is intentionally tiny — `blogname`, `blogdescription`, `posts_per_page`, `date_format`, `time_format`, `show_on_front`, `page_on_front`. Plugin authors opt their own settings in via the `royal_mcp_writable_options` filter.
     3. A hard denylist permanently blocks writes to sensitive option names (siteurl, home, license keys, secrets, salts, etc.) regardless of the allowlist or the toggle.
 
 Plugin authors can opt in their settings with one line: `add_filter('royal_mcp_writable_options', fn($opts) => array_merge($opts, ['my_plugin_settings']));`
@@ -355,12 +355,24 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Changelog ==
 
+= 1.4.40 =
+* New: Every write tool re-reads modified fields after the write and returns the actual saved values.
+* New: Undo tokens now cover wp_delete_post, wp_delete_term, and wp_delete_menu_item, restoring deleted objects within 72 hours via mcp_undo_last_operation.
+* New: wp_update_post preserves the WooCommerce product_type when generic post updates would otherwise reset it to Simple.
+* New: wc_get_order returns fee_lines, shipping_lines, and the raw payment method ID for full write-verification.
+* New: wp_get_seo_meta and wp_update_seo_meta now support AIOSEO and SEObolt alongside Yoast and Rank Math.
+* New: wp_get_widgets returns widget instance content and parsed block markup for before/after diffs.
+* New: OAuth endpoint paths (authorize/token/register) are filterable via royal_mcp_oauth_rewrite_paths.
+* New: Admin notice detects when a published page shadows an OAuth endpoint.
+* Enhancement: wp_get_posts + wp_count_posts accept non-public post types when the caller has edit capability.
+* Enhancement: Option writes require opt-in to the read allowlist first; admin_email + default_role + mailserver_* permanently denylisted.
+* Enhancement: JSON-RPC envelope hardening re-forces "2.0" against edge-layer transformations.
+* Fix: elementor_replace_text is now multi-byte and case-insensitive.
+
 = 1.4.39 =
 * New: Free plugin refuses activation when Royal MCP Pro is already active.
 * New: OAuth session-length setting lets site owners choose how long AI sessions stay connected before requiring re-authorization.
 * New: Revoke all active AI sessions from Settings → OAuth.
-* New: Endpoint profiles let MCP clients request a curated subset of tools by appending ?tools=core to the endpoint URL.
-* New: royal_mcp_tools filter lets developers programmatically trim or extend the tool list.
 * New: wp_replace_in_post and wp_replace_in_page tools for literal find/replace inside post content with dry-run, expected-count safety, and read-after-write verification.
 * New: Settings-page section to allowlist third-party plugin options for `wp_update_option` without writing filter code.
 * New: Widget tools — list widget instances (optionally filtered by sidebar), list sidebars, and update widget content; writes gated by the theme-appearance admin toggle.

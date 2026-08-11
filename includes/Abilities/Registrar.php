@@ -112,7 +112,7 @@ class Registrar {
 
 	/**
 	 * Derive a human-readable label from the tool name. Simple title-case pass —
-	 * a per-tool override map is a Chunk 3+ concern if labels need polishing.
+	 * a per-tool override map can be layered on later if labels need polishing.
 	 */
 	public static function derive_label( string $tool_name ): string {
 		return ucwords( str_replace( '_', ' ', $tool_name ) );

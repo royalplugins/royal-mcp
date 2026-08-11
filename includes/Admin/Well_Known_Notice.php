@@ -22,6 +22,7 @@ class Well_Known_Notice {
     const IMUNIFY360_DISMISS_KEY       = 'royal_mcp_imunify360_dismissed';
     const BITNINJA_DISMISS_KEY         = 'royal_mcp_bitninja_dismissed';
     const PLAIN_PERMALINKS_DISMISS_KEY = 'royal_mcp_plain_permalinks_dismissed';
+    const PAGE_SHADOW_DISMISS_KEY      = 'royal_mcp_oauth_page_shadow_dismissed';
     const SUPPORT_URL                  = 'https://royalplugins.com/support/royal-mcp/siteground-well-known-404.html';
     const STALE_SUPPORT_URL            = 'https://royalplugins.com/support/royal-mcp/stale-well-known-static-files.html';
     const HTML_BODY_SUPPORT_URL        = 'https://royalplugins.com/support/royal-mcp/well-known-served-as-html.html';
@@ -29,6 +30,7 @@ class Well_Known_Notice {
     const IMUNIFY360_SUPPORT_URL       = 'https://royalplugins.com/support/royal-mcp/imunify360-blocks-mcp.html';
     const BITNINJA_SUPPORT_URL         = 'https://royalplugins.com/support/royal-mcp/bitninja-webshield-blocks-mcp.html';
     const PLAIN_PERMALINKS_SUPPORT_URL = 'https://royalplugins.com/support/royal-mcp/plain-permalinks-blocks-discovery.html';
+    const PAGE_SHADOW_SUPPORT_URL      = 'https://royalplugins.com/support/royal-mcp/oauth-page-shadow.html';
 
     public function __construct() {
         add_action( 'admin_notices', [ $this, 'maybe_render_notice' ] );
@@ -151,6 +153,46 @@ class Well_Known_Notice {
         ) {
             $this->render_register_301_notice();
         }
+
+        // Third self-check — is a published page at slug 'authorize', 'token',
+        // or 'register' being shadowed by our rewrite rules? Common on
+        // membership sites (MemberPress, Paid Memberships Pro, etc.) that
+        // default to /register. The method-filter fix (option_rewrite_rules)
+        // handles GET/HEAD collision for the visitor-facing case, but this
+        // notice tells the admin so they know why the plugin looks in charge
+        // of a page they created.
+        $shadowed = $this->check_oauth_page_shadow();
+        if ( ! empty( $shadowed )
+            && ! get_user_meta( $user_id, self::PAGE_SHADOW_DISMISS_KEY, true )
+        ) {
+            $this->render_oauth_page_shadow_notice( $shadowed );
+        }
+    }
+
+    /**
+     * Detect published pages at OAuth endpoint slugs. Returns an array
+     * keyed by action (authorize/token/register) with the shadowed page's
+     * ID + title, or empty array when no collision.
+     */
+    public function check_oauth_page_shadow() {
+        $paths = \Royal_MCP_Plugin::get_oauth_rewrite_paths();
+        $shadowed = [];
+        foreach ( $paths as $action => $slug ) {
+            $slug = ltrim( trim( (string) $slug ), '/' );
+            // Skip nested paths — those can't collide with a top-level page slug.
+            if ( $slug === '' || strpos( $slug, '/' ) !== false ) {
+                continue;
+            }
+            $page = get_page_by_path( $slug );
+            if ( $page instanceof \WP_Post && $page->post_status === 'publish' ) {
+                $shadowed[ $action ] = [
+                    'slug'    => $slug,
+                    'page_id' => (int) $page->ID,
+                    'title'   => (string) $page->post_title,
+                ];
+            }
+        }
+        return $shadowed;
     }
 
     /**
@@ -418,6 +460,15 @@ class Well_Known_Notice {
         ) {
             update_user_meta( get_current_user_id(), self::REGISTER_301_DISMISS_KEY, time() );
             wp_safe_redirect( remove_query_arg( [ 'royal_mcp_dismiss_register_301', '_wpnonce' ] ) );
+            exit;
+        }
+
+        if ( isset( $_GET['royal_mcp_dismiss_page_shadow'] )
+            && isset( $_GET['_wpnonce'] )
+            && wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'royal_mcp_dismiss_page_shadow' )
+        ) {
+            update_user_meta( get_current_user_id(), self::PAGE_SHADOW_DISMISS_KEY, time() );
+            wp_safe_redirect( remove_query_arg( [ 'royal_mcp_dismiss_page_shadow', '_wpnonce' ] ) );
             exit;
         }
 
@@ -705,6 +756,66 @@ class Well_Known_Notice {
             <p>
                 <a href="<?php echo esc_url( self::REGISTER_301_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
                     <?php esc_html_e( 'See Nginx and Apache fixes', 'royal-mcp' ); ?>
+                </a>
+                <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
+                    <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
+                </a>
+            </p>
+        </div>
+        <?php
+    }
+
+    private function render_oauth_page_shadow_notice( array $shadowed ) {
+        $dismiss_url = wp_nonce_url(
+            add_query_arg( 'royal_mcp_dismiss_page_shadow', '1' ),
+            'royal_mcp_dismiss_page_shadow'
+        );
+
+        // Build a human list: "the page \"Register\" (/register)"
+        $items = [];
+        foreach ( $shadowed as $entry ) {
+            $items[] = sprintf(
+                '"%s" (/%s)',
+                esc_html( $entry['title'] ),
+                esc_html( $entry['slug'] )
+            );
+        }
+        $items_html = implode( ', ', $items );
+
+        // Snippet the admin can drop into a mu-plugin to relocate the OAuth
+        // endpoint. Uses whichever slug is currently shadowed as the key.
+        $relocate_lines = [];
+        foreach ( $shadowed as $action => $entry ) {
+            $relocate_lines[] = sprintf(
+                "    \$paths['%s'] = 'royal-mcp-oauth/%s';",
+                esc_html( $action ),
+                esc_html( $action )
+            );
+        }
+        $relocate_snippet  = "add_filter( 'royal_mcp_oauth_rewrite_paths', function( \$paths ) {\n";
+        $relocate_snippet .= implode( "\n", $relocate_lines ) . "\n";
+        $relocate_snippet .= "    return \$paths;\n";
+        $relocate_snippet .= "} );";
+
+        ?>
+        <div class="notice notice-warning royal-mcp-oauth-page-shadow-notice">
+            <p>
+                <strong><?php esc_html_e( 'Royal MCP: OAuth endpoints overlap with existing pages on your site.', 'royal-mcp' ); ?></strong>
+            </p>
+            <p>
+                <?php
+                printf(
+                    /* translators: %s: comma-separated list of page-title/slug pairs */
+                    esc_html__( 'Royal MCP serves OAuth endpoints at %s, which also match pages you published. Visitor GET requests to those URLs fall through to your pages correctly; MCP POST requests to /register and /token still reach Royal MCP. If a page at /register also accepts POST form submissions (some membership plugins do), you can relocate the OAuth endpoint via the filter below.', 'royal-mcp' ),
+                    // items already escaped above
+                    wp_kses( $items_html, [ 'em' => [] ] )
+                );
+                ?>
+            </p>
+            <p><code style="display:block; white-space:pre; padding:8px; background:#f6f7f7;"><?php echo esc_html( $relocate_snippet ); ?></code></p>
+            <p>
+                <a href="<?php echo esc_url( self::PAGE_SHADOW_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
+                    <?php esc_html_e( 'Read the full guidance', 'royal-mcp' ); ?>
                 </a>
                 <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
                     <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>

@@ -103,11 +103,21 @@ class Server {
     private function metadata() {
         $base = home_url();
 
+        // Read paths from the same filterable source register_oauth_rewrites()
+        // uses, so discovery advertises whatever the site actually serves.
+        // Customers who relocate via royal_mcp_oauth_rewrite_paths get correct
+        // discovery URLs automatically — no separate metadata filter needed.
+        $paths = \Royal_MCP_Plugin::get_oauth_rewrite_paths();
+        $slug_for = static function ( array $paths, $action ) {
+            $slug = isset( $paths[ $action ] ) ? ltrim( trim( (string) $paths[ $action ] ), '/' ) : $action;
+            return $slug === '' ? $action : $slug;
+        };
+
         $metadata = [
             'issuer'                                => $base,
-            'authorization_endpoint'                => $base . '/authorize',
-            'token_endpoint'                        => $base . '/token',
-            'registration_endpoint'                 => $base . '/register',
+            'authorization_endpoint'                => $base . '/' . $slug_for( $paths, 'authorize' ),
+            'token_endpoint'                        => $base . '/' . $slug_for( $paths, 'token' ),
+            'registration_endpoint'                 => $base . '/' . $slug_for( $paths, 'register' ),
             'response_types_supported'              => [ 'code' ],
             'grant_types_supported'                 => [ 'authorization_code', 'refresh_token' ],
             'token_endpoint_auth_methods_supported' => [ 'none', 'client_secret_post' ],
