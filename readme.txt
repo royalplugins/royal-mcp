@@ -47,9 +47,9 @@ Royal MCP connects AI agents to WordPress. The free [Royal AI Firewall](https://
 
 Install both for a unified audit trail: MCP tool calls and HTTP-layer bot hits appear side by side in one dashboard, with per-bot allow / block / log-only controls for 60+ recognized AI agents. Royal AI Firewall is free forever, no upgrade prompt.
 
-= 78 Core Tools + 74 Integration Tools =
+= 81 Core Tools + 74 Integration Tools =
 
-**WordPress Core (78 tools):**
+**WordPress Core (81 tools):**
 
 * Posts - create, read, update, delete, search, count (any registered public post type, featured images supported)
 * Pages - full CRUD with parent page support
@@ -62,7 +62,11 @@ Install both for a unified audit trail: MCP tool calls and HTTP-layer bot hits a
 * Term Meta - read, update, delete (most useful for term-level SEO meta - titles, descriptions, focus keywords stored against categories and tags)
 * Menus - list menus, list menu items, create / update / delete / reorder menu items
 * Post Meta - read, update, delete custom fields (works with ACF, MetaBox, JetEngine, Pods, CPT UI)
-* SEO Meta - read and write Yoast SEO or Rank Math title/description/focus keyword/robots/OG fields (auto-detects active SEO plugin)
+* SEO Meta - read and write Yoast SEO, Rank Math, AIOSEO, or SEObolt title/description/focus keyword/robots/OG fields (auto-detects active SEO plugin)
+* SEO Audit - fetch a post's actual rendered HTML and report title, meta description, canonical, viewport, Open Graph and Twitter Card tags (catches conflicts that only appear in served output)
+* Widgets - list widget instances (optionally filtered by sidebar), list registered sidebars, and update widget content; writes gated by the theme-appearance admin toggle
+* Find and Replace - literal find/replace inside post/page content with dry-run preview, expected-count safety check, and read-after-write verification
+* Undo - reverse the previous delete or reorder within 72 hours via mcp_undo_last_operation
 * Site Info - site name, description, WordPress version, timezone
 * Site Status - full site health snapshot (WordPress version, PHP version, active theme, active plugins, cron activity) for AI-driven pre-write validation
 * Error Log - read recent PHP error log entries so AI agents can diagnose silent failures without shell access
@@ -78,7 +82,7 @@ Install both for a unified audit trail: MCP tool calls and HTTP-layer bot hits a
 
 Royal MCP automatically detects compatible plugins and adds specialized MCP tools. No configuration needed — if the plugin is active, the tools appear.
 
-**WooCommerce Integration (26 tools):**
+**WooCommerce Integration (29 tools):**
 When WooCommerce is active, AI agents can manage your store end-to-end:
 
 * Browse and search products by category, status, or type
@@ -87,6 +91,7 @@ When WooCommerce is active, AI agents can manage your store end-to-end:
 * Manage global attributes (`pa_*` taxonomies) — list registered attributes, list attribute terms, register new attributes, assign attributes to a product as variation axes
 * Manage coupons — list, search by code, get, create, update, delete (trash or permanent), and bulk-purge trash; supports all standard WC coupon fields (discount type, expiry, usage limits, product/category restrictions, email allowlists)
 * View orders, order details, and update order status
+* Create and update orders and attach order notes — for B2B, wholesale, phone orders, and support-note trails
 * List customers with order count and total spent
 * Get store statistics — revenue, order count, average order value by period
 
@@ -171,7 +176,7 @@ WordPress 6.9 shipped the Abilities API in November 2025 — a primitive that le
 
 **As of 1.4.38, every Royal MCP tool also registers as a WordPress ability.** You get three ways to reach the same tools: (1) Royal MCP's native `/wp-json/royal-mcp/v1/mcp` endpoint (unchanged and always available), (2) the WordPress MCP Adapter if you install it — Royal MCP registers a named `royal-mcp-server` alongside adapter's default server, or (3) WordPress core REST directly at `/wp-json/wp-abilities/v1/abilities/{name}/run`. Same handlers, three transports, one set of per-tool capability gates. The abilities layer can be disabled with a single option flag if needed.
 
-Royal MCP is a complete, production-ready MCP server that predates the official adapter. It runs the full Streamable HTTP transport, enforces API key authentication on every request, ships OAuth 2.0 for Claude Desktop's native connector flow, rate-limits per-IP, redacts sensitive data, and logs every interaction. Out of the box it includes 78 tools for WordPress core operations plus 74 integration tools that auto-load when WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Advanced Custom Fields (ACF), or Redirection is active.
+Royal MCP is a complete, production-ready MCP server that predates the official adapter. It runs the full Streamable HTTP transport, enforces API key authentication on every request, ships OAuth 2.0 for Claude Desktop's native connector flow, rate-limits per-IP, redacts sensitive data, and logs every interaction. Out of the box it includes 81 tools for WordPress core operations plus 74 integration tools that auto-load when WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Advanced Custom Fields (ACF), or Redirection is active.
 
 = Supported AI Platforms =
 
@@ -264,11 +269,11 @@ Security. Most MCP plugins — and 41% of all public MCP servers — have no aut
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
-No. WordPress 6.9 added the Abilities API — a primitive for registering AI-callable functions — and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 78 ready-to-use WordPress core tools, and 74 integration tools that auto-load for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Advanced Custom Fields, and Redirection.
+No. WordPress 6.9 added the Abilities API — a primitive for registering AI-callable functions — and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 81 ready-to-use WordPress core tools, and 74 integration tools that auto-load for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Advanced Custom Fields, and Redirection.
 
 = Does Royal MCP work with WooCommerce? =
 
-Yes. When WooCommerce is active, Royal MCP automatically adds 26 MCP tools spanning product management (simple and variable, including variation CRUD and global attribute management), full coupon management (list/get/create/update/delete + bulk trash purge), order management (view, update status), customer data, and store statistics. No additional configuration is needed — the tools appear automatically in the MCP tools list.
+Yes. When WooCommerce is active, Royal MCP automatically adds 29 MCP tools spanning product management (simple and variable, including variation CRUD and global attribute management), full coupon management (list/get/create/update/delete + bulk trash purge), order management (view, create, update, add notes, update status), customer data, and store statistics. No additional configuration is needed — the tools appear automatically in the MCP tools list.
 
 = Can AI assistants configure my plugins for me? =
 
