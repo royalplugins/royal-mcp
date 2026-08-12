@@ -367,7 +367,10 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Enhancement: wp_get_posts + wp_count_posts accept non-public post types when the caller has edit capability.
 * Enhancement: Option writes require opt-in to the read allowlist first; admin_email + default_role + mailserver_* permanently denylisted.
 * Enhancement: JSON-RPC envelope hardening re-forces "2.0" against edge-layer transformations.
+* Enhancement: Royal MCP Pro promotion refreshed for post-launch with a green Upgrade to Pro link in the sidebar.
 * Fix: elementor_replace_text is now multi-byte and case-insensitive.
+* Fix: Uninstalling the free plugin no longer removes data used by Royal MCP Pro when Pro is installed on the same site.
+* Fix: seo_audit_meta_tags now counts characters instead of bytes so titles and descriptions containing non-ASCII content are measured correctly.
 
 = 1.4.39 =
 * New: Free plugin refuses activation when Royal MCP Pro is already active.

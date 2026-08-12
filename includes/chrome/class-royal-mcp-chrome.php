@@ -28,7 +28,7 @@ class Royal_MCP_Chrome {
     // in the Chrome card + admin notice + submenu label switches automatically
     // on/after this date. If the launch date changes, update this constant and
     // all three surfaces flip in one commit.
-    const PRO_LAUNCH_DATE              = '2026-08-25';
+    const PRO_LAUNCH_DATE              = '2026-08-11';
     const PRO_WAITLIST_URL_BASE        = 'https://royalplugins.com/royal-mcp-pro/founding-members/';
     const PRO_POST_LAUNCH_URL_BASE     = 'https://royalplugins.com/royal-mcp-pro/';
     const FM_NOTICE_DISMISS_META       = 'royal_mcp_founding_members_notice_dismissed';
@@ -230,10 +230,6 @@ class Royal_MCP_Chrome {
                 </div>
             </div>
 
-            <?php if ( ! defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) : ?>
-                <?php $this->render_founding_members_card(); ?>
-            <?php endif; ?>
-
             <?php if ( defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) : ?>
                 <?php \Royal_MCP\Admin\Settings_Page::render_founders_banner( true ); ?>
             <?php endif; ?>
@@ -289,58 +285,6 @@ class Royal_MCP_Chrome {
         );
     }
 
-    /**
-     * Render the Founding Members Pro promotional card on the Royal Tools page.
-     * Content switches automatically pre-/post-launch based on PRO_LAUNCH_DATE.
-     */
-    private function render_founding_members_card(): void {
-        $post_launch = $this->is_pro_launched();
-        $url_args    = array(
-            'source'  => 'chrome_pack',
-            'content' => $post_launch ? 'post_launch' : 'founding_members',
-        );
-        $campaign    = $post_launch ? '1438_postlaunch' : 'waitlist_1438';
-        $cta_url     = $this->pro_url_for( $url_args, $campaign );
-        ?>
-        <div class="royal-mcp-founding">
-            <div class="royal-mcp-founding-icon" aria-hidden="true">&#127873;</div>
-            <div class="royal-mcp-founding-body">
-                <h3>
-                    <?php if ( $post_launch ) : ?>
-                        <?php esc_html_e( 'Royal MCP Pro is live', 'royal-mcp' ); ?>
-                    <?php else : ?>
-                        <?php esc_html_e( 'Royal MCP Pro Founding Members', 'royal-mcp' ); ?>
-                    <?php endif; ?>
-                </h3>
-                <p>
-                    <?php if ( $post_launch ) : ?>
-                        <?php esc_html_e( 'Upgrade for 25-30 agency-scale AI tools — Divi Pro depth, Elementor Pro depth, WooCommerce bulk ops, undo tokens, universal audit log, and cross-plugin workflow composers.', 'royal-mcp' ); ?>
-                    <?php else : ?>
-                        <?php
-                        printf(
-                            /* translators: %1$s: highlighted "$79/yr" text, %2$s: highlighted regular price */
-                            esc_html__( 'Royal MCP Pro launches Aug 25! Agency-scale tools for AI workflows. First 100 waitlist members lock %1$s FOR LIFE (regular price %2$s).', 'royal-mcp' ),
-                            '<span class="gold">' . esc_html__( '$79/yr', 'royal-mcp' ) . '</span>',
-                            '<span class="regular">' . esc_html__( '$149/yr', 'royal-mcp' ) . '</span>'
-                        );
-                        ?>
-                    <?php endif; ?>
-                </p>
-                <?php if ( ! $post_launch ) : ?>
-                    <p class="royal-mcp-founding-scarcity"><?php esc_html_e( '100 spots only', 'royal-mcp' ); ?></p>
-                <?php endif; ?>
-            </div>
-            <a href="<?php echo esc_url( $cta_url ); ?>" target="_blank" rel="noopener noreferrer" class="royal-mcp-founding-cta">
-                <?php if ( $post_launch ) : ?>
-                    <?php esc_html_e( 'See Royal MCP Pro &rarr;', 'royal-mcp' ); ?>
-                <?php else : ?>
-                    <?php esc_html_e( 'Reserve My Spot &rarr;', 'royal-mcp' ); ?>
-                <?php endif; ?>
-            </a>
-        </div>
-        <?php
-    }
-
     /* ==================================================================
      *  6. Founding Members admin notice (P5b)
      * ================================================================ */
@@ -387,7 +331,7 @@ class Royal_MCP_Chrome {
             </p>
             <p style="margin: 0 0 12px;">
                 <?php if ( $post_launch ) : ?>
-                    <?php esc_html_e( 'Upgrade for 25-30 agency-scale AI tools — Divi Pro depth, Elementor Pro depth, WooCommerce bulk ops, undo tokens, universal audit log, and cross-plugin workflow composers.', 'royal-mcp' ); ?>
+                    <?php esc_html_e( 'Agency-scale AI tools — Divi Pro depth, Elementor Pro depth, WooCommerce bulk ops, undo tokens, universal audit log, and cross-plugin workflow composers.', 'royal-mcp' ); ?>
                 <?php else : ?>
                     <?php esc_html_e( 'Lock in $79/yr LIFETIME pricing (going to $149/yr after launch). Limited to 100 spots. No obligation until launch day.', 'royal-mcp' ); ?>
                 <?php endif; ?>
@@ -436,7 +380,7 @@ class Royal_MCP_Chrome {
         // "Founders" (matches existing Founders Bundle branding). Card + admin
         // notice still use the full "Founding Members" name where prose has room.
         $label = $this->is_pro_launched()
-            ? '&#11014;&#65039; ' . __( 'Get Pro', 'royal-mcp' )
+            ? '<span class="royal-mcp-upgrade-menu-text">' . esc_html__( 'Upgrade to Pro', 'royal-mcp' ) . '</span>'
             : '&#127873; ' . __( 'Founders', 'royal-mcp' );
 
         add_submenu_page(

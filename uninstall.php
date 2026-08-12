@@ -13,6 +13,15 @@ if (!defined('WP_UNINSTALL_PLUGIN')) {
     exit;
 }
 
+// If Royal MCP Pro is present on this site, skip cleanup entirely. Pro's
+// vendored copy of the free codebase shares the same OAuth tables, settings
+// option, logs table, and cron hook — dropping them here would silently
+// break every AI connection Pro is managing. Pro has its own uninstall
+// handler that manages Pro-tier data independently.
+if ( file_exists( WP_PLUGIN_DIR . '/royal-mcp-pro/royal-mcp-pro.php' ) ) {
+    return;
+}
+
 // Delete plugin options
 delete_option('royal_mcp_settings');
 
