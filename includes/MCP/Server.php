@@ -4205,17 +4205,23 @@ class Server {
                 $canonical_norm  = $canonical_first !== '' ? untrailingslashit($canonical_first) : '';
                 $requested_norm  = untrailingslashit($seo_url);
 
+                // mb_strlen for character count (not byte count). strlen on
+                // UTF-8 content over-reports by 2-3x on non-Latin scripts (a
+                // CJK site with 20-character titles would report 60 → false
+                // title_too_long on every page). Defensive fallback to strlen
+                // when mbstring isn't available on the host.
+                $title_len_fn = function_exists('mb_strlen') ? 'mb_strlen' : 'strlen';
                 return [
                     'url'    => $seo_url,
                     'status' => $seo_status,
                     'title'  => [
                         'value'      => $title_first,
-                        'length'     => strlen($title_first),
+                        'length'     => (int) $title_len_fn($title_first),
                         'duplicates' => max(0, $title_nodes->length - 1),
                     ],
                     'description' => [
                         'value'      => $meta_desc_values[0] ?? '',
-                        'length'     => isset($meta_desc_values[0]) ? strlen($meta_desc_values[0]) : 0,
+                        'length'     => isset($meta_desc_values[0]) ? (int) $title_len_fn($meta_desc_values[0]) : 0,
                         'duplicates' => max(0, count($meta_desc_values) - 1),
                     ],
                     'canonical' => [

@@ -497,3 +497,15 @@
         margin: 0 auto;
     }
 }
+
+/* ======================================================================
+   Upgrade to Pro — sidebar submenu highlight
+   ====================================================================== */
+.royal-mcp-upgrade-menu-text {
+    color: #22c55e;
+    font-weight: 600;
+}
+#adminmenu .wp-submenu a:hover .royal-mcp-upgrade-menu-text,
+#adminmenu .wp-submenu a:focus .royal-mcp-upgrade-menu-text {
+    color: #16a34a;
+}
