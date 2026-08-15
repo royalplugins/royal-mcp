@@ -34,7 +34,7 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 
 ## Capabilities
 
-### WordPress core (73 tools, always available)
+### WordPress core (84 tools, always available)
 
 - **Content** — Posts, pages, custom post types (full CRUD + revisions + featured images)
 - **Taxonomies** — Categories, tags, custom taxonomies, term meta, post-term linking
@@ -48,18 +48,19 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 - **SEO** — Yoast / Rank Math / AIOSEO meta read/write where the plugin is active
 - **Diagnostics** — Site status (WP/PHP/MySQL/plugins/themes/cron in one call), PHP error-log tail, WP cron schedule, and MCP `royal_mcp_connection_health` (returns route, auth method, session ID, plugin version, and active page-builder versions for Divi + Elementor + Gutenberg)
 
-### Plugin integrations (71 tools, conditional)
+### Plugin integrations (80 tools, conditional)
 
 Auto-register only when the integrated plugin is active.
 
 | Plugin | Tools | What's covered |
 |---|---|---|
-| WooCommerce | 26 | Products, variations, attributes, coupons, orders, customers, store stats |
+| WooCommerce | 29 | Products, variations, attributes, coupons, orders (create/update/notes), customers, store stats |
 | Elementor | 8 | Clone pages, replace text, swap images, get outline, read single element, list templates, import templates, add widget |
 | GuardPress | 7 | Security score, failed logins, blocked IPs, vulnerability scans, audit log |
+| Divi | 6 | Format detection (D4 shortcode vs D5 block), page outline, layout validation, library list + get, find/replace with builder-format awareness |
 | Royal AI Firewall | 6 | Dashboard stats, recent bot hits, per-bot policies (allow / block / challenge), daily rollups, one-call emergency lockdown |
 | SiteVault | 6 | Trigger backups, monitor progress, list schedules |
-| **Redirection** (new in 1.4.38) | **4** | **List redirects with group + URL-substring filters, create + update redirects (301 / 302 / 307 / regex / groups), list redirect groups** |
+| Redirection | 4 | List redirects with group + URL-substring filters, create + update redirects (301 / 302 / 307 / regex / groups), list redirect groups |
 | Advanced Custom Fields | 4 | Read/write ACF fields with each field's Return Format respected (hydrated post objects, parsed repeater rows, image arrays); enumerate field groups for AI-driven discovery |
 | Royal Ledger | 4 | Software costs, renewal dates, license keys (values never exposed) |
 | Royal Links | 3 | Branded short links, click stats |
@@ -80,7 +81,7 @@ Same handlers, three transports, one set of per-tool capability gates. Bridge ca
 Explicit scope boundaries — the integration model is "narrow tools that work reliably," not "expose every API surface."
 
 - **No widget-level Elementor generation from scratch.** Atomic widgets (Editor V4) pass through opaque; we never decode atomic schemas because Elementor itself may shift them.
-- **No Beaver Builder / Divi / Bricks page-builder JSON writes.** Standard post content is readable and writable; page-builder-specific JSON storage is opaque unless covered by a dedicated tool.
+- **No Beaver Builder / Bricks page-builder JSON writes.** Standard post content is readable and writable; page-builder-specific JSON storage is opaque unless covered by a dedicated tool. (Elementor and Divi have dedicated tools — see the integration table above.)
 - **No theme builder template creation** (Elementor or otherwise).
 - **No core file modifications** — Royal MCP never writes to `wp-content/themes`, `wp-includes`, or `wp-admin`.
 - **No plugin installation or upgrades via MCP.** Discovery yes; install/activate/deactivate no.

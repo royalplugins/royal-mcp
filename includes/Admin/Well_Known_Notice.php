@@ -14,23 +14,31 @@ class Well_Known_Notice {
 
     const TRANSIENT_KEY                = 'royal_mcp_well_known_status';
     const TRANSIENT_TTL                = 12 * HOUR_IN_SECONDS;
-    const USER_DISMISS_KEY             = 'royal_mcp_well_known_dismissed';
-    const STALE_DISMISS_KEY            = 'royal_mcp_well_known_stale_dismissed';
-    const HTML_BODY_DISMISS_KEY        = 'royal_mcp_well_known_html_body_dismissed';
-    const REGISTER_301_TRANSIENT       = 'royal_mcp_register_301_status';
-    const REGISTER_301_DISMISS_KEY     = 'royal_mcp_register_301_dismissed';
-    const IMUNIFY360_DISMISS_KEY       = 'royal_mcp_imunify360_dismissed';
-    const BITNINJA_DISMISS_KEY         = 'royal_mcp_bitninja_dismissed';
-    const PLAIN_PERMALINKS_DISMISS_KEY = 'royal_mcp_plain_permalinks_dismissed';
-    const PAGE_SHADOW_DISMISS_KEY      = 'royal_mcp_oauth_page_shadow_dismissed';
-    const SUPPORT_URL                  = 'https://royalplugins.com/support/royal-mcp/siteground-well-known-404.html';
-    const STALE_SUPPORT_URL            = 'https://royalplugins.com/support/royal-mcp/stale-well-known-static-files.html';
-    const HTML_BODY_SUPPORT_URL        = 'https://royalplugins.com/support/royal-mcp/well-known-served-as-html.html';
-    const REGISTER_301_SUPPORT_URL     = 'https://royalplugins.com/support/royal-mcp/oauth-register-trailing-slash-301.html';
-    const IMUNIFY360_SUPPORT_URL       = 'https://royalplugins.com/support/royal-mcp/imunify360-blocks-mcp.html';
-    const BITNINJA_SUPPORT_URL         = 'https://royalplugins.com/support/royal-mcp/bitninja-webshield-blocks-mcp.html';
-    const PLAIN_PERMALINKS_SUPPORT_URL = 'https://royalplugins.com/support/royal-mcp/plain-permalinks-blocks-discovery.html';
-    const PAGE_SHADOW_SUPPORT_URL      = 'https://royalplugins.com/support/royal-mcp/oauth-page-shadow.html';
+    // Adaptive TTL for WAF-fronted sites — state changes (allowlist adds,
+    // exclusion rules) need to surface faster during active troubleshooting.
+    const TRANSIENT_TTL_WAF            = 1 * HOUR_IN_SECONDS;
+    const USER_DISMISS_KEY                 = 'royal_mcp_well_known_dismissed';
+    const STALE_DISMISS_KEY                = 'royal_mcp_well_known_stale_dismissed';
+    const HTML_BODY_DISMISS_KEY            = 'royal_mcp_well_known_html_body_dismissed';
+    const REGISTER_301_TRANSIENT           = 'royal_mcp_register_301_status';
+    const REGISTER_301_DISMISS_KEY         = 'royal_mcp_register_301_dismissed';
+    const IMUNIFY360_DISMISS_KEY           = 'royal_mcp_imunify360_dismissed';
+    const BITNINJA_DISMISS_KEY             = 'royal_mcp_bitninja_dismissed';
+    const SUCURI_CLOUDPROXY_DISMISS_KEY    = 'royal_mcp_sucuri_cloudproxy_dismissed';
+    const PLAIN_PERMALINKS_DISMISS_KEY     = 'royal_mcp_plain_permalinks_dismissed';
+    const PAGE_SHADOW_DISMISS_KEY          = 'royal_mcp_oauth_page_shadow_dismissed';
+    const RECHECK_ACTION                   = 'royal_mcp_recheck_well_known';
+    const RECHECK_NONCE                    = 'royal_mcp_recheck_well_known_nonce';
+    const RECHECK_JUST_RAN_META_KEY        = 'royal_mcp_recheck_just_ran';
+    const SUPPORT_URL                      = 'https://royalplugins.com/support/royal-mcp/siteground-well-known-404.html';
+    const STALE_SUPPORT_URL                = 'https://royalplugins.com/support/royal-mcp/stale-well-known-static-files.html';
+    const HTML_BODY_SUPPORT_URL            = 'https://royalplugins.com/support/royal-mcp/well-known-served-as-html.html';
+    const REGISTER_301_SUPPORT_URL         = 'https://royalplugins.com/support/royal-mcp/oauth-register-trailing-slash-301.html';
+    const IMUNIFY360_SUPPORT_URL           = 'https://royalplugins.com/support/royal-mcp/imunify360-blocks-mcp.html';
+    const BITNINJA_SUPPORT_URL             = 'https://royalplugins.com/support/royal-mcp/bitninja-webshield-blocks-mcp.html';
+    const SUCURI_CLOUDPROXY_SUPPORT_URL    = 'https://royalplugins.com/support/royal-mcp/sucuri-cloudproxy-blocks-mcp.html';
+    const PLAIN_PERMALINKS_SUPPORT_URL     = 'https://royalplugins.com/support/royal-mcp/plain-permalinks-blocks-discovery.html';
+    const PAGE_SHADOW_SUPPORT_URL          = 'https://royalplugins.com/support/royal-mcp/oauth-page-shadow.html';
 
     public function __construct() {
         add_action( 'admin_notices', [ $this, 'maybe_render_notice' ] );
@@ -41,6 +49,10 @@ class Well_Known_Notice {
         // Drop cached classification so the notice reflects the new state
         // immediately after an admin changes Settings → Permalinks.
         add_action( 'update_option_permalink_structure', [ $this, 'invalidate_check' ] );
+        // Re-check button on any host-blocked notice invalidates the transient
+        // and re-probes in the same request. Removes the 12h wait when an
+        // admin is actively troubleshooting host/WAF exclusion changes.
+        add_action( 'admin_post_' . self::RECHECK_ACTION, [ $this, 'handle_recheck' ] );
     }
 
     /**
@@ -96,6 +108,18 @@ class Well_Known_Notice {
         }
 
         $status = $this->check_well_known();
+
+        // Sucuri/CloudProxy fires BEFORE generic 'blocked' because it needs
+        // Sucuri-specific fix guidance (edge-CDN allowlist / IDS exclusion),
+        // not host path-reservation. Signature is the Server header alone —
+        // Sucuri's edge 404 body carries no branding, so body-content match
+        // silently fails. Header match is the only reliable Sucuri tell.
+        if ( 'sucuri_cloudproxy_blocked' === $status
+            && ! get_user_meta( $user_id, self::SUCURI_CLOUDPROXY_DISMISS_KEY, true )
+        ) {
+            $this->render_sucuri_cloudproxy_notice();
+            return;
+        }
 
         // Imunify360 fires BEFORE 'blocked' because the misdiagnosis cost
         // is high: 'blocked' guides the admin toward host path-reservation
@@ -228,6 +252,12 @@ class Well_Known_Notice {
             ]
         );
 
+        // WAF-signature-driven adaptive TTL — sites behind an edge CDN see
+        // faster re-probes so allowlist / exclusion changes surface within
+        // an hour instead of half a day. Static self-hosted installs keep
+        // the 12h default to avoid unnecessary loopback probes.
+        $ttl = self::TRANSIENT_TTL;
+
         if ( is_wp_error( $response ) ) {
             $status = 'unknown';
         } else {
@@ -236,11 +266,93 @@ class Well_Known_Notice {
             $headers = wp_remote_retrieve_headers( $response );
             $headers = is_array( $headers ) ? $headers : iterator_to_array( $headers );
             $status  = self::classify_response( $code, $body, $headers, rtrim( home_url(), '/' ) );
+            $ttl     = self::determine_ttl( $headers );
         }
 
-        set_transient( self::TRANSIENT_KEY, $status, self::TRANSIENT_TTL );
+        set_transient( self::TRANSIENT_KEY, $status, $ttl );
 
         return $status;
+    }
+
+    /**
+     * Adaptive TTL based on WAF/edge-CDN signature in response headers.
+     * Shorter TTL for WAF-fronted sites so that host-layer exclusion changes
+     * surface faster during active troubleshooting. Public static for
+     * testability.
+     *
+     * @param array $headers Response headers (key-value array; keys are
+     *                       case-insensitive per HTTP spec but stored
+     *                       lowercase by wp_remote_retrieve_headers).
+     * @return int TTL in seconds.
+     */
+    public static function determine_ttl( array $headers ) {
+        return self::is_waf_signature_header( $headers )
+            ? self::TRANSIENT_TTL_WAF
+            : self::TRANSIENT_TTL;
+    }
+
+    /**
+     * True if response headers carry a known WAF / edge-CDN fingerprint.
+     * Case-insensitive header-name + value matching. Public static for
+     * testability + shared reuse across TTL decision + classifier hints.
+     *
+     * @param array $headers Response headers.
+     * @return bool
+     */
+    public static function is_waf_signature_header( array $headers ) {
+        // Normalize header keys to lowercase for reliable lookup — WP's
+        // wp_remote_retrieve_headers returns a Requests_Utility_CaseInsensitiveDictionary
+        // or array with lowercase keys, but we accept any casing when
+        // called from tests.
+        $lookup = [];
+        foreach ( $headers as $k => $v ) {
+            $lookup[ strtolower( (string) $k ) ] = is_array( $v ) ? implode( ',', $v ) : (string) $v;
+        }
+
+        $server = isset( $lookup['server'] ) ? strtolower( (string) $lookup['server'] ) : '';
+        if ( '' !== $server ) {
+            // Sucuri / CloudProxy — SG fleet-default, extremely common.
+            if ( false !== strpos( $server, 'sucuri' ) || false !== strpos( $server, 'cloudproxy' ) ) {
+                return true;
+            }
+            // Cloudflare — includes both free tier and Enterprise. If Cloudflare
+            // is fronting the site and returned a 404, allowlist changes need
+            // to propagate; short TTL reflects that.
+            if ( false !== strpos( $server, 'cloudflare' ) ) {
+                return true;
+            }
+        }
+
+        // Cloudflare also sets these regardless of Server header contents.
+        if ( isset( $lookup['cf-ray'] ) || isset( $lookup['cf-cache-status'] ) ) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * True if response headers indicate the response came from PHP (either
+     * via x-httpd or x-powered-by: PHP*). Used by 404 classifier to
+     * distinguish "PHP served the 404" (plugin problem, not host) from
+     * "host served the 404 pre-PHP" (host allowlist required).
+     *
+     * @param array $headers Response headers.
+     * @return bool
+     */
+    public static function has_php_fingerprint( array $headers ) {
+        $lookup = [];
+        foreach ( $headers as $k => $v ) {
+            $lookup[ strtolower( (string) $k ) ] = is_array( $v ) ? implode( ',', $v ) : (string) $v;
+        }
+        if ( ! empty( $lookup['x-httpd'] ) ) {
+            return true;
+        }
+        $powered = isset( $lookup['x-powered-by'] ) ? strtolower( (string) $lookup['x-powered-by'] ) : '';
+        if ( '' !== $powered && false !== strpos( $powered, 'php' ) ) {
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -328,9 +440,48 @@ class Well_Known_Notice {
         }
 
         if ( 404 === $code ) {
-            $has_php_hdr  = ! empty( $headers['x-httpd'] );
+            // PHP served the 404 → this is a plugin/route problem, not a
+            // host-layer block. Bail early so we don't misdiagnose.
+            if ( self::has_php_fingerprint( $headers ) ) {
+                return 'unknown';
+            }
+
+            // Sucuri / CloudProxy Server header — reliable Sucuri tell.
+            // Their edge 404 body carries NO Sucuri branding (unbranded
+            // ~80KB HTML template), so body-content match fails. Header
+            // match is the only signal that survives.
+            $lookup = [];
+            foreach ( $headers as $k => $v ) {
+                $lookup[ strtolower( (string) $k ) ] = is_array( $v ) ? implode( ',', $v ) : (string) $v;
+            }
+            $server = isset( $lookup['server'] ) ? strtolower( (string) $lookup['server'] ) : '';
+            if ( '' !== $server
+                && ( false !== strpos( $server, 'sucuri' )
+                    || false !== strpos( $server, 'cloudproxy' ) )
+            ) {
+                return 'sucuri_cloudproxy_blocked';
+            }
+
+            // Generic HTML 404 with no PHP fingerprint → edge/WAF 404 template
+            // regardless of body size. Sucuri's 83KB body used to fall through
+            // to 'unknown' under the old size-based rule; the fix is to trust
+            // the content-type + no-PHP-fingerprint signal alone.
+            $content_type = isset( $lookup['content-type'] ) ? strtolower( (string) $lookup['content-type'] ) : '';
+            $is_html      = false !== strpos( $content_type, 'text/html' );
+            if ( $is_html ) {
+                return 'blocked';
+            }
+
+            // Tiny-body-no-PHP path preserved as one satisfying case for
+            // hosts that return bare nginx / minimal-template 404s without
+            // a content-type header (rare but observed on custom-configured
+            // edge servers).
             $is_tiny_body = strlen( $body ) < 500;
-            return ( ! $has_php_hdr && $is_tiny_body ) ? 'blocked' : 'unknown';
+            if ( $is_tiny_body ) {
+                return 'blocked';
+            }
+
+            return 'unknown';
         }
 
         return 'unknown';
@@ -498,6 +649,67 @@ class Well_Known_Notice {
             wp_safe_redirect( remove_query_arg( [ 'royal_mcp_dismiss_plain_permalinks', '_wpnonce' ] ) );
             exit;
         }
+
+        if ( isset( $_GET['royal_mcp_dismiss_sucuri_cloudproxy'] )
+            && isset( $_GET['_wpnonce'] )
+            && wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'royal_mcp_dismiss_sucuri_cloudproxy' )
+        ) {
+            update_user_meta( get_current_user_id(), self::SUCURI_CLOUDPROXY_DISMISS_KEY, time() );
+            wp_safe_redirect( remove_query_arg( [ 'royal_mcp_dismiss_sucuri_cloudproxy', '_wpnonce' ] ) );
+            exit;
+        }
+    }
+
+    /**
+     * admin_post handler for the "Re-check now" button. Cap + nonce gated.
+     * Drops the classification transient, re-probes in-request, and stores
+     * the new status on user meta so the redirected admin_notices pass can
+     * render a "just re-checked — status: X" toast alongside whatever notice
+     * matches the fresh state.
+     */
+    public function handle_recheck() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_die(
+                esc_html__( 'You do not have permission to re-check OAuth discovery.', 'royal-mcp' ),
+                '',
+                [ 'response' => 403 ]
+            );
+        }
+        check_admin_referer( self::RECHECK_NONCE );
+
+        $this->invalidate_check();
+        $status = $this->check_well_known();
+
+        update_user_meta(
+            get_current_user_id(),
+            self::RECHECK_JUST_RAN_META_KEY,
+            [ 'status' => (string) $status, 'at' => time() ]
+        );
+
+        $redirect = wp_get_referer();
+        if ( ! $redirect ) {
+            $redirect = admin_url();
+        }
+        wp_safe_redirect( $redirect );
+        exit;
+    }
+
+    /**
+     * Emit the "Re-check now" button as a self-contained POST form. Uses
+     * admin-post with cap + nonce to avoid a GET-based state-mutation
+     * pattern. Shown inside every host-blocked notice so admins can re-probe
+     * from wherever they see the problem.
+     */
+    private function render_recheck_button() {
+        ?>
+        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline;margin-left:0.5rem;">
+            <input type="hidden" name="action" value="<?php echo esc_attr( self::RECHECK_ACTION ); ?>" />
+            <?php wp_nonce_field( self::RECHECK_NONCE ); ?>
+            <button type="submit" class="button">
+                <?php esc_html_e( 'Re-check now', 'royal-mcp' ); ?>
+            </button>
+        </form>
+        <?php
     }
 
     private function render_blocked_notice() {
@@ -524,6 +736,53 @@ class Well_Known_Notice {
                 <a href="<?php echo esc_url( self::SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
                     <?php esc_html_e( 'See the 5-minute fix', 'royal-mcp' ); ?>
                 </a>
+                <?php $this->render_recheck_button(); ?>
+                <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
+                    <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
+                </a>
+            </p>
+        </div>
+        <?php
+    }
+
+    /**
+     * Sucuri / CloudProxy edge-CDN-level 404. Names the product so the
+     * admin knows the fix is a Sucuri firewall configuration change (allow
+     * URL paths / IDS exclusion), not a host path-reservation.
+     */
+    private function render_sucuri_cloudproxy_notice() {
+        $dismiss_url = wp_nonce_url(
+            add_query_arg( 'royal_mcp_dismiss_sucuri_cloudproxy', '1' ),
+            'royal_mcp_dismiss_sucuri_cloudproxy'
+        );
+
+        ?>
+        <div class="notice notice-warning royal-mcp-sucuri-cloudproxy-notice">
+            <p>
+                <strong><?php esc_html_e( 'Royal MCP: OAuth discovery is being blocked at the Sucuri firewall edge.', 'royal-mcp' ); ?></strong>
+            </p>
+            <p>
+                <?php
+                printf(
+                    /* translators: 1: literal URL path code, 2: literal URL path code */
+                    esc_html__( 'Sucuri / CloudProxy is intercepting %1$s and returning a 404 before your site receives the request. Claude.ai and other MCP clients will fail to connect until Sucuri allows this path through. This is an edge-CDN configuration change, not a WordPress or host-server setting.', 'royal-mcp' ),
+                    '<code>/.well-known/oauth-authorization-server</code>',
+                    '<code>/wp-json/*</code>'
+                );
+                ?>
+            </p>
+            <p>
+                <?php esc_html_e( 'In your Sucuri firewall dashboard, add these paths to Allow URL Paths (or ask Sucuri support to allowlist them):', 'royal-mcp' ); ?>
+                <code>/.well-known/*</code>, <code>/authorize</code>, <code>/token</code>, <code>/register</code>.
+            </p>
+            <p>
+                <em><?php esc_html_e( 'Sucuri\'s "Allow URL Paths" is a bypass rule (allows the path from any IP, still subject to IDS signatures), not an intersection. Path-level allowlist is preferred over IP allowlist because MCP client IPs rotate.', 'royal-mcp' ); ?></em>
+            </p>
+            <p>
+                <a href="<?php echo esc_url( self::SUCURI_CLOUDPROXY_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
+                    <?php esc_html_e( 'See the Sucuri fix guide', 'royal-mcp' ); ?>
+                </a>
+                <?php $this->render_recheck_button(); ?>
                 <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
                     <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
                 </a>
@@ -564,6 +823,7 @@ class Well_Known_Notice {
                 <a href="<?php echo esc_url( self::STALE_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
                     <?php esc_html_e( 'See the full fix', 'royal-mcp' ); ?>
                 </a>
+                <?php $this->render_recheck_button(); ?>
                 <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
                     <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
                 </a>
@@ -604,6 +864,7 @@ class Well_Known_Notice {
                 <a href="<?php echo esc_url( self::HTML_BODY_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
                     <?php esc_html_e( 'See the troubleshooting guide', 'royal-mcp' ); ?>
                 </a>
+                <?php $this->render_recheck_button(); ?>
                 <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
                     <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
                 </a>
@@ -641,6 +902,7 @@ class Well_Known_Notice {
                 <a href="<?php echo esc_url( self::IMUNIFY360_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
                     <?php esc_html_e( 'Copy-paste hosting request', 'royal-mcp' ); ?>
                 </a>
+                <?php $this->render_recheck_button(); ?>
                 <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
                     <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
                 </a>
@@ -681,6 +943,7 @@ class Well_Known_Notice {
                 <a href="<?php echo esc_url( self::BITNINJA_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
                     <?php esc_html_e( 'Copy-paste hosting request', 'royal-mcp' ); ?>
                 </a>
+                <?php $this->render_recheck_button(); ?>
                 <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
                     <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
                 </a>
