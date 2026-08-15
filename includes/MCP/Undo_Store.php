@@ -99,6 +99,133 @@ class Undo_Store {
     }
 
     /**
+     * Count active (non-expired) undo tokens. Used by the AI Safety
+     * Overview dashboard widget as the "Undo Window" metric. Iterates
+     * all rows with the OPTION_PREFIX — cheap for typical token counts
+     * (widget dashboards render infrequently; token counts are small).
+     */
+    public static function count_active(): int {
+        $stats = self::collect_active_stats();
+        return $stats['count'];
+    }
+
+    /**
+     * Minimum expires_at across active (non-expired) tokens, or null when
+     * no active tokens exist. Powers the "Oldest reversible op" status
+     * line in the AI Safety Overview widget.
+     */
+    public static function oldest_expiry(): ?int {
+        $stats = self::collect_active_stats();
+        return $stats['oldest'];
+    }
+
+    /**
+     * List every active (non-expired) undo token with its full metadata.
+     * Powers the "Recent Operations" admin page that lets admins inspect
+     * and one-click-undo pending operations.
+     *
+     * Returns tokens sorted by created_at DESC (newest first) — matches
+     * "what did I just do?" workflow. Each entry:
+     *   - token (string)
+     *   - op (string) — tool name
+     *   - summary (string) — human-readable description
+     *   - created_at (int) — unix
+     *   - expires_at (int) — unix
+     *   - expires_in_seconds (int)
+     *
+     * @return array<int, array{token: string, op: string, summary: string, created_at: int, expires_at: int, expires_in_seconds: int}>
+     */
+    public static function list_active(): array {
+        global $wpdb;
+        $prefix = $wpdb->esc_like( self::OPTION_PREFIX ) . '%';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE %s",
+                $prefix
+            )
+        );
+        $out = [];
+        $now = time();
+        foreach ( (array) $rows as $row ) {
+            $stored = isset( $row->option_value ) ? (string) $row->option_value : '';
+            if ( '' === $stored ) continue;
+            $raw = @gzuncompress( base64_decode( $stored ) );
+            if ( false === $raw ) continue;
+            $data = json_decode( $raw, true );
+            if ( ! is_array( $data ) ) continue;
+            $expires_at = isset( $data['expires_at'] ) ? (int) $data['expires_at'] : 0;
+            if ( $expires_at <= $now ) continue;
+            $out[] = [
+                'token'              => isset( $data['token'] ) ? (string) $data['token'] : '',
+                'op'                 => isset( $data['op'] ) ? (string) $data['op'] : '',
+                'summary'            => isset( $data['summary'] ) ? (string) $data['summary'] : '',
+                'created_at'         => isset( $data['created_at'] ) ? (int) $data['created_at'] : 0,
+                'expires_at'         => $expires_at,
+                'expires_in_seconds' => max( 0, $expires_at - $now ),
+            ];
+        }
+        // Newest first. Token used as deterministic tiebreaker when two
+        // rows share created_at (bin2hex token → lexicographic order is
+        // stable, unlike DB scan order).
+        usort( $out, static function ( $a, $b ) {
+            if ( $a['created_at'] === $b['created_at'] ) {
+                return strcmp( $b['token'], $a['token'] );
+            }
+            return $b['created_at'] <=> $a['created_at'];
+        } );
+        return $out;
+    }
+
+    /**
+     * One-pass iteration over royal_mcp_undo_* options producing both the
+     * active-token count and the min-expires_at. Separated so multiple
+     * dashboard-widget metric calls in one request don't re-scan the
+     * options table.
+     *
+     * @return array{count: int, oldest: int|null}
+     */
+    private static function collect_active_stats(): array {
+        global $wpdb;
+        $prefix = $wpdb->esc_like( self::OPTION_PREFIX ) . '%';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE %s",
+                $prefix
+            )
+        );
+        $count  = 0;
+        $oldest = null;
+        $now    = time();
+        foreach ( (array) $rows as $row ) {
+            $stored = isset( $row->option_value ) ? (string) $row->option_value : '';
+            if ( '' === $stored ) {
+                continue;
+            }
+            $raw = @gzuncompress( base64_decode( $stored ) );
+            if ( false === $raw ) {
+                continue;
+            }
+            $data = json_decode( $raw, true );
+            if ( ! is_array( $data ) ) {
+                continue;
+            }
+            $expires_at = isset( $data['expires_at'] ) ? (int) $data['expires_at'] : 0;
+            if ( $expires_at <= $now ) {
+                // Expired but not yet swept. Skip for the widget metric —
+                // cron cleanup will remove eventually.
+                continue;
+            }
+            $count++;
+            if ( null === $oldest || $expires_at < $oldest ) {
+                $oldest = $expires_at;
+            }
+        }
+        return [ 'count' => $count, 'oldest' => $oldest ];
+    }
+
+    /**
      * Sweep every expired snapshot from wp_options. Hooked to the shared
      * `royal_mcp_token_cleanup` daily cron alongside `Token_Store::cleanup_expired`
      * and `Session_Store::cleanup_expired`.

@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.4.40
+Stable tag: 1.4.41
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -47,9 +47,9 @@ Royal MCP connects AI agents to WordPress. The free [Royal AI Firewall](https://
 
 Install both for a unified audit trail: MCP tool calls and HTTP-layer bot hits appear side by side in one dashboard, with per-bot allow / block / log-only controls for 60+ recognized AI agents. Royal AI Firewall is free forever, no upgrade prompt.
 
-= 81 Core Tools + 74 Integration Tools =
+= 84 Core Tools + 80 Integration Tools =
 
-**WordPress Core (81 tools):**
+**WordPress Core (84 tools):**
 
 * Posts - create, read, update, delete, search, count (any registered public post type, featured images supported)
 * Pages - full CRUD with parent page support
@@ -60,7 +60,9 @@ Install both for a unified audit trail: MCP tool calls and HTTP-layer bot hits a
 * Users - display names and roles (emails and usernames are not exposed)
 * Categories & Tags & Custom Taxonomies - create, update (rename/re-slug/edit/move), delete, assign, count, discover all registered taxonomies
 * Term Meta - read, update, delete (most useful for term-level SEO meta - titles, descriptions, focus keywords stored against categories and tags)
-* Menus - list menus, list menu items, create / update / delete / reorder menu items
+* Menus - create menus, list menus, list menu items, create / update / delete / reorder menu items
+* Publish and Promote - publish a draft and insert it into a menu in one call, so agents can complete "publish the post and add it to the main nav" in a single tool call
+* Preview Links - generate a shareable draft-preview URL for a single preview session so reviewers can see unpublished changes without a WP login
 * Post Meta - read, update, delete custom fields (works with ACF, MetaBox, JetEngine, Pods, CPT UI)
 * SEO Meta - read and write Yoast SEO, Rank Math, AIOSEO, or SEObolt title/description/focus keyword/robots/OG fields (auto-detects active SEO plugin)
 * SEO Audit - fetch a post's actual rendered HTML and report title, meta description, canonical, viewport, Open Graph and Twitter Card tags (catches conflicts that only appear in served output)
@@ -105,6 +107,16 @@ When Elementor (free or Pro) is active, AI agents can clone and customize existi
 * Read full settings for a single widget/container/section/column by ID (for precise agent editing without loading the entire page tree)
 * List saved templates from the Elementor template library and import templates from JSON
 * Atomic widgets (Elementor 4.0+ Editor V4 elements) pass through opaque — we never decode atomic schemas because Elementor itself may shift them. Widget-level creation from scratch is intentionally out of scope; the design commitment is to work from an existing-known-good source.
+
+**Divi Integration (6 tools):**
+When Divi (Divi 4 shortcode format or Divi 5 block format) is active, AI agents get safety-first tools for reading and editing Divi content without corrupting builder state:
+
+* Detect a page's Divi format (Divi 4 shortcodes, Divi 5 blocks, mixed, or non-Divi) from postmeta rather than the current theme version — so aged pages read correctly even after the theme was updated
+* Get a compact page outline (section/row/module hierarchy with text snippets) so an agent can reason over a full Divi page in a few KB instead of raw markup
+* Validate a Divi shortcode or block layout string before writing it, catching malformed structure before it corrupts the page
+* List saved layouts from the Divi Library, optionally filtered by category or layout type
+* Read a full Divi Library layout by ID for reuse or template extraction
+* Find-and-replace text inside Divi content with dry-run preview, expected-count safety check, active-editor-session detection, and a warning when literal escape sequences appear in the replacement
 
 **Advanced Custom Fields Integration (4 tools):**
 When ACF (free or Pro) is active, AI agents can read and write ACF fields with the field-type-aware formatting the ACF UI uses — instead of the raw serialized values WordPress meta returns:
@@ -176,7 +188,7 @@ WordPress 6.9 shipped the Abilities API in November 2025 — a primitive that le
 
 **As of 1.4.38, every Royal MCP tool also registers as a WordPress ability.** You get three ways to reach the same tools: (1) Royal MCP's native `/wp-json/royal-mcp/v1/mcp` endpoint (unchanged and always available), (2) the WordPress MCP Adapter if you install it — Royal MCP registers a named `royal-mcp-server` alongside adapter's default server, or (3) WordPress core REST directly at `/wp-json/wp-abilities/v1/abilities/{name}/run`. Same handlers, three transports, one set of per-tool capability gates. The abilities layer can be disabled with a single option flag if needed.
 
-Royal MCP is a complete, production-ready MCP server that predates the official adapter. It runs the full Streamable HTTP transport, enforces API key authentication on every request, ships OAuth 2.0 for Claude Desktop's native connector flow, rate-limits per-IP, redacts sensitive data, and logs every interaction. Out of the box it includes 81 tools for WordPress core operations plus 74 integration tools that auto-load when WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Advanced Custom Fields (ACF), or Redirection is active.
+Royal MCP is a complete, production-ready MCP server that predates the official adapter. It runs the full Streamable HTTP transport, enforces API key authentication on every request, ships OAuth 2.0 for Claude Desktop's native connector flow, rate-limits per-IP, redacts sensitive data, and logs every interaction. Out of the box it includes 84 tools for WordPress core operations plus 80 integration tools that auto-load when WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, Advanced Custom Fields (ACF), or Redirection is active.
 
 = Supported AI Platforms =
 
@@ -198,7 +210,7 @@ Royal MCP works with any MCP-compliant client, IDE, or AI agent framework — no
 * **AI code IDEs** - Claude Code, VS Code (with MCP extension), Cursor, Windsurf, Continue, Cline, Zed, JetBrains AI Assistant.
 * **API testing tools** - Postman, Bruno, Insomnia (use the API key in the `X-Royal-MCP-API-Key` header).
 * **Custom field plugins** - Advanced Custom Fields (ACF) has dedicated `acf_*` tools that return values formatted per each field's Return Format setting (the same way the ACF UI shows them). MetaBox, JetEngine, Pods, CPT UI, and Custom Field Suite are supported through the `wp_get_post_meta` / `wp_update_post_meta` tools, so AI agents can populate custom fields just like a human editor.
-* **Page builders** - Elementor has dedicated tools for clone-and-customize workflows (clone a page, find/replace text, swap images, get an outline, import templates) - see the Tools list. Widget-level creation from scratch is intentionally out of scope. Divi, Beaver Builder, Bricks, Gutenberg, Spectra, and Stackable store standard post content that is readable and writable by AI; page-builder-specific JSON storage is opaque unless covered by a dedicated tool.
+* **Page builders** - Elementor and Divi have dedicated tools for safe clone-and-customize workflows (Elementor: clone a page, find/replace text, swap images, get an outline, import templates; Divi: format detection, layout validation, page outline, library read, find/replace with builder-format awareness) - see the Tools list. Widget-level creation from scratch is intentionally out of scope. Beaver Builder, Bricks, Gutenberg, Spectra, and Stackable store standard post content that is readable and writable by AI; page-builder-specific JSON storage is opaque unless covered by a dedicated tool.
 * **Multilingual** - WPML, Polylang, TranslatePress, qTranslate. Translated posts appear as separate posts and can be read or written via the standard post tools.
 * **AI agent frameworks** - LangChain, AutoGen, CrewAI, LlamaIndex, Haystack - any MCP-compatible framework can call Royal MCP's tools.
 * **AI app platforms** - Anthropic Console, OpenAI Playground, Google AI Studio, Vertex AI, Azure AI Studio, Amazon Bedrock Console.
@@ -269,7 +281,7 @@ Security. Most MCP plugins — and 41% of all public MCP servers — have no aut
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
-No. WordPress 6.9 added the Abilities API — a primitive for registering AI-callable functions — and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 81 ready-to-use WordPress core tools, and 74 integration tools that auto-load for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Advanced Custom Fields, and Redirection.
+No. WordPress 6.9 added the Abilities API — a primitive for registering AI-callable functions — and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 84 ready-to-use WordPress core tools, and 80 integration tools that auto-load for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, Advanced Custom Fields, and Redirection.
 
 = Does Royal MCP work with WooCommerce? =
 
@@ -359,6 +371,17 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.4.41 =
+* New: Six Divi builder tools for safer AI-driven Divi editing (get page format, outline, validate layout, list local templates, library get, replace text).
+* New: wp_publish_and_promote publishes a draft and inserts it into a menu in one call.
+* New: wp_create_menu creates a WordPress navigation menu with optional theme-location assignment.
+* New: wp_create_preview_link generates a shareable draft-preview URL for one preview session.
+* Enhancement: wp_get_post_revisions returns per-revision content_length for quick change-size scanning.
+* Enhancement: Destructive write tools now warn when literal escape sequences appear in replacement text, so operators catch double-escaping before it lands.
+* Enhancement: OAuth discovery self-check now detects Sucuri / CloudProxy edge blocks and links to a Sucuri-specific fix guide.
+* Enhancement: A "Re-check now" button on host-blocked admin notices re-probes OAuth discovery in-place during troubleshooting.
+* Enhancement: OAuth discovery cache shortens automatically on WAF-fronted sites for faster feedback after configuration changes.
 
 = 1.4.40 =
 * New: Every write tool re-reads modified fields after the write and returns the actual saved values.
