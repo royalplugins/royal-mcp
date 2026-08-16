@@ -22,8 +22,6 @@ Royal MCP is a security-first Model Context Protocol (MCP) server for WordPress.
 
 **First-time setup walkthrough (with videos):** [royalplugins.com/support/royal-mcp/connecting-to-claude/](https://royalplugins.com/support/royal-mcp/connecting-to-claude/)
 
-According to [recent security research](https://mcpplaygroundonline.com/blog/mcp-server-security-complete-guide-2026), 41% of public MCP servers have no authentication and respond to tool calls without any credentials. Royal MCP takes the opposite approach: every MCP session requires an API key, every request is rate-limited, and every interaction is logged.
-
 = Why Security Matters for MCP =
 
 MCP gives AI agents the ability to read, create, update, and delete your WordPress content. Without proper authentication, anyone who discovers your MCP endpoint can:
@@ -37,7 +35,7 @@ Royal MCP prevents all of this with API key authentication on session initializa
 
 = Free, Self-Hosted, Fully Featured =
 
-Royal MCP is fully featured in its free, GPL-licensed release. There is no Pro version &mdash; all tools ship in the wp.org plugin, and updates go through the standard WordPress plugin updater.
+Royal MCP is fully featured in its free, GPL-licensed release. Royal MCP Pro is a separate paid tier that layers agency-scale workflows (Divi/Elementor/WooCommerce Pro depth, bulk operations, endpoint profiles, universal audit log) on top of everything in Free.
 
 Your credentials stay on your server. Royal MCP runs entirely inside WordPress: API keys, OAuth tokens, and session state all live in your own database. Royal MCP makes no outbound connections to Royal Plugins&rsquo; own servers &mdash; no license check, no telemetry, no traffic beacon. If you prefer to keep AI inference local too, Ollama and LM Studio are first-class platforms alongside Claude, ChatGPT, and Gemini.
 
@@ -45,7 +43,7 @@ Your credentials stay on your server. Royal MCP runs entirely inside WordPress: 
 
 Royal MCP connects AI agents to WordPress. The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) companion shows you every AI agent hitting your site at the HTTP layer &mdash; training crawlers, retrieval bots, AI search engines &mdash; not just the ones connected through Royal MCP.
 
-Install both for a unified audit trail: MCP tool calls and HTTP-layer bot hits appear side by side in one dashboard, with per-bot allow / block / log-only controls for 60+ recognized AI agents. Royal AI Firewall is free forever, no upgrade prompt.
+Install both for a unified audit trail across MCP tool calls and HTTP-layer bot hits.
 
 = 84 Core Tools + 80 Integration Tools =
 
@@ -182,13 +180,9 @@ When John Godley's Redirection plugin is active, AI agents can manage 301 / 302 
 * Update existing redirects (target, status, enabled state)
 * List redirect groups
 
-= Royal MCP and the WordPress Core Abilities API =
+= WordPress Core Abilities API =
 
-WordPress 6.9 shipped the Abilities API in November 2025 — a primitive that lets plugins register typed capabilities AI agents can call. Core ships three default abilities (site info, user info, environment info) and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol.
-
-**As of 1.4.38, every Royal MCP tool also registers as a WordPress ability.** You get three ways to reach the same tools: (1) Royal MCP's native `/wp-json/royal-mcp/v1/mcp` endpoint (unchanged and always available), (2) the WordPress MCP Adapter if you install it — Royal MCP registers a named `royal-mcp-server` alongside adapter's default server, or (3) WordPress core REST directly at `/wp-json/wp-abilities/v1/abilities/{name}/run`. Same handlers, three transports, one set of per-tool capability gates. The abilities layer can be disabled with a single option flag if needed.
-
-Royal MCP is a complete, production-ready MCP server that predates the official adapter. It runs the full Streamable HTTP transport, enforces API key authentication on every request, ships OAuth 2.0 for Claude Desktop's native connector flow, rate-limits per-IP, redacts sensitive data, and logs every interaction. Out of the box it includes 84 tools for WordPress core operations plus 80 integration tools that auto-load when WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, Advanced Custom Fields (ACF), or Redirection is active.
+As of 1.4.38, every Royal MCP tool also registers as a WordPress ability, discoverable via the WordPress MCP Adapter (named `royal-mcp-server`) or directly through the core `/wp-json/wp-abilities/v1/abilities/{name}/run` REST route. Same handlers, three transports, one set of per-tool capability gates.
 
 = Supported AI Platforms =
 
@@ -211,9 +205,8 @@ Royal MCP works with any MCP-compliant client, IDE, or AI agent framework — no
 * **API testing tools** - Postman, Bruno, Insomnia (use the API key in the `X-Royal-MCP-API-Key` header).
 * **Custom field plugins** - Advanced Custom Fields (ACF) has dedicated `acf_*` tools that return values formatted per each field's Return Format setting (the same way the ACF UI shows them). MetaBox, JetEngine, Pods, CPT UI, and Custom Field Suite are supported through the `wp_get_post_meta` / `wp_update_post_meta` tools, so AI agents can populate custom fields just like a human editor.
 * **Page builders** - Elementor and Divi have dedicated tools for safe clone-and-customize workflows (Elementor: clone a page, find/replace text, swap images, get an outline, import templates; Divi: format detection, layout validation, page outline, library read, find/replace with builder-format awareness) - see the Tools list. Widget-level creation from scratch is intentionally out of scope. Beaver Builder, Bricks, Gutenberg, Spectra, and Stackable store standard post content that is readable and writable by AI; page-builder-specific JSON storage is opaque unless covered by a dedicated tool.
-* **Multilingual** - WPML, Polylang, TranslatePress, qTranslate. Translated posts appear as separate posts and can be read or written via the standard post tools.
-* **AI agent frameworks** - LangChain, AutoGen, CrewAI, LlamaIndex, Haystack - any MCP-compatible framework can call Royal MCP's tools.
-* **AI app platforms** - Anthropic Console, OpenAI Playground, Google AI Studio, Vertex AI, Azure AI Studio, Amazon Bedrock Console.
+* **Multilingual** - WPML, Polylang, TranslatePress: translated posts appear as separate posts and can be read/written via the standard post tools.
+* **AI agent frameworks** - Any MCP-compatible framework (LangChain, AutoGen, CrewAI, LlamaIndex, Haystack, etc.).
 
 = MCP Spec Compliance =
 
