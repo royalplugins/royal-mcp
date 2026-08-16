@@ -6994,7 +6994,19 @@ class Server {
                 if (!current_user_can('manage_options')) {
                     throw new \Exception('manage_options capability required.');
                 }
-                $pl_structure = isset($args['structure']) ? sanitize_text_field((string) $args['structure']) : '';
+                // sanitize_text_field() strips %XX percent sequences via its
+                // /%[a-f0-9]{2}/i pattern — %ca in %category% matches and gets
+                // eaten, corrupting valid permalink tokens. Approximate WP core's
+                // own permalink-form handling (strip #, defensive UTF-8, tag
+                // strip, whitespace) since the source is an MCP client. The
+                // value ultimately flows through set_permalink_structure(),
+                // which validates it.
+                $pl_structure_raw = isset($args['structure']) ? (string) $args['structure'] : '';
+                $pl_structure = wp_check_invalid_utf8( $pl_structure_raw );
+                $pl_structure = wp_strip_all_tags( $pl_structure );
+                $pl_structure = str_replace( '#', '', $pl_structure );
+                $pl_structure = preg_replace( '/[\r\n\t]+/', '', $pl_structure );
+                $pl_structure = trim( $pl_structure );
                 if (empty($pl_structure)) {
                     throw new \Exception('structure is required (e.g. /%postname%/)');
                 }
