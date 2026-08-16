@@ -158,7 +158,7 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                                    class="large-text code"
                                    readonly>
                             <?php
-                            // Inline SVG with currentColor + inline flex — per CLAUDE.md rule 8.
+                            // Inline SVG with currentColor + inline flex, per CLAUDE.md rule 8.
                             $btn_style_copy = 'display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;';
                             $svg_style_copy = 'width:14px;height:14px;flex-shrink:0;';
                             ?>
@@ -191,7 +191,7 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                             <span class="dashicons dashicons-shield-alt"></span>
                             <p>
                                 <strong><?php esc_html_e('Behind Cloudflare?', 'royal-mcp'); ?></strong>
-                                <?php esc_html_e('Turn off "Block AI Bots" in your Cloudflare Security settings — it blocks every MCP backend (Claude, ChatGPT, others) from completing the handshake. Enabled by default on new Cloudflare domains.', 'royal-mcp'); ?>
+                                <?php esc_html_e('Turn off "Block AI Bots" in your Cloudflare Security settings. It blocks every MCP backend (Claude, ChatGPT, others) from completing the handshake. Enabled by default on new Cloudflare domains.', 'royal-mcp'); ?>
                             </p>
                         </div>
                     </div>
@@ -246,7 +246,7 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                                         </button>
                                     <?php endif; ?>
                                     <p class="description">
-                                        <?php esc_html_e('Optional — most MCP clients register themselves automatically via Dynamic Client Registration. Set a static Client ID only if your client requires it.', 'royal-mcp'); ?>
+                                        <?php esc_html_e('Optional. Most MCP clients register themselves automatically via Dynamic Client Registration. Set a static Client ID only if your client requires it.', 'royal-mcp'); ?>
                                     </p>
                                 </td>
                             </tr>
@@ -317,7 +317,7 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                                     <li><?php echo wp_kses(__('Click <strong>Add custom connector</strong>', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php esc_html_e('Enter a name (e.g., "My WordPress Site")', 'royal-mcp'); ?></li>
                                     <li><?php echo wp_kses(__('Paste the <strong>MCP Server URL</strong> from General Settings above', 'royal-mcp'), ['strong' => []]); ?></li>
-                                    <li><?php echo wp_kses(__('Click <strong>Add</strong> — Claude will run the OAuth handshake automatically', 'royal-mcp'), ['strong' => []]); ?></li>
+                                    <li><?php echo wp_kses(__('Click <strong>Add</strong>. Claude will run the OAuth handshake automatically', 'royal-mcp'), ['strong' => []]); ?></li>
                                 </ol>
                                 <a href="https://royalplugins.com/support/royal-mcp/connecting-to-claude/" target="_blank" rel="noopener noreferrer" class="setup-guide-full-link">
                                     <?php esc_html_e('Full walkthrough with screenshots', 'royal-mcp'); ?>
@@ -342,7 +342,7 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                                     <li><?php echo wp_kses(__('Click <strong>+ Add</strong> and choose <strong>Plugin</strong> (or "MCP Server")', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php esc_html_e('Enter a name (e.g., "My WordPress Site")', 'royal-mcp'); ?></li>
                                     <li><?php echo wp_kses(__('Paste the <strong>MCP Server URL</strong> from General Settings above', 'royal-mcp'), ['strong' => []]); ?></li>
-                                    <li><?php esc_html_e('Authorize when prompted — ChatGPT will run the OAuth handshake against your WordPress site', 'royal-mcp'); ?></li>
+                                    <li><?php esc_html_e('Authorize when prompted. ChatGPT will run the OAuth handshake against your WordPress site', 'royal-mcp'); ?></li>
                                     <li><?php esc_html_e('The plugin becomes available across new ChatGPT conversations', 'royal-mcp'); ?></li>
                                 </ol>
                                 <a href="https://royalplugins.com/support/royal-mcp/connecting-to-chatgpt/" target="_blank" rel="noopener noreferrer" class="setup-guide-full-link">
@@ -411,7 +411,7 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                                     <li><?php esc_html_e('Enter a name (e.g., "Royal MCP — My Site")', 'royal-mcp'); ?></li>
                                     <li><?php echo wp_kses(__('Paste the <strong>MCP Server URL</strong> from General Settings above', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php echo wp_kses(__('Add an HTTP header: <code>X-Royal-MCP-API-Key</code> with your <strong>WordPress API Key</strong> as the value', 'royal-mcp'), ['strong' => [], 'code' => []]); ?></li>
-                                    <li><?php esc_html_e('Save — Cursor connects automatically and Royal MCP tools become available', 'royal-mcp'); ?></li>
+                                    <li><?php esc_html_e('Save. Cursor connects automatically and Royal MCP tools become available', 'royal-mcp'); ?></li>
                                 </ol>
                             </div>
                         </div>
@@ -628,7 +628,7 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                                 <?php endforeach; ?>
                             </select>
                             <?php
-                            // Inline SVG with currentColor + inline flex — per CLAUDE.md rule 8.
+                            // Inline SVG with currentColor + inline flex, per CLAUDE.md rule 8.
                             $btn_style_add = 'display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;';
                             $svg_style_add = 'width:14px;height:14px;flex-shrink:0;';
                             ?>
@@ -656,41 +656,78 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                 </div>
                 <div class="inside">
                     <div class="api-endpoints-reference">
-                        <h3><?php esc_html_e('Posts', 'royal-mcp'); ?></h3>
-                        <ul>
-                            <li><code>GET /posts</code> - <?php esc_html_e('List posts', 'royal-mcp'); ?></li>
-                            <li><code>GET /posts/{id}</code> - <?php esc_html_e('Get a specific post', 'royal-mcp'); ?></li>
-                            <li><code>POST /posts</code> - <?php esc_html_e('Create a new post', 'royal-mcp'); ?></li>
-                            <li><code>PUT /posts/{id}</code> - <?php esc_html_e('Update a post', 'royal-mcp'); ?></li>
-                            <li><code>DELETE /posts/{id}</code> - <?php esc_html_e('Delete a post', 'royal-mcp'); ?></li>
-                        </ul>
-
-                        <h3><?php esc_html_e('Pages', 'royal-mcp'); ?></h3>
-                        <ul>
-                            <li><code>GET /pages</code> - <?php esc_html_e('List pages', 'royal-mcp'); ?></li>
-                            <li><code>GET /pages/{id}</code> - <?php esc_html_e('Get a specific page', 'royal-mcp'); ?></li>
-                            <li><code>POST /pages</code> - <?php esc_html_e('Create a new page', 'royal-mcp'); ?></li>
-                            <li><code>PUT /pages/{id}</code> - <?php esc_html_e('Update a page', 'royal-mcp'); ?></li>
-                            <li><code>DELETE /pages/{id}</code> - <?php esc_html_e('Delete a page', 'royal-mcp'); ?></li>
-                        </ul>
-
-                        <h3><?php esc_html_e('Media', 'royal-mcp'); ?></h3>
-                        <ul>
-                            <li><code>GET /media</code> - <?php esc_html_e('List media files', 'royal-mcp'); ?></li>
-                            <li><code>GET /media/{id}</code> - <?php esc_html_e('Get a specific media file', 'royal-mcp'); ?></li>
-                            <li><code>POST /media</code> - <?php esc_html_e('Upload media', 'royal-mcp'); ?></li>
-                            <li><code>DELETE /media/{id}</code> - <?php esc_html_e('Delete media', 'royal-mcp'); ?></li>
-                        </ul>
-
-                        <h3><?php esc_html_e('Site & Search', 'royal-mcp'); ?></h3>
-                        <ul>
-                            <li><code>GET /site</code> - <?php esc_html_e('Get site information', 'royal-mcp'); ?></li>
-                            <li><code>GET /search</code> - <?php esc_html_e('Search content', 'royal-mcp'); ?></li>
-                        </ul>
-
-                        <p class="description">
-                            <?php esc_html_e('All legacy REST requests must include the API key in the X-Royal-MCP-API-Key header. Modern MCP clients negotiate auth via OAuth automatically.', 'royal-mcp'); ?>
+                        <p>
+                            <?php esc_html_e('The plugin exposes two API layers. MCP is the primary path for AI clients; legacy REST remains available for backwards compatibility.', 'royal-mcp'); ?>
                         </p>
+
+                        <h3><?php esc_html_e('MCP (recommended)', 'royal-mcp'); ?></h3>
+                        <p class="description">
+                            <?php esc_html_e('JSON-RPC endpoint for Claude Desktop, ChatGPT, Cursor, and any MCP-compatible client. Auth is negotiated via OAuth automatically. Every registered tool is discoverable via the tools/list method.', 'royal-mcp'); ?>
+                        </p>
+                        <ul>
+                            <li><code>POST /royal-mcp/v1/mcp</code> - <?php esc_html_e('Primary MCP JSON-RPC endpoint (tools/list, tools/call, prompts/list, resources/list)', 'royal-mcp'); ?></li>
+                            <li><code>GET /royal-mcp/v1/sse</code> - <?php esc_html_e('Server-Sent Events stream for streaming MCP clients', 'royal-mcp'); ?></li>
+                            <li><code>POST /royal-mcp/v1/messages</code> - <?php esc_html_e('SSE session message channel', 'royal-mcp'); ?></li>
+                        </ul>
+                        <p class="description">
+                            <?php
+                            printf(
+                                /* translators: %s: example endpoint-profile URL fragment. */
+                                esc_html__('Endpoint profiles (Royal MCP Pro) trim the tools/list response to a whitelisted subset. Attach %s to any MCP URL to route calls through a specific profile.', 'royal-mcp'),
+                                '<code>?tools=&lt;profile-slug&gt;</code>'
+                            );
+                            ?>
+                        </p>
+
+                        <h3><?php esc_html_e('Legacy REST', 'royal-mcp'); ?></h3>
+                        <p class="description">
+                            <?php esc_html_e('Backwards-compatible REST endpoints predating MCP. Auth via the X-Royal-MCP-API-Key header. New integrations should use MCP above.', 'royal-mcp'); ?>
+                        </p>
+
+                        <h4><?php esc_html_e('Posts', 'royal-mcp'); ?></h4>
+                        <ul>
+                            <li><code>GET /royal-mcp/v1/posts</code> - <?php esc_html_e('List posts', 'royal-mcp'); ?></li>
+                            <li><code>GET /royal-mcp/v1/posts/{id}</code> - <?php esc_html_e('Get a specific post', 'royal-mcp'); ?></li>
+                            <li><code>POST /royal-mcp/v1/posts</code> - <?php esc_html_e('Create a new post', 'royal-mcp'); ?></li>
+                            <li><code>PUT /royal-mcp/v1/posts/{id}</code> - <?php esc_html_e('Update a post', 'royal-mcp'); ?></li>
+                            <li><code>DELETE /royal-mcp/v1/posts/{id}</code> - <?php esc_html_e('Delete a post', 'royal-mcp'); ?></li>
+                        </ul>
+
+                        <h4><?php esc_html_e('Pages', 'royal-mcp'); ?></h4>
+                        <ul>
+                            <li><code>GET /royal-mcp/v1/pages</code> - <?php esc_html_e('List pages', 'royal-mcp'); ?></li>
+                            <li><code>GET /royal-mcp/v1/pages/{id}</code> - <?php esc_html_e('Get a specific page', 'royal-mcp'); ?></li>
+                            <li><code>POST /royal-mcp/v1/pages</code> - <?php esc_html_e('Create a new page', 'royal-mcp'); ?></li>
+                            <li><code>PUT /royal-mcp/v1/pages/{id}</code> - <?php esc_html_e('Update a page', 'royal-mcp'); ?></li>
+                            <li><code>DELETE /royal-mcp/v1/pages/{id}</code> - <?php esc_html_e('Delete a page', 'royal-mcp'); ?></li>
+                        </ul>
+
+                        <h4><?php esc_html_e('Media', 'royal-mcp'); ?></h4>
+                        <ul>
+                            <li><code>GET /royal-mcp/v1/media</code> - <?php esc_html_e('List media files', 'royal-mcp'); ?></li>
+                            <li><code>GET /royal-mcp/v1/media/{id}</code> - <?php esc_html_e('Get a specific media file', 'royal-mcp'); ?></li>
+                            <li><code>POST /royal-mcp/v1/media</code> - <?php esc_html_e('Upload media', 'royal-mcp'); ?></li>
+                            <li><code>DELETE /royal-mcp/v1/media/{id}</code> - <?php esc_html_e('Delete media', 'royal-mcp'); ?></li>
+                        </ul>
+
+                        <h4><?php esc_html_e('Site & Search', 'royal-mcp'); ?></h4>
+                        <ul>
+                            <li><code>GET /royal-mcp/v1/site</code> - <?php esc_html_e('Get site information', 'royal-mcp'); ?></li>
+                            <li><code>GET /royal-mcp/v1/search</code> - <?php esc_html_e('Search content', 'royal-mcp'); ?></li>
+                        </ul>
+
+                        <h4><?php esc_html_e('WooCommerce Product Attributes & Variations', 'royal-mcp'); ?></h4>
+                        <ul>
+                            <li><code>GET /royal-mcp/v1/products/attributes</code> - <?php esc_html_e('List product attributes', 'royal-mcp'); ?></li>
+                            <li><code>POST /royal-mcp/v1/products/attributes</code> - <?php esc_html_e('Create a product attribute', 'royal-mcp'); ?></li>
+                            <li><code>GET /royal-mcp/v1/products/attributes/{attribute_id}/terms</code> - <?php esc_html_e('List attribute terms', 'royal-mcp'); ?></li>
+                            <li><code>GET /royal-mcp/v1/products/{id}/variations</code> - <?php esc_html_e('List product variations', 'royal-mcp'); ?></li>
+                            <li><code>POST /royal-mcp/v1/products/{id}/variations</code> - <?php esc_html_e('Create a variation', 'royal-mcp'); ?></li>
+                            <li><code>GET /royal-mcp/v1/products/{id}/variations/{variation_id}</code> - <?php esc_html_e('Get a specific variation', 'royal-mcp'); ?></li>
+                            <li><code>PUT /royal-mcp/v1/products/{id}/variations/{variation_id}</code> - <?php esc_html_e('Update a variation', 'royal-mcp'); ?></li>
+                            <li><code>DELETE /royal-mcp/v1/products/{id}/variations/{variation_id}</code> - <?php esc_html_e('Delete a variation', 'royal-mcp'); ?></li>
+                            <li><code>POST /royal-mcp/v1/products/{id}/attributes</code> - <?php esc_html_e('Set attributes on a product', 'royal-mcp'); ?></li>
+                        </ul>
                     </div>
                 </div>
             </div>
@@ -738,7 +775,7 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                         </th>
                         <td>
                             <?php
-                            // Inline SVG with currentColor + inline flex — per CLAUDE.md rule 8.
+                            // Inline SVG with currentColor + inline flex, per CLAUDE.md rule 8.
                             // Dashicons inside .button rot across WP admin CSS releases; inline SVG
                             // inherits button text color and survives cascade churn.
                             $btn_style = 'display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;';
@@ -784,7 +821,7 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
             </p>
             <p>
                 <?php
-                // Inline SVG with currentColor + inline flex — per CLAUDE.md rule 8.
+                // Inline SVG with currentColor + inline flex, per CLAUDE.md rule 8.
                 $btn_style_reset = 'display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;';
                 $svg_style_reset = 'width:14px;height:14px;flex-shrink:0;';
                 ?>
