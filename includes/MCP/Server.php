@@ -7020,12 +7020,18 @@ class Server {
                 }
                 $pl_actual = (string) get_option('permalink_structure', '');
 
+                // Permalink structures require strict input fidelity — any %<token>%
+                // altered by the sanitizer breaks rewrite rules. Pass raw input into
+                // diff() and fail-loud if the sanitizer changed it, as a belt-and-braces
+                // second line of defense (the primary defense is the safe sanitizer above).
                 $pl_diff = \Royal_MCP\MCP\Support\WriteVerifier::diff(
                     [ 'structure' => $pl_structure ],
                     [ 'structure' => $pl_previous ],
-                    [ 'structure' => $pl_actual ]
+                    [ 'structure' => $pl_actual ],
+                    [ 'structure' => $pl_structure_raw ]
                 );
                 \Royal_MCP\MCP\Support\WriteVerifier::throw_if_dropped( $pl_diff, 'wp_update_permalink_structure' );
+                \Royal_MCP\MCP\Support\WriteVerifier::throw_if_input_mangled( $pl_diff, 'wp_update_permalink_structure' );
 
                 // Permalink structures are always short strings — no size cap needed.
                 $pl_undo_envelope = \Royal_MCP\MCP\Undo_Store::store([
