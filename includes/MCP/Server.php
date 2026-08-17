@@ -5617,10 +5617,10 @@ class Server {
                             throw new \Exception('WooCommerce is no longer active — cannot restore product fields.');
                         }
                         // Existence check via get_post first — wc_get_product
-                        // may return a stale cached object after a hard-delete
-                        // (same class as the variation undo bug). get_post reads
-                        // wp_posts directly so vanished target is caught before
-                        // the cap check fires with a misleading error.
+                        // may return a stale cached object after a hard-delete.
+                        // get_post reads wp_posts directly so a vanished target
+                        // is caught before the cap check fires with a
+                        // misleading error.
                         $up_undo_post = get_post( $undo_up_id );
                         if ( ! $up_undo_post || $up_undo_post->post_type !== 'product' ) {
                             throw new \Exception('Product no longer exists — cannot restore fields.');
