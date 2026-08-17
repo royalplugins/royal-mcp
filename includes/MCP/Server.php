@@ -725,7 +725,7 @@ class Server {
             ['name' => 'wp_create_term', 'description' => 'Create a term in any registered taxonomy (category, post_tag, or any custom taxonomy). Description may contain inline HTML — WordPress permits <a>, <strong>, <em>, <blockquote>, <code>, <cite>, <abbr>, <acronym> in term descriptions; block-level tags (<p>, <h1>-<h6>, <ul>) are stripped by WP core. Use wp_get_taxonomies to discover available taxonomy slugs.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)'], 'description' => ['type' => 'string', 'description' => 'Optional description. May contain inline HTML (<a>, <strong>, <em>, etc.); block-level tags are stripped by WP core.'], 'parent' => ['type' => 'integer', 'description' => 'Parent term ID (only applies to hierarchical taxonomies)'], 'slug' => ['type' => 'string', 'description' => 'Optional URL-friendly slug. Auto-generated from name if omitted.']], 'required' => ['name', 'taxonomy']]],
             ['name' => 'wp_update_term', 'description' => 'Update an existing term in any taxonomy. Use this to rename a tag/category, edit its description, or change its slug. Description may contain inline HTML (WP core strips block-level tags). Pair with wp_update_term_meta to edit SEO meta on tags (Yoast/Rank Math/AIOSEO store tag SEO data in wp_termmeta).', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to'], 'name' => ['type' => 'string'], 'slug' => ['type' => 'string'], 'description' => ['type' => 'string', 'description' => 'Optional description. May contain inline HTML.'], 'parent' => ['type' => 'integer', 'description' => 'Parent term ID (hierarchical taxonomies only)']], 'required' => ['id', 'taxonomy']]],
             ['name' => 'wp_delete_term', 'description' => 'Delete a term from any registered taxonomy.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to']], 'required' => ['id', 'taxonomy']]],
-            ['name' => 'wp_add_post_terms', 'description' => 'Add or replace terms on a post in any taxonomy.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'terms' => ['type' => 'array', 'items' => ['type' => 'integer']], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)']], 'required' => ['post_id', 'terms', 'taxonomy']]],
+            ['name' => 'wp_add_post_terms', 'description' => 'Add or replace terms on a post in any taxonomy. Accepts term IDs (integers), slugs (for hierarchical taxonomies like category), or names (for non-hierarchical like post_tag).', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'terms' => ['type' => 'array', 'items' => ['oneOf' => [['type' => 'integer'], ['type' => 'string']]], 'description' => 'Array of term IDs (integers) OR term slugs/names (strings). Must be an array — pass ["my-tag"] not "my-tag".'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)']], 'required' => ['post_id', 'terms', 'taxonomy']]],
             ['name' => 'wp_get_terms', 'description' => 'List terms in any registered taxonomy with paginated output. Returns id, name, slug, description, count, parent. Use to map term names to IDs before wp_add_post_terms, or to walk a taxonomy tree.', 'inputSchema' => ['type' => 'object', 'properties' => ['taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat, any custom taxonomy)'], 'search' => ['type' => 'string', 'description' => 'Optional name-substring filter (case-insensitive).'], 'hide_empty' => ['type' => 'boolean', 'description' => 'Exclude terms with zero attached posts. Default false.'], 'parent' => ['type' => 'integer', 'description' => 'Return only children of this parent term ID (hierarchical taxonomies).'], 'per_page' => ['type' => 'integer', 'description' => 'Results per page. Default 100, max 500.'], 'page' => ['type' => 'integer', 'description' => 'Page number, 1-indexed. Default 1.']], 'required' => ['taxonomy']]],
             ['name' => 'wp_count_terms', 'description' => 'Get term counts in a taxonomy', 'inputSchema' => ['type' => 'object', 'properties' => ['taxonomy' => ['type' => 'string']]]],
             ['name' => 'wp_get_taxonomies', 'description' => 'Get all registered public taxonomies (built-in plus custom taxonomies registered by themes/plugins like product_cat, brand, etc.). Returns the taxonomy slug, label, hierarchical flag, and which post types it applies to.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -1572,7 +1572,7 @@ class Server {
                 }
                 $query_args = [
                     'numberposts' => min(intval($args['per_page'] ?? 10), 100),
-                    's' => sanitize_text_field($args['search'] ?? ''),
+                    's' => \Royal_MCP\MCP\Support\SafeText::field($args['search'] ?? ''),
                 ];
                 if (!empty($args['post_type'])) {
                     $pt = sanitize_text_field($args['post_type']);
@@ -1703,7 +1703,7 @@ class Server {
                 // be in the future or WP silently downgrades to publish with
                 // that backdate — same behavior as wp-admin scheduling.
                 $post_data = [
-                    'post_title' => sanitize_text_field($args['title']),
+                    'post_title' => \Royal_MCP\MCP\Support\SafeText::field($args['title']),
                     'post_content' => wp_slash($args['content']),
                     'post_status' => in_array($args['status'] ?? 'draft', ['publish', 'draft', 'future', 'pending', 'private']) ? $args['status'] : 'draft',
                     'post_type' => $post_type,
@@ -1712,7 +1712,14 @@ class Server {
                 // filter would apply; sanitize_text_field flattened any <p>/<a>/<strong>
                 // formatting that legitimately renders on category archives + RSS feeds.
                 if (!empty($args['excerpt'])) $post_data['post_excerpt'] = wp_kses_post($args['excerpt']);
-                if (!empty($args['categories'])) $post_data['post_category'] = array_map('intval', $args['categories']);
+                // Guard against string input (an LLM passing categories=5 instead of [5])
+                // — !empty is truthy for non-empty strings, and array_map on a string
+                // throws a fatal TypeError. Normalize to array; if the caller passed
+                // a bare number, wrap it.
+                if (!empty($args['categories'])) {
+                    $cats = is_array($args['categories']) ? $args['categories'] : [$args['categories']];
+                    $post_data['post_category'] = array_map('intval', $cats);
+                }
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     $post_data['post_author'] = intval($args['post_author']);
                 }
@@ -1814,7 +1821,7 @@ class Server {
                 // destructive writes (blanked post body, title, excerpt) on
                 // what reads as a partial update. To explicitly clear a
                 // field, edit via wp-admin or future dedicated clear tool.
-                if (isset($args['title']) && $args['title'] !== '') $data['post_title'] = sanitize_text_field($args['title']);
+                if (isset($args['title']) && $args['title'] !== '') $data['post_title'] = \Royal_MCP\MCP\Support\SafeText::field($args['title']);
                 // See wp_create_post above for the wp_slash + no-wp_kses_post rationale.
                 if (isset($args['content']) && $args['content'] !== '') $data['post_content'] = wp_slash($args['content']);
                 if (isset($args['status'])) $data['post_status'] = sanitize_text_field($args['status']);
@@ -2108,7 +2115,7 @@ class Server {
                 }
                 // See wp_create_post above for the wp_slash + no-wp_kses_post rationale.
                 $page_data = [
-                    'post_title' => sanitize_text_field($args['title']),
+                    'post_title' => \Royal_MCP\MCP\Support\SafeText::field($args['title']),
                     'post_content' => wp_slash($args['content']),
                     'post_status' => $page_status,
                     'post_type' => 'page',
@@ -2148,7 +2155,7 @@ class Server {
                 }
                 $data = ['ID' => $page_id];
                 // see wp_update_post: "" preserves existing value.
-                if (isset($args['title']) && $args['title'] !== '') $data['post_title'] = sanitize_text_field($args['title']);
+                if (isset($args['title']) && $args['title'] !== '') $data['post_title'] = \Royal_MCP\MCP\Support\SafeText::field($args['title']);
                 // See wp_create_post above for the wp_slash + no-wp_kses_post rationale.
                 if (isset($args['content']) && $args['content'] !== '') $data['post_content'] = wp_slash($args['content']);
                 if (isset($args['status'])) $data['post_status'] = sanitize_text_field($args['status']);
@@ -2209,7 +2216,7 @@ class Server {
                 // filtering client-side. Sits on the main query's meta_query
                 // slot; composes with post__in from the search branch below via
                 // WP_Query's implicit AND between post__in and meta_query.
-                $alt_filter = isset($args['alt_text']) ? sanitize_text_field($args['alt_text']) : 'any';
+                $alt_filter = isset($args['alt_text']) ? \Royal_MCP\MCP\Support\SafeText::field($args['alt_text']) : 'any';
                 if ($alt_filter === 'empty') {
                     $media_args['meta_query'] = [
                         'relation' => 'OR',
@@ -2222,7 +2229,7 @@ class Server {
                     ];
                 }
 
-                $media_search = sanitize_text_field($args['search'] ?? '');
+                $media_search = \Royal_MCP\MCP\Support\SafeText::field($args['search'] ?? '');
                 if ($media_search !== '') {
                     // WP_Query's `s` does not reach attachment filenames or alt
                     // text, and a keyword search cannot be OR'd against a
@@ -2302,9 +2309,9 @@ class Server {
                 $attachment_id = $this->sideload_image_from_url(
                     $url,
                     isset($args['filename']) ? sanitize_file_name($args['filename']) : '',
-                    isset($args['title']) ? sanitize_text_field($args['title']) : '',
-                    isset($args['caption']) ? sanitize_text_field($args['caption']) : '',
-                    isset($args['alt_text']) ? sanitize_text_field($args['alt_text']) : ''
+                    isset($args['title']) ? \Royal_MCP\MCP\Support\SafeText::field($args['title']) : '',
+                    isset($args['caption']) ? \Royal_MCP\MCP\Support\SafeText::field($args['caption']) : '',
+                    isset($args['alt_text']) ? \Royal_MCP\MCP\Support\SafeText::field($args['alt_text']) : ''
                 );
                 return [
                     'id' => $attachment_id,
@@ -2330,9 +2337,9 @@ class Server {
                 $attachment_id = $this->sideload_image_from_bytes(
                     $bytes,
                     $filename,
-                    isset($args['title']) ? sanitize_text_field($args['title']) : '',
-                    isset($args['caption']) ? sanitize_text_field($args['caption']) : '',
-                    isset($args['alt_text']) ? sanitize_text_field($args['alt_text']) : ''
+                    isset($args['title']) ? \Royal_MCP\MCP\Support\SafeText::field($args['title']) : '',
+                    isset($args['caption']) ? \Royal_MCP\MCP\Support\SafeText::field($args['caption']) : '',
+                    isset($args['alt_text']) ? \Royal_MCP\MCP\Support\SafeText::field($args['alt_text']) : ''
                 );
                 return [
                     'id' => $attachment_id,
@@ -2356,7 +2363,7 @@ class Server {
                         '',
                         '',
                         '',
-                        isset($args['alt_text']) ? sanitize_text_field($args['alt_text']) : ''
+                        isset($args['alt_text']) ? \Royal_MCP\MCP\Support\SafeText::field($args['alt_text']) : ''
                     );
                 } else {
                     $media_id = isset($args['media_id']) ? intval($args['media_id']) : -1;
@@ -2383,10 +2390,10 @@ class Server {
                 // the underlying wp_posts column names — LLM callers see the
                 // API they invoked, not the DB schema.
                 $media_requested = [];
-                if (isset($args['title']) && $args['title'] !== '')             $media_requested['title']       = sanitize_text_field($args['title']);
-                if (isset($args['caption']) && $args['caption'] !== '')         $media_requested['caption']     = sanitize_text_field($args['caption']);
+                if (isset($args['title']) && $args['title'] !== '')             $media_requested['title']       = \Royal_MCP\MCP\Support\SafeText::field($args['title']);
+                if (isset($args['caption']) && $args['caption'] !== '')         $media_requested['caption']     = \Royal_MCP\MCP\Support\SafeText::field($args['caption']);
                 if (isset($args['description']) && $args['description'] !== '') $media_requested['description'] = wp_kses_post($args['description']);
-                if (isset($args['alt_text']) && $args['alt_text'] !== '')       $media_requested['alt_text']    = sanitize_text_field($args['alt_text']);
+                if (isset($args['alt_text']) && $args['alt_text'] !== '')       $media_requested['alt_text']    = \Royal_MCP\MCP\Support\SafeText::field($args['alt_text']);
                 if (empty($media_requested)) {
                     throw new \Exception('No update fields provided. Pass at least one of: title, caption, description, alt_text.');
                 }
@@ -2529,7 +2536,7 @@ class Server {
                 if (!empty($args['description'])) $term_args['description'] = wp_kses_post($args['description']);
                 if (!empty($args['slug'])) $term_args['slug'] = sanitize_title($args['slug']);
                 if (!empty($args['parent']) && $tax_obj && $tax_obj->hierarchical) $term_args['parent'] = intval($args['parent']);
-                $result = wp_insert_term(sanitize_text_field($args['name']), $taxonomy, $term_args);
+                $result = wp_insert_term(\Royal_MCP\MCP\Support\SafeText::field($args['name']), $taxonomy, $term_args);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
                 return ['id' => $result['term_id'], 'taxonomy' => $taxonomy, 'message' => 'Term created successfully'];
 
@@ -2545,7 +2552,7 @@ class Server {
 
                 // Requested-field extraction. Keys mirror the MCP tool arg names.
                 $term_requested = [];
-                if (isset($args['name']) && $args['name'] !== '')               $term_requested['name']        = sanitize_text_field($args['name']);
+                if (isset($args['name']) && $args['name'] !== '')               $term_requested['name']        = \Royal_MCP\MCP\Support\SafeText::field($args['name']);
                 if (isset($args['slug']) && $args['slug'] !== '')               $term_requested['slug']        = sanitize_title($args['slug']);
                 if (isset($args['description']) && $args['description'] !== '') $term_requested['description'] = wp_kses_post($args['description']);
                 if (isset($args['parent'])) {
@@ -2733,7 +2740,7 @@ class Server {
                     'order'      => 'ASC',
                 ];
                 if (!empty($args['search'])) {
-                    $get_args['search'] = sanitize_text_field($args['search']);
+                    $get_args['search'] = \Royal_MCP\MCP\Support\SafeText::field($args['search']);
                 }
                 if (isset($args['parent'])) {
                     $get_args['parent'] = intval($args['parent']);
@@ -2781,7 +2788,23 @@ class Server {
                 if (!current_user_can($assign_cap)) {
                     throw new \Exception('You do not have permission to assign terms in ' . esc_html($taxonomy) . '.');
                 }
-                $result = wp_set_post_terms($post_id, array_map('intval', $args['terms']), $taxonomy, true);
+                // Normalize terms input: wp_set_post_terms accepts an array
+                // of term IDs (integers), slugs (non-numeric strings, for
+                // hierarchical taxonomies), or names (for non-hierarchical
+                // like tags). Reject non-array input with a clear error rather
+                // than crashing on the following array_map. Numeric values
+                // (int OR numeric string) coerce to int; non-numeric strings
+                // pass through as slug/name.
+                if ( ! isset( $args['terms'] ) || ! is_array( $args['terms'] ) ) {
+                    throw new \Exception( 'terms must be an array of term IDs (integers) or term slugs/names (strings).' );
+                }
+                $normalized_terms = array_map( function ( $t ) {
+                    if ( is_string( $t ) && ! is_numeric( $t ) ) {
+                        return $t;
+                    }
+                    return (int) $t;
+                }, $args['terms'] );
+                $result = wp_set_post_terms( $post_id, $normalized_terms, $taxonomy, true );
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
                 return ['message' => 'Terms added to post successfully'];
 
@@ -2804,7 +2827,7 @@ class Server {
                 // structured arrays. Single-key get returns {term_id, key,
                 // value}; full-meta get returns {term_id, meta: {...}}.
                 if (!empty($args['key'])) {
-                    $key = sanitize_text_field($args['key']);
+                    $key = \Royal_MCP\MCP\Support\SafeText::field($args['key']);
                     return [
                         'term_id' => $term_id,
                         'key'     => $key,
@@ -2825,7 +2848,7 @@ class Server {
                 if (!array_key_exists('value', $args)) {
                     throw new \Exception('A value is required.');
                 }
-                $tmeta_key   = sanitize_text_field($args['key']);
+                $tmeta_key   = \Royal_MCP\MCP\Support\SafeText::field($args['key']);
                 $tmeta_value = self::filter_meta_value($args['value'], $tmeta_key, $term_id, 'wp_update_term_meta');
 
                 $tmeta_before = get_term_meta($term_id, $tmeta_key, true);
@@ -2892,7 +2915,7 @@ class Server {
                 if (!current_user_can('edit_term', $term_id)) {
                     throw new \Exception('You do not have permission to edit this term.');
                 }
-                $result = delete_term_meta($term_id, sanitize_text_field($args['key']));
+                $result = delete_term_meta($term_id, \Royal_MCP\MCP\Support\SafeText::field($args['key']));
                 if (!$result) throw new \Exception('Failed to delete term meta (key may not exist)');
                 return ['term_id' => $term_id, 'message' => 'Term meta deleted'];
 
@@ -2948,7 +2971,7 @@ class Server {
                 $comment_data = [
                     'comment_post_ID' => $comment_post_id,
                     'comment_content' => wp_filter_kses($args['content']),
-                    'comment_author' => sanitize_text_field($args['author'] ?? 'Anonymous'),
+                    'comment_author' => \Royal_MCP\MCP\Support\SafeText::field($args['author'] ?? 'Anonymous'),
                     'comment_author_email' => sanitize_email($args['author_email'] ?? ''),
                 ];
                 // Respect WordPress comment moderation settings
@@ -3223,7 +3246,7 @@ class Server {
             case 'wp_get_post_meta':
                 $post_id = self::resolve_post_id_arg($args);
                 if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
-                $key = !empty($args['key']) ? sanitize_text_field($args['key']) : '';
+                $key = !empty($args['key']) ? \Royal_MCP\MCP\Support\SafeText::field($args['key']) : '';
                 // protected-meta gating. Mirrors WP core's
                 // is_protected_meta() convention: underscore-prefixed keys
                 // (_yoast_wpseo_*, _edit_lock, _wp_attached_file, ACF
@@ -3255,7 +3278,7 @@ class Server {
                 if (!array_key_exists('value', $args)) {
                     throw new \Exception('A value is required. To remove a key entirely, use wp_delete_post_meta.');
                 }
-                $meta_key   = sanitize_text_field($args['key']);
+                $meta_key   = \Royal_MCP\MCP\Support\SafeText::field($args['key']);
                 $meta_value = self::filter_meta_value($args['value'], $meta_key, $post_id, 'wp_update_post_meta');
 
                 // Snapshot prior value BEFORE the write for both undo (restore
@@ -3336,7 +3359,7 @@ class Server {
                 if (!array_key_exists('value', $args)) {
                     throw new \Exception('A value is required.');
                 }
-                $add_key = sanitize_text_field($args['key'] ?? '');
+                $add_key = \Royal_MCP\MCP\Support\SafeText::field($args['key'] ?? '');
                 if ($add_key === '') throw new \Exception('A meta key is required.');
                 $add_value  = self::filter_meta_value($args['value'], $add_key, $post_id, 'wp_add_post_meta');
                 $add_unique = !empty($args['unique']);
@@ -3416,7 +3439,7 @@ class Server {
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('You do not have permission to edit meta on this post.');
                 }
-                $result = delete_post_meta($post_id, sanitize_text_field($args['key']));
+                $result = delete_post_meta($post_id, \Royal_MCP\MCP\Support\SafeText::field($args['key']));
                 if (!$result) throw new \Exception('Failed to delete post meta');
                 return ['message' => 'Post meta deleted successfully'];
 
@@ -3676,7 +3699,7 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to search.');
                 }
-                $query = sanitize_text_field($args['query']);
+                $query = \Royal_MCP\MCP\Support\SafeText::field($args['query']);
                 $per_page = isset($args['per_page']) ? max(1, min(intval($args['per_page']), 100)) : 20;
                 $snippet_len = isset($args['snippet']) ? max(0, min(intval($args['snippet']), 1000)) : 0;
                 $search_args = [
@@ -3699,7 +3722,7 @@ class Server {
                 if (!current_user_can('manage_options')) {
                     throw new \Exception('You do not have permission to read site options.');
                 }
-                $name = sanitize_text_field($args['name']);
+                $name = \Royal_MCP\MCP\Support\SafeText::field($args['name']);
                 $allowed = $this->get_readable_options_allowlist();
                 if (!in_array($name, $allowed, true)) {
                     throw new \Exception('Option not in readable allowlist: ' . esc_html($name) . '. Plugin authors can opt their settings in via add_filter("royal_mcp_readable_options", ...).');
@@ -3721,7 +3744,7 @@ class Server {
                 if (!current_user_can('manage_options')) {
                     throw new \Exception('You do not have permission to write site options.');
                 }
-                $name = sanitize_text_field($args['name'] ?? '');
+                $name = \Royal_MCP\MCP\Support\SafeText::field($args['name'] ?? '');
                 if (empty($name)) throw new \Exception('Option name is required.');
 
                 // Gate 1: master toggle
@@ -3853,7 +3876,7 @@ class Server {
                 if (!current_user_can('edit_theme_options')) {
                     throw new \Exception('edit_theme_options capability required.');
                 }
-                $menu_name = sanitize_text_field((string) ($args['name'] ?? ''));
+                $menu_name = \Royal_MCP\MCP\Support\SafeText::field((string) ($args['name'] ?? ''));
                 if ($menu_name === '') {
                     throw new \Exception('name is required.');
                 }
@@ -3876,7 +3899,7 @@ class Server {
                 }
                 $object_type = sanitize_text_field($args['object_type'] ?? 'custom');
                 $item_args = [
-                    'menu-item-title'     => sanitize_text_field($args['title']),
+                    'menu-item-title'     => \Royal_MCP\MCP\Support\SafeText::field($args['title']),
                     'menu-item-url'       => esc_url_raw($args['url'] ?? ''),
                     'menu-item-status'    => 'publish',
                     'menu-item-type'      => $object_type === 'category' ? 'taxonomy' : ($object_type === 'custom' ? 'custom' : 'post_type'),
@@ -3906,7 +3929,7 @@ class Server {
                 // the MCP tool arg names, not the wp_update_nav_menu_item
                 // menu-item-* keys — the caller sees the API it invoked.
                 $mi_requested = [];
-                if ( isset( $args['title'] ) )     $mi_requested['title']     = sanitize_text_field( $args['title'] );
+                if ( isset( $args['title'] ) )     $mi_requested['title']     = \Royal_MCP\MCP\Support\SafeText::field( $args['title'] );
                 if ( isset( $args['url'] ) )       $mi_requested['url']       = esc_url_raw( $args['url'] );
                 if ( isset( $args['parent_id'] ) ) $mi_requested['parent_id'] = intval( $args['parent_id'] );
                 if ( isset( $args['position'] ) )  $mi_requested['position']  = intval( $args['position'] );
@@ -6469,7 +6492,7 @@ class Server {
                 if (!current_user_can('edit_theme_options')) {
                     throw new \Exception('You do not have permission to update theme mods.');
                 }
-                $mod_name = sanitize_text_field($args['mod_name'] ?? '');
+                $mod_name = \Royal_MCP\MCP\Support\SafeText::field($args['mod_name'] ?? '');
                 if (empty($mod_name)) throw new \Exception('mod_name is required.');
 
                 // Gate 1: master toggle
