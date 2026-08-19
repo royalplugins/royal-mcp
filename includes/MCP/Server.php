@@ -2831,12 +2831,12 @@ class Server {
                     return [
                         'term_id' => $term_id,
                         'key'     => $key,
-                        'value'   => get_term_meta($term_id, $key, true),
+                        'value'   => $this->redact_sensitive_keys(get_term_meta($term_id, $key, true), $key),
                     ];
                 }
                 return [
                     'term_id' => $term_id,
-                    'meta'    => (array) get_term_meta($term_id),
+                    'meta'    => $this->redact_sensitive_keys((array) get_term_meta($term_id)),
                 ];
 
             case 'wp_update_term_meta':
@@ -3265,9 +3265,9 @@ class Server {
                 }
                 if ($key !== '') {
                     $value = get_post_meta($post_id, $key, true);
-                    return ['key' => $key, 'value' => $value];
+                    return ['key' => $key, 'value' => $this->redact_sensitive_keys($value, $key)];
                 }
-                return get_post_meta($post_id);
+                return $this->redact_sensitive_keys(get_post_meta($post_id));
 
             case 'wp_update_post_meta':
                 $post_id = self::resolve_post_id_arg($args);
@@ -3643,7 +3643,7 @@ class Server {
                     'truncated'      => $offset > 0,
                     'filter'         => $filter,
                     'total_returned' => count($tail),
-                    'lines'          => array_values($tail),
+                    'lines'          => array_values(array_map([$this, 'redact_log_line'], $tail)),
                 ];
 
             // enumerate scheduled cron events. Stuck cron is a routine WP
@@ -3727,7 +3727,7 @@ class Server {
                 if (!in_array($name, $allowed, true)) {
                     throw new \Exception('Option not in readable allowlist: ' . esc_html($name) . '. Plugin authors can opt their settings in via add_filter("royal_mcp_readable_options", ...).');
                 }
-                return ['name' => $name, 'value' => $this->redact_sensitive_keys(get_option($name))];
+                return ['name' => $name, 'value' => $this->redact_sensitive_keys(get_option($name), $name)];
 
             case 'wp_get_plugin_settings':
                 if (!current_user_can('manage_options')) {
@@ -6486,7 +6486,7 @@ class Server {
                     throw new \Exception('You do not have permission to read theme mods.');
                 }
                 $mods = get_theme_mods();
-                return is_array($mods) ? $mods : [];
+                return $this->redact_sensitive_keys(is_array($mods) ? $mods : []);
 
             case 'wp_update_theme_mod':
                 if (!current_user_can('edit_theme_options')) {
@@ -7579,7 +7579,7 @@ class Server {
         $result = [];
         foreach ($rows as $row) {
             $value = maybe_unserialize($row->option_value);
-            $result[$row->option_name] = $this->redact_sensitive_keys($value);
+            $result[$row->option_name] = $this->redact_sensitive_keys($value, $row->option_name);
         }
         return $result;
     }
@@ -7616,26 +7616,155 @@ class Server {
     }
 
     /**
-     * Walk a value (array/object/scalar) and replace any value whose KEY matches
-     * a credential-shaped pattern with the literal string [REDACTED]. Non-array
-     * scalars at the top level pass through unchanged.
+     * Walk a value (array/object/scalar) and redact anything that looks
+     * like a credential. Three redaction triggers:
+     *   1. The value's own key ($key_hint) matches is_sensitive_key.
+     *      This is what closes the row-level scalar leak — an option
+     *      stored under a sensitive-named row (e.g. litespeed_api_key)
+     *      would otherwise pass through untouched because it's a scalar
+     *      string, not an array.
+     *   2. Any nested key inside an array matches is_sensitive_key.
+     *      Recursive walk, checked per key via the key_hint on child calls.
+     *   3. Any scalar string matches is_credential_shaped_value.
+     *      Defense-in-depth for the case where a plugin stores a token
+     *      under an innocuous key name (e.g. _plugin_state, config_blob).
+     *
+     * @param mixed  $value    The value to walk.
+     * @param string $key_hint Optional. The key name this value is stored
+     *                         under (e.g. WP option_name for row-level
+     *                         calls). Enables outer-key redaction.
+     * @return mixed
      */
-    private function redact_sensitive_keys($value) {
+    private function redact_sensitive_keys($value, $key_hint = '') {
+        // Outer-key check: sensitive-named scalar values are the leak
+        // path Tomasz reported. Redact the whole subtree regardless of
+        // shape when the containing key is credential-shaped.
+        if ($key_hint !== '' && $this->is_sensitive_key($key_hint)) {
+            return '[REDACTED]';
+        }
+
         if (is_object($value)) {
             $value = (array) $value;
         }
+
         if (!is_array($value)) {
+            // Scalar value: apply shape heuristic as defense in depth.
+            if (is_string($value) && $this->is_credential_shaped_value($value)) {
+                return '[REDACTED]';
+            }
             return $value;
         }
+
+        // Special-case: WordPress attachment EXIF blob (_wp_attachment_metadata
+        // -> image_meta) contains GPS + device fingerprint fields with no
+        // legitimate use for an SEO/content tool. Strip these keys entirely
+        // rather than [REDACTED]-flag them — a placeholder in a coordinate
+        // slot adds noise for no benefit. Kept: title, caption, credit,
+        // copyright, keywords (occasionally useful for schema/attribution).
+        if ($key_hint === 'image_meta') {
+            $exif_pii_keys = [
+                'latitude', 'longitude',
+                'camera',
+                'aperture', 'iso', 'shutter_speed',
+                'focal_length', 'orientation',
+                'created_timestamp',
+            ];
+            $filtered = [];
+            foreach ($value as $k => $v) {
+                if (in_array(strtolower((string) $k), $exif_pii_keys, true)) continue;
+                $filtered[$k] = $v;
+            }
+            $value = $filtered;
+        }
+
         $out = [];
         foreach ($value as $k => $v) {
-            if ($this->is_sensitive_key($k)) {
-                $out[$k] = '[REDACTED]';
-                continue;
-            }
-            $out[$k] = $this->redact_sensitive_keys($v);
+            $out[$k] = $this->redact_sensitive_keys($v, (string) $k);
         }
         return $out;
+    }
+
+    /**
+     * Redact credential-shaped substrings in a debug log line while preserving
+     * timestamps, file paths, function names, and stack trace context. Used
+     * only by wp_get_error_log_tail — the log has legitimate troubleshooting
+     * value that must survive; only credentials get stripped.
+     *
+     * Patterns catch:
+     *   - key=value / key: value forms (password, passwd, pass, pwd, token,
+     *     api_key, secret, bearer, db_password, db_user, etc.)
+     *   - HTTP Authorization headers (Bearer / Basic / Token / Digest)
+     *   - URI-embedded creds (mysql://user:pass@host, redis://..., etc.)
+     *   - Cookie header values (PHPSESSID, wordpress_logged_in_hash, etc.)
+     *   - Standalone 40+ char token-shaped strings (fallback for raw dumps)
+     */
+    private function redact_log_line($line) {
+        if (!is_string($line) || $line === '') return $line;
+
+        // password / passwd / pass / pwd / db_password / user_pass — key=value form
+        $line = preg_replace(
+            '/(?<![a-z_])(password|passwd|pass|pwd|db_password|db_pass|user_pass)(\s*[:=]\s*)([\'"]?)([^\'"\s;,\)]+)\3/i',
+            '$1$2$3[REDACTED]$3',
+            $line
+        );
+
+        // username / db_user / user_login / admin_user — key=value form
+        // Bare word 'user' intentionally not covered — too many false positives
+        // in stack traces referencing user objects, current_user_can, etc.
+        $line = preg_replace(
+            '/(?<![a-z_])(username|db_user|db_username|user_login|admin_user)(\s*[:=]\s*)([\'"]?)([^\'"\s;,\)]+)\3/i',
+            '$1$2$3[REDACTED]$3',
+            $line
+        );
+
+        // HTTP Authorization header — Bearer / Basic / Token / Digest schemes
+        $line = preg_replace(
+            '/(Authorization\s*:\s*(?:Bearer|Basic|Token|Digest)\s+)[A-Za-z0-9._\-+\/=]+/i',
+            '$1[REDACTED]',
+            $line
+        );
+
+        // Token / key / secret / bearer in key=value form (8+ char value min
+        // to avoid stripping numeric IDs, order counts, etc.)
+        $line = preg_replace(
+            '/(?<![a-z_])(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|bearer|client[_-]?secret)(\s*[:=]\s*)([\'"]?)([A-Za-z0-9._\-+\/=]{8,})\3/i',
+            '$1$2$3[REDACTED]$3',
+            $line
+        );
+
+        // URI-embedded credentials: mysql://user:pass@host — strips both parts
+        $line = preg_replace(
+            '/((?:mysql|mysqli|postgres|postgresql|mongodb|redis|amqp|amqps|smb|ftp|sftp|https?)\:\/\/)[^:@\/\s]+:[^@\s]+@/i',
+            '$1[REDACTED]:[REDACTED]@',
+            $line
+        );
+
+        // Cookie header values — redact each key=value where value is 8+ char
+        $line = preg_replace_callback(
+            '/(cookie\s*:\s*)([^\r\n]+)/i',
+            function ($m) {
+                $cookies = preg_replace(
+                    '/([A-Za-z0-9_\-]+\s*=\s*)([A-Za-z0-9._\-+\/=%]{8,})/',
+                    '$1[REDACTED]',
+                    $m[2]
+                );
+                return $m[1] . $cookies;
+            },
+            $line
+        );
+
+        // Fallback: any standalone 40+ char credential-shaped token that
+        // survived the above patterns (raw Cloudflare tokens, JWTs, generic
+        // long secrets dumped mid-line without a key=value wrapper).
+        $line = preg_replace_callback(
+            '/[A-Za-z0-9_\-]{40,}/',
+            function ($m) {
+                return $this->is_credential_shaped_value($m[0]) ? '[REDACTED]' : $m[0];
+            },
+            $line
+        );
+
+        return $line;
     }
 
     /**
@@ -7645,6 +7774,9 @@ class Server {
      */
     private function is_sensitive_key($key) {
         if (!is_string($key) || $key === '') return false;
+        $key_lc = strtolower($key);
+
+        // Compound-substring needles — match anywhere in the key.
         $needles = [
             'password', 'passwd', 'secret', 'salt', 'token', 'nonce',
             'apikey', 'api_key', 'accesskey', 'access_key',
@@ -7653,10 +7785,59 @@ class Server {
             'bearer', 'license_key', 'consumer_secret', 'consumer_key',
             'webhook_secret', 'session_key', 'credentials',
         ];
-        $key_lc = strtolower($key);
         foreach ($needles as $needle) {
             if (strpos($key_lc, $needle) !== false) return true;
         }
+
+        // Boundary-anchored generic suffix patterns — catches
+        // cdn-cloudflare_key, stripe_public_key, mailserver_pass,
+        // admin_pwd, third-party.conf.secret, dot-notation keys, etc.
+        // Boundary chars _-. and start/end of string prevent word-inside-
+        // word matches (donkey, keyword, passageway all pass through).
+        if (preg_match('/(^|[_\-.])(key|pass|pwd|secret|token)([_\-.]|$)/i', $key_lc)) {
+            return true;
+        }
+
+        // Hash suffix — only redact when paired with a credential-shaped
+        // root token. content_hash, file_hash, checksum_hash are legit
+        // plugin data and stay unredacted; api_key_hash, password_hash,
+        // token_hash, secret_hash all redact.
+        if (preg_match('/(key|pass|pwd|secret|token|auth|salt)_?hash/i', $key_lc)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Returns true if the value looks like a credential regardless of
+     * the key it's stored under. Defense-in-depth backstop for plugins
+     * that stash tokens under innocuous key names (_plugin_state,
+     * config_blob, etc.).
+     *
+     * Matches: 32+ char pure-alphanumeric-with-dash/underscore strings
+     * (covers Cloudflare 40-char tokens, Stripe sk_test_ 100+ char keys,
+     * generic 32-char API keys) and dot-separated JWT shapes.
+     *
+     * Trade-off: long alphanumeric slugs, UUIDs (with dashes), and
+     * base64url-encoded blobs will also match and redact. Per the
+     * is_sensitive_key comment, false positives are recoverable — user
+     * can fetch the underlying option via wp_get_option after opting it
+     * into the readable allowlist. False negatives leak credentials.
+     *
+     * Length cap 4096 avoids catching serialized blobs and image data.
+     */
+    private function is_credential_shaped_value($value) {
+        if (!is_string($value)) return false;
+        $len = strlen($value);
+        if ($len < 32 || $len > 4096) return false;
+
+        // Pure token shape: [A-Za-z0-9_-]{32,}
+        if (preg_match('/^[A-Za-z0-9_\-]{32,}$/', $value)) return true;
+
+        // JWT shape: header.payload.signature (each base64url)
+        if (preg_match('/^[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}$/', $value)) return true;
+
         return false;
     }
 
@@ -7709,15 +7890,16 @@ class Server {
         // Royal MCP namespace is reserved.
         if (strpos($name_lc, 'royal_mcp_') === 0) return true;
 
-        // Pattern denylist on the option name itself.
-        $patterns = [
-            'secret', 'salt', 'auth_key', 'logged_in_key', 'nonce_key',
-            'license_key', 'api_key', 'auth_token', 'private_key',
-            'session_token', 'recovery_key',
-        ];
-        foreach ($patterns as $p) {
-            if (strpos($name_lc, $p) !== false) return true;
-        }
+        // Delegate remaining pattern check to the unified sensitive-key
+        // helper so read and write denylists stay in lockstep. Any key
+        // the read path redacts, the write path rejects — single source
+        // of truth. Prior in-line patterns (auth_key, license_key, etc.)
+        // are all subsumed by is_sensitive_key's needle list + generic
+        // suffix regex, plus the generic regex catches new variants
+        // (cdn-cloudflare_key, stripe_public_key, mailserver_pass) that
+        // the old in-line list missed.
+        if ($this->is_sensitive_key($name)) return true;
+
         return false;
     }
 
