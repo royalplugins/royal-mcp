@@ -369,7 +369,7 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Enhancement: Write-verification helper now detects pre-write input mangling for tools that require strict input fidelity.
 * Enhancement: Tool argument sanitizers now preserve %XX escape sequences so URLs, patterns, and templated inputs survive round-trip.
 * Fix: wp_update_permalink_structure preserves permalink tokens like %category% and %author% when writing the structure.
-* Fix: hardens redaction of API keys, tokens, passwords, and EXIF/GPS data across plugin/option/meta read tools and debug log responses.
+* Fix: Hardens redaction of sensitive data across plugin/option/meta read tools and debug log responses.
 
 = 1.4.41 =
 * New: Six Divi builder tools for safer AI-driven Divi editing (get page format, outline, validate layout, list local templates, library get, replace text).
