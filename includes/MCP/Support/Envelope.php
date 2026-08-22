@@ -63,12 +63,36 @@ final class Envelope {
      * @return array MCP-canonical tool-response envelope.
      */
     public static function success( string $summary, array $struct = [], ?array $undo = null ) : array {
+        $has_undo = is_array( $undo ) && ! empty( $undo['token'] );
+        if ( $has_undo ) {
+            // Mirror undo into structuredContent so spec-forward MCP clients
+            // that read the full envelope can consume the token programmatically.
+            $struct = array_merge(
+                $struct,
+                [
+                    'undo_available'  => true,
+                    'undo_token'      => (string) $undo['token'],
+                    'undo_expires_at' => isset( $undo['expires_at'] ) ? (int) $undo['expires_at'] : null,
+                    'undo_ttl_hours'  => isset( $undo['ttl_hours'] ) ? (int) $undo['ttl_hours'] : null,
+                    'undo_summary'    => isset( $undo['summary'] ) ? (string) $undo['summary'] : '',
+                ]
+            );
+            // Also surface the token INTO the human-readable summary text.
+            // Most MCP clients (Claude Desktop, ChatGPT connectors, Cursor)
+            // inject content[0].text into the model context but do NOT inject
+            // structuredContent — so any LLM operator that needs to invoke
+            // mcp_undo_last_operation must have the token value visible in
+            // the tool response text block, not just on the wire envelope.
+            $summary = rtrim( $summary, ". \t\r\n" )
+                . '. Undo token: ' . (string) $undo['token']
+                . ' (72h, pass to mcp_undo_last_operation to reverse).';
+        }
         $out = [
             'isError'           => false,
             'content'           => [ [ 'type' => 'text', 'text' => $summary ] ],
             'structuredContent' => $struct,
         ];
-        if ( is_array( $undo ) && ! empty( $undo['token'] ) ) {
+        if ( $has_undo ) {
             $out['undo'] = $undo;
         }
         return $out;

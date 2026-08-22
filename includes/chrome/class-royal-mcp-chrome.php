@@ -323,7 +323,7 @@ class Royal_MCP_Chrome {
             <p style="margin: 0 0 8px; font-size: 14px;">
                 <strong>
                     <?php if ( $post_launch ) : ?>
-                        &#128640; <?php esc_html_e( 'Royal MCP Pro is live', 'royal-mcp' ); ?>
+                        &#127881; <?php esc_html_e( 'Royal MCP Pro is live!', 'royal-mcp' ); ?>
                     <?php else : ?>
                         &#127881; <?php esc_html_e( 'Royal MCP Pro launches Aug 25 — Join the Founding Members waitlist', 'royal-mcp' ); ?>
                     <?php endif; ?>
@@ -331,7 +331,7 @@ class Royal_MCP_Chrome {
             </p>
             <p style="margin: 0 0 12px;">
                 <?php if ( $post_launch ) : ?>
-                    <?php esc_html_e( 'Agency-scale AI tools — Divi Pro depth, Elementor Pro depth, WooCommerce bulk ops, undo tokens, universal audit log, and cross-plugin workflow composers.', 'royal-mcp' ); ?>
+                    <?php esc_html_e( '220+ MCP tools. The Solo Dev & Agency Workflow — one chat runs every client site. Scoped endpoints per project, bulk ops across whole catalogs, and a 90-day audit log so you can show clients exactly what changed.', 'royal-mcp' ); ?>
                 <?php else : ?>
                     <?php esc_html_e( 'Lock in $79/yr LIFETIME pricing (going to $149/yr after launch). Limited to 100 spots. No obligation until launch day.', 'royal-mcp' ); ?>
                 <?php endif; ?>
@@ -339,7 +339,7 @@ class Royal_MCP_Chrome {
             <p style="margin: 0;">
                 <a href="<?php echo esc_url( $cta_url ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
                     <?php if ( $post_launch ) : ?>
-                        <?php esc_html_e( 'See Royal MCP Pro', 'royal-mcp' ); ?>
+                        <?php esc_html_e( 'See Pro workflows &rarr;', 'royal-mcp' ); ?>
                     <?php else : ?>
                         <?php esc_html_e( 'Reserve My Spot &rarr;', 'royal-mcp' ); ?>
                     <?php endif; ?>

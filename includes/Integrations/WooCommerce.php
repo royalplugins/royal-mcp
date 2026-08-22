@@ -645,13 +645,18 @@ class WooCommerce {
 						'created_by_op' => true,
 					],
 				]);
+				$cp_product_url = get_permalink( $product_id );
 				return \Royal_MCP\MCP\Support\Envelope::success(
-					sprintf( 'Created product %d (%s), undo available.', $product_id, $type ),
+					sprintf( 'Created product %d (%s), undo available. View: %s',
+						$product_id,
+						$type,
+						$cp_product_url ?: '(no permalink)'
+					),
 					[
 						'id'      => (int) $product_id,
 						'type'    => $type,
 						'status'  => $product->get_status(),
-						'url'     => get_permalink( $product_id ),
+						'url'     => $cp_product_url,
 						'created' => true,
 					],
 					$cp_undo_envelope

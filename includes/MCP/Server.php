@@ -725,14 +725,14 @@ class Server {
             ['name' => 'wp_create_term', 'description' => 'Create a term in any registered taxonomy (category, post_tag, or any custom taxonomy). Description may contain inline HTML — WordPress permits <a>, <strong>, <em>, <blockquote>, <code>, <cite>, <abbr>, <acronym> in term descriptions; block-level tags (<p>, <h1>-<h6>, <ul>) are stripped by WP core. Use wp_get_taxonomies to discover available taxonomy slugs.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)'], 'description' => ['type' => 'string', 'description' => 'Optional description. May contain inline HTML (<a>, <strong>, <em>, etc.); block-level tags are stripped by WP core.'], 'parent' => ['type' => 'integer', 'description' => 'Parent term ID (only applies to hierarchical taxonomies)'], 'slug' => ['type' => 'string', 'description' => 'Optional URL-friendly slug. Auto-generated from name if omitted.']], 'required' => ['name', 'taxonomy']]],
             ['name' => 'wp_update_term', 'description' => 'Update an existing term in any taxonomy. Use this to rename a tag/category, edit its description, or change its slug. Description may contain inline HTML (WP core strips block-level tags). Pair with wp_update_term_meta to edit SEO meta on tags (Yoast/Rank Math/AIOSEO store tag SEO data in wp_termmeta).', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to'], 'name' => ['type' => 'string'], 'slug' => ['type' => 'string'], 'description' => ['type' => 'string', 'description' => 'Optional description. May contain inline HTML.'], 'parent' => ['type' => 'integer', 'description' => 'Parent term ID (hierarchical taxonomies only)']], 'required' => ['id', 'taxonomy']]],
             ['name' => 'wp_delete_term', 'description' => 'Delete a term from any registered taxonomy.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to']], 'required' => ['id', 'taxonomy']]],
-            ['name' => 'wp_add_post_terms', 'description' => 'Add or replace terms on a post in any taxonomy. Accepts term IDs (integers), slugs (for hierarchical taxonomies like category), or names (for non-hierarchical like post_tag).', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'terms' => ['type' => 'array', 'items' => ['oneOf' => [['type' => 'integer'], ['type' => 'string']]], 'description' => 'Array of term IDs (integers) OR term slugs/names (strings). Must be an array — pass ["my-tag"] not "my-tag".'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)']], 'required' => ['post_id', 'terms', 'taxonomy']]],
+            ['name' => 'wp_add_post_terms', 'description' => 'Add or replace terms on a post in any taxonomy. Accepts term IDs (integers), slugs (for hierarchical taxonomies like category), or names (for non-hierarchical like post_tag).', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'terms' => ['type' => 'array', 'items' => ['anyOf' => [['type' => 'integer'], ['type' => 'string']]], 'description' => 'Array of term IDs (integers) OR term slugs/names (strings). Must be an array — pass ["my-tag"] not "my-tag".'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)']], 'required' => ['post_id', 'terms', 'taxonomy']]],
             ['name' => 'wp_get_terms', 'description' => 'List terms in any registered taxonomy with paginated output. Returns id, name, slug, description, count, parent. Use to map term names to IDs before wp_add_post_terms, or to walk a taxonomy tree.', 'inputSchema' => ['type' => 'object', 'properties' => ['taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat, any custom taxonomy)'], 'search' => ['type' => 'string', 'description' => 'Optional name-substring filter (case-insensitive).'], 'hide_empty' => ['type' => 'boolean', 'description' => 'Exclude terms with zero attached posts. Default false.'], 'parent' => ['type' => 'integer', 'description' => 'Return only children of this parent term ID (hierarchical taxonomies).'], 'per_page' => ['type' => 'integer', 'description' => 'Results per page. Default 100, max 500.'], 'page' => ['type' => 'integer', 'description' => 'Page number, 1-indexed. Default 1.']], 'required' => ['taxonomy']]],
             ['name' => 'wp_count_terms', 'description' => 'Get term counts in a taxonomy', 'inputSchema' => ['type' => 'object', 'properties' => ['taxonomy' => ['type' => 'string']]]],
             ['name' => 'wp_get_taxonomies', 'description' => 'Get all registered public taxonomies (built-in plus custom taxonomies registered by themes/plugins like product_cat, brand, etc.). Returns the taxonomy slug, label, hierarchical flag, and which post types it applies to.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
 
             // Term Meta (for SEO-plugin tag/category meta — Yoast, Rank Math, AIOSEO)
             ['name' => 'wp_get_term_meta', 'description' => 'Get term meta data. Useful for reading tag/category SEO meta stored by Yoast, Rank Math, or AIOSEO before editing it.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string', 'description' => 'Specific meta key. Omit to return all meta for the term.']], 'required' => ['term_id']]],
-            ['name' => 'wp_update_term_meta', 'description' => 'Update term meta data. Common keys for SEO plugins: Yoast uses _yoast_wpseo_title / _yoast_wpseo_metadesc; Rank Math uses rank_math_title / rank_math_description; AIOSEO uses _aioseo_title / _aioseo_description. String values may contain safe HTML (same allow-list as post content). Use the royal_mcp_meta_value_sanitizer filter to customize per meta key.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['oneOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array'], ['type' => 'object']]]], 'required' => ['term_id', 'key', 'value']]],
+            ['name' => 'wp_update_term_meta', 'description' => 'Update term meta data. Common keys for SEO plugins: Yoast uses _yoast_wpseo_title / _yoast_wpseo_metadesc; Rank Math uses rank_math_title / rank_math_description; AIOSEO uses _aioseo_title / _aioseo_description. String values may contain safe HTML (same allow-list as post content). Use the royal_mcp_meta_value_sanitizer filter to customize per meta key.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['anyOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array'], ['type' => 'object']]]], 'required' => ['term_id', 'key', 'value']]],
             ['name' => 'wp_delete_term_meta', 'description' => 'Delete term meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['term_id', 'key']]],
 
             // Comments
@@ -750,8 +750,8 @@ class Server {
 
             // Post Meta
             ['name' => 'wp_get_post_meta', 'description' => 'Get post meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['post_id']]],
-            ['name' => 'wp_update_post_meta', 'description' => 'Update post meta. Value can be any JSON type (string, number, boolean, array, object). String values may contain safe HTML (same allow-list as post content — hook the royal_mcp_meta_value_sanitizer filter to customize per meta key). Arrays and objects are serialized by WordPress on write and returned as PHP arrays by wp_get_post_meta on read. Overwrites the existing row for this key (use wp_add_post_meta for multi-row keys). Response includes read-after-write verify (silent-drop error if the write did not persist; modified_by_wp diff if WP transformed the value) and a 72-hour undo token that restores the prior value via mcp_undo_last_operation. Undo token omitted with a warnings entry if the prior value exceeds 1MB compressed (rare — SiteVault snapshot recommended for reversal in that case). Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['oneOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array'], ['type' => 'object']], 'description' => 'Any JSON value. Do not pass PHP-serialized strings (a:1:{...}) — pass the structured value directly.']], 'required' => ['post_id', 'key', 'value']]],
-            ['name' => 'wp_add_post_meta', 'description' => 'Add a meta row without overwriting existing values under the same key. Use for keys that store multiple rows (e.g. tag one post with several IDs under the same key). Value can be any JSON type; string values may contain safe HTML (customize per key with royal_mcp_meta_value_sanitizer). Arrays and objects are serialized by WordPress. If unique=true and a row with this key already exists, the call returns created=false. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['oneOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array'], ['type' => 'object']], 'description' => 'Any JSON value. Do not pass PHP-serialized strings.'], 'unique' => ['type' => 'boolean', 'description' => 'If true, fail (return created=false) when a row with this key already exists. Default false.']], 'required' => ['post_id', 'key', 'value']]],
+            ['name' => 'wp_update_post_meta', 'description' => 'Update post meta. Value can be any JSON type (string, number, boolean, array, object). String values may contain safe HTML (same allow-list as post content — hook the royal_mcp_meta_value_sanitizer filter to customize per meta key). Arrays and objects are serialized by WordPress on write and returned as PHP arrays by wp_get_post_meta on read. Overwrites the existing row for this key (use wp_add_post_meta for multi-row keys). Response includes read-after-write verify (silent-drop error if the write did not persist; modified_by_wp diff if WP transformed the value) and a 72-hour undo token that restores the prior value via mcp_undo_last_operation. Undo token omitted with a warnings entry if the prior value exceeds 1MB compressed (rare — SiteVault snapshot recommended for reversal in that case). Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['anyOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array'], ['type' => 'object']], 'description' => 'Any JSON value. Do not pass PHP-serialized strings (a:1:{...}) — pass the structured value directly.']], 'required' => ['post_id', 'key', 'value']]],
+            ['name' => 'wp_add_post_meta', 'description' => 'Add a meta row without overwriting existing values under the same key. Use for keys that store multiple rows (e.g. tag one post with several IDs under the same key). Value can be any JSON type; string values may contain safe HTML (customize per key with royal_mcp_meta_value_sanitizer). Arrays and objects are serialized by WordPress. If unique=true and a row with this key already exists, the call returns created=false. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['anyOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array'], ['type' => 'object']], 'description' => 'Any JSON value. Do not pass PHP-serialized strings.'], 'unique' => ['type' => 'boolean', 'description' => 'If true, fail (return created=false) when a row with this key already exists. Default false.']], 'required' => ['post_id', 'key', 'value']]],
             ['name' => 'wp_delete_post_meta', 'description' => 'Delete post meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['post_id', 'key']]],
 
             // Site & Search
@@ -760,7 +760,7 @@ class Server {
             ['name' => 'wp_get_error_log_tail', 'description' => 'Read the tail of wp-content/debug.log. Returns the last N lines (default 100, max 1000), optionally filtered by a case-insensitive substring. Automatically caps file read at last 1MB to prevent memory blowup on huge logs (truncated=true when this happens). Returns status="disabled" with instructions when WP_DEBUG_LOG is not enabled in wp-config.php. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => ['lines' => ['type' => 'integer', 'description' => 'Number of lines to return from the tail (default 100, max 1000).'], 'filter' => ['type' => 'string', 'description' => 'Optional case-insensitive substring filter applied before the last-N slice (e.g. "Fatal error", "Deprecated", a plugin slug).']]]],
             ['name' => 'wp_get_cron_schedule', 'description' => 'Enumerate scheduled wp_cron events. Returns each event with hook name, next run (unix + ISO 8601), seconds until next run, is_overdue flag, recurrence (hourly / twicedaily / daily / custom + interval in seconds), and args. Sorted by next-run ascending so overdue events come first. Useful for diagnosing missed schedules, plugin cron conflicts, or unfired hooks. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'royal_mcp_connection_health', 'description' => 'Diagnostic probe for the current MCP connection. Returns MCP endpoint route, authentication method used by this request (api-key or oauth-bearer), OAuth access token time-to-live in seconds (null for api-key), current MCP session ID, active MCP capabilities negotiated at initialize, plus Royal MCP + WordPress + PHP version strings. No arguments. Call at connection start to confirm setup, or when diagnosing 401/403/404 issues. Any authenticated caller.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
-            ['name' => 'mcp_undo_last_operation', 'description' => 'NARROW SCOPE: reverses ONE tool only — wp_reorder_menu_items. No other tool emits undo tokens (wp_update_post, wp_update_option, wp_update_widget, wp_update_seo_meta, elementor_*, wc_create_order, wc_update_order, wc_add_order_note, etc. all write without undo). Pass the token from a wp_reorder_menu_items response\'s undo.token field. Tokens live 72 hours and are one-shot (consumed on successful undo). More tools gain undo retrofits in future releases. Cap requirement matches the original operation. Free basic mode — single-op restore, local storage.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (response.undo.token).']], 'required' => ['token']]],
+            ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, wp_update_post, wp_update_page, wp_update_post_meta, wp_add_post_meta, wp_delete_post_meta, wp_delete_post, wp_delete_page, wp_delete_media, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_term_meta, wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, wp_update_widget, wp_delete_comment, plus every Elementor write tool (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_rebuild_post_content) and comment edit/reply ops. Tokens live 72 hours and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Restore may be refused with a drift error if the target was modified between the tracked write and this undo call (protects downstream writes from silent clobber). Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).']], 'required' => ['token']]],
             ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page). Each result includes content_length (bytes of stored content) for size triage.', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.']], 'required' => ['query']]],
 
             // Options
@@ -789,7 +789,7 @@ class Server {
             ['name' => 'wp_update_custom_css', 'description' => 'Update the active theme\'s custom CSS. CSS is filtered through wp_kses (script tags stripped). Requires the "Allow AI to modify theme appearance" admin toggle and unfiltered_html capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['css' => ['type' => 'string'], 'theme_slug' => ['type' => 'string', 'description' => 'Theme slug (defaults to active theme)']], 'required' => ['css']]],
             ['name' => 'wp_get_widgets', 'description' => 'List widget instances. Uses the WordPress core /wp/v2/widgets REST endpoint in edit context so both rendered output AND full instance payload are returned uniformly for classic and block widgets. Classic widgets: instance carries the widget-specific settings (text, title, filter, etc.). Block widgets: instance.raw.content carries the raw block markup, and a blocks field is added with the parsed block tree for structured inspection. Omit sidebar to return widgets across ALL sidebars including wp_inactive_widgets (orphaned widgets from prior themes — these have rendered:"" and produce no front-end output). Filter by a specific sidebar ID (discover IDs via wp_get_sidebars) to scope results; a non-existent sidebar ID returns an empty array, not an error.', 'inputSchema' => ['type' => 'object', 'properties' => ['sidebar' => ['type' => 'string', 'description' => 'Optional sidebar ID to filter by. Omit to return widgets across all sidebars (includes wp_inactive_widgets).']]]],
             ['name' => 'wp_get_sidebars', 'description' => 'List registered sidebars (widget areas) on the active theme with their IDs, names, description, and status. Use to discover sidebar IDs before calling wp_get_widgets or wp_update_widget.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
-            ['name' => 'wp_update_widget', 'description' => 'Update a widget instance by ID. Requires the "Allow AI to modify theme appearance" admin toggle AND edit_theme_options capability. Uses WordPress core /wp/v2/widgets so classic and block widgets are handled uniformly. Pass the id returned by wp_get_widgets. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string', 'description' => 'Widget ID (e.g. text-2, block-15)'], 'sidebar' => ['type' => 'string', 'description' => 'Sidebar ID to place the widget in (omit to leave unchanged)'], 'instance' => ['type' => 'object', 'description' => 'Widget instance data. For classic widgets, either pass the same {encoded, hash} object returned by wp_get_widgets or wrap raw settings as {raw: {…}}.'], 'form_data' => ['type' => 'string', 'description' => 'Serialized form data (classic widgets alternative to instance)']], 'required' => ['id']]],
+            ['name' => 'wp_update_widget', 'description' => 'Update a widget instance by ID. Requires the "Allow AI to modify theme appearance" admin toggle AND edit_theme_options capability. Uses WordPress core /wp/v2/widgets so classic and block widgets are handled uniformly. Pass the id returned by wp_get_widgets. Response includes a 72-hour undo token that restores the prior widget instance via mcp_undo_last_operation. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string', 'description' => 'Widget ID (e.g. text-2, block-15)'], 'sidebar' => ['type' => 'string', 'description' => 'Sidebar ID to place the widget in (omit to leave unchanged)'], 'instance' => ['type' => 'object', 'description' => 'Widget instance data. For classic widgets, either pass the same {encoded, hash} object returned by wp_get_widgets or wrap raw settings as {raw: {…}}.'], 'form_data' => ['type' => 'string', 'description' => 'Serialized form data (classic widgets alternative to instance)']], 'required' => ['id']]],
 
             // SEO Meta (auto-detects Yoast SEO / Rank Math / AIOSEO / SEObolt)
             ['name' => 'wp_get_seo_meta', 'description' => 'Get the SEO meta fields for a post (title, description, focus keyword, noindex, OG overrides where supported, URL slug). Auto-detects the active SEO plugin — Yoast SEO, Rank Math, AIOSEO, or SEObolt — and returns that plugin\'s fields plus the post slug (which is a WordPress-native field, returned regardless of SEO plugin). AIOSEO + SEObolt return the four core fields (title/description/focus_keyword/noindex); og_title/og_description are populated for Yoast + Rank Math only. Returns RAW stored templates (e.g. Yoast\'s default "%%page%% %%sep%% %%sitename%%") — do NOT measure length from these values, they contain template markup that never appears in the rendered <title> tag and will produce false-positive title_too_short / title_too_long flags. For measured/rendered SEO values, use Royal MCP Pro\'s wp_audit_seo_bulk which resolves per-engine template variables before measuring.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer']], 'required' => ['post_id']]],
@@ -2705,10 +2705,11 @@ class Server {
                 }
 
                 return \Royal_MCP\MCP\Support\Envelope::success(
-                    sprintf( 'Deleted term %d (%s) from taxonomy %s%s.',
+                    sprintf( 'Deleted term %d (%s) from taxonomy %s (was linked to %d object(s))%s.',
                         $dt_tid,
                         $dt_full['name'],
                         $dt_tax,
+                        (int) $dt_object_count,
                         $dt_undo_envelope !== null ? ', undo available (new term_id + object relations NOT re-linked)' : ' (no undo: snapshot too large)'
                     ),
                     [
@@ -3327,9 +3328,11 @@ class Server {
 
                 $meta_struct = array_merge(
                     [
-                        'post_id'  => $post_id,
-                        'meta_key' => $meta_key,
-                        'updated'  => (bool) $result,
+                        'post_id'      => $post_id,
+                        'meta_key'     => $meta_key,
+                        'updated'      => (bool) $result,
+                        'verified'     => true,
+                        'stored_value' => $actual_value,
                     ],
                     \Royal_MCP\MCP\Support\WriteVerifier::response_partial( $meta_diff )
                 );
@@ -4138,12 +4141,15 @@ class Server {
                     'pre_op_state' => $pre_op_state,
                 ]);
 
-                $response = ['success' => true, 'menu_id' => $menu_id, 'count' => count($reordered), 'reordered' => $reordered];
+                $reorder_struct = ['menu_id' => $menu_id, 'count' => count($reordered), 'reordered' => $reordered];
                 if (!empty($skipped)) {
-                    $response['skipped'] = $skipped;
+                    $reorder_struct['skipped'] = $skipped;
                 }
-                $response['undo'] = $undo_envelope;
-                return $response;
+                return \Royal_MCP\MCP\Support\Envelope::success(
+                    sprintf('Reordered %d menu item(s) in menu %d, undo available.', count($reordered), $menu_id),
+                    $reorder_struct,
+                    $undo_envelope
+                );
 
             // ==================== SEO — served-HTML audit ====================
             case 'seo_audit_meta_tags':
@@ -6414,6 +6420,133 @@ class Server {
                             ]
                         );
 
+                    case 'wp_update_widget':
+                        $uw_target      = $undo_snapshot['target'] ?? [];
+                        $uw_widget_id   = (string) ( $uw_target['widget_id'] ?? '' );
+                        if ( $uw_widget_id === '' ) {
+                            throw new \Exception('Undo snapshot missing widget_id.');
+                        }
+                        if ( ! current_user_can( 'edit_theme_options' ) ) {
+                            throw new \Exception('edit_theme_options capability required to undo this operation.');
+                        }
+                        $uw_pre = isset( $undo_snapshot['pre_op_state']['prior'] ) && is_array( $undo_snapshot['pre_op_state']['prior'] )
+                            ? $undo_snapshot['pre_op_state']['prior']
+                            : null;
+                        if ( $uw_pre === null ) {
+                            throw new \Exception('Undo snapshot missing prior widget state.');
+                        }
+                        $uw_undo_req = new \WP_REST_Request( 'PUT', '/wp/v2/widgets/' . $uw_widget_id );
+                        foreach ( [ 'sidebar', 'instance', 'form_data' ] as $k ) {
+                            if ( array_key_exists( $k, $uw_pre ) ) {
+                                $uw_undo_req->set_param( $k, $uw_pre[ $k ] );
+                            }
+                        }
+                        $uw_undo_resp = rest_do_request( $uw_undo_req );
+                        if ( $uw_undo_resp->is_error() ) {
+                            throw new \Exception( 'Undo restore failed: ' . esc_html( $uw_undo_resp->as_error()->get_error_message() ) );
+                        }
+                        \Royal_MCP\MCP\Undo_Store::delete( $undo_token );
+                        return \Royal_MCP\MCP\Support\Envelope::success(
+                            sprintf( 'Restored widget %s to prior instance state.', $uw_widget_id ),
+                            [
+                                'undone'    => true,
+                                'op'        => $undo_op,
+                                'target'    => $uw_target,
+                                'restored'  => true,
+                                'widget_id' => $uw_widget_id,
+                            ]
+                        );
+
+                    case 'elementor_replace_text':
+                    case 'elementor_replace_image':
+                    case 'elementor_add_widget':
+                    case 'elementor_apply_template_to_page':
+                        $el_target = $undo_snapshot['target'] ?? [];
+                        $el_pid    = (int) ( $el_target['post_id'] ?? 0 );
+                        if ( $el_pid <= 0 ) {
+                            throw new \Exception('Undo snapshot missing post_id.');
+                        }
+                        if ( ! current_user_can( 'edit_post', $el_pid ) ) {
+                            throw new \Exception('edit_post capability required to undo this operation.');
+                        }
+                        $el_pre = isset( $undo_snapshot['pre_op_state']['prior_elementor_data'] )
+                            ? $undo_snapshot['pre_op_state']['prior_elementor_data']
+                            : null;
+                        if ( $el_pre === null ) {
+                            throw new \Exception('Undo snapshot missing prior _elementor_data.');
+                        }
+                        update_post_meta( $el_pid, '_elementor_data', wp_slash( is_string( $el_pre ) ? $el_pre : (string) wp_json_encode( $el_pre ) ) );
+                        clean_post_cache( $el_pid );
+                        \Royal_MCP\MCP\Undo_Store::delete( $undo_token );
+                        return \Royal_MCP\MCP\Support\Envelope::success(
+                            sprintf( 'Restored prior _elementor_data on post %d.', $el_pid ),
+                            [
+                                'undone'   => true,
+                                'op'       => $undo_op,
+                                'target'   => $el_target,
+                                'restored' => true,
+                                'post_id'  => $el_pid,
+                            ]
+                        );
+
+                    case 'elementor_clone_page':
+                    case 'elementor_import_template':
+                        $ec_pre     = isset( $undo_snapshot['pre_op_state']['created_post_id'] )
+                            ? (int) $undo_snapshot['pre_op_state']['created_post_id']
+                            : 0;
+                        if ( $ec_pre <= 0 ) {
+                            throw new \Exception('Undo snapshot missing created_post_id.');
+                        }
+                        if ( ! current_user_can( 'delete_post', $ec_pre ) ) {
+                            throw new \Exception('delete_post capability required to undo this operation.');
+                        }
+                        // Delete the created post permanently (skip trash) so undo
+                        // fully reverses the creation.
+                        $ec_del = wp_delete_post( $ec_pre, true );
+                        \Royal_MCP\MCP\Undo_Store::delete( $undo_token );
+                        return \Royal_MCP\MCP\Support\Envelope::success(
+                            $ec_del
+                                ? sprintf( 'Deleted %s (post %d) created by prior operation.', $undo_op === 'elementor_clone_page' ? 'cloned page' : 'imported template', $ec_pre )
+                                : sprintf( 'No-op: post %d was already removed.', $ec_pre ),
+                            [
+                                'undone'          => true,
+                                'op'              => $undo_op,
+                                'target'          => $undo_snapshot['target'] ?? [],
+                                'restored'        => (bool) $ec_del,
+                                'deleted_post_id' => $ec_pre,
+                            ]
+                        );
+
+                    case 'elementor_rebuild_post_content':
+                        $rc_target = $undo_snapshot['target'] ?? [];
+                        $rc_pid    = (int) ( $rc_target['post_id'] ?? 0 );
+                        if ( $rc_pid <= 0 ) {
+                            throw new \Exception('Undo snapshot missing post_id.');
+                        }
+                        if ( ! current_user_can( 'edit_post', $rc_pid ) ) {
+                            throw new \Exception('edit_post capability required to undo this operation.');
+                        }
+                        $rc_pre  = isset( $undo_snapshot['pre_op_state'] ) && is_array( $undo_snapshot['pre_op_state'] )
+                            ? $undo_snapshot['pre_op_state']
+                            : [];
+                        $rc_prior_content = isset( $rc_pre['prior_content'] ) ? (string) $rc_pre['prior_content'] : '';
+                        wp_update_post( [
+                            'ID'           => $rc_pid,
+                            'post_content' => $rc_prior_content,
+                        ] );
+                        clean_post_cache( $rc_pid );
+                        \Royal_MCP\MCP\Undo_Store::delete( $undo_token );
+                        return \Royal_MCP\MCP\Support\Envelope::success(
+                            sprintf( 'Restored prior post_content on post %d (%d chars).', $rc_pid, strlen( $rc_prior_content ) ),
+                            [
+                                'undone'         => true,
+                                'op'             => $undo_op,
+                                'target'         => $rc_target,
+                                'restored'       => true,
+                                'restored_length' => strlen( $rc_prior_content ),
+                            ]
+                        );
+
                     default:
                         return \Royal_MCP\MCP\Support\Envelope::error(
                             'unsupported_op',
@@ -6720,6 +6853,35 @@ class Server {
                 if ($widget_id === '') {
                     throw new \Exception('Widget id is required.');
                 }
+
+                // Snapshot BEFORE-state via GET /wp/v2/widgets/<id> for undo.
+                // context=edit is required — the default view context omits the
+                // instance field from the REST response, leaving nothing to
+                // restore. Capture only the RAW instance settings; the
+                // {encoded, hash} pair is signed against a per-request secret
+                // and will not validate when replayed on the restore PUT.
+                $uw_get_req = new \WP_REST_Request('GET', '/wp/v2/widgets/' . $widget_id);
+                $uw_get_req->set_param('context', 'edit');
+                $uw_get_resp = rest_do_request($uw_get_req);
+                $uw_prior = null;
+                $uw_prior_sidebar = null;
+                if (!$uw_get_resp->is_error()) {
+                    $uw_prior_full = $uw_get_resp->get_data();
+                    if (is_array($uw_prior_full)) {
+                        $uw_prior = [];
+                        if (array_key_exists('sidebar', $uw_prior_full)) {
+                            $uw_prior['sidebar'] = $uw_prior_full['sidebar'];
+                        }
+                        // Prefer raw settings for cross-request replay stability.
+                        if (isset($uw_prior_full['instance']['raw']) && is_array($uw_prior_full['instance']['raw'])) {
+                            $uw_prior['instance'] = ['raw' => $uw_prior_full['instance']['raw']];
+                        } elseif (array_key_exists('instance', $uw_prior_full)) {
+                            $uw_prior['instance'] = $uw_prior_full['instance'];
+                        }
+                        $uw_prior_sidebar = $uw_prior_full['sidebar'] ?? null;
+                    }
+                }
+
                 $request = new \WP_REST_Request('PUT', '/wp/v2/widgets/' . $widget_id);
                 foreach (['sidebar', 'instance', 'form_data'] as $param) {
                     if (isset($args[$param])) {
@@ -6730,7 +6892,41 @@ class Server {
                 if ($response->is_error()) {
                     throw new \Exception(esc_html($response->as_error()->get_error_message()));
                 }
-                return $response->get_data();
+                $uw_result_data = $response->get_data();
+
+                // Build undo envelope unless the prior state exceeds the 1MB cap
+                // (rare for widgets — instance dicts are tiny) or the GET failed.
+                $uw_undo_envelope = null;
+                $uw_warnings      = [];
+                if ($uw_prior === null) {
+                    $uw_warnings[] = 'undo not available — could not read prior widget state before write.';
+                } else {
+                    $uw_reverse_json = (string) wp_json_encode(['prior' => $uw_prior]);
+                    if (strlen(gzcompress($uw_reverse_json, 9)) > 1024 * 1024) {
+                        $uw_warnings[] = 'undo not available — prior widget instance exceeds 1MB storage cap.';
+                    } else {
+                        $uw_undo_envelope = \Royal_MCP\MCP\Undo_Store::store([
+                            'op'      => 'wp_update_widget',
+                            'summary' => sprintf('Restore widget %s to prior instance state', $widget_id),
+                            'target'  => ['widget_id' => $widget_id, 'prior_sidebar' => $uw_prior_sidebar],
+                            'pre_op_state' => ['prior' => $uw_prior],
+                        ]);
+                    }
+                }
+
+                $uw_struct = is_array($uw_result_data) ? $uw_result_data : ['result' => $uw_result_data];
+                $uw_struct['widget_id'] = $widget_id;
+                if (!empty($uw_warnings)) {
+                    $uw_struct['warnings'] = $uw_warnings;
+                }
+                return \Royal_MCP\MCP\Support\Envelope::success(
+                    sprintf('Updated widget %s%s.',
+                        $widget_id,
+                        $uw_undo_envelope !== null ? ', undo available' : ' (undo not available)'
+                    ),
+                    $uw_struct,
+                    $uw_undo_envelope
+                );
 
             // ==================== SEO META (Yoast / Rank Math auto-detect) ====================
             case 'wp_get_seo_meta':

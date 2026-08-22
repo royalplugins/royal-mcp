@@ -27,6 +27,8 @@ class Well_Known_Notice {
     const SUCURI_CLOUDPROXY_DISMISS_KEY    = 'royal_mcp_sucuri_cloudproxy_dismissed';
     const PLAIN_PERMALINKS_DISMISS_KEY     = 'royal_mcp_plain_permalinks_dismissed';
     const PAGE_SHADOW_DISMISS_KEY          = 'royal_mcp_oauth_page_shadow_dismissed';
+    const MISSING_ENDPOINTS_TRANSIENT      = 'royal_mcp_missing_endpoints_list';
+    const MISSING_ENDPOINTS_DISMISS_KEY    = 'royal_mcp_well_known_missing_endpoints_dismissed';
     const RECHECK_ACTION                   = 'royal_mcp_recheck_well_known';
     const RECHECK_NONCE                    = 'royal_mcp_recheck_well_known_nonce';
     const RECHECK_JUST_RAN_META_KEY        = 'royal_mcp_recheck_just_ran';
@@ -39,6 +41,7 @@ class Well_Known_Notice {
     const SUCURI_CLOUDPROXY_SUPPORT_URL    = 'https://royalplugins.com/support/royal-mcp/sucuri-cloudproxy-blocks-mcp.html';
     const PLAIN_PERMALINKS_SUPPORT_URL     = 'https://royalplugins.com/support/royal-mcp/plain-permalinks-blocks-discovery.html';
     const PAGE_SHADOW_SUPPORT_URL          = 'https://royalplugins.com/support/royal-mcp/oauth-page-shadow.html';
+    const MISSING_ENDPOINTS_SUPPORT_URL    = 'https://royalplugins.com/support/royal-mcp/oauth-discovery-missing-endpoints.html';
 
     public function __construct() {
         add_action( 'admin_notices', [ $this, 'maybe_render_notice' ] );
@@ -158,6 +161,13 @@ class Well_Known_Notice {
             && ! get_user_meta( $user_id, self::STALE_DISMISS_KEY, true )
         ) {
             $this->render_stale_static_notice();
+            return;
+        }
+
+        if ( 'missing_endpoints' === $status
+            && ! get_user_meta( $user_id, self::MISSING_ENDPOINTS_DISMISS_KEY, true )
+        ) {
+            $this->render_missing_endpoints_notice();
             return;
         }
 
@@ -425,15 +435,41 @@ class Well_Known_Notice {
             // OAuth endpoints (/wp-json/royal-mcp/v1/authorize). Current code serves
             // them at root (/authorize). If a stale file is still on disk with old
             // paths, discovery clients follow the bad URL and 404.
+            // Runs BEFORE missing-endpoints so a file that's both stale AND
+            // missing keys surfaces as stale_static (delete-and-let-PHP-serve
+            // is the stronger fix).
             $endpoints = [
                 $data['authorization_endpoint'] ?? '',
                 $data['token_endpoint']         ?? '',
                 $data['registration_endpoint']  ?? '',
             ];
             foreach ( $endpoints as $endpoint ) {
-                if ( '' !== $endpoint && false !== strpos( $endpoint, '/wp-json/royal-mcp/v1/' ) ) {
+                if ( is_string( $endpoint ) && '' !== $endpoint && false !== strpos( $endpoint, '/wp-json/royal-mcp/v1/' ) ) {
                     return 'stale_static';
                 }
+            }
+
+            // Missing-endpoints detection: a hand-authored static file that
+            // omits one of the required RFC 8414 / RFC 7591 endpoint keys
+            // leaves discovery clients with no URL to reach that leg of the
+            // flow (DCR fails silently when registration_endpoint is absent,
+            // authorize fails silently when authorization_endpoint is absent).
+            // Cache the specific missing key list in a companion transient so
+            // the renderer can name them without re-parsing the response.
+            $required = [
+                'authorization_endpoint',
+                'token_endpoint',
+                'registration_endpoint',
+            ];
+            $missing = [];
+            foreach ( $required as $key ) {
+                if ( empty( $data[ $key ] ) || ! is_string( $data[ $key ] ) ) {
+                    $missing[] = $key;
+                }
+            }
+            if ( ! empty( $missing ) ) {
+                set_transient( self::MISSING_ENDPOINTS_TRANSIENT, $missing, self::TRANSIENT_TTL );
+                return 'missing_endpoints';
             }
 
             return $issuer_ok ? 'ok' : 'mismatch';
@@ -593,6 +629,15 @@ class Well_Known_Notice {
         ) {
             update_user_meta( get_current_user_id(), self::STALE_DISMISS_KEY, time() );
             wp_safe_redirect( remove_query_arg( [ 'royal_mcp_dismiss_stale_static', '_wpnonce' ] ) );
+            exit;
+        }
+
+        if ( isset( $_GET['royal_mcp_dismiss_missing_endpoints'] )
+            && isset( $_GET['_wpnonce'] )
+            && wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'royal_mcp_dismiss_missing_endpoints' )
+        ) {
+            update_user_meta( get_current_user_id(), self::MISSING_ENDPOINTS_DISMISS_KEY, time() );
+            wp_safe_redirect( remove_query_arg( [ 'royal_mcp_dismiss_missing_endpoints', '_wpnonce' ] ) );
             exit;
         }
 
@@ -821,6 +866,71 @@ class Well_Known_Notice {
             </p>
             <p>
                 <a href="<?php echo esc_url( self::STALE_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
+                    <?php esc_html_e( 'See the full fix', 'royal-mcp' ); ?>
+                </a>
+                <?php $this->render_recheck_button(); ?>
+                <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
+                    <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
+                </a>
+            </p>
+        </div>
+        <?php
+    }
+
+    private function render_missing_endpoints_notice() {
+        $dismiss_url = wp_nonce_url(
+            add_query_arg( 'royal_mcp_dismiss_missing_endpoints', '1' ),
+            'royal_mcp_dismiss_missing_endpoints'
+        );
+        $missing = get_transient( self::MISSING_ENDPOINTS_TRANSIENT );
+        if ( ! is_array( $missing ) || empty( $missing ) ) {
+            $missing = [ 'authorization_endpoint', 'token_endpoint', 'registration_endpoint' ];
+        }
+        $missing_pretty = implode( ', ', array_map(
+            function ( $k ) { return '<code>' . esc_html( $k ) . '</code>'; },
+            $missing
+        ) );
+        $issuer = rtrim( (string) home_url(), '/' );
+
+        ?>
+        <div class="notice notice-error royal-mcp-missing-endpoints-notice">
+            <p>
+                <strong><?php esc_html_e( 'Royal MCP: your OAuth discovery file is missing required fields.', 'royal-mcp' ); ?></strong>
+            </p>
+            <p>
+                <?php
+                printf(
+                    /* translators: 1: discovery URL, 2: comma-separated list of missing field code tags */
+                    wp_kses(
+                        __( 'Your %1$s file is being served but is missing the following required field(s): %2$s. Discovery clients like Claude.ai read this file, find no URL to reach these endpoints, and fail to connect silently.', 'royal-mcp' ),
+                        [ 'code' => [] ]
+                    ),
+                    '<code>/.well-known/oauth-authorization-server</code>',
+                    $missing_pretty // already HTML-safe (values escaped in closure above)
+                );
+                ?>
+            </p>
+            <p>
+                <strong><?php esc_html_e( 'Preferred fix — delete the static file so Royal MCP serves fresh, complete metadata from PHP automatically:', 'royal-mcp' ); ?></strong><br>
+                <code>rm /path/to/your/webroot/.well-known/oauth-authorization-server</code>
+            </p>
+            <p>
+                <?php esc_html_e( 'If your host reserves the .well-known/ path prefix and you must keep the file static, it must include all three required endpoint URLs. Use this template (substitute your domain):', 'royal-mcp' ); ?>
+            </p>
+            <pre><code><?php
+                $template_json = [
+                    'issuer'                 => $issuer,
+                    'authorization_endpoint' => $issuer . '/authorize',
+                    'token_endpoint'         => $issuer . '/token',
+                    'registration_endpoint'  => $issuer . '/register',
+                    'response_types_supported' => [ 'code' ],
+                    'grant_types_supported'    => [ 'authorization_code', 'refresh_token' ],
+                    'code_challenge_methods_supported' => [ 'S256' ],
+                ];
+                echo esc_html( wp_json_encode( $template_json, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
+            ?></code></pre>
+            <p>
+                <a href="<?php echo esc_url( self::MISSING_ENDPOINTS_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
                     <?php esc_html_e( 'See the full fix', 'royal-mcp' ); ?>
                 </a>
                 <?php $this->render_recheck_button(); ?>

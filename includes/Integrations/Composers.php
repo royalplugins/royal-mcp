@@ -252,12 +252,13 @@ class Composers {
 		}
 
 		$summary = sprintf(
-			'Post "%s" created (id=%d, status=%s%s%s).',
+			'Post "%s" created (id=%d, status=%s%s%s). View: %s',
 			$title,
 			$post_id,
 			$structured['post_status'],
 			$attachment_id ? sprintf( ', featured=%d', $attachment_id ) : '',
-			! empty( $warnings ) ? sprintf( ', %d warning(s)', count( $warnings ) ) : ''
+			! empty( $warnings ) ? sprintf( ', %d warning(s)', count( $warnings ) ) : '',
+			$structured['url'] ?: '(no permalink)'
 		);
 
 		return Envelope::success( $summary, $structured );
