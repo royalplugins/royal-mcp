@@ -43,7 +43,7 @@ class Composers {
 						'publish_date'       => [ 'type' => 'string',  'description' => 'Optional. Format YYYY-MM-DD HH:MM:SS. If in the future and status=publish, post_status auto-becomes "future".' ],
 						'featured_image_url' => [ 'type' => 'string',  'description' => 'Optional. Publicly-fetchable image URL to sideload as the featured image.' ],
 						'category'           => [ 'type' => 'string',  'description' => 'Optional. Category name. Created if it does not exist.' ],
-						'tags'               => [ 'type' => 'array',   'description' => 'Optional. Array of tag names. Created if they do not exist.' ],
+						'tags'               => [ 'type' => 'array',   'items' => [ 'type' => 'string' ], 'description' => 'Optional. Array of tag names. Created if they do not exist.' ],
 						'seo_title'          => [ 'type' => 'string',  'description' => 'Optional. Written to the auto-detected SEO plugin (Yoast/Rank Math/SEObolt).' ],
 						'seo_description'    => [ 'type' => 'string',  'description' => 'Optional. Written to the auto-detected SEO plugin.' ],
 						'seo_focus_keyword'  => [ 'type' => 'string',  'description' => 'Optional. Written to the auto-detected SEO plugin.' ],
@@ -252,12 +252,13 @@ class Composers {
 		}
 
 		$summary = sprintf(
-			'Post "%s" created (id=%d, status=%s%s%s).',
+			'Post "%s" created (id=%d, status=%s%s%s). View: %s',
 			$title,
 			$post_id,
 			$structured['post_status'],
 			$attachment_id ? sprintf( ', featured=%d', $attachment_id ) : '',
-			! empty( $warnings ) ? sprintf( ', %d warning(s)', count( $warnings ) ) : ''
+			! empty( $warnings ) ? sprintf( ', %d warning(s)', count( $warnings ) ) : '',
+			$structured['url'] ?: '(no permalink)'
 		);
 
 		return Envelope::success( $summary, $structured );

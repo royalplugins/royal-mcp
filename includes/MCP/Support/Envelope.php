@@ -63,12 +63,36 @@ final class Envelope {
      * @return array MCP-canonical tool-response envelope.
      */
     public static function success( string $summary, array $struct = [], ?array $undo = null ) : array {
+        $has_undo = is_array( $undo ) && ! empty( $undo['token'] );
+        if ( $has_undo ) {
+            // Mirror undo into structuredContent so spec-forward MCP clients
+            // that read the full envelope can consume the token programmatically.
+            $struct = array_merge(
+                $struct,
+                [
+                    'undo_available'  => true,
+                    'undo_token'      => (string) $undo['token'],
+                    'undo_expires_at' => isset( $undo['expires_at'] ) ? (int) $undo['expires_at'] : null,
+                    'undo_ttl_hours'  => isset( $undo['ttl_hours'] ) ? (int) $undo['ttl_hours'] : null,
+                    'undo_summary'    => isset( $undo['summary'] ) ? (string) $undo['summary'] : '',
+                ]
+            );
+            // Also surface the token INTO the human-readable summary text.
+            // Most MCP clients (Claude Desktop, ChatGPT connectors, Cursor)
+            // inject content[0].text into the model context but do NOT inject
+            // structuredContent — so any LLM operator that needs to invoke
+            // mcp_undo_last_operation must have the token value visible in
+            // the tool response text block, not just on the wire envelope.
+            $summary = rtrim( $summary, ". \t\r\n" )
+                . '. Undo token: ' . (string) $undo['token']
+                . ' (72h, pass to mcp_undo_last_operation to reverse).';
+        }
         $out = [
             'isError'           => false,
             'content'           => [ [ 'type' => 'text', 'text' => $summary ] ],
             'structuredContent' => $struct,
         ];
-        if ( is_array( $undo ) && ! empty( $undo['token'] ) ) {
+        if ( $has_undo ) {
             $out['undo'] = $undo;
         }
         return $out;
@@ -108,5 +132,99 @@ final class Envelope {
             && array_key_exists( 'isError', $value )
             && isset( $value['content'] )
             && is_array( $value['content'] );
+    }
+
+    /**
+     * Append a full JSON code fence containing structuredContent (merged with
+     * envelope-level undo) to content[0].text. Idempotent — skipped if the
+     * marker is already present.
+     *
+     * Opt-in. Free tool responses default to prose-only summaries; callers that
+     * want the JSON-fence dump call this method after building the envelope.
+     * Pro's Tool_Handlers::mirror_structured_to_text() middleware wraps every
+     * Pro tool response via this method so Pro-native tools uniformly emit
+     * the JSON fence.
+     *
+     * Also promotes envelope-level `undo` into `structuredContent.undo` so
+     * clients that parse structuredContent receive the token in the same
+     * shape as the text mirror.
+     *
+     * Contract:
+     *   - Only mutates success envelopes (isError !== true).
+     *   - No-op when structuredContent is empty AND envelope has no undo.
+     *   - Idempotent: skipped if content[0].text already contains the marker.
+     *   - Uses '--- royal-mcp payload ---' as the marker (unified with Pro's
+     *     historical '--- royal-mcp-pro payload ---' — both variants are
+     *     recognized on read so pre-existing Pro responses don't double-inject).
+     *
+     * @param array  $result The MCP tool-response envelope to mirror.
+     * @param string $marker Marker line prefixing the JSON fence. Callers can
+     *                       override to preserve legacy marker text (Pro uses
+     *                       '--- royal-mcp-pro payload ---' historically).
+     * @return array The (possibly-mutated) envelope.
+     */
+    public static function apply_full_json_mirror( $result, string $marker = '--- royal-mcp payload ---' ) : array {
+        if ( ! is_array( $result ) ) {
+            return $result;
+        }
+        if ( isset( $result['isError'] ) && $result['isError'] === true ) {
+            return $result;
+        }
+        $struct = isset( $result['structuredContent'] ) && is_array( $result['structuredContent'] )
+            ? $result['structuredContent']
+            : [];
+        $undo = isset( $result['undo'] ) && is_array( $result['undo'] )
+            ? $result['undo']
+            : null;
+        if ( empty( $struct ) && $undo === null ) {
+            return $result;
+        }
+
+        // Promote envelope-level undo into structuredContent for structural parity.
+        if ( $undo !== null ) {
+            if ( ! isset( $result['structuredContent'] ) || ! is_array( $result['structuredContent'] ) ) {
+                $result['structuredContent'] = [];
+            }
+            if ( ! isset( $result['structuredContent']['undo'] ) ) {
+                $result['structuredContent']['undo'] = $undo;
+            }
+            $struct = $result['structuredContent'];
+        }
+
+        $payload = $struct;
+        if ( $undo !== null && ! isset( $payload['undo'] ) ) {
+            $payload['undo'] = $undo;
+        }
+
+        $existing_text = '';
+        if ( isset( $result['content'][0]['text'] ) ) {
+            $existing_text = (string) $result['content'][0]['text'];
+        }
+
+        // Idempotent — recognize both current unified marker and historical Pro-only marker.
+        if ( strpos( $existing_text, $marker ) !== false
+            || strpos( $existing_text, '--- royal-mcp payload ---' ) !== false
+            || strpos( $existing_text, '--- royal-mcp-pro payload ---' ) !== false ) {
+            return $result;
+        }
+
+        $json = wp_json_encode( $payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+        if ( $json === false ) {
+            return $result;
+        }
+
+        $appended = $existing_text
+            . ( $existing_text === '' ? '' : "\n\n" )
+            . $marker . "\n"
+            . "```json\n" . $json . "\n```";
+
+        if ( ! isset( $result['content'] ) || ! is_array( $result['content'] ) || empty( $result['content'] ) ) {
+            $result['content'] = [ [ 'type' => 'text', 'text' => $appended ] ];
+        } else {
+            $result['content'][0]['type'] = 'text';
+            $result['content'][0]['text'] = $appended;
+        }
+
+        return $result;
     }
 }

@@ -2,7 +2,7 @@
 /**
  * Royal MCP — Divi integration.
  *
- * Free-tier Divi tooling. Six tools ship in this integration:
+ * Free-tier Divi tooling:
  *
  *   divi_get_page_format        Detect D4/D5/mixed/not_divi + compat modules
  *                                + optional builder_session probe.
@@ -11,9 +11,14 @@
  *                                raw_content).
  *   divi_get_page_outline       Normalized Section > Row > Column > Module
  *                                tree, same shape for D4 and D5.
- *   divi_list_local_templates   (later chunk)
- *   divi_library_get            (later chunk)
- *   divi_replace_text           (later chunk — first write tool)
+ *   divi_list_local_templates   Enumerate et_pb_layout library items.
+ *   divi_library_get            Fetch a single library entry with format meta.
+ *   divi_replace_text           Dual-format text substitution write tool.
+ *   divi_clone_page             Dual-format post duplication with meta
+ *                                preservation + fresh D5 clientIds.
+ *   divi_replace_image          Dual-format bulk image URL swap.
+ *   divi_import_template        Apply library entry to target page
+ *                                (merge or replace).
  *
  * Safety helpers are named to match the sibling Pro implementation
  * (Royal_MCP_Pro\Integrations\Divi) so Pro's Divi tools can share the
@@ -25,6 +30,7 @@ namespace Royal_MCP\Integrations;
 
 use Royal_MCP\MCP\Support\Envelope;
 use Royal_MCP\MCP\Support\Builder_Safety;
+use Royal_MCP\MCP\Undo_Store;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -41,6 +47,29 @@ class Divi {
 	/** Lowest Divi 5 version validated. */
 	const MIN_D5_VERSION = '5.0.0';
 
+	/** Post meta keys copied from source → clone. */
+	const CLONE_META_KEYS = [
+		'_et_pb_use_builder',
+		'_et_pb_page_layout',
+		'_et_pb_side_nav',
+		'_et_pb_show_title',
+		'_et_pb_post_hide_nav',
+		'_et_pb_old_content',
+		'_et_pb_ab_bounce_rate_limit',
+		'_et_pb_ab_stats_refresh_interval',
+		'_et_pb_ab_current_shortcode',
+		'_et_pb_ab_subjects',
+		'_et_pb_ab_goal_module',
+		'_et_pb_enable_ab_testing',
+		'_et_pb_first_image',
+		'_et_pb_truncate_post_date',
+		'_et_pb_truncate_post',
+		'_et_pb_builder_version',
+	];
+
+	/** Backup meta key stamped by divi_import_template. */
+	const BACKUP_META_KEY_PREFIX = '_royal_mcp_pro_divi_backup_';
+
 	/**
 	 * Per-tool minimum-version map. Every Divi tool that ships should have
 	 * an entry so callers can pre-check compatibility via get_version_support().
@@ -52,6 +81,9 @@ class Divi {
 		'divi_list_local_templates' => [ 'min_version' => '4.0.0' ],
 		'divi_library_get'          => [ 'min_version' => '4.0.0' ],
 		'divi_replace_text'         => [ 'min_version' => '4.0.0' ],
+		'divi_clone_page'           => [ 'min_version' => '4.0.0' ],
+		'divi_replace_image'        => [ 'min_version' => '4.0.0' ],
+		'divi_import_template'      => [ 'min_version' => '4.0.0' ],
 	];
 
 	// ----------------------------------------------------------------------
@@ -419,11 +451,64 @@ class Divi {
 					'type'       => 'object',
 					'properties' => [
 						'post_id'        => [ 'type' => 'integer', 'description' => 'Post/page ID to substitute in. Must be Divi-built.' ],
-						'replacements'   => [ 'type' => 'array',   'description' => 'Array of { find: string, replace: string } pairs. Applied in order; later pairs see the output of earlier ones.' ],
+						'replacements'   => [
+							'type'        => 'array',
+							'description' => 'Array of { find: string, replace: string } pairs. Applied in order; later pairs see the output of earlier ones.',
+							'items'       => [
+								'type'       => 'object',
+								'properties' => [
+									'find'    => [ 'type' => 'string', 'description' => 'Substring to find.' ],
+									'replace' => [ 'type' => 'string', 'description' => 'Replacement text.' ],
+								],
+								'required'   => [ 'find', 'replace' ],
+							],
+						],
 						'case_sensitive' => [ 'type' => 'boolean', 'description' => 'Default false. Case-insensitive matching is Unicode-aware.' ],
 						'force'          => [ 'type' => 'boolean', 'description' => 'Default false. When true, bypasses the active-editor-session guard.' ],
 					],
 					'required'   => [ 'post_id', 'replacements' ],
+				],
+			],
+			[
+				'name'        => 'divi_clone_page',
+				'description' => 'Duplicate a Divi page/post (D4 shortcode, D5 blocks, or mixed) as a new draft. Preserves all _et_pb_* meta, regenerates D5 clientIds, validates D4 shortcode structure before write. 72h undo deletes the created post.',
+				'inputSchema' => [
+					'type'       => 'object',
+					'properties' => [
+						'source_post_id' => [ 'type' => 'integer', 'description' => 'Post ID to clone from. Must be a Divi-built page (has _et_pb_use_builder=on OR contains [et_pb_* shortcodes / divi/* blocks).' ],
+						'new_title'      => [ 'type' => 'string',  'description' => 'Title for the created clone.' ],
+						'new_status'     => [ 'type' => 'string',  'enum' => [ 'draft', 'publish', 'private', 'pending' ], 'description' => 'Publish state for the clone. Defaults to draft.' ],
+					],
+					'required'   => [ 'source_post_id', 'new_title' ],
+				],
+			],
+			[
+				'name'        => 'divi_replace_image',
+				'description' => 'Swap an image URL across every image-bearing Divi element on a post — module src, background_image, D5 image block URLs, gallery entries. Dual-format (D4 shortcodes + D5 blocks + mixed). Validates result. 72h undo restores prior content + meta.',
+				'inputSchema' => [
+					'type'       => 'object',
+					'properties' => [
+						'post_id'     => [ 'type' => 'integer', 'description' => 'Divi-built post/page ID to modify. Refuses on non-Divi content.' ],
+						'find_url'    => [ 'type' => 'string',  'description' => 'Existing image URL to search for (exact match).' ],
+						'replace_url' => [ 'type' => 'string',  'description' => 'New image URL to substitute.' ],
+						'force'       => [ 'type' => 'boolean', 'description' => 'Default false. When true, bypasses the active-editor-session guard.' ],
+					],
+					'required'   => [ 'post_id', 'find_url', 'replace_url' ],
+				],
+			],
+			[
+				'name'        => 'divi_import_template',
+				'description' => 'Apply an et_pb_layout library entry to a target page. mode=merge appends (top or bottom); mode=replace overwrites (with backup meta stamp). Dual-format aware — logs warning on target/template format mismatch. 72h undo restores prior post_content.',
+				'inputSchema' => [
+					'type'       => 'object',
+					'properties' => [
+						'target_post_id' => [ 'type' => 'integer', 'description' => 'The post/page ID that receives the imported template.' ],
+						'template_id'    => [ 'type' => 'integer', 'description' => 'ID of the et_pb_layout library item to apply. Use divi_list_local_templates + divi_library_get to discover items.' ],
+						'mode'           => [ 'type' => 'string',  'enum' => [ 'merge', 'replace' ], 'description' => 'merge = append template content to existing (default); replace = overwrite target content (backup stamped to a versioned meta key).' ],
+						'position'       => [ 'type' => 'string',  'enum' => [ 'top', 'bottom' ], 'description' => 'Merge mode only — insert template at top or bottom of existing content. Defaults to bottom.' ],
+						'force'          => [ 'type' => 'boolean', 'description' => 'Default false. When true, bypasses the active-editor-session guard.' ],
+					],
+					'required'   => [ 'target_post_id', 'template_id' ],
 				],
 			],
 		];
@@ -460,6 +545,15 @@ class Divi {
 
 			case 'divi_replace_text':
 				return self::handle_replace_text( $args );
+
+			case 'divi_clone_page':
+				return self::handle_clone_page( $args );
+
+			case 'divi_replace_image':
+				return self::handle_replace_image( $args );
+
+			case 'divi_import_template':
+				return self::handle_import_template( $args );
 
 			default:
 				return Envelope::error(
@@ -1668,5 +1762,403 @@ class Divi {
 			}
 		}
 		return '';
+	}
+
+	// ----------------------------------------------------------------------
+	// divi_clone_page, divi_replace_image, divi_import_template + helpers
+	// ----------------------------------------------------------------------
+
+	public static function handle_clone_page( array $args ) {
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			return Envelope::error( 'insufficient_caps', 'edit_posts capability required.' );
+		}
+		$source_id  = (int) ( $args['source_post_id'] ?? 0 );
+		$new_title  = isset( $args['new_title'] ) ? sanitize_text_field( (string) $args['new_title'] ) : '';
+		$new_status = isset( $args['new_status'] ) ? sanitize_key( (string) $args['new_status'] ) : 'draft';
+		if ( ! in_array( $new_status, [ 'draft', 'publish', 'private', 'pending' ], true ) ) {
+			$new_status = 'draft';
+		}
+		if ( $source_id <= 0 || $new_title === '' ) {
+			return Envelope::error( 'invalid_args', 'source_post_id and new_title are required.' );
+		}
+		$source = get_post( $source_id );
+		if ( ! $source ) {
+			return Envelope::error( 'source_not_found', 'Source post not found.' );
+		}
+		if ( ! current_user_can( 'read_post', $source_id ) ) {
+			return Envelope::error( 'insufficient_caps', 'read_post on source_post_id required.' );
+		}
+
+		$format = self::detect_format( $source_id );
+		if ( $format === 'not_divi' ) {
+			return Envelope::error( 'source_not_divi', 'Source post does not appear to be a Divi-built page.' );
+		}
+		$content = (string) $source->post_content;
+
+		if ( $format === 'divi_4_shortcodes' || $format === 'mixed' ) {
+			$val = self::validate_shortcode_structure( $content );
+			if ( ! $val['valid'] ) {
+				return Envelope::error( 'source_content_invalid', 'Source post content did not validate.', [ 'errors' => $val['errors'] ] );
+			}
+		}
+
+		if ( $format === 'divi_5_blocks' || $format === 'mixed' ) {
+			$blocks  = parse_blocks( $content );
+			$blocks  = self::d5_regenerate_client_ids( $blocks );
+			$content = serialize_blocks( $blocks );
+		}
+
+		$new_id = wp_insert_post( [
+			'post_title'   => $new_title,
+			'post_status'  => $new_status,
+			'post_type'    => $source->post_type,
+			'post_content' => wp_slash( $content ),
+			'post_author'  => get_current_user_id() ?: (int) $source->post_author,
+		], true );
+		if ( is_wp_error( $new_id ) ) {
+			return Envelope::error( 'insert_failed', $new_id->get_error_message() );
+		}
+
+		foreach ( self::CLONE_META_KEYS as $key ) {
+			$val = get_post_meta( $source_id, $key, true );
+			if ( $val !== '' && $val !== null && $val !== false ) {
+				update_post_meta( $new_id, $key, $val );
+			}
+		}
+		self::assert_divi_meta_flags( (int) $new_id, $format );
+		self::purge_divi_static_css( (int) $new_id );
+
+		$shortcode_count = 0;
+		$block_count     = 0;
+		if ( preg_match_all( '/\[et_pb_[a-z0-9_]+/', $content, $sm ) ) {
+			$shortcode_count = count( $sm[0] );
+		}
+		if ( function_exists( 'parse_blocks' ) ) {
+			$flat_blocks = self::flatten_blocks( parse_blocks( $content ) );
+			$block_count = count( array_filter( $flat_blocks, static function ( $b ) {
+				return is_array( $b ) && isset( $b['blockName'] ) && strpos( (string) $b['blockName'], 'divi/' ) === 0;
+			} ) );
+		}
+
+		$undo_envelope = Undo_Store::store( [
+			'op'           => 'divi_clone_page',
+			'target'       => [ 'created_post_id' => (int) $new_id ],
+			'pre_op_state' => [ 'created_by_op' => true ],
+			'summary'      => sprintf( 'Delete the cloned Divi post %d.', (int) $new_id ),
+		] );
+
+		$edit_url = admin_url( 'post.php?post=' . $new_id . '&action=edit' );
+
+		return Envelope::success(
+			sprintf( 'Cloned Divi post %d → %d ("%s", format=%s, shortcodes=%d, blocks=%d). Edit: %s',
+				$source_id, (int) $new_id, $new_title, $format, $shortcode_count, $block_count, $edit_url
+			),
+			[
+				'new_post_id'      => (int) $new_id,
+				'source_post_id'   => $source_id,
+				'new_title'        => $new_title,
+				'new_status'       => $new_status,
+				'format_detected'  => $format,
+				'shortcode_count'  => $shortcode_count,
+				'block_count'      => $block_count,
+				'edit_url'         => $edit_url,
+			],
+			$undo_envelope
+		);
+	}
+
+	public static function handle_replace_image( array $args ) {
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			return Envelope::error( 'insufficient_caps', 'edit_posts capability required.' );
+		}
+		$post_id = (int) ( $args['post_id'] ?? 0 );
+		$find    = isset( $args['find_url'] ) ? esc_url_raw( (string) $args['find_url'] ) : '';
+		$repl    = isset( $args['replace_url'] ) ? esc_url_raw( (string) $args['replace_url'] ) : '';
+		$force   = ! empty( $args['force'] );
+		if ( $post_id <= 0 || $find === '' || $repl === '' ) {
+			return Envelope::error( 'invalid_args', 'post_id, find_url, and replace_url are required.' );
+		}
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			return Envelope::error( 'insufficient_caps', 'edit_post on post_id required.' );
+		}
+		$post = get_post( $post_id );
+		if ( ! $post ) {
+			return Envelope::error( 'post_not_found', 'Post not found.' );
+		}
+		if ( ! $force ) {
+			$session = Builder_Safety::detect_active_editor_session( $post_id );
+			if ( ! empty( $session['active'] ) ) {
+				return Envelope::error(
+					'builder_session_active',
+					'An editor session is currently open on this post. Close the editor or pass force:true to override.',
+					[ 'post_id' => $post_id, 'builder_session' => $session ]
+				);
+			}
+		}
+		$format = self::detect_format( $post_id );
+		if ( $format === 'not_divi' ) {
+			return Envelope::error( 'post_not_divi', 'Post does not appear to be a Divi-built page.' );
+		}
+
+		$snapshot = self::snapshot_post_content( $post_id );
+		$content  = (string) $post->post_content;
+		$counter  = [ 'count' => 0 ];
+
+		if ( $format === 'divi_4_shortcodes' || $format === 'mixed' ) {
+			$content = self::d4_walk_image( $content, $find, $repl, $counter );
+		}
+		if ( $format === 'divi_5_blocks' || $format === 'mixed' ) {
+			$blocks  = parse_blocks( $content );
+			$blocks  = self::d5_walk_image( $blocks, $find, $repl, $counter );
+			$content = serialize_blocks( $blocks );
+		}
+
+		if ( $format === 'divi_4_shortcodes' || $format === 'mixed' ) {
+			$val = self::validate_shortcode_structure( $content );
+			if ( ! $val['valid'] ) {
+				return Envelope::error( 'post_write_would_corrupt', 'Refusing write — resulting content did not validate.', [ 'errors' => $val['errors'] ] );
+			}
+		}
+
+		wp_update_post( [ 'ID' => $post_id, 'post_content' => wp_slash( $content ) ] );
+		self::assert_divi_meta_flags( $post_id, $format );
+		self::purge_divi_static_css( $post_id );
+
+		$undo_envelope = Undo_Store::store( [
+			'op'           => 'divi_replace_image',
+			'target'       => [ 'post_id' => $post_id ],
+			'pre_op_state' => $snapshot,
+			'summary'      => sprintf( 'Restore prior content of post %d (before divi_replace_image).', $post_id ),
+		] );
+
+		return Envelope::success(
+			sprintf( 'Replaced %d image URL(s) on post %d (format=%s).', $counter['count'], $post_id, $format ),
+			[
+				'post_id'         => $post_id,
+				'format_detected' => $format,
+				'replacements'    => $counter['count'],
+				'telemetry'       => [
+					'content_length_before' => strlen( (string) ( $snapshot['post_content'] ?? '' ) ),
+					'content_length_after'  => strlen( $content ),
+					'divi_format'           => (string) $format,
+				],
+			],
+			$undo_envelope
+		);
+	}
+
+	public static function handle_import_template( array $args ) {
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			return Envelope::error( 'insufficient_caps', 'edit_posts capability required.' );
+		}
+		$target_id   = (int) ( $args['target_post_id'] ?? 0 );
+		$template_id = (int) ( $args['template_id'] ?? 0 );
+		$mode        = isset( $args['mode'] ) ? sanitize_key( (string) $args['mode'] ) : 'merge';
+		$position    = isset( $args['position'] ) ? sanitize_key( (string) $args['position'] ) : 'bottom';
+		$force       = ! empty( $args['force'] );
+		if ( ! in_array( $mode, [ 'merge', 'replace' ], true ) ) $mode = 'merge';
+		if ( ! in_array( $position, [ 'top', 'bottom' ], true ) ) $position = 'bottom';
+		if ( $target_id <= 0 || $template_id <= 0 ) {
+			return Envelope::error( 'invalid_args', 'target_post_id and template_id are required.' );
+		}
+		$target = get_post( $target_id );
+		if ( ! $target ) return Envelope::error( 'target_not_found', 'Target post not found.' );
+		$template = get_post( $template_id );
+		if ( ! $template || $template->post_type !== 'et_pb_layout' ) {
+			return Envelope::error( 'template_not_found', 'Template not found in et_pb_layout.' );
+		}
+		if ( ! current_user_can( 'edit_post', $target_id ) ) {
+			return Envelope::error( 'insufficient_caps', 'edit_post on target_post_id required.' );
+		}
+		if ( ! $force ) {
+			$session = Builder_Safety::detect_active_editor_session( $target_id );
+			if ( ! empty( $session['active'] ) ) {
+				return Envelope::error(
+					'builder_session_active',
+					'An editor session is currently open on this post. Close the editor or pass force:true to override.',
+					[ 'target_post_id' => $target_id, 'builder_session' => $session ]
+				);
+			}
+		}
+
+		$snapshot        = self::snapshot_post_content( $target_id );
+		$tpl_content     = (string) $template->post_content;
+		$target_format   = self::detect_format( $target_id );
+		$template_format = self::detect_format( $template_id );
+
+		if ( $template_format === 'divi_4_shortcodes' || $template_format === 'mixed' ) {
+			$val = self::validate_shortcode_structure( $tpl_content );
+			if ( ! $val['valid'] ) {
+				return Envelope::error( 'template_content_invalid', 'Template content did not validate.', [ 'errors' => $val['errors'] ] );
+			}
+		}
+
+		$original = (string) $target->post_content;
+		if ( $mode === 'replace' ) {
+			$new_content = $tpl_content;
+		} elseif ( $position === 'top' ) {
+			$new_content = $tpl_content . "\n" . $original;
+		} else {
+			$new_content = $original . "\n" . $tpl_content;
+		}
+
+		if ( in_array( $target_format, [ 'divi_4_shortcodes', 'mixed' ], true )
+			|| in_array( $template_format, [ 'divi_4_shortcodes', 'mixed' ], true ) ) {
+			$val = self::validate_shortcode_structure( $new_content );
+			if ( ! $val['valid'] ) {
+				return Envelope::error( 'merged_content_invalid', 'Merged content did not validate — refusing write.', [ 'errors' => $val['errors'] ] );
+			}
+		}
+
+		wp_update_post( [ 'ID' => $target_id, 'post_content' => wp_slash( $new_content ) ] );
+		$effective_format = $template_format === 'not_divi' ? $target_format : $template_format;
+		self::assert_divi_meta_flags( $target_id, $effective_format );
+		self::purge_divi_static_css( $target_id );
+
+		$backup_meta_key = self::BACKUP_META_KEY_PREFIX . time();
+		update_post_meta( $target_id, $backup_meta_key, wp_slash( $original ) );
+
+		$modules_added = 0;
+		if ( preg_match_all( '/\[et_pb_[a-z0-9_]+/', $tpl_content, $mods ) ) $modules_added += count( $mods[0] );
+		if ( function_exists( 'parse_blocks' ) ) {
+			$blocks_added = count( array_filter( self::flatten_blocks( parse_blocks( $tpl_content ) ), static function ( $b ) {
+				return is_array( $b ) && isset( $b['blockName'] ) && strpos( (string) $b['blockName'], 'divi/' ) === 0;
+			} ) );
+			$modules_added += $blocks_added;
+		}
+
+		$undo_envelope = Undo_Store::store( [
+			'op'           => 'divi_import_template',
+			'target'       => [ 'target_post_id' => $target_id ],
+			'pre_op_state' => $snapshot,
+			'summary'      => sprintf( 'Restore prior content of post %d (before divi_import_template).', $target_id ),
+		] );
+
+		$warnings = [];
+		if ( $target_format !== 'not_divi' && $template_format !== 'not_divi' && $target_format !== $template_format ) {
+			$warnings[] = sprintf( 'format_mismatch: target=%s, template=%s', $target_format, $template_format );
+		}
+
+		return Envelope::success(
+			sprintf( 'Applied template %d to post %d (mode=%s, position=%s, modules=%d).', $template_id, $target_id, $mode, $position, $modules_added ),
+			[
+				'target_post_id'  => $target_id,
+				'template_id'     => $template_id,
+				'mode'            => $mode,
+				'position'        => $position,
+				'modules_added'   => $modules_added,
+				'backup_meta_key' => $backup_meta_key,
+				'warnings'        => $warnings,
+				'telemetry'       => [
+					'content_length_before' => strlen( (string) ( $snapshot['post_content'] ?? '' ) ),
+					'content_length_after'  => strlen( $new_content ),
+					'divi_format'           => (string) $effective_format,
+				],
+			],
+			$undo_envelope
+		);
+	}
+
+	// ---- helpers below shared by clone_page + replace_image + import_template ----
+
+	private static function d4_walk_image( $content, $old_url, $new_url, array &$counter ) {
+		if ( $old_url === '' || $content === '' ) {
+			return $content;
+		}
+		$url_attrs = [
+			'src', 'background_image', 'background_url', 'image_url',
+			'button_bg_image', 'video_url', 'og_image', 'logo_image_url',
+		];
+		$pattern = '/\b(' . implode( '|', array_map( 'preg_quote', $url_attrs ) ) . ')=("[^"]*"|\'[^\']*\')/';
+		return preg_replace_callback( $pattern, static function ( $m ) use ( $old_url, $new_url, &$counter ) {
+			$attr = $m[1];
+			$val  = trim( $m[2], "\"'" );
+			if ( $val === $old_url ) {
+				$counter['count']++;
+				$quote = $m[2][0] === '"' ? '"' : '\'';
+				return $attr . '=' . $quote . $new_url . $quote;
+			}
+			return $m[0];
+		}, $content );
+	}
+
+	private static function d5_walk_image( array $blocks, $old_url, $new_url, array &$counter ) {
+		$url_keys = [ 'src', 'url', 'imageUrl', 'backgroundImageUrl', 'videoUrl', 'logoUrl', 'href' ];
+		$out = [];
+		foreach ( $blocks as $block ) {
+			if ( ! is_array( $block ) ) {
+				$out[] = $block;
+				continue;
+			}
+			if ( isset( $block['attrs'] ) && is_array( $block['attrs'] ) ) {
+				foreach ( $url_keys as $k ) {
+					if ( isset( $block['attrs'][ $k ] ) && is_string( $block['attrs'][ $k ] ) && $block['attrs'][ $k ] === $old_url ) {
+						$block['attrs'][ $k ] = $new_url;
+						$counter['count']++;
+					}
+					if ( isset( $block['attrs'][ $k ] ) && is_array( $block['attrs'][ $k ] ) && ( $block['attrs'][ $k ]['url'] ?? null ) === $old_url ) {
+						$block['attrs'][ $k ]['url'] = $new_url;
+						$counter['count']++;
+					}
+				}
+			}
+			if ( isset( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) ) {
+				$block['innerBlocks'] = self::d5_walk_image( $block['innerBlocks'], $old_url, $new_url, $counter );
+			}
+			$out[] = $block;
+		}
+		return $out;
+	}
+
+	private static function d5_regenerate_client_ids( array $blocks ) {
+		$out = [];
+		foreach ( $blocks as $block ) {
+			if ( ! is_array( $block ) ) {
+				$out[] = $block;
+				continue;
+			}
+			if ( isset( $block['attrs'] ) && is_array( $block['attrs'] ) && isset( $block['attrs']['_uid'] ) ) {
+				$block['attrs']['_uid'] = self::gen_client_id();
+			}
+			if ( isset( $block['attrs']['clientId'] ) ) {
+				$block['attrs']['clientId'] = self::gen_client_id();
+			}
+			if ( isset( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) ) {
+				$block['innerBlocks'] = self::d5_regenerate_client_ids( $block['innerBlocks'] );
+			}
+			$out[] = $block;
+		}
+		return $out;
+	}
+
+	private static function gen_client_id() {
+		return bin2hex( random_bytes( 6 ) );
+	}
+
+	private static function flatten_blocks( array $blocks ) {
+		$out = [];
+		foreach ( $blocks as $b ) {
+			if ( ! is_array( $b ) ) continue;
+			$out[] = $b;
+			if ( isset( $b['innerBlocks'] ) && is_array( $b['innerBlocks'] ) ) {
+				$out = array_merge( $out, self::flatten_blocks( $b['innerBlocks'] ) );
+			}
+		}
+		return $out;
+	}
+
+	private static function snapshot_post_content( $post_id ) {
+		$post = get_post( $post_id );
+		if ( ! $post ) return [ 'post_id' => (int) $post_id, 'post_content' => '' ];
+		$meta_snap = [];
+		foreach ( self::CLONE_META_KEYS as $k ) {
+			$v = get_post_meta( (int) $post_id, $k, true );
+			if ( $v !== '' && $v !== false ) $meta_snap[ $k ] = $v;
+		}
+		return [
+			'post_id'      => (int) $post_id,
+			'post_content' => (string) $post->post_content,
+			'meta'         => $meta_snap,
+		];
 	}
 }
