@@ -144,7 +144,11 @@ class Elementor {
 						'position'         => [ 'type' => 'integer', 'description' => 'Optional. Zero-indexed position within parent. If omitted, appended at end.' ],
 						'flex_direction'   => [ 'type' => 'string', 'enum' => [ 'row', 'column' ], 'description' => 'Curated container: row or column. Default column.' ],
 						'content_width'    => [ 'type' => 'string', 'enum' => [ 'boxed', 'full' ], 'description' => 'Curated container: boxed or full. Default boxed.' ],
-						'children'         => [ 'type' => 'array', 'description' => 'Curated container: inline child widget definitions. Each item is an object with widget_type + curated params or settings.' ],
+						'children'         => [
+							'type'        => 'array',
+							'description' => 'Curated container: inline child widget definitions. Each item is an object with widget_type + curated params or settings.',
+							'items'       => [ 'type' => 'object' ],
+						],
 						'title'            => [ 'type' => 'string', 'description' => 'Curated heading: title text.' ],
 						'header_size'      => [ 'type' => 'string', 'description' => 'Curated heading: HTML tag (h1-h6, div, span, p). Default h2.' ],
 						'editor'           => [ 'type' => 'string', 'description' => 'Curated text-editor: HTML content.' ],
@@ -157,7 +161,19 @@ class Elementor {
 						'description_text' => [ 'type' => 'string', 'description' => 'Curated image-box/icon-box: description text.' ],
 						'title_size'       => [ 'type' => 'string', 'description' => 'Curated image-box/icon-box: title HTML tag. Default h3.' ],
 						'icon'             => [ 'type' => 'string', 'description' => 'Curated icon-box: FontAwesome icon class (e.g. fas fa-check). Library auto-derived from prefix.' ],
-						'items'            => [ 'type' => 'array', 'description' => 'Curated icon-list: array of { text (required), icon?, link_url? } items.' ],
+						'items'            => [
+							'type'        => 'array',
+							'description' => 'Curated icon-list: array of { text (required), icon?, link_url? } items.',
+							'items'       => [
+								'type'       => 'object',
+								'properties' => [
+									'text'     => [ 'type' => 'string' ],
+									'icon'     => [ 'type' => 'string' ],
+									'link_url' => [ 'type' => 'string' ],
+								],
+								'required'   => [ 'text' ],
+							],
+						],
 						'video_url'        => [ 'type' => 'string', 'description' => 'Curated video: YouTube, Vimeo, or Dailymotion URL. Self-hosted / VideoPress require raw mode.' ],
 						'aspect_ratio'     => [ 'type' => 'string', 'enum' => [ '169', '219', '43', '32', '11', '916' ], 'description' => 'Curated video: aspect ratio (169 = 16:9). Default 169.' ],
 						'autoplay'         => [ 'type' => 'boolean', 'description' => 'Curated video: autoplay. Default false.' ],

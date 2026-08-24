@@ -8,13 +8,43 @@ if ( ! defined( 'ABSPATH' ) ) {
 /**
  * SiteVault MCP Integration
  *
- * Registers MCP tools for SiteVault backup management.
- * Only loaded when SiteVault Pro is active.
+ * Registers MCP tools for SiteVault backup management. Detects both
+ * SiteVault Free (SiteVault_ prefix) and SiteVault Pro (RB_ prefix) —
+ * the public API surface is identical across tiers, so tool behavior is
+ * consistent whichever plugin is installed.
  */
 class SiteVault {
 
+	/**
+	 * Resolve the loaded Backup_Manager class name. Prefers Pro's RB_ prefix
+	 * when both are present (Pro overrides Free on the same install).
+	 */
+	private static function manager_class() {
+		if ( class_exists( '\\RB_Backup_Manager' ) ) return '\\RB_Backup_Manager';
+		if ( class_exists( '\\SiteVault_Backup_Manager' ) ) return '\\SiteVault_Backup_Manager';
+		return null;
+	}
+
+	private static function async_backup_class() {
+		if ( class_exists( '\\RB_Async_Backup' ) ) return '\\RB_Async_Backup';
+		if ( class_exists( '\\SiteVault_Async_Backup' ) ) return '\\SiteVault_Async_Backup';
+		return null;
+	}
+
+	private static function scheduler_class() {
+		if ( class_exists( '\\RB_Backup_Scheduler' ) ) return '\\RB_Backup_Scheduler';
+		if ( class_exists( '\\SiteVault_Backup_Scheduler' ) ) return '\\SiteVault_Backup_Scheduler';
+		return null;
+	}
+
+	private static function engine_class() {
+		if ( class_exists( '\\RB_Backup_Engine' ) ) return '\\RB_Backup_Engine';
+		if ( class_exists( '\\SiteVault_Backup_Engine' ) ) return '\\SiteVault_Backup_Engine';
+		return null;
+	}
+
 	public static function is_available() {
-		return class_exists( 'RB_Backup_Manager' );
+		return self::manager_class() !== null;
 	}
 
 	public static function get_tools() {
@@ -96,7 +126,8 @@ class SiteVault {
 			throw new \Exception( 'SiteVault is not active' );
 		}
 
-		$manager = \RB_Backup_Manager::instance();
+		$manager_class = self::manager_class();
+		$manager       = $manager_class::instance();
 
 		switch ( $name ) {
 			case 'sv_get_backups':
@@ -133,10 +164,15 @@ class SiteVault {
 				}
 
 				// Use async backup to avoid timeout
-				if ( class_exists( 'RB_Async_Backup' ) ) {
-					$backup_id = \RB_Async_Backup::instance()->start_backup( $backup_args );
+				$async_class = self::async_backup_class();
+				if ( $async_class !== null ) {
+					$backup_id = $async_class::instance()->start_backup( $backup_args );
 				} else {
-					$backup_id = \RB_Backup_Engine::instance()->create_backup( $backup_args );
+					$engine_class = self::engine_class();
+					if ( $engine_class === null ) {
+						throw new \Exception( 'SiteVault backup engine not available' );
+					}
+					$backup_id = $engine_class::instance()->create_backup( $backup_args );
 				}
 
 				if ( is_wp_error( $backup_id ) ) {
@@ -163,8 +199,9 @@ class SiteVault {
 				];
 
 				// If in progress, get detailed progress
-				if ( $backup->status === 'in_progress' && class_exists( 'RB_Async_Backup' ) ) {
-					$progress = \RB_Async_Backup::instance()->get_status( $backup_id );
+				$async_class = self::async_backup_class();
+				if ( $backup->status === 'in_progress' && $async_class !== null ) {
+					$progress = $async_class::instance()->get_status( $backup_id );
 					if ( is_array( $progress ) ) {
 						$result['percent'] = $progress['percent'] ?? 0;
 						$result['step']    = $progress['step'] ?? '';
@@ -188,10 +225,11 @@ class SiteVault {
 				return $manager->get_stats();
 
 			case 'sv_get_schedules':
-				if ( ! class_exists( 'RB_Backup_Scheduler' ) ) {
+				$scheduler_class = self::scheduler_class();
+				if ( $scheduler_class === null ) {
 					throw new \Exception( 'Backup scheduler not available' );
 				}
-				$schedules = \RB_Backup_Scheduler::instance()->get_schedules();
+				$schedules = $scheduler_class::instance()->get_schedules();
 				return array_map( function( $s ) {
 					return [
 						'id'         => $s->id,

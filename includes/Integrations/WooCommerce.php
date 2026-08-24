@@ -142,12 +142,56 @@ class WooCommerce {
 						'customer_id'    => [ 'type' => 'integer', 'description' => 'Optional WP user ID for the customer. Omit to create a guest order.' ],
 						'billing'        => [ 'type' => 'object', 'description' => 'Billing address: first_name, last_name, address_1, address_2, city, state, postcode, country, email, phone.' ],
 						'shipping'       => [ 'type' => 'object', 'description' => 'Shipping address (same shape as billing, minus email/phone).' ],
-						'line_items'     => [ 'type' => 'array', 'description' => 'Array of {product_id, quantity, variation_id?}. variation_id must belong to product_id.' ],
+						'line_items'     => [
+							'type'        => 'array',
+							'description' => 'Array of {product_id, quantity, variation_id?}. variation_id must belong to product_id.',
+							'items'       => [
+								'type'       => 'object',
+								'properties' => [
+									'product_id'   => [ 'type' => 'integer' ],
+									'quantity'     => [ 'type' => 'integer' ],
+									'variation_id' => [ 'type' => 'integer' ],
+								],
+								'required'   => [ 'product_id', 'quantity' ],
+							],
+						],
 						'status'         => [ 'type' => 'string', 'description' => 'Initial order status (default pending). Accepted: pending, processing, on-hold, completed, cancelled.' ],
 						'payment_method' => [ 'type' => 'string', 'description' => 'Payment method ID (e.g. bacs, cheque, cod, stripe).' ],
-						'shipping_lines' => [ 'type' => 'array', 'description' => 'Optional shipping lines. Array of {method_id, method_title, total}.' ],
-						'fee_lines'      => [ 'type' => 'array', 'description' => 'Optional fee lines. Array of {name, total}.' ],
-						'meta_data'      => [ 'type' => 'array', 'description' => 'Optional custom order meta. Array of {key, value}.' ],
+						'shipping_lines' => [
+							'type'        => 'array',
+							'description' => 'Optional shipping lines. Array of {method_id, method_title, total}.',
+							'items'       => [
+								'type'       => 'object',
+								'properties' => [
+									'method_id'    => [ 'type' => 'string' ],
+									'method_title' => [ 'type' => 'string' ],
+									'total'        => [ 'type' => 'string' ],
+								],
+							],
+						],
+						'fee_lines'      => [
+							'type'        => 'array',
+							'description' => 'Optional fee lines. Array of {name, total}.',
+							'items'       => [
+								'type'       => 'object',
+								'properties' => [
+									'name'  => [ 'type' => 'string' ],
+									'total' => [ 'type' => 'string' ],
+								],
+							],
+						],
+						'meta_data'      => [
+							'type'        => 'array',
+							'description' => 'Optional custom order meta. Array of {key, value}.',
+							'items'       => [
+								'type'       => 'object',
+								'properties' => [
+									'key'   => [ 'type' => 'string' ],
+									'value' => [],
+								],
+								'required'   => [ 'key' ],
+							],
+						],
 						'customer_note'  => [ 'type' => 'string', 'description' => 'Customer-facing note attached to the order.' ],
 						'send_emails'    => [ 'type' => 'boolean', 'description' => 'If true, fire the WC New Order email after creation. Default false.' ],
 					],
@@ -165,8 +209,31 @@ class WooCommerce {
 						'shipping'      => [ 'type' => 'object', 'description' => 'Partial shipping address — only provided keys are updated.' ],
 						'customer_note' => [ 'type' => 'string', 'description' => 'Replace customer-facing order note.' ],
 						'status'        => [ 'type' => 'string', 'description' => 'New order status.' ],
-						'meta_data'     => [ 'type' => 'array', 'description' => 'Array of {key, value} to add/replace on the order meta.' ],
-						'line_items'    => [ 'type' => 'array', 'description' => 'Array of {product_id, quantity, variation_id?, id?}. id present + quantity 0 = remove; id present + quantity > 0 = update; no id = add.' ],
+						'meta_data'     => [
+							'type'        => 'array',
+							'description' => 'Array of {key, value} to add/replace on the order meta.',
+							'items'       => [
+								'type'       => 'object',
+								'properties' => [
+									'key'   => [ 'type' => 'string' ],
+									'value' => [],
+								],
+								'required'   => [ 'key' ],
+							],
+						],
+						'line_items'    => [
+							'type'        => 'array',
+							'description' => 'Array of {product_id, quantity, variation_id?, id?}. id present + quantity 0 = remove; id present + quantity > 0 = update; no id = add.',
+							'items'       => [
+								'type'       => 'object',
+								'properties' => [
+									'id'           => [ 'type' => 'integer' ],
+									'product_id'   => [ 'type' => 'integer' ],
+									'quantity'     => [ 'type' => 'integer' ],
+									'variation_id' => [ 'type' => 'integer' ],
+								],
+							],
+						],
 					],
 					'required'   => [ 'order_id' ],
 				],

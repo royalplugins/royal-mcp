@@ -10,13 +10,13 @@ License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Preview-On-WordPress-Playground: yes
 
-168 MCP tools. OAuth 2.0. Connect Claude, ChatGPT, Gemini, Cursor & any MCP agent to your WordPress site. 100% self-hosted.
+170+ MCP tools. OAuth 2.0. Connect Claude, ChatGPT, Gemini, Cursor & any MCP agent to your WordPress site. 100% self-hosted.
 
 == Description ==
 
-**The most complete WordPress MCP server — 168 tools, OAuth 2.0, and nothing leaves your site.**
+**The most complete WordPress MCP server — 170+ tools, OAuth 2.0, and nothing leaves your site.**
 
-Royal MCP gives Claude, ChatGPT, Google Gemini, Cursor, Windsurf, Claude Code, and every other MCP-compatible AI client structured access to your WordPress site: 85 WordPress core tools plus 83 integration tools that auto-load for WooCommerce, Elementor, Divi, Advanced Custom Fields, and more.
+Royal MCP gives Claude, ChatGPT, Google Gemini, Perplexity, DeepSeek, Mistral, and every other MCP-compatible AI structured access to your WordPress site: 85 WordPress core tools plus 86 integration tools that auto-load for WooCommerce, Elementor, Divi, Advanced Custom Fields, and more.
 
 = Connect Claude to WordPress =
 
@@ -24,17 +24,19 @@ Royal MCP connects your WordPress site directly to Claude Code, Claude Desktop, 
 
 https://youtu.be/pf-mdRnXezM
 
-https://youtu.be/6P7TU1Tva3k
+**Edit Elementor with Claude**
+
+https://youtu.be/HsEIoDz9WmY
 
 **First-time setup walkthrough:** [royalplugins.com/support/royal-mcp/connecting-to-claude/](https://royalplugins.com/support/royal-mcp/connecting-to-claude/)
 
 = Connect ChatGPT to WordPress =
 
-ChatGPT on the web, desktop, and iOS supports MCP servers natively. Paste your Royal MCP endpoint into ChatGPT's connector list, authorize once, and ChatGPT can read your posts, publish drafts, update product prices, moderate comments, and audit SEO across your site — all through ordinary conversation.
+ChatGPT on the web, desktop, and iOS supports MCP servers natively. Add Royal MCP in ChatGPT's Plugins panel, authorize once, and ChatGPT can read your posts, publish drafts, update product prices, moderate comments, and audit SEO across your site — all through ordinary conversation.
 
 = Works with every MCP-compatible AI client =
 
-Royal MCP is not vendor-locked. Claude Desktop, Claude on the web, Claude Code, ChatGPT, Google Gemini through Gemini CLI, Cursor, Windsurf, OpenCode, and every future MCP-compatible agent connect through the same endpoint. Switch AI vendors without rewriting a single connection.
+Royal MCP is not vendor-locked. Claude/Anthropic, ChatGPT/OpenAI, Gemini/Google, Grok/xAI, Llama/Meta, Mistral, DeepSeek, Qwen/Alibaba, Cohere, and Perplexity all work through MCP-compatible clients like Cursor, Windsurf, Cline, Continue, Zed, JetBrains AI Assistant, OpenCode, Warp, Ollama, and LM Studio, all connecting through the same endpoint. Switch AI vendors without rewriting a single connection.
 
 = How Royal MCP handles authorization =
 
@@ -46,17 +48,17 @@ Nowhere. Your AI client authenticates straight to your WordPress site, and every
 
 = Can I undo what the AI does? =
 
-Yes. Every MCP client — Claude Desktop, ChatGPT, and the rest — asks you to approve or deny each destructive tool call by default, until you flip that setting in your connector. On top of that, Royal MCP captures a reverse-state snapshot before every destructive write and hands back a 72-hour undo token. One mcp_undo_last_operation call reverses the change — whether Claude deleted a post, replaced text on an Elementor page, updated a WooCommerce product, or reordered menu items. New posts and pages start as drafts, so nothing the AI writes appears on your live site until you approve publishing. Every tool call also lands in an activity log you can review from wp-admin.
+Yes. Every MCP client (Claude Desktop, ChatGPT, and the rest) asks you to approve or deny each destructive tool call by default, until you flip that setting in your connector. On top of that, Royal MCP captures a reverse-state snapshot before every destructive write and hands back a 72-hour undo token. One mcp_undo_last_operation call reverses the change — whether Claude deleted a post, replaced text on an Elementor page, updated a WooCommerce product, or reordered menu items. New posts and pages start as drafts, so nothing the AI writes appears on your live site until you approve publishing. Every tool call also lands in an activity log you can review from wp-admin.
 
 = Does Royal MCP work with the WordPress Abilities API? =
 
-Yes — Royal MCP surfaces every AI-callable operation through one endpoint, from three sources: the 85 native tools Royal MCP ships, the 83 integration tools that auto-load when WooCommerce, Elementor, Divi, ACF, and other supported plugins activate, and every ability any plugin registers through WordPress 6.9's Abilities API. Your AI sees them all as MCP tools — one connector, no per-plugin setup, no per-vendor rewrite.
+Yes. Royal MCP surfaces every AI-callable operation through one endpoint, from three sources: the 85 native tools Royal MCP ships, the 86 integration tools that auto-load when WooCommerce, Elementor, Divi, ACF, and other supported plugins activate, and every ability any plugin registers through WordPress 6.9's Abilities API. Your AI sees them all as MCP tools — one connector, no per-plugin setup, no per-vendor rewrite.
 
 = See what AI agents do to your site =
 
-The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) companion shows every AI agent hitting your site at the HTTP layer — training crawlers, retrieval bots, AI search engines — not just the ones connected through Royal MCP. Install both for a unified view across MCP tool calls and HTTP-layer bot hits.
+The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) companion shows every AI agent hitting your site at the HTTP layer (training crawlers, retrieval bots, AI search engines), not just the ones connected through Royal MCP. Install both for a unified view across MCP tool calls and HTTP-layer bot hits.
 
-= 85 Core Tools + 83 Integration Tools =
+= 85 Core Tools + 86 Integration Tools =
 
 **WordPress Core (85 tools):**
 
@@ -120,7 +122,7 @@ When Elementor (free or Pro) is active, AI agents can clone and customize existi
 * Every write returns a 72-hour undo token via mcp_undo_last_operation
 * Atomic widgets (Elementor 4.0+ Editor V4 elements) pass through opaque — we never decode atomic schemas because Elementor itself may shift them. Widget-level creation from scratch is intentionally out of scope; the design commitment is to work from an existing-known-good source.
 
-**Divi Integration (6 tools):**
+**Divi Integration (9 tools):**
 When Divi (Divi 4 shortcode format or Divi 5 block format) is active, AI agents get safety-first tools for reading and editing Divi content without corrupting builder state:
 
 * Detect a page's Divi format (Divi 4 shortcodes, Divi 5 blocks, mixed, or non-Divi) from postmeta rather than the current theme version — so aged pages read correctly even after the theme was updated
@@ -129,6 +131,9 @@ When Divi (Divi 4 shortcode format or Divi 5 block format) is active, AI agents 
 * List saved layouts from the Divi Library, optionally filtered by category or layout type
 * Read a full Divi Library layout by ID for reuse or template extraction
 * Find-and-replace text inside Divi content with dry-run preview, expected-count safety check, active-editor-session detection, and a warning when literal escape sequences appear in the replacement
+* Clone a Divi 4 or Divi 5 page as a new draft, preserving builder meta and regenerating D5 clientIds so the duplicate opens in the editor without ID collisions (72-hour undo token)
+* Swap an image URL across every image-bearing Divi element on a post, dual-format aware for Divi 4 shortcodes and Divi 5 blocks (72-hour undo token)
+* Apply a Divi Library entry to a target page in merge or replace mode (72-hour undo token)
 
 **Advanced Custom Fields Integration (4 tools):**
 When ACF (free or Pro) is active, AI agents can read and write ACF fields with the field-type-aware formatting the ACF UI uses — instead of the raw serialized values WordPress meta returns:
@@ -213,11 +218,11 @@ Model Context Protocol (MCP) is an open standard created by Anthropic that lets 
 
 = How is Royal MCP different from other WordPress MCP plugins? =
 
-Security. Most MCP plugins — and 41% of all public MCP servers — have no authentication at all. Royal MCP requires an API key for every session, rate-limits requests to prevent abuse, logs every interaction for audit purposes, and filters sensitive data (emails, PHP version, admin credentials) from responses. We built this plugin with the same security standards we apply to GuardPress, our WordPress security plugin used on thousands of sites.
+Security. Most MCP plugins (and 41% of all public MCP servers) have no authentication at all. Royal MCP requires an API key for every session, rate-limits requests to prevent abuse, logs every interaction for audit purposes, and filters sensitive data (emails, PHP version, admin credentials) from responses. We built this plugin with the same security standards we apply to GuardPress, our WordPress security plugin used on thousands of sites.
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
-No. WordPress 6.9 added the Abilities API — a primitive for registering AI-callable functions — and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 85 ready-to-use WordPress core tools, and 83 integration tools that auto-load for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, Advanced Custom Fields, and Redirection.
+No. WordPress 6.9 added the Abilities API (a primitive for registering AI-callable functions), and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 85 ready-to-use WordPress core tools, and 86 integration tools that auto-load for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, Advanced Custom Fields, and Redirection.
 
 = Does Royal MCP work with WooCommerce? =
 
@@ -309,23 +314,14 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 == Changelog ==
 
 = 1.4.43 =
-* New: elementor_apply_template_to_page inserts a saved Elementor library template onto any page at top, bottom, or after a specific element.
-* New: elementor_rebuild_post_content repairs a single page where the Elementor render was missing, restoring WordPress core search visibility.
-* New: elementor_rebuild_post_content_bulk scans and repairs damaged pages in batch with dry-run preview.
-* Enhancement: Every Elementor write tool now emits a 72-hour undo token via mcp_undo_last_operation.
-* Enhancement: wp_update_widget now emits a 72-hour undo token that restores the prior widget instance.
-* Enhancement: Undo tokens surface in the response body alongside verified and stored-value fields for read-after-write confirmation.
-* Enhancement: elementor_replace_text adds dry_run preview and expected_count guard for safer batch writes.
-* Enhancement: elementor_replace_text returns a read-after-write verification block and hints when a zero-match search contains HTML-encoded characters.
-* Enhancement: elementor_replace_text now walks image alt and title on image, image-box, image-carousel, and gallery widgets.
-* Enhancement: elementor_replace_text can sync the underlying media-library attachment alt via sync_attachment_meta.
-* Enhancement: elementor_get_page_outline includes each element id so downstream tools can act on it.
-* Enhancement: OAuth discovery self-check detects hand-authored well-known files missing required endpoint URLs and links to a fix guide.
-* Fix: elementor_clone_page populates page content on the clone so cloned pages are visible to WordPress core search and SEO auto-descriptions.
-* Fix: Tool input schemas now use anyOf instead of oneOf so ChatGPT Developer Mode custom connectors can complete action discovery on the endpoint.
-* Fix: Undo tokens now appear in the response text so AI assistants can read the token value and pass it to mcp_undo_last_operation, restoring the documented rollback path across every client.
-* Fix: elementor_rebuild_post_content_bulk dry-run response now lists candidate post IDs in the response text so AI assistants can name each target before authorizing a batch repair.
-* Fix: wc_create_product and wp_delete_term response text now surface the created product URL and deleted-term relation count so AI assistants can act on the result without an extra lookup call.
+* New: Divi 4 and Divi 5 page tools in Free — clone a page, swap images, and import a library template, all with 72-hour undo tokens.
+* New: Elementor library-to-page bridge (`elementor_apply_template_to_page`) plus tools to repair pages where the Elementor render is missing (single and bulk).
+* New: SiteVault backup tools now work with the free SiteVault plugin from WordPress.org in addition to SiteVault Pro.
+* Enhancement: Every destructive write emits a 72-hour undo token in the response text; responses now surface actionable URLs, IDs, and counts.
+* Enhancement: `elementor_replace_text` adds dry-run preview, expected-count guard, image alt/title walking, and optional media-library sync.
+* Fix: Tool schemas conform to strict JSON Schema so VS Code and ChatGPT Plugins accept the tools at load time.
+* Fix: `elementor_clone_page` populates page content so cloned pages stay visible to WordPress core search.
+* Fix: OAuth discovery adds a filter to override the metadata URL for hosts intercepting `.well-known/`.
 
 = 1.4.42 =
 * Enhancement: Write-verification helper now detects pre-write input mangling for tools that require strict input fidelity.
