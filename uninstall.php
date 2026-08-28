@@ -13,11 +13,7 @@ if (!defined('WP_UNINSTALL_PLUGIN')) {
     exit;
 }
 
-// If Royal MCP Pro is present on this site, skip cleanup entirely. Pro's
-// vendored copy of the free codebase shares the same OAuth tables, settings
-// option, logs table, and cron hook — dropping them here would silently
-// break every AI connection Pro is managing. Pro has its own uninstall
-// handler that manages Pro-tier data independently.
+// Pro ships its own uninstall handler and shares these tables/options.
 if ( file_exists( WP_PLUGIN_DIR . '/royal-mcp-pro/royal-mcp-pro.php' ) ) {
     return;
 }
@@ -25,9 +21,7 @@ if ( file_exists( WP_PLUGIN_DIR . '/royal-mcp-pro/royal-mcp-pro.php' ) ) {
 // Delete plugin options
 delete_option('royal_mcp_settings');
 
-// Clear the db_version option so a future reinstall can't be silently
-// short-circuited by maybe_upgrade_db() seeing a matching version with the
-// tables already dropped. Fresh installs deserve a clean slate.
+// MUST clear db_version so a reinstall re-runs maybe_upgrade_db().
 delete_option('royal_mcp_db_version');
 
 // Delete the logs table
@@ -75,6 +69,5 @@ delete_metadata('user', 0, 'royal_mcp_founders_dismissed', '', true);
 // version-stamped dismissal meta for founders + review banners.
 delete_metadata('user', 0, 'royal_mcp_founders_dismissed_version', '', true);
 delete_metadata('user', 0, 'royal_mcp_review_dismissed_version', '', true);
-// Legacy chrome-callout dismissal meta (retired in 1.4.39 when the Founders Bundle
-// ad was consolidated onto a single admin surface).
+// Legacy chrome-callout dismissal meta.
 delete_metadata('user', 0, 'royal_plugins_dismissed_founders_callout', '', true);

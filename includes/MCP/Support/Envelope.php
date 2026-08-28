@@ -165,7 +165,7 @@ final class Envelope {
      */
     public static function apply_full_json_mirror( $result, string $marker = '--- royal-mcp payload ---' ) : array {
         if ( ! is_array( $result ) ) {
-            return $result;
+            return [];
         }
         if ( isset( $result['isError'] ) && $result['isError'] === true ) {
             return $result;

@@ -498,10 +498,7 @@ class Well_Known_Notice {
                 return 'sucuri_cloudproxy_blocked';
             }
 
-            // Generic HTML 404 with no PHP fingerprint → edge/WAF 404 template
-            // regardless of body size. Sucuri's 83KB body used to fall through
-            // to 'unknown' under the old size-based rule; the fix is to trust
-            // the content-type + no-PHP-fingerprint signal alone.
+            // HTML 404 with no PHP fingerprint → edge/WAF 404 template. Trust content-type + no-PHP-FP, ignore body size.
             $content_type = isset( $lookup['content-type'] ) ? strtolower( (string) $lookup['content-type'] ) : '';
             $is_html      = false !== strpos( $content_type, 'text/html' );
             if ( $is_html ) {

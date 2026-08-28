@@ -13,6 +13,9 @@ use Royal_MCP\Integrations\RoyalAIFirewall as RAIFIntegration;
 use Royal_MCP\Integrations\Redirection as RedirectionIntegration;
 use Royal_MCP\Integrations\Divi as DiviIntegration;
 use Royal_MCP\Integrations\Composers as ComposersIntegration;
+use Royal_MCP\Integrations\YoastSEO as YoastIntegration;
+use Royal_MCP\Integrations\UpdraftPlus as UpdraftIntegration;
+use Royal_MCP\Integrations\WPForms as WPFormsIntegration;
 use Royal_MCP\Integrations\Elementor_Coexistence;
 
 if (!defined('ABSPATH')) {
@@ -414,12 +417,7 @@ class Server {
             return false;
         }
 
-        // DB-backed session lookup. Transient-backed sessions silently
-        // drop on hosts with an active WordPress object-cache drop-in that
-        // evicts keys between requests, so we persist to a real table.
-        // The sliding window is a single atomic UPDATE that refreshes
-        // expires_at IFF the row exists and has not expired — safer than
-        // a GET-then-SET pattern which can race and grant expired sessions.
+        // Atomic UPDATE: refresh expires_at only if the row exists and hasn't expired.
         return Session_Store::touch_session($session_id);
     }
 
@@ -429,9 +427,7 @@ class Server {
      * @param string $session_id The session ID to store
      */
     private function store_session($session_id, $auth_fingerprint = '') {
-        // DB-backed session persistence. 24-hour expiry, refreshed
-        // on every valid hit via Session_Store::touch_session. See
-        // is_valid_session() for the object-cache motivation.
+        // 24-hour expiry, refreshed on every valid hit via Session_Store::touch_session.
         Session_Store::create_session($session_id, $auth_fingerprint);
     }
 
@@ -444,15 +440,7 @@ class Server {
         Session_Store::delete_session($session_id);
     }
 
-    /**
-     * Resolve a post identifier from tool args, accepting either
-     * `post_id` (canonical) or `id` (alias). Different tools historically
-     * used different argument names (wp_get_post took `id`, wp_get_post_meta
-     * took `post_id`); AI drivers sometimes swap conventions and got
-     * InputValidationError. Accept both everywhere a single post is
-     * identified. Pages and media (also post types) are included; comments,
-     * terms, and users are separate ID domains and keep their own arg names.
-     */
+    /** Resolve a post identifier from args — accepts `post_id` (canonical) or `id` (alias). */
     private static function resolve_post_id_arg(array $args): int {
         return intval($args['post_id'] ?? $args['id'] ?? 0);
     }
@@ -476,27 +464,8 @@ class Server {
     /**
      * Build a read-after-write response for wp_update_post / wp_update_page.
      *
-     * Reads the post back from DB after mutation so the response reflects
-     * actual stored values, not the requested values. Fields WordPress
-     * silently modified (post_parent coerced to 0 on unknown parent,
-     * status transitions overridden, etc.) are surfaced via a
-     * modified_by_wp entry so an LLM caller can react rather than treating
-     * a hardcoded success string as truth.
-     *
-     * Text fields (title / content / excerpt) skip the diff-check because
-     * sanitize_text_field / wp_kses_post / wp_slash naturally modify the
-     * input; the stored value in saved_fields is the truth signal there
-     * and comparing raw-vs-stored would trigger noisy modified_by_wp
-     * entries on every call that contains any sanitizable input.
-     * Int / enum / password fields participate in the diff-check because
-     * WP-side modifications to those are always meaningful.
-     *
-     * @param int    $post_id  Post ID that was just updated.
-     * @param array  $args     Raw args from the tool call (what the caller sent).
-     * @param array  $data     Array passed to wp_update_post() (post-sanitization).
-     * @param string $message  Human-readable success string (kept for backwards compat).
-     *
-     * @return array Response with id, saved_fields, optional modified_by_wp, message.
+     * Reads the post back from DB post-mutation so the response reflects stored values.
+     * Text fields skip diff-check (sanitizers always modify); int/enum/password fields participate.
      */
     private static function build_update_response(int $post_id, array $args, array $data, string $message): array {
         $saved_post = get_post($post_id);
@@ -734,7 +703,7 @@ class Server {
             ['name' => 'wp_get_media_item', 'description' => 'Get single media item by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer']], 'required' => ['id']]],
             ['name' => 'wp_upload_media_from_url', 'description' => 'Download an image from a public HTTPS URL and add it to the WordPress media library. Use this when you have an image URL (Unsplash, Pexels, client asset, etc) that needs to become a library attachment — for example before setting it as a featured image. Returns the new attachment ID.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Public HTTPS URL of the image to download'], 'filename' => ['type' => 'string', 'description' => 'Optional filename (with extension). Derived from URL if omitted.'], 'alt_text' => ['type' => 'string', 'description' => 'Alt text for accessibility and SEO'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string']], 'required' => ['url']]],
             ['name' => 'wp_upload_media', 'description' => 'Upload an image to the media library from base64-encoded bytes. Use this for AI-generated images or pasted screenshots where you have raw bytes rather than a URL. For images already hosted somewhere, prefer wp_upload_media_from_url.', 'inputSchema' => ['type' => 'object', 'properties' => ['filename' => ['type' => 'string', 'description' => 'Filename with extension (e.g. hero.jpg)'], 'content_base64' => ['type' => 'string', 'description' => 'Base64-encoded file bytes'], 'alt_text' => ['type' => 'string'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string']], 'required' => ['filename', 'content_base64']]],
-            ['name' => 'wp_set_featured_image', 'description' => 'Set or replace the featured image on a post or page. Accepts EITHER an existing media_id from wp_get_media, OR an image_url that will be downloaded into the library first. Pass media_id=0 to remove the featured image.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer', 'description' => 'Post or page ID'], 'media_id' => ['type' => 'integer', 'description' => 'Existing attachment ID (use 0 to remove the featured image)'], 'image_url' => ['type' => 'string', 'description' => 'Public HTTPS image URL to download and use instead of media_id'], 'alt_text' => ['type' => 'string', 'description' => 'Alt text applied when image_url is provided']], 'required' => ['post_id']]],
+            ['name' => 'wp_set_featured_image', 'description' => 'Set or replace the featured image on a post or page. Accepts EITHER an existing media_id from wp_get_media, OR an image_url that will be downloaded into the library first. Pass media_id=0 to remove the featured image.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer', 'description' => 'Post or page ID'], 'media_id' => ['type' => 'integer', 'description' => 'Existing attachment ID (use 0 to remove the featured image)'], 'image_url' => ['type' => 'string', 'description' => 'Public HTTPS image URL to download and use instead of media_id'], 'alt_text' => ['type' => 'string', 'description' => 'Alt text to persist on the attachment. Works for both media_id and image_url input paths.']], 'required' => ['post_id']]],
             ['name' => 'wp_update_media', 'description' => 'Update metadata on an existing media attachment: alt text, caption, title, description. Great for adding SEO-friendly alt text to images already in the library.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'alt_text' => ['type' => 'string'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string'], 'description' => ['type' => 'string']], 'required' => ['id']]],
             ['name' => 'wp_delete_media', 'description' => 'Delete media item', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean']], 'required' => ['id']]],
             ['name' => 'wp_count_media', 'description' => 'Get media counts by type', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -752,7 +721,7 @@ class Server {
 
             // Term Meta (for SEO-plugin tag/category meta — Yoast, Rank Math, AIOSEO)
             ['name' => 'wp_get_term_meta', 'description' => 'Get term meta data. Useful for reading tag/category SEO meta stored by Yoast, Rank Math, or AIOSEO before editing it.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string', 'description' => 'Specific meta key. Omit to return all meta for the term.']], 'required' => ['term_id']]],
-            ['name' => 'wp_update_term_meta', 'description' => 'Update term meta data. Common keys for SEO plugins: Yoast uses _yoast_wpseo_title / _yoast_wpseo_metadesc; Rank Math uses rank_math_title / rank_math_description; AIOSEO uses _aioseo_title / _aioseo_description. String values may contain safe HTML (same allow-list as post content). Use the royal_mcp_meta_value_sanitizer filter to customize per meta key.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['anyOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array', 'items' => new \stdClass()], ['type' => 'object']]]], 'required' => ['term_id', 'key', 'value']]],
+            ['name' => 'wp_update_term_meta', 'description' => 'Update term meta data. Common keys for SEO plugins: Yoast uses _yoast_wpseo_title / _yoast_wpseo_metadesc; Rank Math uses rank_math_title / rank_math_description; AIOSEO uses _aioseo_title / _aioseo_description. String values may contain safe HTML (same allow-list as post content). Use the royal_mcp_meta_value_sanitizer filter to customize per meta key.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null']]], 'required' => ['term_id', 'key', 'value']]],
             ['name' => 'wp_delete_term_meta', 'description' => 'Delete term meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['term_id', 'key']]],
 
             // Comments
@@ -770,8 +739,8 @@ class Server {
 
             // Post Meta
             ['name' => 'wp_get_post_meta', 'description' => 'Get post meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['post_id']]],
-            ['name' => 'wp_update_post_meta', 'description' => 'Update post meta. Value can be any JSON type (string, number, boolean, array, object). String values may contain safe HTML (same allow-list as post content — hook the royal_mcp_meta_value_sanitizer filter to customize per meta key). Arrays and objects are serialized by WordPress on write and returned as PHP arrays by wp_get_post_meta on read. Overwrites the existing row for this key (use wp_add_post_meta for multi-row keys). Response includes read-after-write verify (silent-drop error if the write did not persist; modified_by_wp diff if WP transformed the value) and a 72-hour undo token that restores the prior value via mcp_undo_last_operation. Undo token omitted with a warnings entry if the prior value exceeds 1MB compressed (rare — SiteVault snapshot recommended for reversal in that case). Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['anyOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array', 'items' => new \stdClass()], ['type' => 'object']], 'description' => 'Any JSON value. Do not pass PHP-serialized strings (a:1:{...}) — pass the structured value directly.']], 'required' => ['post_id', 'key', 'value']]],
-            ['name' => 'wp_add_post_meta', 'description' => 'Add a meta row without overwriting existing values under the same key. Use for keys that store multiple rows (e.g. tag one post with several IDs under the same key). Value can be any JSON type; string values may contain safe HTML (customize per key with royal_mcp_meta_value_sanitizer). Arrays and objects are serialized by WordPress. If unique=true and a row with this key already exists, the call returns created=false. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['anyOf' => [['type' => 'string'], ['type' => 'integer'], ['type' => 'number'], ['type' => 'boolean'], ['type' => 'array', 'items' => new \stdClass()], ['type' => 'object']], 'description' => 'Any JSON value. Do not pass PHP-serialized strings.'], 'unique' => ['type' => 'boolean', 'description' => 'If true, fail (return created=false) when a row with this key already exists. Default false.']], 'required' => ['post_id', 'key', 'value']]],
+            ['name' => 'wp_update_post_meta', 'description' => 'Update post meta. Value can be any JSON type (string, number, boolean, array, object). String values may contain safe HTML (same allow-list as post content — hook the royal_mcp_meta_value_sanitizer filter to customize per meta key). Arrays and objects are serialized by WordPress on write and returned as PHP arrays by wp_get_post_meta on read. Overwrites the existing row for this key (use wp_add_post_meta for multi-row keys). Response includes read-after-write verify (silent-drop error if the write did not persist; modified_by_wp diff if WP transformed the value) and a 72-hour undo token that restores the prior value via mcp_undo_last_operation. Undo token omitted with a warnings entry if the prior value exceeds 1MB compressed (rare — SiteVault snapshot recommended for reversal in that case). Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'Any JSON value. Do not pass PHP-serialized strings (a:1:{...}) — pass the structured value directly.']], 'required' => ['post_id', 'key', 'value']]],
+            ['name' => 'wp_add_post_meta', 'description' => 'Add a meta row without overwriting existing values under the same key. Use for keys that store multiple rows (e.g. tag one post with several IDs under the same key). Value can be any JSON type; string values may contain safe HTML (customize per key with royal_mcp_meta_value_sanitizer). Arrays and objects are serialized by WordPress. If unique=true and a row with this key already exists, the call returns created=false. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'Any JSON value. Do not pass PHP-serialized strings.'], 'unique' => ['type' => 'boolean', 'description' => 'If true, fail (return created=false) when a row with this key already exists. Default false.']], 'required' => ['post_id', 'key', 'value']]],
             ['name' => 'wp_delete_post_meta', 'description' => 'Delete post meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['post_id', 'key']]],
 
             // Site & Search
@@ -780,13 +749,13 @@ class Server {
             ['name' => 'wp_get_error_log_tail', 'description' => 'Read the tail of wp-content/debug.log. Returns the last N lines (default 100, max 1000), optionally filtered by a case-insensitive substring. Automatically caps file read at last 1MB to prevent memory blowup on huge logs (truncated=true when this happens). Returns status="disabled" with instructions when WP_DEBUG_LOG is not enabled in wp-config.php. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => ['lines' => ['type' => 'integer', 'description' => 'Number of lines to return from the tail (default 100, max 1000).'], 'filter' => ['type' => 'string', 'description' => 'Optional case-insensitive substring filter applied before the last-N slice (e.g. "Fatal error", "Deprecated", a plugin slug).']]]],
             ['name' => 'wp_get_cron_schedule', 'description' => 'Enumerate scheduled wp_cron events. Returns each event with hook name, next run (unix + ISO 8601), seconds until next run, is_overdue flag, recurrence (hourly / twicedaily / daily / custom + interval in seconds), and args. Sorted by next-run ascending so overdue events come first. Useful for diagnosing missed schedules, plugin cron conflicts, or unfired hooks. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'royal_mcp_connection_health', 'description' => 'Diagnostic probe for the current MCP connection. Returns MCP endpoint route, authentication method used by this request (api-key or oauth-bearer), OAuth access token time-to-live in seconds (null for api-key), current MCP session ID, active MCP capabilities negotiated at initialize, plus Royal MCP + WordPress + PHP version strings. No arguments. Call at connection start to confirm setup, or when diagnosing 401/403/404 issues. Any authenticated caller.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
-            ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, wp_update_post, wp_update_page, wp_update_post_meta, wp_add_post_meta, wp_delete_post_meta, wp_delete_post, wp_delete_page, wp_delete_media, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_term_meta, wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, wp_update_widget, wp_delete_comment, plus every Elementor write tool (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_rebuild_post_content), Divi write tools (divi_replace_text, divi_replace_image, divi_clone_page, divi_import_template) and comment edit/reply ops. Tokens live 72 hours and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Restore may be refused with a drift error if the target was modified between the tracked write and this undo call (protects downstream writes from silent clobber). Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).']], 'required' => ['token']]],
+            ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, wp_update_post, wp_update_page, wp_update_post_meta, wp_add_post_meta, wp_delete_post_meta, wp_delete_post, wp_delete_page, wp_delete_media, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_term_meta, wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, yoast_update_meta (aliases wp_update_seo_meta), wp_update_widget, wp_delete_comment, plus every Elementor write tool (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_rebuild_post_content), Divi write tools (divi_replace_text, divi_replace_image, divi_clone_page, divi_import_template) and comment edit/reply ops. Tokens live 72 hours and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Restore may be refused with a drift error if the target was modified between the tracked write and this undo call (protects downstream writes from silent clobber). Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).']], 'required' => ['token']]],
             ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page). Each result includes content_length (bytes of stored content) for size triage.', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.']], 'required' => ['query']]],
 
             // Options
             ['name' => 'wp_get_option', 'description' => 'Get a single WordPress option value. Requires manage_options capability. The option name must be in the readable allowlist — 12 defaults (blogname, blogdescription, siteurl, home, admin_email, posts_per_page, date_format, time_format, timezone_string, googlesitekit_analytics-4_settings, show_on_front, page_on_front) plus any keys plugin authors opt in via the royal_mcp_readable_options filter. Sensitive keys inside the returned value are redacted regardless of what the option contains.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string']], 'required' => ['name']]],
             ['name' => 'wp_get_plugin_settings', 'description' => 'Get all options stored by a plugin, looked up by slug. Sensitive keys (api keys, secrets, tokens, passwords) are redacted before return.', 'inputSchema' => ['type' => 'object', 'properties' => ['plugin_slug' => ['type' => 'string', 'description' => 'Plugin slug, e.g. royalcomply or royal-affiliate-pro']], 'required' => ['plugin_slug']]],
-            ['name' => 'wp_update_option', 'description' => 'Update a WordPress option. Four gates in order: (1) manage_options capability on the caller; (2) master "Allow AI to write WordPress options" admin toggle enabled; (3) hard denylist (siteurl, home, admin_email, mailserver_*, upload_path, users_can_register, wp_user_roles, wp_capabilities, api_key/secret/*_pass/*_key patterns, royal_mcp_* namespace — permanent, cannot be filter-overridden); (4) write⊆readable invariant + writable allowlist (option must appear in both royal_mcp_readable_options AND royal_mcp_writable_options — plugin authors must opt into READS before opting into WRITES). Error text names which gate blocked. "Not in allowlist" is fixable via filter opt-in; "permanently denylisted" is not.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'value' => ['description' => 'New value (any JSON type). Full overwrite — read first, merge in your client, then write back.']], 'required' => ['name', 'value']]],
+            ['name' => 'wp_update_option', 'description' => 'Update a WordPress option. Four gates in order: (1) manage_options capability on the caller; (2) master "Allow AI to write WordPress options" admin toggle enabled; (3) hard denylist (siteurl, home, admin_email, mailserver_*, upload_path, users_can_register, wp_user_roles, wp_capabilities, api_key/secret/*_pass/*_key patterns, royal_mcp_* namespace — permanent, cannot be filter-overridden); (4) write⊆readable invariant + writable allowlist (option must appear in both royal_mcp_readable_options AND royal_mcp_writable_options — plugin authors must opt into READS before opting into WRITES). Error text names which gate blocked. "Not in allowlist" is fixable via filter opt-in; "permanently denylisted" is not.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'New value (any JSON type). Full overwrite — read first, merge in your client, then write back.']], 'required' => ['name', 'value']]],
 
             // Menus
             ['name' => 'wp_get_menus', 'description' => 'List all registered navigation menus (nav_menu taxonomy). Returns id, name, slug, and item count for each. Use wp_get_menu_items to enumerate items within a specific menu.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -804,12 +773,12 @@ class Server {
             // Theme & Appearance
             ['name' => 'wp_get_active_theme', 'description' => 'Get the active theme with name, version, parent (if child theme), and screenshot URL', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_get_theme_mods', 'description' => 'Get all customizer settings (theme_mods) for the active theme', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
-            ['name' => 'wp_update_theme_mod', 'description' => 'Update a single theme customizer setting. Requires the "Allow AI to modify theme appearance" admin toggle AND the mod name must be in the allowlist (extend via the royal_mcp_writable_theme_mods filter).', 'inputSchema' => ['type' => 'object', 'properties' => ['mod_name' => ['type' => 'string'], 'value' => ['description' => 'New value (any JSON type compatible with set_theme_mod)']], 'required' => ['mod_name', 'value']]],
+            ['name' => 'wp_update_theme_mod', 'description' => 'Update a single theme customizer setting. Requires the "Allow AI to modify theme appearance" admin toggle AND the mod name must be in the allowlist (extend via the royal_mcp_writable_theme_mods filter).', 'inputSchema' => ['type' => 'object', 'properties' => ['mod_name' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'New value (any JSON type compatible with set_theme_mod)']], 'required' => ['mod_name', 'value']]],
             ['name' => 'wp_get_custom_css', 'description' => 'Get the active theme\'s custom CSS', 'inputSchema' => ['type' => 'object', 'properties' => ['theme_slug' => ['type' => 'string', 'description' => 'Theme slug (defaults to active theme)']]]],
             ['name' => 'wp_update_custom_css', 'description' => 'Update the active theme\'s custom CSS. CSS is filtered through wp_kses (script tags stripped). Requires the "Allow AI to modify theme appearance" admin toggle and unfiltered_html capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['css' => ['type' => 'string'], 'theme_slug' => ['type' => 'string', 'description' => 'Theme slug (defaults to active theme)']], 'required' => ['css']]],
             ['name' => 'wp_get_widgets', 'description' => 'List widget instances. Uses the WordPress core /wp/v2/widgets REST endpoint in edit context so both rendered output AND full instance payload are returned uniformly for classic and block widgets. Classic widgets: instance carries the widget-specific settings (text, title, filter, etc.). Block widgets: instance.raw.content carries the raw block markup, and a blocks field is added with the parsed block tree for structured inspection. Omit sidebar to return widgets across ALL sidebars including wp_inactive_widgets (orphaned widgets from prior themes — these have rendered:"" and produce no front-end output). Filter by a specific sidebar ID (discover IDs via wp_get_sidebars) to scope results; a non-existent sidebar ID returns an empty array, not an error.', 'inputSchema' => ['type' => 'object', 'properties' => ['sidebar' => ['type' => 'string', 'description' => 'Optional sidebar ID to filter by. Omit to return widgets across all sidebars (includes wp_inactive_widgets).']]]],
             ['name' => 'wp_get_sidebars', 'description' => 'List registered sidebars (widget areas) on the active theme with their IDs, names, description, and status. Use to discover sidebar IDs before calling wp_get_widgets or wp_update_widget.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
-            ['name' => 'wp_update_widget', 'description' => 'Update a widget instance by ID. Requires the "Allow AI to modify theme appearance" admin toggle AND edit_theme_options capability. Uses WordPress core /wp/v2/widgets so classic and block widgets are handled uniformly. Pass the id returned by wp_get_widgets. Response includes a 72-hour undo token that restores the prior widget instance via mcp_undo_last_operation. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string', 'description' => 'Widget ID (e.g. text-2, block-15)'], 'sidebar' => ['type' => 'string', 'description' => 'Sidebar ID to place the widget in (omit to leave unchanged)'], 'instance' => ['type' => 'object', 'description' => 'Widget instance data. For classic widgets, either pass the same {encoded, hash} object returned by wp_get_widgets or wrap raw settings as {raw: {…}}.'], 'form_data' => ['type' => 'string', 'description' => 'Serialized form data (classic widgets alternative to instance)']], 'required' => ['id']]],
+            ['name' => 'wp_update_widget', 'description' => 'Update a widget instance by ID. Requires the "Allow AI to modify theme appearance" admin toggle AND edit_theme_options capability. Uses WordPress core /wp/v2/widgets so classic and block widgets are handled uniformly. Pass the id returned by wp_get_widgets. Response includes a 72-hour undo token that restores the prior widget instance via mcp_undo_last_operation. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string', 'description' => 'Widget ID (e.g. text-2, block-15)'], 'sidebar' => ['type' => 'string', 'description' => 'Sidebar ID to place the widget in (omit to leave unchanged)'], 'instance' => ['type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true, 'description' => 'Widget instance data. For classic widgets, either pass the same {encoded, hash} object returned by wp_get_widgets or wrap raw settings as {raw: {…}}.'], 'form_data' => ['type' => 'string', 'description' => 'Serialized form data (classic widgets alternative to instance)']], 'required' => ['id']]],
 
             // SEO Meta (auto-detects Yoast SEO / Rank Math / AIOSEO / SEObolt)
             ['name' => 'wp_get_seo_meta', 'description' => 'Get the SEO meta fields for a post (title, description, focus keyword, noindex, OG overrides where supported, URL slug). Auto-detects the active SEO plugin — Yoast SEO, Rank Math, AIOSEO, or SEObolt — and returns that plugin\'s fields plus the post slug (which is a WordPress-native field, returned regardless of SEO plugin). AIOSEO + SEObolt return the four core fields (title/description/focus_keyword/noindex); og_title/og_description are populated for Yoast + Rank Math only. Returns RAW stored templates (e.g. Yoast\'s default "%%page%% %%sep%% %%sitename%%") — do NOT measure length from these values, they contain template markup that never appears in the rendered <title> tag and will produce false-positive title_too_short / title_too_long flags. For measured/rendered SEO values, use Royal MCP Pro\'s wp_audit_seo_bulk which resolves per-engine template variables before measuring.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer']], 'required' => ['post_id']]],
@@ -841,11 +810,11 @@ class Server {
         $tools = array_merge( $tools, RedirectionIntegration::get_tools() );
         $tools = array_merge( $tools, DiviIntegration::get_tools() );
         $tools = array_merge( $tools, ComposersIntegration::get_tools() );
+        $tools = array_merge( $tools, YoastIntegration::get_tools() );
+        $tools = array_merge( $tools, UpdraftIntegration::get_tools() );
+        $tools = array_merge( $tools, WPFormsIntegration::get_tools() );
 
-        // 1.4.37 Candidate 5 — when Elementor's own MCP module is present,
-        // prefix our elementor_* tool descriptions with a routing hint so
-        // agents pick the canonical primitive per task. No behavior change
-        // to our tools; opt-in defer only.
+        // If Elementor's own MCP module is present, prefix our elementor_* descriptions with a routing hint.
         $tools = Elementor_Coexistence::filter_elementor_tool_descriptions( $tools );
 
         /**
@@ -923,30 +892,12 @@ class Server {
     }
 
     /**
-     * Handle GET - tri-state response for the MCP Streamable HTTP endpoint
+     * Handle GET — tri-state response for the MCP Streamable HTTP endpoint.
      *
-     * The single /mcp endpoint is hit by multiple clients with conflicting
-     * probe behavior. Each "fix" we've shipped has broken a different client.
-     * This is the 4th iteration. Auth check FIRST (RFC 9728), then dispatch by
-     * User-Agent so each client gets its expected behavior:
-     *
-     *  1. Unauthenticated GET (any UA) →
-     *     401 + WWW-Authenticate: Bearer resource_metadata="..."
-     *     (RFC 9728 — required for Claude.ai web / ChatGPT pre-OAuth discovery.
-     *     Handled inside validate_auth().)
-     *
-     *  2. Authenticated GET + UA contains "Claude-User" →
-     *     200 + Content-Type: text/event-stream + a minimal keepalive comment.
-     *     This is Anthropic's post-OAuth session-establishment probe. Without
-     *     it Anthropic retries the GET four times then gives up, so the entire
-     *     OAuth flow (which succeeded at /token in 1.4.17) still fails to
-     *     produce a working session. Added in 1.4.18.
-     *
-     *  3. Authenticated GET + any other UA (mcp-remote, node-fetch, etc.) →
-     *     405 + Allow: POST, DELETE, OPTIONS.
-     *     The MCP Streamable HTTP spec says servers MAY support GET for SSE
-     *     and MUST return 405 if they don't — both are spec-compliant. Clients
-     *     that don't implement SSE handle 405 cleanly by falling back to POST.
+     * Auth check first (RFC 9728), then dispatch by User-Agent:
+     *   1. Unauthenticated → 401 + WWW-Authenticate: Bearer resource_metadata="..."
+     *   2. Auth + UA contains "Claude-User" → 200 + text/event-stream keepalive
+     *   3. Auth + any other UA → 405 + Allow: POST, DELETE, OPTIONS
      */
     private function handle_get_stream($request) {
         $auth_check = $this->validate_auth($request);
@@ -1133,8 +1084,7 @@ class Server {
                 ], 404);
             }
 
-            // Verify session is bound to the same credentials. 1.4.27 — DB-backed
-            // lookup (see Session_Store class doc for the object-cache motivation).
+            // Verify session is bound to the same credentials. MUST use hash_equals.
             $stored_fingerprint = Session_Store::get_fingerprint($session_id);
             if (!empty($stored_fingerprint) && !hash_equals($stored_fingerprint, $auth_fingerprint)) {
                 return $this->json_response([
@@ -1237,16 +1187,7 @@ class Server {
         return bin2hex(random_bytes(16));
     }
 
-    /**
-     * Create JSON response with proper headers.
-     *
-     * Cache-Control: no-store is mandatory on every MCP response. Without it,
-     * edge caches (CDN, host-level fastcgi cache, generic intermediaries)
-     * key on URL alone and serve a stale auth-error response regardless of
-     * whether the Authorization / X-Royal-MCP-API-Key header is present on
-     * the second request. This is the same class of cache-poisoning bug
-     * that gates every authenticated JSON-RPC endpoint.
-     */
+    /** Create JSON response. Cache-Control: no-store is MANDATORY to prevent auth-response poisoning. */
     private function json_response($data, $status = 200) {
         $response = new \WP_REST_Response($data, $status);
         $response->header('Content-Type', 'application/json');
@@ -1630,6 +1571,12 @@ class Server {
                 }
                 $posts = get_posts($query_args);
                 return array_map(function($p) {
+                    // Surface featured_media symmetrically with the write
+                    // schema — wp_create_post + wp_update_post both accept
+                    // featured_media as a first-class param, so the read
+                    // schema should return it as a first-class field rather
+                    // than forcing a follow-up wp_get_post_meta('_thumbnail_id').
+                    $thumb_id = (int) get_post_thumbnail_id( $p );
                     return [
                         'id' => $p->ID,
                         'title' => $p->post_title,
@@ -1639,6 +1586,8 @@ class Server {
                         'url' => get_permalink($p),
                         'date' => $p->post_date,
                         'content_length' => strlen((string) $p->post_content),
+                        'featured_media' => $thumb_id,
+                        'featured_media_url' => $thumb_id > 0 ? ( wp_get_attachment_url( $thumb_id ) ?: null ) : null,
                     ];
                 }, $posts);
 
@@ -1650,6 +1599,7 @@ class Server {
                 if (!current_user_can('read_post', $post->ID)) {
                     throw new \Exception('You do not have permission to read this post.');
                 }
+                $thumb_id = (int) get_post_thumbnail_id( $post );
                 return [
                     'id' => $post->ID,
                     'title' => $post->post_title,
@@ -1661,6 +1611,8 @@ class Server {
                     'date' => $post->post_date,
                     'modified' => $post->post_modified,
                     'author' => get_the_author_meta('display_name', $post->post_author),
+                    'featured_media' => $thumb_id,
+                    'featured_media_url' => $thumb_id > 0 ? ( wp_get_attachment_url( $thumb_id ) ?: null ) : null,
                 ];
 
             case 'wp_create_post':
@@ -1682,15 +1634,7 @@ class Server {
                     throw new \Exception('You do not have permission to create ' . esc_html($post_type) . ' posts.');
                 }
                 $requested_status = isset($args['status']) ? sanitize_text_field($args['status']) : 'draft';
-                // publish_posts cap now gates future + private in
-                // addition to publish. When the enum expanded from
-                // ['publish', 'draft'] to include future/pending/private the
-                // pre-existing 'publish' check needed matching coverage: WP
-                // core silently downgrades unauthorized future/private to
-                // pending, which would surface as a confusing "why did my
-                // scheduled post become pending" bug rather than a clear
-                // permission error. pending stays uncapped — it's just an
-                // unpublished proposal, no publish-tier trust required.
+                // publish_posts cap gates publish/future/private; pending stays uncapped.
                 if (in_array($requested_status, ['publish', 'future', 'private'], true)) {
                     $publish_cap = !empty($pto->cap->publish_posts) ? $pto->cap->publish_posts : 'publish_posts';
                     if (!current_user_can($publish_cap)) {
@@ -1717,11 +1661,7 @@ class Server {
                 //     internally, which would otherwise strip the literal
                 //     backslashes inside escape sequences (`\n`, `&`) that
                 //     per-block `style.css` depends on.
-                // status allowlist expanded to match schema enum.
-                // future/pending/private are all standard WP statuses that
-                // wp_insert_post handles natively. future requires post_date to
-                // be in the future or WP silently downgrades to publish with
-                // that backdate — same behavior as wp-admin scheduling.
+                // status allowlist matches schema enum; future requires post_date in the future.
                 $post_data = [
                     'post_title' => \Royal_MCP\MCP\Support\SafeText::field($args['title']),
                     'post_content' => wp_slash($args['content']),
@@ -1813,12 +1753,8 @@ class Server {
                     'post_date'      => (string) $up_existing_post->post_date,
                     'post_date_gmt'  => (string) $up_existing_post->post_date_gmt,
                 ];
-                // WC product-type preservation. sandrinne #30: generic
-                // wp_update_post on a product silently downgrades product_type
-                // to 'simple' because WC's save_post handler reads
-                // $_POST['product-type'] and falls back to 'simple' when the
-                // request context isn't the WC admin form. Snapshot the term
-                // BEFORE the write so we can detect + restore drift.
+                // WC product-type preservation: snapshot the term before write to detect/restore drift.
+                // WC's save_post handler downgrades product_type to 'simple' outside the WC admin form context.
                 $up_is_product = ( $up_existing_post->post_type === 'product' );
                 $up_prior_product_type = null;
                 $up_prior_featured_id  = null;
@@ -1855,9 +1791,7 @@ class Server {
                 if (array_key_exists('password', $args)) $data['post_password'] = (string) $args['password'];
                 if (array_key_exists('comment_status', $args)) $data['comment_status'] = $args['comment_status'];
                 if (array_key_exists('ping_status', $args)) $data['ping_status'] = $args['ping_status'];
-                // scheduling support on the update path. edit_date=true
-                // is REQUIRED on wp_update_post() to actually change post_date on
-                // an existing post; without it WP silently ignores post_date args.
+                // MUST set edit_date=true on wp_update_post() to change post_date on an existing post.
                 if (!empty($args['date'])) {
                     $ts = strtotime((string) $args['date']);
                     if (false === $ts) {
@@ -2098,6 +2032,7 @@ class Server {
                 if (!empty($args['parent'])) $page_args['parent'] = intval($args['parent']);
                 $pages = get_pages($page_args);
                 return array_map(function($p) {
+                    $thumb_id = (int) get_post_thumbnail_id( $p );
                     return [
                         'id' => $p->ID,
                         'title' => $p->post_title,
@@ -2105,6 +2040,8 @@ class Server {
                         'status' => $p->post_status,
                         'parent' => $p->post_parent,
                         'content_length' => strlen((string) $p->post_content),
+                        'featured_media' => $thumb_id,
+                        'featured_media_url' => $thumb_id > 0 ? ( wp_get_attachment_url( $thumb_id ) ?: null ) : null,
                     ];
                 }, $pages);
 
@@ -2114,6 +2051,7 @@ class Server {
                 if (!current_user_can('read_post', $page->ID)) {
                     throw new \Exception('You do not have permission to read this page.');
                 }
+                $thumb_id = (int) get_post_thumbnail_id( $page );
                 return [
                     'id' => $page->ID,
                     'title' => $page->post_title,
@@ -2121,6 +2059,8 @@ class Server {
                     'status' => $page->post_status,
                     'url' => get_permalink($page),
                     'parent' => $page->post_parent,
+                    'featured_media' => $thumb_id,
+                    'featured_media_url' => $thumb_id > 0 ? ( wp_get_attachment_url( $thumb_id ) ?: null ) : null,
                 ];
 
             case 'wp_create_page':
@@ -2390,11 +2330,20 @@ class Server {
                     if ($media_id < 0) throw new \Exception('Provide either media_id or image_url.');
                 }
                 $this->apply_featured_media($post_id, $media_id);
+
+                // Persist alt text uniformly across image_url + media_id input paths.
+                $alt_written = null;
+                if ( $media_id > 0 && isset( $args['alt_text'] ) && $args['alt_text'] !== '' ) {
+                    $alt_written = \Royal_MCP\MCP\Support\SafeText::field( $args['alt_text'] );
+                    update_post_meta( $media_id, '_wp_attachment_image_alt', $alt_written );
+                }
+
                 return [
-                    'post_id'  => $post_id,
-                    'media_id' => $media_id,
-                    'url'      => $media_id > 0 ? wp_get_attachment_url($media_id) : null,
-                    'message'  => $media_id > 0 ? 'Featured image set.' : 'Featured image removed.',
+                    'post_id'   => $post_id,
+                    'media_id'  => $media_id,
+                    'url'       => $media_id > 0 ? wp_get_attachment_url($media_id) : null,
+                    'alt_text'  => $alt_written,
+                    'message'   => $media_id > 0 ? 'Featured image set.' : 'Featured image removed.',
                 ];
 
             case 'wp_update_media':
@@ -3367,6 +3316,10 @@ class Server {
                     ! empty( $meta_diff['silent_modifies'] ) ? ', WP modified value' : '',
                     $undo_envelope !== null ? ', undo available' : ' (undo not available: value too large)'
                 );
+                // Bridge meta-only write to save_post so page-cache invalidation
+                // and SEO indexable rebuilders (which subscribe to save_post,
+                // not updated_post_meta) pick up the change.
+                \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
                 return \Royal_MCP\MCP\Support\Envelope::success(
                     $meta_summary,
                     $meta_struct,
@@ -3450,6 +3403,7 @@ class Server {
                     (int) $add_meta_id,
                     $add_modified_by_wp !== null ? ', WP modified value' : ''
                 );
+                \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
                 return \Royal_MCP\MCP\Support\Envelope::success(
                     $add_summary,
                     $add_struct,
@@ -3464,6 +3418,7 @@ class Server {
                 }
                 $result = delete_post_meta($post_id, \Royal_MCP\MCP\Support\SafeText::field($args['key']));
                 if (!$result) throw new \Exception('Failed to delete post meta');
+                \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
                 return ['message' => 'Post meta deleted successfully'];
 
             // ==================== SITE & SEARCH ====================
@@ -3480,13 +3435,8 @@ class Server {
                     'wp_version' => get_bloginfo('version'),
                 ];
 
-            // one-shot site diagnostic. Collapses the WP+PHP+MySQL+plugins+theme
-                // discovery flurry (previously 3-5 separate tool calls at conversation start)
-                // into a single read. Distinct from wp_get_site_info which is user-visible
-                // metadata (name/description/URL); this is operator-visible environment.
-            // 1.4.37 Candidate 1 — connection health probe. Any authenticated caller.
-            // Every field is self-attributable (my auth method, my session, my token TTL),
-            // no cap check needed — reaching execute_tool already required valid auth.
+            // One-shot operator-visible environment diagnostic (WP + PHP + MySQL + plugins + theme).
+            // Connection-health block below is self-attributable — no cap check required.
             case 'royal_mcp_connection_health':
                 global $wp_version;
                 // builders block lets an agent plan multi-step edits without probing.
@@ -3669,10 +3619,7 @@ class Server {
                     'lines'          => array_values(array_map([$this, 'redact_log_line'], $tail)),
                 ];
 
-            // enumerate scheduled cron events. Stuck cron is a routine WP
-            // diagnosis (missed_schedule reports on WP core, unfired hooks on plugin
-            // conflicts) and agents previously had no visibility. Manage_options gate
-            // because cron args occasionally carry token-like identifiers.
+            // Enumerate scheduled cron events. manage_options gate: cron args can carry token-like identifiers.
             case 'wp_get_cron_schedule':
                 if (!current_user_can('manage_options')) {
                     throw new \Exception('You do not have permission to read the cron schedule.');
@@ -4125,10 +4072,8 @@ class Server {
                     ];
                 }
 
-                // For each item, read existing values then send a full args
-                // payload with only menu-item-position overridden. Sending
-                // partial args here was the 1.4.17 destructive bug — WP merges
-                // with defaults, wiping title/url/parent on every item touched.
+                // MUST send full args (read existing first, override position only).
+                // Partial args to wp_update_nav_menu_item() wipe title/url/parent to defaults.
                 $position = 1;
                 $reordered = [];
                 $skipped = [];
@@ -7271,6 +7216,7 @@ class Server {
                     ! empty( $unsupported_fields ) ? sprintf( ', %d unsupported field(s) skipped', count( $unsupported_fields ) ) : '',
                     $seo_undo_envelope !== null ? ', undo available' : ''
                 );
+                \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
                 return \Royal_MCP\MCP\Support\Envelope::success(
                     $seo_summary,
                     $seo_struct,
@@ -7589,25 +7535,24 @@ class Server {
                 if ( 'wp_publish_and_promote' === $name ) {
                     return ComposersIntegration::execute_tool( $name, $args );
                 }
+                if ( strpos( $name, 'yoast_' ) === 0 ) {
+                    return YoastIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'updraftplus_' ) === 0 ) {
+                    return UpdraftIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'wpforms_' ) === 0 ) {
+                    return WPFormsIntegration::execute_tool( $name, $args );
+                }
                 throw new \Exception('Unknown tool: ' . esc_html($name));
         }
     }
 
     /**
-     * Build menu-item update args that preserve existing values for any field
-     * not in $overrides. Without this read-merge-write pattern, callers passing
-     * partial args to wp_update_nav_menu_item() silently zero title/url/parent
-     * on the existing item — a destructive class of bug where a well-intentioned
-     * partial update erases fields the caller never touched.
+     * Build menu-item update args, read-merge-write to preserve fields not in $overrides.
      *
-     * Returns an array suitable for wp_update_nav_menu_item(), or WP_Error if
-     * the item doesn't exist, the merge would still destroy a non-empty
-     * existing field, or the caller explicitly passed empty for a destructive
-     * field that's currently non-empty.
-     *
-     * @param int   $item_id   Menu item post ID.
-     * @param array $overrides Caller-supplied fields keyed by wp_update_nav_menu_item arg name (e.g. 'menu-item-title').
-     * @return array|\WP_Error
+     * wp_update_nav_menu_item() zeroes any missing field. Returns WP_Error if the item
+     * doesn't exist or the merge would destroy an existing non-empty destructive field.
      */
     private function build_safe_menu_item_args($item_id, $overrides) {
         $post = get_post($item_id);
@@ -7688,6 +7633,7 @@ class Server {
     private function apply_featured_media($post_id, $media_id) {
         if ($media_id <= 0) {
             delete_post_thumbnail($post_id);
+            \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
             return;
         }
         $attachment = get_post($media_id);
@@ -7696,6 +7642,7 @@ class Server {
         }
         $result = set_post_thumbnail($post_id, $media_id);
         if (!$result) throw new \Exception('Failed to set featured image.');
+        \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
     }
 
     /**
@@ -8172,11 +8119,8 @@ class Server {
         // Delegate remaining pattern check to the unified sensitive-key
         // helper so read and write denylists stay in lockstep. Any key
         // the read path redacts, the write path rejects — single source
-        // of truth. Prior in-line patterns (auth_key, license_key, etc.)
-        // are all subsumed by is_sensitive_key's needle list + generic
-        // suffix regex, plus the generic regex catches new variants
-        // (cdn-cloudflare_key, stripe_public_key, mailserver_pass) that
-        // the old in-line list missed.
+        // of truth. The generic suffix regex catches variants like
+        // cdn-cloudflare_key, stripe_public_key, mailserver_pass.
         if ($this->is_sensitive_key($name)) return true;
 
         return false;

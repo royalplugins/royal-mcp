@@ -14,13 +14,7 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
     <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
 
     <?php
-    /**
-     * Cross-link card to Royal AI Firewall — first-party companion plugin that
-     * captures HTTP-layer AI bot traffic (GPTBot, ClaudeBot, PerplexityBot, etc.)
-     * alongside MCP tool calls. Two states: swap to a deep-link when RAIF is
-     * detected, otherwise show a wp.org install pointer. Not dismissable in v1
-     * (contextual + only shown on this page — see project_royal_mcp_1_4_33_backlog.md).
-     */
+    // Royal AI Firewall cross-link — deep-link if active, wp.org install pointer otherwise.
     $royal_mcp_raif_active = defined('ROYAL_AI_FIREWALL_VERSION');
     ?>
     <div class="royal-mcp-raif-cta" style="background:#fff;border:1px solid #dcdcde;border-left:4px solid #C9A227;border-radius:6px;padding:1rem 1.25rem;margin:1rem 0 1.5rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;box-shadow:0 1px 2px rgba(0,0,0,0.04)">

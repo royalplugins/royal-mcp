@@ -1,0 +1,594 @@
+/**
+ * Royal MCP — Help page styles.
+ *
+ * Loaded only on the Help submenu (Help_Page::enqueue_assets guards on hook
+ * suffix). Uses WP-admin-native color tokens where possible, adds a gold
+ * accent for Royal brand consistency without leaving admin conventions.
+ */
+
+/* ==========================================================================
+   Container + typography
+   ========================================================================== */
+
+.wrap.royal-mcp-help {
+	max-width: 960px;
+	margin: 20px auto 40px;
+}
+
+.royal-mcp-help-title {
+	font-size: 24px;
+	font-weight: 500;
+	margin: 0 0 20px;
+	color: #1d2327;
+}
+
+.royal-mcp-help-body {
+	margin-top: 0;
+}
+
+/* ==========================================================================
+   Tab navigation — enhances WP core .nav-tab-wrapper
+   ========================================================================== */
+
+.royal-mcp-help-tabs.nav-tab-wrapper {
+	border-bottom: 1px solid #c3c4c7;
+	margin: 0 0 24px;
+	padding: 0;
+}
+
+.royal-mcp-help-tabs .nav-tab {
+	font-size: 14px;
+	font-weight: 500;
+	padding: 10px 16px;
+	margin-left: 0;
+	margin-right: 4px;
+	border-radius: 4px 4px 0 0;
+	transition: color 0.15s, border-color 0.15s;
+}
+
+.royal-mcp-help-tabs .nav-tab-active,
+.royal-mcp-help-tabs .nav-tab-active:hover,
+.royal-mcp-help-tabs .nav-tab-active:focus {
+	color: #1d2327;
+	border-bottom-color: #f0f0f1;
+	background: #f0f0f1;
+}
+
+/* ==========================================================================
+   Section container (card)
+   ========================================================================== */
+
+.royal-mcp-help-section {
+	background: #fff;
+	border: 1px solid #dcdcde;
+	border-radius: 8px;
+	padding: 24px 28px;
+	margin-bottom: 20px;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.royal-mcp-help-section h3 {
+	margin: 0 0 12px;
+	font-size: 17px;
+	font-weight: 600;
+	color: #1d2327;
+	line-height: 1.4;
+}
+
+.royal-mcp-help-section > p {
+	margin: 0 0 12px;
+	line-height: 1.6;
+	color: #2c2c2c;
+}
+
+.royal-mcp-help-section > p:last-child {
+	margin-bottom: 0;
+}
+
+.royal-mcp-help-section .description {
+	color: #50575e;
+	font-size: 13px;
+	font-style: normal;
+	line-height: 1.5;
+}
+
+/* Section with icon in the header */
+.royal-mcp-help-section-header {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin: 0 0 16px;
+	padding-bottom: 14px;
+	border-bottom: 1px solid #f0f0f1;
+}
+
+.royal-mcp-help-section-header h3 {
+	margin: 0;
+}
+
+.royal-mcp-help-section-icon {
+	flex-shrink: 0;
+	width: 32px;
+	height: 32px;
+}
+
+/* ==========================================================================
+   Hero (Overview tab)
+   ========================================================================== */
+
+.royal-mcp-help-hero {
+	background: #fff;
+	border: 1px solid #dcdcde;
+	border-left: 4px solid #C9A227;
+	border-radius: 8px;
+	padding: 28px 32px;
+	margin-bottom: 24px;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.royal-mcp-help-hero h2 {
+	margin: 0 0 12px;
+	font-size: 24px;
+	font-weight: 600;
+	color: #1d2327;
+	line-height: 1.3;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.royal-mcp-help-hero-icon {
+	width: 26px;
+	height: 26px;
+	color: #C9A227;
+	flex-shrink: 0;
+}
+
+.royal-mcp-help-hero-lede {
+	font-size: 15px;
+	color: #50575e;
+	line-height: 1.65;
+	max-width: 720px;
+	margin: 0;
+}
+
+/* Per-tab intro */
+.royal-mcp-help-tab-intro {
+	padding: 8px 0 16px;
+}
+
+.royal-mcp-help-tab-intro h2 {
+	margin: 0 0 10px;
+	font-size: 22px;
+	font-weight: 500;
+	color: #1d2327;
+}
+
+.royal-mcp-help-tab-intro p {
+	margin: 0 0 8px;
+	line-height: 1.6;
+	color: #2c2c2c;
+}
+
+.royal-mcp-help-tab-intro p.description {
+	font-size: 13px;
+	color: #50575e;
+}
+
+/* ==========================================================================
+   Steps + sublists
+   ========================================================================== */
+
+.royal-mcp-help-steps {
+	padding-left: 24px;
+	margin: 12px 0;
+}
+
+.royal-mcp-help-steps > li {
+	margin-bottom: 14px;
+	line-height: 1.6;
+	color: #2c2c2c;
+}
+
+.royal-mcp-help-steps > li:last-child {
+	margin-bottom: 0;
+}
+
+.royal-mcp-help-steps strong {
+	display: block;
+	color: #1d2327;
+	margin-bottom: 4px;
+}
+
+.royal-mcp-help-sublist {
+	list-style: disc;
+	padding-left: 22px;
+	margin: 8px 0 4px;
+}
+
+.royal-mcp-help-sublist li {
+	margin-bottom: 8px;
+	line-height: 1.55;
+	color: #2c2c2c;
+}
+
+/* ==========================================================================
+   Code blocks
+   ========================================================================== */
+
+/* Inline endpoint URL — small, subtle */
+.royal-mcp-help-endpoint {
+	display: inline-block;
+	background: #f0f0f1;
+	color: #2c2c2c;
+	padding: 4px 8px;
+	border-radius: 3px;
+	font-family: Consolas, Monaco, "Courier New", monospace;
+	font-size: 12px;
+	line-height: 1.4;
+	word-break: break-all;
+	margin: 4px 0;
+	border: 1px solid #dcdcde;
+}
+
+/* Multi-line copy-ready code — dark themed */
+.royal-mcp-help-code {
+	background: #1e1e1e;
+	color: #e4e4e7;
+	padding: 14px 18px;
+	border-radius: 6px;
+	overflow-x: auto;
+	font-family: Consolas, Monaco, "Courier New", monospace;
+	font-size: 12.5px;
+	line-height: 1.55;
+	margin: 12px 0;
+	white-space: pre;
+	border: 1px solid #333;
+}
+
+.royal-mcp-help-code code {
+	background: none;
+	color: inherit;
+	padding: 0;
+	font-size: inherit;
+	font-family: inherit;
+}
+
+/* ==========================================================================
+   Client picker grid (Overview tab)
+   ========================================================================== */
+
+.royal-mcp-help-client-grid {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 16px;
+	margin-top: 20px;
+}
+
+.royal-mcp-help-client-card {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	text-align: center;
+	padding: 24px 20px;
+	background: #fafbfc;
+	border: 1px solid #dcdcde;
+	border-radius: 8px;
+	text-decoration: none;
+	color: inherit;
+	transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.royal-mcp-help-client-card:hover,
+.royal-mcp-help-client-card:focus {
+	background: #fff;
+	border-color: #C9A227;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+	transform: translateY(-2px);
+	text-decoration: none;
+	color: inherit;
+}
+
+.royal-mcp-help-client-icon {
+	margin-bottom: 14px;
+	line-height: 1;
+}
+
+.royal-mcp-help-client-icon img {
+	width: 48px;
+	height: 48px;
+	display: block;
+}
+
+.royal-mcp-help-client-icon-multi {
+	display: flex;
+	gap: 6px;
+	margin-bottom: 14px;
+}
+
+.royal-mcp-help-client-icon-multi img {
+	width: 32px;
+	height: 32px;
+}
+
+.royal-mcp-help-client-card h4 {
+	margin: 0 0 8px;
+	font-size: 16px;
+	font-weight: 600;
+	color: #1d2327;
+}
+
+.royal-mcp-help-client-card p {
+	margin: 0 0 14px;
+	color: #50575e;
+	font-size: 13px;
+	line-height: 1.5;
+	flex-grow: 1;
+}
+
+.royal-mcp-help-client-cta {
+	color: #B8940F;
+	font-weight: 500;
+	font-size: 13px;
+}
+
+/* ==========================================================================
+   Callouts (tips + warnings)
+   ========================================================================== */
+
+.royal-mcp-help-callout {
+	background: #f0f6fc;
+	border-left: 4px solid #2271b1;
+	padding: 12px 16px;
+	margin: 14px 0;
+	border-radius: 0 4px 4px 0;
+	line-height: 1.55;
+	font-size: 13.5px;
+	color: #2c2c2c;
+}
+
+.royal-mcp-help-callout strong {
+	color: #1d2327;
+	display: inline;
+	margin-right: 4px;
+}
+
+.royal-mcp-help-callout-warning {
+	background: #fcf9e8;
+	border-left-color: #dba617;
+}
+
+.royal-mcp-help-callout a {
+	color: #2271b1;
+}
+
+/* ==========================================================================
+   Full-guide link
+   ========================================================================== */
+
+.royal-mcp-help-guide-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: #B8940F;
+	font-weight: 500;
+	text-decoration: none;
+	font-size: 13.5px;
+}
+
+.royal-mcp-help-guide-link:hover,
+.royal-mcp-help-guide-link:focus {
+	color: #9A7B0C;
+	text-decoration: underline;
+}
+
+.royal-mcp-help-section-cta {
+	margin-top: 16px;
+	padding-top: 14px;
+	border-top: 1px solid #f0f0f1;
+	font-size: 13.5px;
+}
+
+/* ==========================================================================
+   "Nextstep" footer per tab (points at Troubleshooting/Support)
+   ========================================================================== */
+
+.royal-mcp-help-nextstep {
+	background: #f6f7f7;
+	border: 1px solid #dcdcde;
+	border-radius: 6px;
+	padding: 14px 18px;
+	margin-top: 20px;
+	color: #50575e;
+	font-size: 13.5px;
+	box-shadow: none;
+}
+
+.royal-mcp-help-nextstep p {
+	margin: 0;
+	line-height: 1.55;
+}
+
+/* ==========================================================================
+   Troubleshooting — quick fix ladder
+   ========================================================================== */
+
+.royal-mcp-help-quickfix {
+	border-left: 4px solid #2271b1;
+	background: #fdfdfe;
+}
+
+.royal-mcp-help-ladder {
+	list-style: none;
+	padding: 0;
+	margin: 16px 0 0;
+	counter-reset: rmcp-rung;
+}
+
+.royal-mcp-help-ladder-rung {
+	counter-increment: rmcp-rung;
+	position: relative;
+	padding: 18px 20px 18px 72px;
+	background: #f6f7f7;
+	border: 1px solid #e5e7eb;
+	border-radius: 6px;
+	margin-bottom: 12px;
+}
+
+.royal-mcp-help-ladder-rung::before {
+	content: counter(rmcp-rung);
+	position: absolute;
+	left: 18px;
+	top: 18px;
+	width: 36px;
+	height: 36px;
+	background: #2271b1;
+	color: #fff;
+	border-radius: 50%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-weight: 600;
+	font-size: 16px;
+	line-height: 1;
+}
+
+.royal-mcp-help-ladder-rung:last-child {
+	margin-bottom: 0;
+}
+
+.royal-mcp-help-ladder-rung h4 {
+	margin: 0 0 8px;
+	font-size: 15px;
+	font-weight: 600;
+	color: #1d2327;
+	line-height: 1.4;
+}
+
+.royal-mcp-help-ladder-rung p {
+	margin: 0 0 8px;
+	line-height: 1.55;
+	color: #2c2c2c;
+	font-size: 13.5px;
+}
+
+.royal-mcp-help-ladder-rung p:last-child {
+	margin-bottom: 0;
+}
+
+.royal-mcp-help-ladder-meta {
+	color: #50575e;
+	font-size: 12.5px;
+}
+
+.royal-mcp-help-substeps {
+	list-style: disc;
+	padding-left: 22px;
+	margin: 8px 0;
+}
+
+.royal-mcp-help-substeps li {
+	margin-bottom: 6px;
+	line-height: 1.5;
+	font-size: 13.5px;
+	color: #2c2c2c;
+}
+
+/* ==========================================================================
+   Troubleshooting — 4-step diagnostic
+   ========================================================================== */
+
+.royal-mcp-help-diagnostic .royal-mcp-help-steps {
+	margin-top: 12px;
+}
+
+/* ==========================================================================
+   Troubleshooting — issue cards
+   ========================================================================== */
+
+.royal-mcp-help-issues > h3 {
+	margin-bottom: 16px;
+}
+
+.royal-mcp-help-issue-card {
+	background: #fafbfc;
+	border: 1px solid #dcdcde;
+	border-radius: 6px;
+	padding: 16px 20px;
+	margin-bottom: 12px;
+}
+
+.royal-mcp-help-issue-card:last-child {
+	margin-bottom: 0;
+}
+
+.royal-mcp-help-issue-card h4 {
+	margin: 0 0 8px;
+	font-size: 14.5px;
+	font-weight: 600;
+	color: #1d2327;
+	line-height: 1.4;
+}
+
+.royal-mcp-help-issue-symptom {
+	color: #50575e;
+	font-size: 13px;
+	font-style: italic;
+	margin: 0 0 10px;
+	line-height: 1.5;
+}
+
+.royal-mcp-help-issue-card p {
+	margin: 0 0 8px;
+	line-height: 1.55;
+	color: #2c2c2c;
+	font-size: 13.5px;
+}
+
+.royal-mcp-help-issue-card p:last-child {
+	margin-bottom: 0;
+}
+
+.royal-mcp-help-issue-guide {
+	margin-top: 12px;
+	padding-top: 10px;
+	border-top: 1px solid #f0f0f1;
+}
+
+/* ==========================================================================
+   Support tab
+   ========================================================================== */
+
+.royal-mcp-help-support-card {
+	/* Uses .royal-mcp-help-section base */
+}
+
+.royal-mcp-help-support-card .button {
+	margin-top: 4px;
+}
+
+/* ==========================================================================
+   Responsive
+   ========================================================================== */
+
+@media screen and (max-width: 782px) {
+	.royal-mcp-help-client-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.royal-mcp-help-section {
+		padding: 18px 20px;
+	}
+
+	.royal-mcp-help-ladder-rung {
+		padding: 16px 16px 16px 62px;
+	}
+
+	.royal-mcp-help-ladder-rung::before {
+		left: 14px;
+		top: 16px;
+		width: 32px;
+		height: 32px;
+		font-size: 14px;
+	}
+}

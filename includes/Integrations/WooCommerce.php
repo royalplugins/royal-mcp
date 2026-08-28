@@ -26,9 +26,11 @@ class WooCommerce {
 	 * Get tool definitions for MCP tools/list response.
 	 */
 	public static function get_tools() {
-		if ( ! self::is_available() ) {
-			return [];
-		}
+		// Always register so tools appear in MCP tools/list regardless of the
+		// underlying plugin activation state. execute_tool gates at call time
+		// with a clean 'not active' throw. Prevents ghost-tools UX where
+		// activating a plugin post-MCP-connection requires the client to
+		// reconnect before the tools become discoverable.
 
 		return [
 			[
@@ -140,8 +142,8 @@ class WooCommerce {
 					'type'       => 'object',
 					'properties' => [
 						'customer_id'    => [ 'type' => 'integer', 'description' => 'Optional WP user ID for the customer. Omit to create a guest order.' ],
-						'billing'        => [ 'type' => 'object', 'description' => 'Billing address: first_name, last_name, address_1, address_2, city, state, postcode, country, email, phone.' ],
-						'shipping'       => [ 'type' => 'object', 'description' => 'Shipping address (same shape as billing, minus email/phone).' ],
+						'billing'        => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true, 'description' => 'Billing address: first_name, last_name, address_1, address_2, city, state, postcode, country, email, phone.' ],
+						'shipping'       => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true, 'description' => 'Shipping address (same shape as billing, minus email/phone).' ],
 						'line_items'     => [
 							'type'        => 'array',
 							'description' => 'Array of {product_id, quantity, variation_id?}. variation_id must belong to product_id.',
@@ -205,8 +207,8 @@ class WooCommerce {
 					'type'       => 'object',
 					'properties' => [
 						'order_id'      => [ 'type' => 'integer', 'description' => 'Order ID to update.' ],
-						'billing'       => [ 'type' => 'object', 'description' => 'Partial billing address — only provided keys are updated.' ],
-						'shipping'      => [ 'type' => 'object', 'description' => 'Partial shipping address — only provided keys are updated.' ],
+						'billing'       => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true, 'description' => 'Partial billing address — only provided keys are updated.' ],
+						'shipping'      => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true, 'description' => 'Partial shipping address — only provided keys are updated.' ],
 						'customer_note' => [ 'type' => 'string', 'description' => 'Replace customer-facing order note.' ],
 						'status'        => [ 'type' => 'string', 'description' => 'New order status.' ],
 						'meta_data'     => [
@@ -400,12 +402,12 @@ class WooCommerce {
 						'create'     => [
 							'type'        => 'array',
 							'description' => 'Variations to create (same fields as wc_create_variation minus product_id)',
-							'items'       => [ 'type' => 'object' ],
+							'items'       => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true ],
 						],
 						'update'     => [
 							'type'        => 'array',
 							'description' => 'Variations to update — each must include variation_id',
-							'items'       => [ 'type' => 'object' ],
+							'items'       => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true ],
 						],
 						'delete'     => [
 							'type'        => 'array',
