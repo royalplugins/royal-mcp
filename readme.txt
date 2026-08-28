@@ -10,11 +10,11 @@ License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Preview-On-WordPress-Playground: yes
 
-184 MCP tools. OAuth 2.0. Connect Claude, ChatGPT, Gemini, Cursor & any MCP agent to your WordPress site. 100% self-hosted.
+170+ MCP tools. OAuth 2.0. Connect Claude, ChatGPT, Gemini, Cursor & any MCP agent to your WordPress site. 100% self-hosted.
 
 == Description ==
 
-**The most complete WordPress MCP server — 184 tools, OAuth 2.0, and nothing leaves your site.**
+**The most complete WordPress MCP server — 170+ tools, OAuth 2.0, and nothing leaves your site.**
 
 Royal MCP gives Claude, ChatGPT, Google Gemini, Perplexity, DeepSeek, Mistral, and every other MCP-compatible AI structured access to your WordPress site: 85 WordPress core tools plus 99 integration tools that auto-load for WooCommerce, Elementor, Divi, Advanced Custom Fields, Yoast SEO, UpdraftPlus, WPForms, and more.
 
@@ -152,6 +152,10 @@ When John Godley's Redirection plugin is active, AI agents can manage 301 / 302 
 * List redirect groups
 
 **Also auto-detected:**
+
+* **Yoast SEO Integration (5 tools)** — read/write Yoast meta (raw + resolved), capture JSON-LD schema graph, list indexed internal links, list Premium redirects
+* **UpdraftPlus Integration (4 tools)** — list backups, read status, trigger async backups with entity filtering, read schedule
+* **WPForms Integration (4 tools)** — list forms, read form schema, (Pro) list submissions, (Pro) read single submission
 
 * **Royal AI Firewall Integration (6 tools)** — review AI bot traffic, dashboard stats, and set allow/block/challenge policies per bot signature
 * **GuardPress Integration (7 tools)** — review your security score, run vulnerability scans, inspect failed logins and blocked IPs
