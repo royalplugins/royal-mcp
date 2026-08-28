@@ -210,7 +210,7 @@ Full security architecture: [royalplugins.com/support/royal-mcp/](https://royalp
 - **Active maintenance** — releases roughly weekly. See [releases](https://github.com/royalplugins/royal-mcp/releases) for changelog.
 - **MCP spec compliance** — implements the [Streamable HTTP transport (2025-11-25)](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http).
 - **Issues** — [github.com/royalplugins/royal-mcp/issues](https://github.com/royalplugins/royal-mcp/issues). Customer-impact issues are typically acknowledged within 24h and triaged with version targets.
-- **Contributing** — PRs welcome. The plugin source is committed to both this repo and the wp.org SVN trunk; releases are coordinated through the wp.org review process.
+- **Source access** — This repo mirrors the plugin's wp.org SVN trunk for transparency. Report bugs and feature requests in [Issues](https://github.com/royalplugins/royal-mcp/issues). Releases ship through the wp.org review pipeline.
 
 ## Further reading
 
