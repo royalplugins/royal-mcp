@@ -7,7 +7,7 @@
 [![WordPress](https://img.shields.io/badge/WordPress-5.8+-21759B?style=flat-square&logo=wordpress)](https://wordpress.org/plugins/royal-mcp/)
 [![PHP](https://img.shields.io/badge/PHP-7.4+-777BB4?style=flat-square&logo=php)](https://www.php.net/)
 [![License](https://img.shields.io/badge/License-GPLv2-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-2.0.html)
-[![Version](https://img.shields.io/badge/Version-1.4.43-C9A227?style=flat-square)](https://wordpress.org/plugins/royal-mcp/)
+[![Version](https://img.shields.io/badge/Version-1.4.44-C9A227?style=flat-square)](https://wordpress.org/plugins/royal-mcp/)
 
 [Download on WordPress.org](https://wordpress.org/plugins/royal-mcp/) · [Documentation](https://royalplugins.com/support/royal-mcp/) · [Royal Plugins](https://royalplugins.com)
 
@@ -210,7 +210,7 @@ Full security architecture: [royalplugins.com/support/royal-mcp/](https://royalp
 - **Active maintenance** — releases roughly weekly. See [releases](https://github.com/royalplugins/royal-mcp/releases) for changelog.
 - **MCP spec compliance** — implements the [Streamable HTTP transport (2025-11-25)](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http).
 - **Issues** — [github.com/royalplugins/royal-mcp/issues](https://github.com/royalplugins/royal-mcp/issues). Customer-impact issues are typically acknowledged within 24h and triaged with version targets.
-- **Contributing** — PRs welcome. The plugin source is committed to both this repo and the wp.org SVN trunk; releases are coordinated through the wp.org review process.
+- **Source access** — This repo mirrors the plugin's wp.org SVN trunk for transparency. Report bugs and feature requests in [Issues](https://github.com/royalplugins/royal-mcp/issues). Releases ship through the wp.org review pipeline.
 
 ## Further reading
 
