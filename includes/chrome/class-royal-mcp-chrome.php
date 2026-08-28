@@ -130,9 +130,10 @@ class Royal_MCP_Chrome {
         // codebase vendored) override the wordmark + external links so its
         // admin chrome carries the paid-tier branding instead of the free-
         // plugin defaults.
-        $wordmark    = apply_filters( 'royal_mcp_chrome_wordmark', __( 'Royal MCP', 'royal-mcp' ) );
-        $docs_url    = apply_filters( 'royal_mcp_chrome_docs_url', 'https://royalplugins.com/support/royal-mcp/' );
-        $support_url = apply_filters( 'royal_mcp_chrome_support_url', 'https://wordpress.org/support/plugin/royal-mcp/' );
+        $wordmark       = apply_filters( 'royal_mcp_chrome_wordmark', __( 'Royal MCP', 'royal-mcp' ) );
+        $docs_url       = apply_filters( 'royal_mcp_chrome_docs_url', 'https://royalplugins.com/support/royal-mcp/' );
+        $support_url    = apply_filters( 'royal_mcp_chrome_support_url', 'https://wordpress.org/support/plugin/royal-mcp/' );
+        $newsletter_url = apply_filters( 'royal_mcp_chrome_newsletter_url', 'https://royalplugins.com/newsletter' );
         ?>
         <div class="royal-mcp-chrome-header">
             <div class="royal-mcp-chrome-header-brand">
@@ -148,6 +149,52 @@ class Royal_MCP_Chrome {
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                     <?php esc_html_e( 'Support', 'royal-mcp' ); ?>
                 </a>
+                <a href="<?php echo esc_url( $newsletter_url ); ?>" class="royal-mcp-chrome-header-btn" target="_blank" rel="noopener noreferrer">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><polyline points="3,7 12,13 21,7"/></svg>
+                    <?php esc_html_e( 'Newsletter', 'royal-mcp' ); ?>
+                </a>
+            </div>
+        </div>
+        <?php
+        $this->render_upgrade_bar();
+    }
+
+    /**
+     * Thin cross-sell bar rendered directly under the chrome header on every
+     * Royal MCP admin page. Not dismissible — the bar only appears on our
+     * own admin surfaces and stays subtle enough not to warrant an X.
+     *
+     * Skipped when the plugin is vendored inside Pro (no need to upsell to
+     * a Pro customer) or when Pro hasn't launched yet (upsell would 404 the
+     * user to a not-yet-live product page).
+     */
+    public function render_upgrade_bar(): void {
+        if ( defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) {
+            return;
+        }
+        if ( ! $this->is_pro_launched() ) {
+            return;
+        }
+
+        $cta_url = $this->pro_url_for(
+            [ 'content' => 'chrome_upgrade_bar' ],
+            'royal_mcp_upgrade_bar'
+        );
+        ?>
+        <div class="royal-mcp-chrome-upgrade-bar" role="region" aria-label="<?php esc_attr_e( 'Upgrade notice', 'royal-mcp' ); ?>">
+            <div class="royal-mcp-chrome-upgrade-bar-inner">
+                <span class="royal-mcp-chrome-upgrade-bar-text">
+                    <?php
+                    printf(
+                        wp_kses(
+                            /* translators: %s: link to Royal MCP Pro upgrade */
+                            __( "You're using Royal MCP Free. Upgrade to %s for 30-50%% off — bulk ops, scoped endpoints, 90-day audit log.", 'royal-mcp' ),
+                            [ 'a' => [ 'href' => [], 'class' => [], 'target' => [], 'rel' => [] ] ]
+                        ),
+                        '<a class="royal-mcp-chrome-upgrade-bar-cta" href="' . esc_url( $cta_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Royal MCP Pro', 'royal-mcp' ) . '</a>'
+                    );
+                    ?>
+                </span>
             </div>
         </div>
         <?php
@@ -253,7 +300,7 @@ class Royal_MCP_Chrome {
     }
 
     /* ==================================================================
-     *  5. Royal MCP Pro Founding Members — Chrome Pack card (P5a)
+     *  5. Royal MCP Pro Founding Members — Chrome Pack card
      * ================================================================ */
 
     /**
@@ -286,7 +333,7 @@ class Royal_MCP_Chrome {
     }
 
     /* ==================================================================
-     *  6. Founding Members admin notice (P5b)
+     *  6. Founding Members admin notice
      * ================================================================ */
 
     /**
@@ -331,7 +378,7 @@ class Royal_MCP_Chrome {
             </p>
             <p style="margin: 0 0 12px;">
                 <?php if ( $post_launch ) : ?>
-                    <?php esc_html_e( '220+ MCP tools. The Solo Dev & Agency Workflow — one chat runs every client site. Scoped endpoints per project, bulk ops across whole catalogs, and a 90-day audit log so you can show clients exactly what changed.', 'royal-mcp' ); ?>
+                    <?php esc_html_e( '250+ MCP tools. The Solo Dev & Agency Workflow — one chat runs every client site. Scoped endpoints per project, bulk ops across whole catalogs, and a 90-day audit log so you can show clients exactly what changed. Get 30-50% off normal price.', 'royal-mcp' ); ?>
                 <?php else : ?>
                     <?php esc_html_e( 'Lock in $79/yr LIFETIME pricing (going to $149/yr after launch). Limited to 100 spots. No obligation until launch day.', 'royal-mcp' ); ?>
                 <?php endif; ?>
@@ -339,7 +386,7 @@ class Royal_MCP_Chrome {
             <p style="margin: 0;">
                 <a href="<?php echo esc_url( $cta_url ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
                     <?php if ( $post_launch ) : ?>
-                        <?php esc_html_e( 'See Pro workflows &rarr;', 'royal-mcp' ); ?>
+                        <?php esc_html_e( 'Check Out Pro &rarr;', 'royal-mcp' ); ?>
                     <?php else : ?>
                         <?php esc_html_e( 'Reserve My Spot &rarr;', 'royal-mcp' ); ?>
                     <?php endif; ?>

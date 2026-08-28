@@ -519,11 +519,40 @@ class Divi {
 	 * first so unprivileged callers can't fingerprint whether Divi is
 	 * present on the site — matches sibling integration pattern.
 	 */
+	/**
+	 * Divi builder presence check. Divi 4 defines ET_BUILDER_VERSION; Divi 5
+	 * defines ET_CORE_VERSION and exposes et_builder_d5_enabled(). Either
+	 * signals Divi is loaded.
+	 */
+	public static function is_available() {
+		return defined( 'ET_BUILDER_VERSION' )
+			|| defined( 'ET_CORE_VERSION' )
+			|| function_exists( 'et_builder_d5_enabled' )
+			|| class_exists( 'ET_Builder_Element' );
+	}
+
 	public static function execute_tool( $name, $args ) {
+		// Cap check first — matches sibling integration pattern so callers
+		// can't fingerprint whether Divi is present via error-message differences.
 		if ( ! current_user_can( 'edit_posts' ) ) {
 			return Envelope::error(
 				'insufficient_caps',
 				'You do not have permission to use Divi tools.'
+			);
+		}
+
+		// divi_validate_layout has TWO paths — Path A (post_id) needs the
+		// plugin runtime to resolve the post's stored content, Path B
+		// (raw_content + explicit format) is pure string parsing against
+		// the Divi grammar and works on sites where Divi is not installed
+		// (legitimate cross-site validation workflow: generate markup on
+		// one site, validate before writing to another). The tool's own
+		// handler applies the plugin-presence check inline on Path A only.
+		$string_only_tools = [ 'divi_validate_layout' ];
+		if ( ! in_array( $name, $string_only_tools, true ) && ! self::is_available() ) {
+			return Envelope::error(
+				'divi_not_active',
+				'Divi is not active'
 			);
 		}
 
@@ -737,6 +766,16 @@ class Divi {
 		$format  = 'auto';
 
 		if ( $has_post_id ) {
+			// Path A resolves stored post_content and calls detect_format
+			// which reads Divi builder-version postmeta — needs the plugin
+			// runtime. Path B (raw_content) skips this branch entirely and
+			// runs pure grammar validation with no plugin dependency.
+			if ( ! self::is_available() ) {
+				return Envelope::error(
+					'divi_not_active',
+					'Divi is not active'
+				);
+			}
 			$post_id = (int) $args['post_id'];
 			if ( $post_id <= 0 ) {
 				return Envelope::error(
@@ -1581,11 +1620,7 @@ class Divi {
 		self::assert_divi_meta_flags( $post_id, $format );
 		self::purge_divi_static_css( $post_id );
 
-		// P5b.2 backslash escape-sequence detection. Warn (do not refuse)
-		// when any replace value contains \u or \\ sequences that may be
-		// silently mangled somewhere in the MCP → REST → write pipeline.
-		// The warning is informational — the write already happened; the
-		// agent can verify rendered output and retry if needed.
+		// Warn (don't refuse) on \u or \\ in replace values — may not survive to storage as literal backslashes.
 		$warnings = [];
 		foreach ( $pairs as $pair ) {
 			if ( false !== strpos( $pair['replace'], '\\u' ) || false !== strpos( $pair['replace'], '\\\\' ) ) {

@@ -509,3 +509,54 @@
 #adminmenu .wp-submenu a:focus .royal-mcp-upgrade-menu-text {
     color: #16a34a;
 }
+
+/* ======================================================================
+   Upgrade to Pro — thin cross-sell bar (under chrome header)
+   Edge-to-edge; not dismissible — small + only on our own admin pages.
+   ====================================================================== */
+.royal-mcp-chrome-upgrade-bar {
+    background: #f6f7f7;
+    border-top: 2px solid #C9A227;
+    border-bottom: 1px solid #dcdcde;
+    /* Negative left margin cancels the 20px left padding WP core applies
+       to #wpbody-content so the bar reaches the sidebar edge (screen edge
+       when the admin sidebar is collapsed). */
+    margin: 0 -20px 12px -20px;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1.4;
+    color: #2c2c2c;
+}
+.royal-mcp-chrome-upgrade-bar-inner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 20px;
+    text-align: center;
+}
+.royal-mcp-chrome-upgrade-bar-text {
+    text-align: center;
+}
+.royal-mcp-chrome-upgrade-bar-cta {
+    color: #B8940F;
+    font-weight: 600;
+    text-decoration: none;
+    border-bottom: 1px dotted #C9A227;
+}
+.royal-mcp-chrome-upgrade-bar-cta:hover,
+.royal-mcp-chrome-upgrade-bar-cta:focus {
+    color: #9A7B0C;
+    border-bottom-style: solid;
+}
+@media screen and (max-width: 782px) {
+    .royal-mcp-chrome-upgrade-bar {
+        margin-left: -12px;
+        margin-right: -12px;
+    }
+    .royal-mcp-chrome-upgrade-bar-inner {
+        padding: 10px 12px;
+    }
+    .royal-mcp-chrome-upgrade-bar-text {
+        font-size: 12.5px;
+    }
+}

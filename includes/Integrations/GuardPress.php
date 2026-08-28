@@ -18,9 +18,11 @@ class GuardPress {
 	}
 
 	public static function get_tools() {
-		if ( ! self::is_available() ) {
-			return [];
-		}
+		// Always register so tools appear in MCP tools/list regardless of the
+		// underlying plugin activation state. execute_tool gates at call time
+		// with a clean 'not active' throw. Prevents ghost-tools UX where
+		// activating a plugin post-MCP-connection requires the client to
+		// reconnect before the tools become discoverable.
 
 		return [
 			[

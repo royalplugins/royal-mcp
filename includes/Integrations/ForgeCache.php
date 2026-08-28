@@ -24,9 +24,11 @@ class ForgeCache {
 	 * Get tool definitions for MCP tools/list response.
 	 */
 	public static function get_tools() {
-		if ( ! self::is_available() ) {
-			return [];
-		}
+		// Always register so tools appear in MCP tools/list regardless of the
+		// underlying plugin activation state. execute_tool gates at call time
+		// with a clean 'not active' throw. Prevents ghost-tools UX where
+		// activating a plugin post-MCP-connection requires the client to
+		// reconnect before the tools become discoverable.
 
 		return [
 			[
@@ -47,11 +49,11 @@ class ForgeCache {
 			],
 			[
 				'name'        => 'fc_purge_url',
-				'description' => 'Purge the ForgeCache entry for a single URL on this site. Resolves the URL to a WordPress post or page and clears its cached HTML.',
+				'description' => 'Purge the ForgeCache entry for a single URL on this site. Resolves the URL to a post first (uses ForgeCache\'s post-scoped invalidator, also clears the homepage + archive cache for that post type). Falls back to a direct cache-file hash + delete for URLs that do not resolve to a single post — homepage on posts-front-page installs, blog index, category / tag / author / date archives, paginated /page/N/ URLs, custom rewrites, search result pages. Response identifies which path was used.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
-						'url' => [ 'type' => 'string', 'description' => 'Full URL on this site (e.g. https://yoursite.com/about/)' ],
+						'url' => [ 'type' => 'string', 'description' => 'Full URL on this site (e.g. https://yoursite.com/about/ or https://yoursite.com/ for homepage)' ],
 					],
 					'required'   => [ 'url' ],
 				],
@@ -113,24 +115,75 @@ class ForgeCache {
 					throw new \Exception( 'url is required' );
 				}
 				$post_id = url_to_postid( $url );
-				if ( ! $post_id ) {
-					throw new \Exception( 'Could not resolve URL to a WordPress post or page on this site: ' . esc_html( $url ) );
+
+				// Path A — URL resolves to a real post. Use ForgeCache's own
+				// invalidator so the homepage + archive purges chain fires.
+				if ( $post_id ) {
+					if ( ! current_user_can( 'edit_post', $post_id ) ) {
+						throw new \Exception( 'You do not have permission to purge the cache for this post.' );
+					}
+					$cache = \ForgeCache_Cache::instance();
+					if ( method_exists( $cache, 'clear_post_cache' ) ) {
+						$cache->clear_post_cache( $post_id );
+					}
+					return [
+						'success'    => true,
+						'url'        => $url,
+						'post_id'    => $post_id,
+						'path'       => 'post_scoped',
+						'message'    => 'Cache cleared for post ID ' . $post_id,
+					];
 				}
-				// purging the cache for a specific post requires
-				// edit_post on the target (so a Subscriber can't purge an
-				// admin's draft cache).
-				if ( ! current_user_can( 'edit_post', $post_id ) ) {
-					throw new \Exception( 'You do not have permission to purge the cache for this post.' );
+
+				// Path B — URL does not resolve to a single post (homepage
+				// on posts-front-page installs, blog index, archives,
+				// paginated pages, custom rewrites). Replicate ForgeCache's
+				// own cache-key hash and delete the file directly.
+				// Sitewide invalidation is admin-tier; without cap the
+				// caller could scan arbitrary URLs by probing purge success.
+				if ( ! current_user_can( 'manage_options' ) ) {
+					throw new \Exception( 'You do not have permission to purge non-post URLs.' );
 				}
-				$cache = \ForgeCache_Cache::instance();
-				if ( method_exists( $cache, 'clear_post_cache' ) ) {
-					$cache->clear_post_cache( $post_id );
+
+				if ( ! defined( 'FORGECACHE_CACHE_DIR' ) ) {
+					throw new \Exception( 'ForgeCache cache directory constant is not defined.' );
 				}
+
+				$scheme    = wp_parse_url( home_url(), PHP_URL_SCHEME );
+				$home_host = wp_parse_url( home_url(), PHP_URL_HOST );
+				$scheme    = is_string( $scheme )    ? $scheme    : 'http';
+				$host      = is_string( $home_host ) ? $home_host : '';
+
+				// Match ForgeCache's own logic: relative URL passed to
+				// get_cache_file_path (strip home_url prefix, then hash
+				// scheme + host + relative).
+				$home_url_full = home_url();
+				$relative_url  = ( $home_url_full && strpos( $url, $home_url_full ) === 0 )
+					? substr( $url, strlen( $home_url_full ) )
+					: ( wp_parse_url( $url, PHP_URL_PATH ) ?: '/' );
+				if ( $relative_url === '' ) {
+					$relative_url = '/';
+				}
+
+				$hash       = md5( $scheme . '://' . $host . $relative_url );
+				$cache_file = FORGECACHE_CACHE_DIR . 'pages/' . $hash . '.html';
+
+				$found   = file_exists( $cache_file );
+				$deleted = false;
+				if ( $found ) {
+					$deleted = (bool) wp_delete_file( $cache_file );
+				}
+
 				return [
-					'success' => true,
-					'url'     => $url,
-					'post_id' => $post_id,
-					'message' => 'Cache cleared for post ID ' . $post_id,
+					'success'      => true,
+					'url'          => $url,
+					'post_id'      => 0,
+					'path'         => 'hash_direct',
+					'cache_hit'    => $found,
+					'file_deleted' => $deleted,
+					'message'      => $found
+						? ( $deleted ? 'Cache file deleted for non-post URL.' : 'Cache file found but delete failed (check filesystem permissions).' )
+						: 'No cache file present for this URL — nothing to purge.',
 				];
 
 			default:

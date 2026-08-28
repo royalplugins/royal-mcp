@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & Gemini
+ * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.4.43
+ * Version: 1.4.44
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -19,12 +19,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-// If Royal MCP Pro is already active on this site, its bundled Free
-// codebase (vendored) has already declared this class + function pair.
-// Bail early so WP's plugin loader doesn't fatal on redeclare. Still
-// register a refusal on activation so users trying to activate this
-// plugin while Pro is running get a clean explanation instead of
-// silently ending up in active_plugins with a no-op copy.
+// Pro vendors this class — bail if it's already declared, refuse activation cleanly.
 if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
     register_activation_hook( __FILE__, function () {
         if ( ! function_exists( 'is_plugin_active' ) ) {
@@ -42,7 +37,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 }
 
 // Define plugin constants
-define('ROYAL_MCP_VERSION', '1.4.43');
+define('ROYAL_MCP_VERSION', '1.4.44');
 define('ROYAL_MCP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ROYAL_MCP_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('ROYAL_MCP_PLUGIN_FILE', __FILE__);
@@ -66,12 +61,7 @@ spl_autoload_register(function ($class) {
     }
 });
 
-// Wrap class + function in a class_exists gate. PHP hoists top-level
-// declarations at parse time so an unconditional `class` or `function`
-// would fatal-on-parse when Royal MCP Pro's vendored copy already
-// declared the same name. Inside a conditional block PHP defers the
-// declaration to runtime — combined with the early-return guard above,
-// this keeps a Pro+Free load fully collision-safe.
+// MUST wrap in class_exists gate — PHP hoists top-level declarations at parse time.
 if ( ! class_exists( 'Royal_MCP_Plugin', false ) ) :
 
 /**
@@ -100,24 +90,10 @@ class Royal_MCP_Plugin {
         add_action('rest_api_init', [$this, 'register_rest_routes']);
         add_action('rest_api_init', [$this, 'register_mcp_endpoint']);
 
-        // Cache-Control: no-store on EVERY response under our REST namespace.
-        // 1.4.13 added this to OAuth endpoints. 1.4.15 audit found the MCP
-        // endpoint missing it (Server::json_response) and the REST_Controller
-        // routes (/posts, /pages, /site, etc.) also missing it — both got
-        // poisoned by URL-keyed edge caches when CF cached an early response
-        // and served it back to differently-authenticated requests. The
-        // global filter below covers the whole namespace defensively;
-        // per-response edits in MCP/Server.php are kept as belt-and-suspenders.
+        // Force Cache-Control: no-store on every response in our namespace.
         add_filter('rest_post_dispatch', [$this, 'force_no_store_on_namespace'], 10, 3);
 
-        // JSON-RPC envelope integrity guard. Some host-layer transformers
-        // (edge JSON minifiers, WAF response optimizers, plugin conflicts)
-        // coerce our "jsonrpc":"2.0" string via a float cast which drops the
-        // trailing zero, producing "jsonrpc":"2". Strict MCP clients
-        // (Claude Desktop, mcp-remote) reject the response with
-        // ZodError: expected "2.0". Priority 999 re-forces the correct
-        // value AFTER any other filter, scoped to our namespace so we don't
-        // touch sibling REST plugins' responses.
+        // Re-force jsonrpc="2.0" pre-encode; some transformers float-cast it to "2".
         add_filter('rest_pre_echo_response', [$this, 'force_jsonrpc_version'], 999, 3);
 
         // OAuth 2.0 endpoints (served at domain root, not under /wp-json/).
@@ -125,9 +101,7 @@ class Royal_MCP_Plugin {
         add_filter('query_vars', [$this, 'register_oauth_query_vars']);
         add_action('parse_request', [$this, 'handle_oauth_request']);
 
-        // Strip POST-only OAuth rewrite rules (/register, /token) on GET/HEAD
-        // so browser visits fall through to any page at those slugs.
-        // POST-only per RFC 7591 §3.1 (DCR) + RFC 6749 §3.2 (token).
+        // Strip GET/HEAD rewrites for POST-only endpoints (/register, /token) so browser visits fall through.
         add_filter('option_rewrite_rules', [__CLASS__, 'strip_oauth_get_only_rules']);
 
         // Scheduled token cleanup.
@@ -140,58 +114,31 @@ class Royal_MCP_Plugin {
         // Add plugin action links (Settings, Docs)
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), [$this, 'add_action_links']);
 
-        // Elementor MCP module coexistence: admin notice + dismiss handler.
-        // Safe to register unconditionally; the render callback checks native
-        // detection before drawing anything.
+        // Elementor MCP module coexistence notice — render callback checks detection.
         \Royal_MCP\Integrations\Elementor_Coexistence::register_hooks();
 
-        // Preview_Link redirect handler — validates rmcp_preview token param
-        // and forwards to the native preview URL. Registered unconditionally
-        // so incoming token URLs are honored regardless of whether the
-        // wp_create_preview_link tool was the most recent MCP call.
+        // Preview_Link redirect handler for rmcp_preview token URLs.
         \Royal_MCP\MCP\Support\Preview_Link::register();
 
 
-        // Royal Plugins Chrome Pack: custom top header + lightweight footer +
-        // Royal Tools submenu + Founders Bundle callout. Screen-ID-gated to
-        // Royal MCP admin pages only — never touches other WP admin.
+        // Royal Plugins Chrome Pack: header/footer/submenu on Royal MCP admin screens only.
         require_once ROYAL_MCP_PLUGIN_DIR . 'includes/chrome/class-royal-mcp-chrome.php';
         \Royal_MCP\Chrome\Royal_MCP_Chrome::get_instance();
 
-        // WordPress Abilities API registration (WP 6.9+). function_exists() guard makes this a
-        // silent no-op on older WP. The option flag lets an admin flip the feature off in one
-        // call for rollback without a plugin update.
-        //
-        // WP core exposes two separate hooks: wp_abilities_api_categories_init runs first
-        // (categories registry init), wp_abilities_api_init runs after (ability registry init,
-        // by which point categories must already exist). Registering an ability against a
-        // non-registered category throws.
+        // WordPress Abilities API registration (WP 6.9+). Categories hook fires before
+        // abilities hook; registering an ability against a non-registered category throws.
         if ( function_exists( 'wp_register_ability_category' ) && (bool) get_option( 'royal_mcp_abilities_registration_enabled', true ) ) {
             add_action( 'wp_abilities_api_categories_init', array( \Royal_MCP\Abilities\Categories::class, 'register' ) );
             add_action( 'wp_abilities_api_init', array( \Royal_MCP\Abilities\Registrar::class, 'register' ) );
 
-            // MCP Adapter server registration (Option C — own named server, explicit ability
-            // list, our abilities do NOT auto-enroll on the adapter's default server). Guarded
-            // on adapter presence; silent no-op when MCP Adapter isn't installed.
+            // MCP Adapter: own named server, explicit ability list, no auto-enroll on default server.
             if ( class_exists( '\\WP\\MCP\\Core\\McpAdapter' ) ) {
                 add_action( 'mcp_adapter_init', array( \Royal_MCP\Abilities\MCP_Adapter_Server::class, 'register' ) );
             }
         }
     }
 
-    /**
-     * Force no-store cache headers on every response under royal-mcp/* namespace.
-     *
-     * Hooked late on rest_post_dispatch so it overrides any cache headers a
-     * route callback may have set. Prevents edge/host caches from URL-keying
-     * responses and serving them back to subsequent requests with different
-     * auth state.
-     *
-     * @param \WP_REST_Response $response The dispatch result.
-     * @param \WP_REST_Server   $server   The REST server instance.
-     * @param \WP_REST_Request  $request  The original request.
-     * @return \WP_REST_Response
-     */
+    /** Force no-store cache headers on every response in the royal-mcp namespace. */
     public function force_no_store_on_namespace( $response, $server, $request ) {
         if ( ! $response instanceof \WP_REST_Response ) {
             return $response;
@@ -204,20 +151,7 @@ class Royal_MCP_Plugin {
         return $response;
     }
 
-    /**
-     * Re-force jsonrpc="2.0" on responses from our namespace.
-     *
-     * Fires on rest_pre_echo_response (after rest_post_dispatch, before
-     * wp_json_encode) at priority 999 so any upstream transformer that
-     * coerces our jsonrpc string via float cast gets overwritten before
-     * serialization. Scoped to /royal-mcp/ prefix so sibling plugins'
-     * REST responses are untouched.
-     *
-     * @param array|mixed        $result  The response data about to be JSON-encoded.
-     * @param \WP_REST_Server    $server  The REST server instance.
-     * @param \WP_REST_Request   $request The original request.
-     * @return array|mixed
-     */
+    /** Re-force jsonrpc="2.0" pre-encode on responses in the royal-mcp namespace. */
     public function force_jsonrpc_version( $result, $server, $request ) {
         $route = $request->get_route();
         if ( ! is_string( $route ) || 0 !== strpos( $route, '/royal-mcp/' ) ) {
@@ -241,16 +175,7 @@ class Royal_MCP_Plugin {
     }
 
     public function activate() {
-        // Refuse activation if the Pro plugin is active. Pro bundles the free
-        // codebase; running both simultaneously double-registers every hook
-        // and REST route. wp_die during activation rolls the activation back
-        // and shows the message to the user in wp-admin.
-        //
-        // The `! defined( 'ROYAL_MCP_LOADED_BY_PRO' )` gate skips this check
-        // when Free is running vendored inside Pro (Pro's bootstrap defines
-        // that constant before requiring the vendored royal-mcp.php). In that
-        // context Free's activate() is the mechanism that creates OAuth +
-        // session tables Pro needs — refusing it would leave Pro half-installed.
+        // Refuse activation if Pro is active; skip refusal when Pro is bootstrapping Free.
         if ( ! defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) {
             if ( ! function_exists( 'is_plugin_active' ) ) {
                 include_once ABSPATH . 'wp-admin/includes/plugin.php';
@@ -267,11 +192,10 @@ class Royal_MCP_Plugin {
         // Create necessary database tables and options
         $this->create_tables();
 
-        // Create OAuth tables.
+        // Create OAuth tables. Force-load fallback: autoloader may not have fired yet on activation.
         if ( class_exists( '\Royal_MCP\OAuth\Token_Store' ) ) {
             \Royal_MCP\OAuth\Token_Store::create_tables();
         } else {
-            // Force-load if autoloader hasn't fired yet (WP 7.0+ activation flow)
             $token_store_file = ROYAL_MCP_PLUGIN_DIR . 'includes/OAuth/Token_Store.php';
             if ( file_exists( $token_store_file ) ) {
                 require_once $token_store_file;
@@ -279,9 +203,7 @@ class Royal_MCP_Plugin {
             }
         }
 
-        // Create sessions table. Same force-load pattern as Token_Store
-        // because register_activation_hook fires before the autoloader on some
-        // WP versions, so class_exists() returns false on a fresh activation.
+        // Create sessions table. Same force-load fallback as Token_Store.
         if ( class_exists( '\Royal_MCP\MCP\Session_Store' ) ) {
             \Royal_MCP\MCP\Session_Store::create_tables();
         } else {
@@ -292,10 +214,7 @@ class Royal_MCP_Plugin {
             }
         }
 
-        // Set default options.
-        // API key uses lowercase hex (32 chars) instead of mixed-case alphanumeric
-        // so customers can transcribe it without uppercase/lowercase ambiguity in
-        // monospace admin fonts (e.g., O vs 0, I vs l vs 1).
+        // Set default options. API key: lowercase hex avoids O/0 I/l/1 transcription ambiguity.
         add_option('royal_mcp_settings', [
             'enabled' => false,
             'platforms' => [],
@@ -319,19 +238,10 @@ class Royal_MCP_Plugin {
     }
 
     /**
-     * Runtime schema check. register_activation_hook only fires on activation, so plugins
-     * that ship new tables via an update never run create_tables() on existing installs.
-     * This heals any install where the DB version doesn't match the plugin version.
+     * Runtime schema check — heals installs where db_version lags the plugin version.
      *
-     * INVARIANT: db_version must only advance when EVERY required migration actually ran.
-     * If class_exists() returns false (autoloader transiently failed during auto-update,
-     * opcache stale, file-deploy race) AND the force-load fallback can't find the file,
-     * we leave db_version alone so the next request retries.
-     *
-     * INVARIANT: db_version matching the plugin version is necessary but NOT sufficient —
-     * we also verify required tables physically exist before short-circuiting. Stuck states
-     * like "uninstall dropped tables but left db_version intact, then reinstall ran" cannot
-     * latch the healer into a permanent no-op.
+     * INVARIANT: db_version only advances when every required migration ran AND
+     * required_tables_exist() confirms the tables physically exist.
      */
     public function maybe_upgrade_db() {
         if (get_option('royal_mcp_db_version') === ROYAL_MCP_VERSION
@@ -368,17 +278,9 @@ class Royal_MCP_Plugin {
         if ($token_store_ok && $session_store_ok) {
             update_option('royal_mcp_db_version', ROYAL_MCP_VERSION);
         }
-        // If either failed: db_version stays at the old value, next request retries.
     }
 
-    /**
-     * Verify the two core tables required for OAuth client registration and MCP session
-     * persistence physically exist. Used by maybe_upgrade_db() as a backstop against the
-     * db_version option lying.
-     *
-     * Two SHOW TABLES LIKE queries per pageload — negligible cost, and the safe-by-default
-     * payoff is that no external or accidental state mismatch can latch the healer.
-     */
+    /** Verify core OAuth + session tables physically exist; backstop for maybe_upgrade_db(). */
     private function required_tables_exist() {
         global $wpdb;
         $required = [
@@ -430,16 +332,10 @@ class Royal_MCP_Plugin {
      * ----------------------------------------------------------------*/
 
     /**
-     * OAuth endpoint URL slugs (no leading slash, no regex suffix). Filterable
-     * for customers whose site has an existing page at one of the default slugs
-     * (common on membership sites — /register conflicts with MemberPress, Paid
-     * Memberships Pro, Restrict Content Pro, Ultimate Member defaults).
+     * OAuth endpoint URL slugs, filterable via royal_mcp_oauth_rewrite_paths.
      *
-     * Return value shape: [ action => slug ]. Action matches the query var
-     * royal_mcp_oauth value. Slug is a URL path segment; customers can nest,
-     * e.g. return [ 'register' => 'royal-mcp-oauth/register' ] to relocate.
-     * metadata() reads from this same source so OAuth discovery advertises
-     * whatever the site actually serves.
+     * Shape: [ action => slug ]. Action matches the royal_mcp_oauth query var.
+     * metadata() reads from the same source so discovery matches what's served.
      */
     public static function get_oauth_rewrite_paths() {
         return apply_filters( 'royal_mcp_oauth_rewrite_paths', [
@@ -463,19 +359,10 @@ class Royal_MCP_Plugin {
     }
 
     /**
-     * Strip OAuth rewrite rules on GET/HEAD for endpoints that are POST-only
-     * per spec (/register per RFC 7591 §3.1, /token per RFC 6749 §3.2). This
-     * lets the WP page router take over for browser visits to those paths on
-     * sites where the customer has a real page at the same slug — most commonly
-     * a membership-plugin /register page. /authorize is spec-required to accept
-     * GET (RFC 6749 §3.1) so it is NOT stripped.
+     * Strip GET/HEAD rewrites for POST-only OAuth endpoints (/register, /token).
      *
-     * IMPORTANT: hooks option_rewrite_rules NOT rewrite_rules_array. The latter
-     * feeds update_option() during a flush; filtering there would persist the
-     * removal and permanently break POST /register.
-     *
-     * @param mixed $rules
-     * @return mixed
+     * MUST hook option_rewrite_rules, NOT rewrite_rules_array — the latter
+     * feeds update_option() during a flush and would persist the removal.
      */
     public static function strip_oauth_get_only_rules( $rules ) {
         if ( ! is_array( $rules ) ) {
@@ -528,10 +415,7 @@ class Royal_MCP_Plugin {
             }
         }
 
-        // Short-circuit self-check probes from Well_Known_Notice::check_register_301().
-        // Reaching this point means the rewrite resolved (so there's no host-side 301 to
-        // detect); return 204 No Content without invoking OAuth\Server so we don't pollute
-        // the Activity Log with a synthetic "register failed" entry every 12 hours.
+        // Short-circuit self-check probes to avoid synthetic OAuth log entries.
         $ua = isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '';
         if ( 'Royal MCP Self-Check' === $ua && in_array( $action, [ 'register', 'authorize', 'token' ], true ) ) {
             status_header( 204 );
@@ -546,9 +430,6 @@ class Royal_MCP_Plugin {
     }
 
     public function init() {
-        // Text domain is automatically loaded by WordPress 4.6+ for plugins hosted on WordPress.org
-        // No need to call load_plugin_textdomain() manually
-
         // Endpoint tool-profile filter — trims tools/list by ?tools=<profile>.
         Royal_MCP\MCP\Tool_Profiles::register();
 
@@ -556,6 +437,7 @@ class Royal_MCP_Plugin {
         if (is_admin()) {
             new Royal_MCP\Admin\Settings_Page();
             new Royal_MCP\Admin\Well_Known_Notice();
+            new Royal_MCP\Admin\Help_Page();
         }
     }
 
@@ -567,10 +449,7 @@ class Royal_MCP_Plugin {
     public function register_mcp_endpoint() {
         $server = new Royal_MCP\MCP\Server();
 
-        // Streamable HTTP endpoint.
-        // Single endpoint for all MCP communication - no SSE connection needed
-        // MCP protocol requires public REST endpoints — auth enforced inside
-        // Server::validate_auth() on every request (API key or Bearer token).
+        // Streamable HTTP endpoint. Auth enforced in Server::validate_auth() on every request.
         // @security-ignore WP-AUTH-001 — verified: auth on all code paths in Server.php
         register_rest_route('royal-mcp/v1', '/mcp', [
             'methods' => ['GET', 'POST', 'DELETE', 'OPTIONS'],
@@ -578,8 +457,7 @@ class Royal_MCP_Plugin {
             'permission_callback' => '__return_true', // @security-ignore — auth in validate_auth()
         ]);
 
-        // Also register at namespace root path — Claude Desktop may post to /wp-json/royal-mcp/v1
-        // when it strips the last path segment from the configured MCP URL.
+        // Namespace-root alias — some clients POST to /wp-json/royal-mcp/v1.
         // @security-ignore WP-AUTH-001 — same handler as above
         register_rest_route('royal-mcp', '/v1', [
             'methods' => ['GET', 'POST', 'DELETE', 'OPTIONS'],

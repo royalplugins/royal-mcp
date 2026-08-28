@@ -20,9 +20,11 @@ class RoyalAIFirewall {
 	}
 
 	public static function get_tools() {
-		if ( ! self::is_available() ) {
-			return [];
-		}
+		// Always register so tools appear in MCP tools/list regardless of the
+		// underlying plugin activation state. execute_tool gates at call time
+		// with a clean 'not active' throw. Prevents ghost-tools UX where
+		// activating a plugin post-MCP-connection requires the client to
+		// reconnect before the tools become discoverable.
 
 		return [
 			[
@@ -96,10 +98,7 @@ class RoyalAIFirewall {
 	}
 
 	public static function execute_tool( $name, $args ) {
-		// 1.4.30 order: cap check BEFORE active-check so an unauthorized caller
-		// can't probe whether RAIF is installed via the "not active" error path.
-		// RAIF tools expose invocation logs, IP addresses, and policy write —
-		// manage_options matches RAIF's own admin-screen gating.
+		// MUST check cap before is_available() — otherwise "not active" leaks presence.
 		if ( ! current_user_can( 'manage_options' ) ) {
 			throw new \Exception( 'You do not have permission to use Royal AI Firewall tools.' );
 		}

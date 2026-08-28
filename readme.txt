@@ -4,19 +4,19 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.4.43
+Stable tag: 1.4.44
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Preview-On-WordPress-Playground: yes
 
-170+ MCP tools. OAuth 2.0. Connect Claude, ChatGPT, Gemini, Cursor & any MCP agent to your WordPress site. 100% self-hosted.
+184 MCP tools. OAuth 2.0. Connect Claude, ChatGPT, Gemini, Cursor & any MCP agent to your WordPress site. 100% self-hosted.
 
 == Description ==
 
-**The most complete WordPress MCP server — 170+ tools, OAuth 2.0, and nothing leaves your site.**
+**The most complete WordPress MCP server — 184 tools, OAuth 2.0, and nothing leaves your site.**
 
-Royal MCP gives Claude, ChatGPT, Google Gemini, Perplexity, DeepSeek, Mistral, and every other MCP-compatible AI structured access to your WordPress site: 85 WordPress core tools plus 86 integration tools that auto-load for WooCommerce, Elementor, Divi, Advanced Custom Fields, and more.
+Royal MCP gives Claude, ChatGPT, Google Gemini, Perplexity, DeepSeek, Mistral, and every other MCP-compatible AI structured access to your WordPress site: 85 WordPress core tools plus 99 integration tools that auto-load for WooCommerce, Elementor, Divi, Advanced Custom Fields, Yoast SEO, UpdraftPlus, WPForms, and more.
 
 = Connect Claude to WordPress =
 
@@ -52,13 +52,13 @@ Yes. Every MCP client (Claude Desktop, ChatGPT, and the rest) asks you to approv
 
 = Does Royal MCP work with the WordPress Abilities API? =
 
-Yes. Royal MCP surfaces every AI-callable operation through one endpoint, from three sources: the 85 native tools Royal MCP ships, the 86 integration tools that auto-load when WooCommerce, Elementor, Divi, ACF, and other supported plugins activate, and every ability any plugin registers through WordPress 6.9's Abilities API. Your AI sees them all as MCP tools — one connector, no per-plugin setup, no per-vendor rewrite.
+Yes. Royal MCP surfaces every AI-callable operation through one endpoint, from three sources: the 85 native tools Royal MCP ships, the 99 integration tools that auto-load when WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, and other supported plugins activate, and every ability any plugin registers through WordPress 6.9's Abilities API. Your AI sees them all as MCP tools — one connector, no per-plugin setup, no per-vendor rewrite.
 
 = See what AI agents do to your site =
 
 The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) companion shows every AI agent hitting your site at the HTTP layer (training crawlers, retrieval bots, AI search engines), not just the ones connected through Royal MCP. Install both for a unified view across MCP tool calls and HTTP-layer bot hits.
 
-= 85 Core Tools + 86 Integration Tools =
+= 85 Core Tools + 99 Integration Tools =
 
 **WordPress Core (85 tools):**
 
@@ -222,7 +222,7 @@ Security. Most MCP plugins (and 41% of all public MCP servers) have no authentic
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
-No. WordPress 6.9 added the Abilities API (a primitive for registering AI-callable functions), and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 85 ready-to-use WordPress core tools, and 86 integration tools that auto-load for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, Advanced Custom Fields, and Redirection.
+No. WordPress 6.9 added the Abilities API (a primitive for registering AI-callable functions), and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 85 ready-to-use WordPress core tools, and 99 integration tools that auto-load for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, Advanced Custom Fields, Yoast SEO, UpdraftPlus, WPForms, and Redirection.
 
 = Does Royal MCP work with WooCommerce? =
 
@@ -312,6 +312,31 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.4.44 =
+* New: Yoast SEO integration adds five tools — read the full Yoast meta surface, capture the JSON-LD schema graph, list indexed internal links, list Premium redirects, and update Yoast title/description/focus keyword with a 72-hour undo token.
+* New: UpdraftPlus integration adds four tools — list local backup history, read per-backup status, trigger a new backup, and read the current backup schedule.
+* New: WPForms integration adds four tools — list forms, read a single form's field schema, and (Premium) list submissions plus read a single submission.
+* Fix: Envelope helper's full-JSON-mirror path no longer throws on non-array input during defensive test paths.
+* Fix: Post meta, SEO meta, Yoast meta, and featured image edits made through Royal MCP tools now trigger the standard WordPress post-save event so page-cache plugins and SEO indexable rebuilders pick up the change automatically.
+* Fix: Divi tools now return a clean not-active error on sites where Divi is not installed.
+* Fix: divi_validate_layout accepts raw_content on sites without Divi installed so cross-site validation workflows work without the plugin being present.
+* Fix: Meta writes now bump the post modification timestamp so sitemap regenerators, feed cache invalidators, and staleness detectors keyed on post_modified fire correctly.
+* Fix: wp_get_post, wp_get_page, wp_get_posts, and wp_get_pages return featured_media (attachment ID) and featured_media_url in the response envelope.
+* Fix: wp_set_featured_image persists the alt_text argument on both the media_id and image_url input paths.
+* Fix: mcp_undo_last_operation documentation names yoast_update_meta in the supported-tools list.
+* Fix: Tier-gated tools return a uniform {state: "unavailable", reason, tier, message} envelope so AI callers cannot misread a tier gate as an empty query result.
+* Fix: yoast_get_meta returns Open Graph, Twitter, canonical, and breadcrumb fields as both the stored template and the resolved value Yoast renders (featured image fallback, permalink fallback, post title fallback).
+* Fix: yoast_get_meta surfaces analysis_pending so callers can distinguish a post that has never been scored from a post with a real low content_score or linkdex.
+* Fix: yoast_get_schema removes empty author references from the JSON-LD graph so posts with unresolvable authors no longer produce invalid Article markup.
+* Fix: yoast_get_internal_links returns link_index_status (indexed, index_pending, no_links) plus a content_anchor_count cross-check so callers can distinguish a post with no links from a post the link index has not processed yet.
+* Fix: updraftplus_trigger_backup dispatches asynchronously via WP-Cron and honors the entities argument (a caller requesting entities:["plugins"] gets a plugins-only backup).
+* Fix: fc_purge_url purges the homepage, category and tag archives, paginated pages, and other URLs that do not resolve to a single post or page.
+* Fix: WPForms form schema returns choices as an indexed list with label/value/key, required as a boolean, timestamps as ISO 8601 strings alongside epoch integers, and form listing paginates deterministically on same-second creations.
+* New: In-plugin Help page with per-client setup guides (Claude Desktop, claude.ai Web, Claude Code CLI, ChatGPT, Cursor, VS Code, Continue), a three-rung quick-fix troubleshooting ladder, and a copy-ready diagnostic-info block for support requests.
+* New: Newsletter signup link in the Royal MCP admin header and Support tab.
+* Enhancement: Cross-sell notice bar above every Royal MCP admin page.
+* Enhancement: Every integration's tools now appear in the MCP tool list on connect (WooCommerce, Elementor, Divi, ACF, Yoast, UpdraftPlus, WPForms, SiteVault, ForgeCache, GuardPress, Royal AI Firewall, Royal Ledger, Royal Links, Redirection) so activating a supported plugin no longer requires reconnecting the AI client, and every tool schema now passes strict-validator MCP clients (VS Code, ChatGPT strict mode) after fixing meta-update, WooCommerce order, Elementor widget, ACF field, option, theme-mod, and widget-update surfaces.
 
 = 1.4.43 =
 * New: Divi 4 and Divi 5 page tools in Free — clone a page, swap images, and import a library template, all with 72-hour undo tokens.

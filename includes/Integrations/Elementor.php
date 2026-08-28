@@ -34,9 +34,11 @@ class Elementor {
 	 * Get tool definitions for MCP tools/list response.
 	 */
 	public static function get_tools() {
-		if ( ! self::is_available() ) {
-			return [];
-		}
+		// Always register so tools appear in MCP tools/list regardless of the
+		// underlying plugin activation state. execute_tool gates at call time
+		// with a clean 'not active' throw. Prevents ghost-tools UX where
+		// activating a plugin post-MCP-connection requires the client to
+		// reconnect before the tools become discoverable.
 
 		return [
 			[
@@ -139,7 +141,7 @@ class Elementor {
 					'properties' => [
 						'post_id'          => [ 'type' => 'integer', 'description' => 'Target post or page ID. Must be Elementor-edited.' ],
 						'widget_type'      => [ 'type' => 'string', 'description' => 'Elementor widget slug (e.g. heading, button, html, wp-widget-text), or "container" for a Flexbox container.' ],
-						'settings'         => [ 'type' => 'object', 'description' => 'RAW path: full Elementor settings object for this widget. When supplied, raw wins (curated params ignored). Required for non-curated widget_types.' ],
+						'settings'         => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true, 'description' => 'RAW path: full Elementor settings object for this widget. When supplied, raw wins (curated params ignored). Required for non-curated widget_types.' ],
 						'parent_id'        => [ 'type' => 'string', 'description' => 'Optional. Element ID to insert under. Must be a container, section, or column. If omitted, appended at document top level.' ],
 						'position'         => [ 'type' => 'integer', 'description' => 'Optional. Zero-indexed position within parent. If omitted, appended at end.' ],
 						'flex_direction'   => [ 'type' => 'string', 'enum' => [ 'row', 'column' ], 'description' => 'Curated container: row or column. Default column.' ],
@@ -147,7 +149,7 @@ class Elementor {
 						'children'         => [
 							'type'        => 'array',
 							'description' => 'Curated container: inline child widget definitions. Each item is an object with widget_type + curated params or settings.',
-							'items'       => [ 'type' => 'object' ],
+							'items'       => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true ],
 						],
 						'title'            => [ 'type' => 'string', 'description' => 'Curated heading: title text.' ],
 						'header_size'      => [ 'type' => 'string', 'description' => 'Curated heading: HTML tag (h1-h6, div, span, p). Default h2.' ],
@@ -1451,13 +1453,7 @@ class Elementor {
 		];
 	}
 
-	/**
-	 * 1.4.37 Candidate 2 — read the full settings object for a single Elementor element.
-	 *
-	 * Read-only half of the widget CRUD trio; the write halves (update_widget /
-	 * delete_widget) remain deferred to post-WCUS pending assessment of what
-	 * Elementor's own MCP module ends up covering.
-	 */
+	/** Read the full settings object for a single Elementor element. Read-only. */
 	private static function get_widget_settings( $args ) {
 		$post_id    = (int) ( $args['post_id'] ?? 0 );
 		$element_id = isset( $args['element_id'] ) ? (string) $args['element_id'] : '';
@@ -1723,7 +1719,7 @@ class Elementor {
 	}
 
 	// ============================================================
-	// add_widget — dual-surface widget insertion (1.4.29)
+	// add_widget — dual-surface widget insertion
 	// ============================================================
 
 	/**

@@ -36,9 +36,11 @@ class ACF {
 	 * Get tool definitions for MCP tools/list response.
 	 */
 	public static function get_tools() {
-		if ( ! self::is_available() ) {
-			return [];
-		}
+		// Always register so tools appear in MCP tools/list regardless of the
+		// underlying plugin activation state. execute_tool gates at call time
+		// with a clean 'not active' throw. Prevents ghost-tools UX where
+		// activating a plugin post-MCP-connection requires the client to
+		// reconnect before the tools become discoverable.
 
 		return [
 			[
@@ -72,7 +74,7 @@ class ACF {
 					'properties' => [
 						'field_name' => [ 'type' => 'string', 'description' => 'ACF field name or field key' ],
 						'post_id'    => [ 'type' => 'integer', 'description' => 'Post or page ID' ],
-						'value'      => [ 'description' => 'New value. Type depends on the field type — see ACF documentation.' ],
+						'value'      => [ 'type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'New value. Type depends on the field type — see ACF documentation.' ],
 					],
 					'required'   => [ 'field_name', 'post_id', 'value' ],
 				],

@@ -1,22 +1,12 @@
 <?php
 /**
- * Royal MCP — Cross-plugin composers.
+ * Royal MCP — Cross-plugin composer tools.
  *
- * Free-tier workflow tools that chain multiple primitives into a single
- * agent-facing call. Best-effort composition semantics: post creation is
- * the anchor step (fails whole tool if it fails); downstream steps
- * (featured image, taxonomy, SEO meta) surface as warnings on failure
- * rather than rolling back the created post.
+ * Best-effort composition: post creation is the anchor; downstream steps
+ * (featured image, taxonomy, SEO meta) surface as warnings on failure.
  *
- * Ships in Free 1.4.41:
- *   wp_publish_and_promote   Compose upload_media → create_post →
- *                            set_featured → add_terms → SEO meta.
- *
- * Method names + arg names + status-defaulted-to-publish warning mirror
- * the sibling Pro implementation (Royal_MCP_Pro\Integrations\Composers)
- * so a Pro-tier caller upgrading to the Pro variant sees the same
- * response shape with added compose_mode/rollback/dependencies_probed
- * fields on top.
+ * Tools:
+ *   wp_publish_and_promote  upload_media → create_post → set_featured → add_terms → SEO meta
  */
 
 namespace Royal_MCP\Integrations;

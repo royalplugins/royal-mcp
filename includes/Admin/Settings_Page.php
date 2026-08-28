@@ -26,25 +26,10 @@ class Settings_Page {
     }
 
     /**
-     * Output the Royal Plugins Founders Bundle banner if the current user has
-     * not dismissed it for the current plugin version. Called from the Royal
-     * MCP admin templates only.
-     *
-     * switched from boolean dismissal to version-stamped: banner
-     * re-appears once on each plugin version update (same shape as the
-     * review banner). The old boolean meta (royal_mcp_founders_dismissed)
-     * is no longer read; uninstall.php cleans up the legacy key too so
-     * existing 1.4.30 dismissers get a fresh impression after upgrading.
+     * Render the Founders Bundle banner. $permanent=true skips dismiss X + per-user check (Pro).
+     * Dismissal is version-stamped so the banner re-appears after each plugin update.
      */
     public static function render_founders_banner( $permanent = false ) {
-        // Cross-plugin bundle promo — the bundle covers 6 premium plugins
-        // (GuardPress, ForgeCache, SiteVault Pro, SEObolt Pro, FormForge
-        // Pro, Royal Affiliate Pro) and excludes Royal MCP Pro, so it's a
-        // valid cross-sell to Royal MCP Pro customers too.
-        //
-        // $permanent (Pro): skip dismiss X + skip per-user dismissal check.
-        // Everything else about the banner is IDENTICAL to Free so CSS and
-        // spacing stay in lockstep.
         $user_id = get_current_user_id();
         if (!$user_id) {
             return;
@@ -123,15 +108,8 @@ class Settings_Page {
         exit;
     }
 
-    /**
-     * Output a lightweight wp.org review-request banner. Same version-stamped
-     * dismissal shape as the founders banner — re-appears once per plugin
-     * version update. Stacks above the founders banner so the (smaller, free)
-     * ask gets visual priority; users can dismiss either independently.
-     */
+    /** Render the wp.org review-request banner (Free tier only, version-stamped dismissal). */
     public static function render_review_banner() {
-        // wp.org review ask is a Free-plugin funnel — Pro customers shouldn't
-        // see a "Leave a Review" banner in their paid-tier admin.
         if ( defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) {
             return;
         }
@@ -491,10 +469,9 @@ class Settings_Page {
     /**
      * AJAX handler — wipe all OAuth state (clients, tokens, in-flight auth codes).
      *
-     * Used by the "Reset OAuth State" button on the settings page. Replaces the
-     * wp-cli SQL recipe customers previously had to paste from support emails
-     * when a Claude connector got stuck mid-handshake. All connected MCP clients
-     * will need to re-authorize after this runs — that's the point.
+     * Used by the "Reset OAuth State" button on the settings page. Wipes all
+     * clients, tokens, and in-flight auth codes; every connected MCP client
+     * must re-authorize after this runs.
      */
     public function ajax_reset_oauth_state() {
         check_ajax_referer('royal_mcp_nonce', 'nonce');
