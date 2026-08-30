@@ -189,7 +189,7 @@ class WooCommerce {
 								'type'       => 'object',
 								'properties' => [
 									'key'   => [ 'type' => 'string' ],
-									'value' => [],
+									'value' => [ 'type' => [ 'string', 'integer', 'number', 'boolean', 'array', 'object', 'null' ] ],
 								],
 								'required'   => [ 'key' ],
 							],
@@ -218,7 +218,7 @@ class WooCommerce {
 								'type'       => 'object',
 								'properties' => [
 									'key'   => [ 'type' => 'string' ],
-									'value' => [],
+									'value' => [ 'type' => [ 'string', 'integer', 'number', 'boolean', 'array', 'object', 'null' ] ],
 								],
 								'required'   => [ 'key' ],
 							],

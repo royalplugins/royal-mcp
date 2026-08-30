@@ -317,6 +317,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Changelog ==
 
+= 1.4.44.1 =
+* Fix: WooCommerce order tools now register correctly with ChatGPT.
+
 = 1.4.44 =
 * New: Yoast SEO integration adds five tools — read the full Yoast meta surface, capture the JSON-LD schema graph, list indexed internal links, list Premium redirects, and update Yoast title/description/focus keyword with a 72-hour undo token.
 * New: UpdraftPlus integration adds four tools — list local backup history, read per-backup status, trigger a new backup, and read the current backup schedule.
