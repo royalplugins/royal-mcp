@@ -592,3 +592,86 @@
 		font-size: 14px;
 	}
 }
+
+/* =====================================================
+   Options card — Claude wizard fallback settings block
+   (Path B options screen in claude.php)
+   ===================================================== */
+.royal-mcp-help-options-card {
+	background: #fafbfc;
+	border: 1px solid #dcdcde;
+	border-left: 3px solid #C9A227;
+	border-radius: 6px;
+	padding: 16px 20px 4px;
+	margin: 14px 0 20px;
+}
+
+.royal-mcp-help-options-card-heading {
+	font-size: 12px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: #50575e;
+	margin-bottom: 12px;
+	padding-bottom: 8px;
+	border-bottom: 1px solid #e5e7eb;
+}
+
+.royal-mcp-help-option-row {
+	display: grid;
+	grid-template-columns: 180px 1fr;
+	grid-column-gap: 16px;
+	grid-row-gap: 4px;
+	padding: 10px 0;
+	border-bottom: 1px solid #eef0f2;
+}
+
+.royal-mcp-help-option-row:last-child {
+	border-bottom: 0;
+}
+
+.royal-mcp-help-option-label {
+	font-weight: 600;
+	color: #1d2327;
+	font-size: 13.5px;
+	line-height: 1.5;
+	grid-column: 1;
+	grid-row: 1;
+}
+
+.royal-mcp-help-option-value {
+	display: inline-block;
+	background: #fff;
+	border: 1px solid #C9A227;
+	color: #7a6115;
+	font-family: Consolas, Monaco, monospace;
+	font-size: 12.5px;
+	font-weight: 500;
+	padding: 3px 10px;
+	border-radius: 4px;
+	grid-column: 2;
+	grid-row: 1;
+	justify-self: start;
+	line-height: 1.4;
+}
+
+.royal-mcp-help-option-note {
+	grid-column: 2;
+	grid-row: 2;
+	color: #50575e;
+	font-size: 13px;
+	line-height: 1.55;
+	margin-top: 2px;
+}
+
+@media (max-width: 620px) {
+	.royal-mcp-help-option-row {
+		grid-template-columns: 1fr;
+	}
+	.royal-mcp-help-option-label,
+	.royal-mcp-help-option-value,
+	.royal-mcp-help-option-note {
+		grid-column: 1;
+		grid-row: auto;
+	}
+}

@@ -7,7 +7,7 @@
 [![WordPress](https://img.shields.io/badge/WordPress-5.8+-21759B?style=flat-square&logo=wordpress)](https://wordpress.org/plugins/royal-mcp/)
 [![PHP](https://img.shields.io/badge/PHP-7.4+-777BB4?style=flat-square&logo=php)](https://www.php.net/)
 [![License](https://img.shields.io/badge/License-GPLv2-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-2.0.html)
-[![Version](https://img.shields.io/badge/Version-1.4.44-C9A227?style=flat-square)](https://wordpress.org/plugins/royal-mcp/)
+[![Version](https://img.shields.io/badge/Version-1.4.45-C9A227?style=flat-square)](https://wordpress.org/plugins/royal-mcp/)
 
 [Download on WordPress.org](https://wordpress.org/plugins/royal-mcp/) · [Documentation](https://royalplugins.com/support/royal-mcp/) · [Royal Plugins](https://royalplugins.com)
 
@@ -23,7 +23,7 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 |---|---|
 | **Auth** | API key (`X-Royal-MCP-API-Key`) **or** OAuth 2.1 with PKCE + Dynamic Client Registration (RFC 7591) |
 | **Transport** | MCP 2025-11-25 Streamable HTTP (single `/mcp` endpoint, POST/GET/DELETE) |
-| **Tool count** | Up to 144 (73 WordPress core + 71 conditional plugin integrations) |
+| **Tool count** | Up to 206 (85 WordPress core + 121 conditional plugin integrations) |
 | **Abilities API** | WP 6.9+ — every tool also registers as a WordPress ability, reachable via WP core REST at `/wp-json/wp-abilities/v1/abilities/{name}/run` and via the WordPress MCP Adapter's named `royal-mcp-server` |
 | **Rate limit** | 60 req/min per IP (configurable) |
 | **Session model** | Sliding 24h TTL with refresh-on-access |
@@ -34,7 +34,7 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 
 ## Capabilities
 
-### WordPress core (84 tools, always available)
+### WordPress core (85 tools, always available)
 
 - **Content** — Posts, pages, custom post types (full CRUD + revisions + featured images)
 - **Taxonomies** — Categories, tags, custom taxonomies, term meta, post-term linking
@@ -48,23 +48,33 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 - **SEO** — Yoast / Rank Math / AIOSEO meta read/write where the plugin is active
 - **Diagnostics** — Site status (WP/PHP/MySQL/plugins/themes/cron in one call), PHP error-log tail, WP cron schedule, and MCP `royal_mcp_connection_health` (returns route, auth method, session ID, plugin version, and active page-builder versions for Divi + Elementor + Gutenberg)
 
-### Plugin integrations (80 tools, conditional)
+### Plugin integrations (121 tools, conditional)
 
 Auto-register only when the integrated plugin is active.
 
 | Plugin | Tools | What's covered |
 |---|---|---|
 | WooCommerce | 29 | Products, variations, attributes, coupons, orders (create/update/notes), customers, store stats |
-| Elementor | 8 | Clone pages, replace text, swap images, get outline, read single element, list templates, import templates, add widget |
+| Elementor | 11 | Clone pages, replace text, swap images, get outline, read single element, list templates, import templates, add widget, rebuild post_content |
+| Divi | 9 | Format detection (D4 shortcode vs D5 block), page outline, layout validation, library list + get, find/replace with builder-format awareness, clone, image swap, library apply |
 | GuardPress | 7 | Security score, failed logins, blocked IPs, vulnerability scans, audit log |
-| Divi | 6 | Format detection (D4 shortcode vs D5 block), page outline, layout validation, library list + get, find/replace with builder-format awareness |
-| Royal AI Firewall | 6 | Dashboard stats, recent bot hits, per-bot policies (allow / block / challenge), daily rollups, one-call emergency lockdown |
 | SiteVault | 6 | Trigger backups, monitor progress, list schedules |
+| Royal AI Firewall | 6 | Dashboard stats, recent bot hits, per-bot policies (allow / block / challenge), daily rollups |
+| Yoast SEO | 5 | Read/write Yoast meta (raw + resolved), capture JSON-LD schema graph, list indexed internal links, list Premium redirects |
 | Redirection | 4 | List redirects with group + URL-substring filters, create + update redirects (301 / 302 / 307 / regex / groups), list redirect groups |
-| Advanced Custom Fields | 4 | Read/write ACF fields with each field's Return Format respected (hydrated post objects, parsed repeater rows, image arrays); enumerate field groups for AI-driven discovery |
 | Royal Ledger | 4 | Software costs, renewal dates, license keys (values never exposed) |
+| Advanced Custom Fields | 4 | Read/write ACF fields with each field's Return Format respected (hydrated post objects, parsed repeater rows, image arrays); enumerate field groups |
+| UpdraftPlus | 4 | List backup history, read per-backup status, trigger async backups with entity filtering, read schedule |
+| WPForms | 4 | List forms, read a single form's parsed field schema, (Pro) list submissions, (Pro) read single submission |
+| Solid Security | 4 | Read security status, list currently locked-out IPs, read the security event log, add an IP to the ban list |
+| MonsterInsights | 4 | Read the analytics overview, top pages, traffic sources, and top Google Search Console queries |
+| BuddyPress | 4 | List community members, read a single member profile, list groups, read the activity feed (same detection covers BuddyBoss Platform) |
+| Contact Form 7 | 3 | List forms, read a single form's parsed field schema, list submissions (via Flamingo add-on) |
+| W3 Total Cache | 3 | Read cache configuration across every module, purge cache (all / by URL / by post), read usage statistics |
+| Duplicator | 3 | List migration packages, read per-package status, get the installer URL for a completed package |
 | Royal Links | 3 | Branded short links, click stats |
 | ForgeCache | 3 | Cache stats, clear cache, purge URL |
+| Google Site Kit | 1 | Read authenticated Site Kit report data |
 
 ## WordPress Abilities API bridge (WP 6.9+)
 

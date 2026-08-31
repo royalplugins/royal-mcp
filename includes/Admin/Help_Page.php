@@ -86,7 +86,10 @@ class Help_Page {
 
 	public function enqueue_assets( $hook_suffix ) {
 		// Submenu hook suffix format: "<top-level-slug>_page_<submenu-slug>".
-		if ( $hook_suffix !== 'royal-mcp_page_' . self::SLUG ) {
+		// Parent slug varies when a wrapper plugin absorbs this submenu under
+		// its own top-level menu, so match on the trailing "_page_<slug>" part.
+		$expected_suffix = '_page_' . self::SLUG;
+		if ( substr( (string) $hook_suffix, -strlen( $expected_suffix ) ) !== $expected_suffix ) {
 			return;
 		}
 		$version = defined( 'ROYAL_MCP_VERSION' ) ? ROYAL_MCP_VERSION : '1.0.0';

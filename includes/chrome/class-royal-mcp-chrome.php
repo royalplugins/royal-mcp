@@ -378,7 +378,7 @@ class Royal_MCP_Chrome {
             </p>
             <p style="margin: 0 0 12px;">
                 <?php if ( $post_launch ) : ?>
-                    <?php esc_html_e( '250+ MCP tools. The Solo Dev & Agency Workflow — one chat runs every client site. Scoped endpoints per project, bulk ops across whole catalogs, and a 90-day audit log so you can show clients exactly what changed. Get 30-50% off normal price.', 'royal-mcp' ); ?>
+                    <?php esc_html_e( '280+ MCP tools. The Solo Dev & Agency Workflow — one chat runs every client site. Scoped endpoints per project, bulk ops across whole catalogs, and a 90-day audit log so you can show clients exactly what changed. Get 30-50% off normal price.', 'royal-mcp' ); ?>
                 <?php else : ?>
                     <?php esc_html_e( 'Lock in $79/yr LIFETIME pricing (going to $149/yr after launch). Limited to 100 spots. No obligation until launch day.', 'royal-mcp' ); ?>
                 <?php endif; ?>

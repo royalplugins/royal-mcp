@@ -5,7 +5,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 $royal_mcp_help_endpoint     = isset( $royal_mcp_help_endpoint ) ? $royal_mcp_help_endpoint : rest_url( 'royal-mcp/v1/mcp' );
 $royal_mcp_help_endpoint     = preg_replace( '/^http:/', 'https:', $royal_mcp_help_endpoint );
-$royal_mcp_help_logs_url     = admin_url( 'admin.php?page=royal-mcp-logs' );
+$royal_mcp_help_logs_url     = defined( 'ROYAL_MCP_LOADED_BY_PRO' )
+	? admin_url( 'admin.php?page=royal-mcp-pro' )
+	: admin_url( 'admin.php?page=royal-mcp-logs' );
 ?>
 <div class="royal-mcp-help-tab-content royal-mcp-help-tab-chatgpt">
 

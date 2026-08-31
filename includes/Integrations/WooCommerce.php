@@ -2395,23 +2395,25 @@ class WooCommerce {
 
 	private static function format_product_detail( $product ) {
 		return [
-			'id'                => $product->get_id(),
-			'name'              => $product->get_name(),
-			'type'              => $product->get_type(),
-			'status'            => $product->get_status(),
-			'description'       => $product->get_description(),
-			'short_description' => $product->get_short_description(),
-			'price'             => $product->get_price(),
-			'regular_price'     => $product->get_regular_price(),
-			'sale_price'        => $product->get_sale_price(),
-			'sku'               => $product->get_sku(),
-			'stock_status'      => $product->get_stock_status(),
-			'stock_quantity'    => $product->get_stock_quantity(),
-			'weight'            => $product->get_weight(),
-			'categories'        => wp_get_post_terms( $product->get_id(), 'product_cat', [ 'fields' => 'names' ] ),
-			'tags'              => wp_get_post_terms( $product->get_id(), 'product_tag', [ 'fields' => 'names' ] ),
-			'url'               => get_permalink( $product->get_id() ),
-			'date_created'      => $product->get_date_created() ? $product->get_date_created()->format( 'Y-m-d H:i:s' ) : null,
+			'id'                 => $product->get_id(),
+			'name'               => $product->get_name(),
+			'type'               => $product->get_type(),
+			'status'             => $product->get_status(),
+			'catalog_visibility' => $product->get_catalog_visibility(),
+			'description'        => $product->get_description(),
+			'short_description'  => $product->get_short_description(),
+			'price'              => $product->get_price(),
+			'regular_price'      => $product->get_regular_price(),
+			'sale_price'         => $product->get_sale_price(),
+			'sku'                => $product->get_sku(),
+			'stock_status'       => $product->get_stock_status(),
+			'stock_quantity'     => $product->get_stock_quantity(),
+			'weight'             => $product->get_weight(),
+			'categories'         => wp_get_post_terms( $product->get_id(), 'product_cat', [ 'fields' => 'names' ] ),
+			'tags'               => wp_get_post_terms( $product->get_id(), 'product_tag', [ 'fields' => 'names' ] ),
+			'url'                => get_permalink( $product->get_id() ),
+			'date_created'       => $product->get_date_created() ? $product->get_date_created()->format( 'Y-m-d H:i:s' ) : null,
+			'date_created_iso'   => $product->get_date_created() ? gmdate( 'c', $product->get_date_created()->getTimestamp() ) : null,
 		];
 	}
 
@@ -2764,9 +2766,13 @@ class WooCommerce {
 			'minimum_amount'              => $coupon->get_minimum_amount(),
 			'maximum_amount'              => $coupon->get_maximum_amount(),
 			'email_restrictions'          => $coupon->get_email_restrictions(),
+			'_subscription_length'        => (int) get_post_meta( $coupon->get_id(), '_subscription_length', true ),
 			'date_expires'                => $coupon->get_date_expires() ? $coupon->get_date_expires()->format( 'Y-m-d H:i:s' ) : null,
+			'date_expires_iso'            => $coupon->get_date_expires() ? gmdate( 'c', $coupon->get_date_expires()->getTimestamp() ) : null,
 			'date_created'                => $coupon->get_date_created() ? $coupon->get_date_created()->format( 'Y-m-d H:i:s' ) : null,
+			'date_created_iso'            => $coupon->get_date_created() ? gmdate( 'c', $coupon->get_date_created()->getTimestamp() ) : null,
 			'date_modified'               => $coupon->get_date_modified() ? $coupon->get_date_modified()->format( 'Y-m-d H:i:s' ) : null,
+			'date_modified_iso'           => $coupon->get_date_modified() ? gmdate( 'c', $coupon->get_date_modified()->getTimestamp() ) : null,
 		];
 	}
 

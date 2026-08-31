@@ -16,6 +16,12 @@ use Royal_MCP\Integrations\Composers as ComposersIntegration;
 use Royal_MCP\Integrations\YoastSEO as YoastIntegration;
 use Royal_MCP\Integrations\UpdraftPlus as UpdraftIntegration;
 use Royal_MCP\Integrations\WPForms as WPFormsIntegration;
+use Royal_MCP\Integrations\SolidSecurity as SolidIntegration;
+use Royal_MCP\Integrations\ContactForm7 as CF7Integration;
+use Royal_MCP\Integrations\MonsterInsights as MonsterInsightsIntegration;
+use Royal_MCP\Integrations\W3TotalCache as W3TCIntegration;
+use Royal_MCP\Integrations\Duplicator as DuplicatorIntegration;
+use Royal_MCP\Integrations\BuddyPress as BuddyPressIntegration;
 use Royal_MCP\Integrations\Elementor_Coexistence;
 
 if (!defined('ABSPATH')) {
@@ -813,6 +819,12 @@ class Server {
         $tools = array_merge( $tools, YoastIntegration::get_tools() );
         $tools = array_merge( $tools, UpdraftIntegration::get_tools() );
         $tools = array_merge( $tools, WPFormsIntegration::get_tools() );
+        $tools = array_merge( $tools, SolidIntegration::get_tools() );
+        $tools = array_merge( $tools, CF7Integration::get_tools() );
+        $tools = array_merge( $tools, MonsterInsightsIntegration::get_tools() );
+        $tools = array_merge( $tools, W3TCIntegration::get_tools() );
+        $tools = array_merge( $tools, DuplicatorIntegration::get_tools() );
+        $tools = array_merge( $tools, BuddyPressIntegration::get_tools() );
 
         // If Elementor's own MCP module is present, prefix our elementor_* descriptions with a routing hint.
         $tools = Elementor_Coexistence::filter_elementor_tool_descriptions( $tools );
@@ -1204,15 +1216,27 @@ class Server {
     private function process_method($method, $params, $id) {
         switch ($method) {
             case 'initialize':
+                $server_info = [
+                    'name'    => 'Royal MCP WordPress',
+                    'version' => ROYAL_MCP_VERSION,
+                ];
+                $icon_url = function_exists( 'get_site_icon_url' ) ? get_site_icon_url() : '';
+                if ( $icon_url ) {
+                    $filetype             = wp_check_filetype( $icon_url );
+                    $server_info['icons'] = [
+                        [
+                            'src'      => $icon_url,
+                            'mimeType' => $filetype['type'] ?? 'image/png',
+                            'sizes'    => [ '512x512' ],
+                        ],
+                    ];
+                }
                 return [
                     'jsonrpc' => '2.0',
                     'id' => $id,
                     'result' => [
                         'protocolVersion' => '2025-11-25',
-                        'serverInfo' => [
-                            'name' => 'Royal MCP WordPress',
-                            'version' => ROYAL_MCP_VERSION,
-                        ],
+                        'serverInfo' => $server_info,
                         'capabilities' => [
                             'tools' => new \stdClass(),
                         ],
@@ -7544,6 +7568,24 @@ class Server {
                 if ( strpos( $name, 'wpforms_' ) === 0 ) {
                     return WPFormsIntegration::execute_tool( $name, $args );
                 }
+                if ( strpos( $name, 'solid_' ) === 0 ) {
+                    return SolidIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'cf7_' ) === 0 ) {
+                    return CF7Integration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'monsterinsights_' ) === 0 ) {
+                    return MonsterInsightsIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'w3tc_' ) === 0 ) {
+                    return W3TCIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'duplicator_' ) === 0 ) {
+                    return DuplicatorIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'bp_' ) === 0 ) {
+                    return BuddyPressIntegration::execute_tool( $name, $args );
+                }
                 throw new \Exception('Unknown tool: ' . esc_html($name));
         }
     }
@@ -8094,18 +8136,18 @@ class Server {
             'siteurl', 'home', 'db_version', 'wp_user_roles', 'cron', 'rewrite_rules',
             'wplang', 'template', 'stylesheet', 'active_plugins',
             'royal_mcp_settings', // Self-protection: prevent AI from disabling its own gates.
-            // Takeover / privilege-escalation vectors — each is a direct
-            // site-compromise path if inadvertently opted into the writable
-            // allowlist via a third-party integration filter.
-            'admin_email',        // change → password-reset email hijack → account takeover
-            'default_role',       // set to administrator → next self-reg becomes admin
-            'users_can_register', // enable → combined with default_role, remote admin creation
-            'upload_path',        // redirect uploads to attacker-controlled directory
-            'upload_url_path',    // same class — URL rewriting for uploads
-            'mailserver_login',   // SMTP credential disclosure if paired with reads
-            'mailserver_pass',    // SMTP password — doesn't match _key/_secret patterns
-            'mailserver_url',     // redirect outbound mail to attacker relay
-            'mailserver_port',    // same class
+            // High-sensitivity globals that must never be AI-writable, even
+            // if a third-party integration inadvertently opts them into the
+            // writable allowlist via the royal_mcp_writable_options filter.
+            'admin_email',        // Privileged identity — bypass vector for admin-controlled flows.
+            'default_role',       // Governs new-registration privilege — must stay locked.
+            'users_can_register', // Registration policy — pairs with default_role sensitivity.
+            'upload_path',        // Storage path — must not be relocatable via AI writes.
+            'upload_url_path',    // Same class as upload_path.
+            'mailserver_login',   // SMTP identity — outbound mail-config surface.
+            'mailserver_pass',    // SMTP secret — the generic *_key/*_secret filter does not match this name.
+            'mailserver_url',     // SMTP host — outbound mail-config surface.
+            'mailserver_port',    // Same class as mailserver_url.
             // Role/cap-shaped global option names — mostly inert (real per-user
             // cap data lives in wp_usermeta) but any auditor seeing
             // wp_capabilities in the writable set will file a bug.
