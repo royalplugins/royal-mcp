@@ -5,7 +5,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 $royal_mcp_help_diagnostic   = isset( $royal_mcp_help_diagnostic ) ? $royal_mcp_help_diagnostic : \Royal_MCP\Admin\Help_Page::DIAGNOSTIC_STEPS;
 $royal_mcp_help_settings_url = admin_url( 'admin.php?page=royal-mcp' );
-$royal_mcp_help_logs_url     = admin_url( 'admin.php?page=royal-mcp-logs' );
+$royal_mcp_help_logs_url     = defined( 'ROYAL_MCP_LOADED_BY_PRO' )
+	? admin_url( 'admin.php?page=royal-mcp-pro' )
+	: admin_url( 'admin.php?page=royal-mcp-logs' );
 $royal_mcp_help_permalinks   = admin_url( 'options-permalink.php' );
 ?>
 <div class="royal-mcp-help-tab-content royal-mcp-help-tab-troubleshooting">
@@ -110,6 +112,29 @@ $royal_mcp_help_permalinks   = admin_url( 'options-permalink.php' );
 	     ===================================================== -->
 	<div class="royal-mcp-help-section royal-mcp-help-issues">
 		<h3><?php esc_html_e( 'Specific issues (not OAuth-related)', 'royal-mcp' ); ?></h3>
+
+		<!-- Issue: Claude wizard 5-second timeout drops user on options screen -->
+		<div class="royal-mcp-help-issue-card">
+			<h4><?php esc_html_e( 'Claude wizard shows an options screen with authentication + OAuth client radios', 'royal-mcp' ); ?></h4>
+			<p class="royal-mcp-help-issue-symptom">
+				<?php esc_html_e( 'After pasting your MCP URL in Claude\'s Add custom connector dialog, instead of going straight to Authorize, you see a full options screen with a yellow banner: "Some checks were skipped because the server took longer than 5 seconds. The settings below may need adjusting."', 'royal-mcp' ); ?>
+			</p>
+			<p>
+				<strong><?php esc_html_e( 'Fix:', 'royal-mcp' ); ?></strong>
+				<?php esc_html_e( 'This is the current Claude wizard (as of August 2026) — not an error. The 5-second OAuth-discovery budget is aggressive for many WordPress hosts. On the options screen, leave', 'royal-mcp' ); ?>
+				<em><?php esc_html_e( 'Authentication', 'royal-mcp' ); ?></em>
+				<?php esc_html_e( 'set to', 'royal-mcp' ); ?>
+				<em><?php esc_html_e( 'Always required', 'royal-mcp' ); ?></em>,
+				<?php esc_html_e( 'set', 'royal-mcp' ); ?>
+				<em><?php esc_html_e( 'OAuth client', 'royal-mcp' ); ?></em>
+				<?php esc_html_e( 'to', 'royal-mcp' ); ?>
+				<em><?php esc_html_e( 'No client ID — register one automatically', 'royal-mcp' ); ?></em>,
+				<?php esc_html_e( 'leave headers and Advanced empty, then click Add. Claude drops you onto a connector detail page — click Connect to complete OAuth. Full walkthrough on the Claude tab.', 'royal-mcp' ); ?>
+			</p>
+			<p class="royal-mcp-help-issue-guide">
+				<a href="<?php echo esc_url( \Royal_MCP\Admin\Help_Page::tab_url( 'claude' ) ); ?>"><?php esc_html_e( 'Full Claude connection guide →', 'royal-mcp' ); ?></a>
+			</p>
+		</div>
 
 		<!-- Issue A: ChatGPT cosmetic banner -->
 		<div class="royal-mcp-help-issue-card">

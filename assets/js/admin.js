@@ -311,7 +311,7 @@ jQuery(document).ready(function($) {
         const $status = $('#royal-mcp-reset-oauth-state-status');
 
         $btn.prop('disabled', true);
-        $status.css('color', '').text('Resetting...');
+        $status.css('color', '').text('Resetting... (can take several minutes)');
 
         $.ajax({
             url: royalMcp.ajaxUrl,
@@ -352,7 +352,7 @@ jQuery(document).ready(function($) {
         const originalHtml = $btn.html();
 
         $btn.prop('disabled', true);
-        $status.css('color', '').text('Revoking...');
+        $status.css('color', '').text('Revoking... (can take several minutes)');
 
         $.ajax({
             url: royalMcp.ajaxUrl,

@@ -4,19 +4,19 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.4.44
+Stable tag: 1.4.45
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Preview-On-WordPress-Playground: yes
 
-170+ MCP tools. OAuth 2.0. Connect Claude, ChatGPT, Gemini, Cursor & any MCP agent to your WordPress site. 100% self-hosted.
+200+ MCP tools. OAuth 2.0. Connect Claude, ChatGPT, Gemini, Cursor & any MCP agent to your WordPress site. 100% self-hosted.
 
 == Description ==
 
-**The most complete WordPress MCP server — 170+ tools, OAuth 2.0, and nothing leaves your site.**
+**The most complete WordPress MCP server — 200+ tools, OAuth 2.0, and nothing leaves your site.**
 
-Royal MCP gives Claude, ChatGPT, Google Gemini, Perplexity, DeepSeek, Mistral, and every other MCP-compatible AI structured access to your WordPress site: 85 WordPress core tools plus 99 integration tools that auto-load for WooCommerce, Elementor, Divi, Advanced Custom Fields, Yoast SEO, UpdraftPlus, WPForms, and more.
+Royal MCP gives Claude, ChatGPT, Google Gemini, Perplexity, DeepSeek, Mistral, and every other MCP-compatible AI structured access to your WordPress site: 85 WordPress core tools plus 121 integration tools that auto-load for WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Contact Form 7, MonsterInsights, W3 Total Cache, Duplicator, BuddyPress, and more.
 
 = Connect Claude to WordPress =
 
@@ -52,13 +52,13 @@ Yes. Every MCP client (Claude Desktop, ChatGPT, and the rest) asks you to approv
 
 = Does Royal MCP work with the WordPress Abilities API? =
 
-Yes. Royal MCP surfaces every AI-callable operation through one endpoint, from three sources: the 85 native tools Royal MCP ships, the 99 integration tools that auto-load when WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, and other supported plugins activate, and every ability any plugin registers through WordPress 6.9's Abilities API. Your AI sees them all as MCP tools — one connector, no per-plugin setup, no per-vendor rewrite.
+Yes. Royal MCP surfaces every AI-callable operation through one endpoint, from three sources: the 85 native tools Royal MCP ships, the 121 integration tools that auto-load when WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Contact Form 7, MonsterInsights, W3 Total Cache, Duplicator, BuddyPress, and other supported plugins activate, and every ability any plugin registers through WordPress 6.9's Abilities API. Your AI sees them all as MCP tools — one connector, no per-plugin setup, no per-vendor rewrite.
 
 = See what AI agents do to your site =
 
 The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) companion shows every AI agent hitting your site at the HTTP layer (training crawlers, retrieval bots, AI search engines), not just the ones connected through Royal MCP. Install both for a unified view across MCP tool calls and HTTP-layer bot hits.
 
-= 85 Core Tools + 99 Integration Tools =
+= 85 Core Tools + 121 Integration Tools =
 
 **WordPress Core (85 tools):**
 
@@ -69,27 +69,24 @@ The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) c
 * Media - browse, upload from URL or base64, update alt text/caption/title/description, set as featured image, delete
 * Comments - create, read, delete; full moderation suite (list pending, approve, mark spam, trash)
 * Users - display names and roles (emails and usernames are not exposed)
-* Categories & Tags & Custom Taxonomies - create, update (rename/re-slug/edit/move), delete, assign, count, discover all registered taxonomies
-* Term Meta - read, update, delete (most useful for term-level SEO meta - titles, descriptions, focus keywords stored against categories and tags)
-* Menus - create menus, list menus, list menu items, create / update / delete / reorder menu items
-* Publish and Promote - publish a draft and insert it into a menu in one call, so agents can complete "publish the post and add it to the main nav" in a single tool call
-* Preview Links - generate a shareable draft-preview URL for a single preview session so reviewers can see unpublished changes without a WP login
-* Post Meta - read, update, delete custom fields (works with ACF, MetaBox, JetEngine, Pods, CPT UI)
-* SEO Meta - read and write Yoast SEO, Rank Math, AIOSEO, or SEObolt title/description/focus keyword/robots/OG fields (auto-detects active SEO plugin)
-* SEO Audit - fetch a post's actual rendered HTML and report title, meta description, canonical, viewport, Open Graph and Twitter Card tags (catches conflicts that only appear in served output)
-* Widgets - list widget instances (optionally filtered by sidebar), list registered sidebars, and update widget content; writes gated by the theme-appearance admin toggle
-* Find and Replace - literal find/replace inside post/page content with dry-run preview, expected-count safety check, and read-after-write verification
+* Categories, Tags & Custom Taxonomies - full CRUD, assign, count, discover registered taxonomies
+* Term Meta - read/update/delete (most useful for term-level SEO fields on categories and tags)
+* Menus - create menus, list, and full CRUD + reorder on menu items
+* Publish and Promote - publish a draft and insert into a menu in one call
+* Preview Links - generate a shareable draft-preview URL without a WP login
+* Post Meta - read/update/delete custom fields (works with ACF, MetaBox, JetEngine, Pods, CPT UI)
+* SEO Meta - read/write Yoast, Rank Math, AIOSEO, or SEObolt title/description/focus keyword/robots/OG (auto-detects active plugin)
+* SEO Audit - fetch a post's rendered HTML and report title, meta description, canonical, viewport, OG, Twitter Card
+* Widgets - list, list sidebars, update content (writes gated by theme-appearance admin toggle)
+* Find and Replace - literal replace with dry-run preview, expected-count safety, read-after-write verification
 * Undo - reverse the previous delete or reorder within 72 hours via mcp_undo_last_operation
-* Site Info - site name, description, WordPress version, timezone
-* Site Status - full site health snapshot (WordPress version, PHP version, active theme, active plugins, cron activity) for AI-driven pre-write validation
-* Error Log - read recent PHP error log entries so AI agents can diagnose silent failures without shell access
-* Cron Schedule - list scheduled WP cron events with next-run timestamps and hook names
-* Connection Health - MCP session diagnostic returning route, auth method, session ID, and Royal MCP version details for any authenticated caller
-* Plugins & Themes - list installed plugins and themes with active status
-* Theme Appearance - get active theme, read/write theme mods (gated by admin toggle + allowlist), read/write Custom CSS
-* Search - full-text content search across post types
-* Permalink Structure - read and update permalink settings (gated by admin toggle)
-* Options - read allowlisted core options, read full plugin settings by slug (sensitive keys redacted), and write to allowlisted options when an admin enables it
+* Site Info + Site Status - name, WP/PHP versions, active theme + plugins, cron activity — for AI-driven pre-write validation
+* Error Log + Cron Schedule - read recent PHP errors and scheduled WP cron events
+* Connection Health - MCP session diagnostic (route, auth method, session ID, plugin version)
+* Plugins & Themes - list installed with active status
+* Theme Appearance - get theme, read/write theme mods (gated), read/write Custom CSS
+* Search + Permalink Structure - full-text content search; read/write permalinks (gated)
+* Options - read allowlisted core options, read plugin settings (sensitive keys redacted), write to allowlisted options when enabled
 
 = Plugin Integrations (Conditional) =
 
@@ -98,41 +95,35 @@ Royal MCP automatically detects compatible plugins and adds specialized MCP tool
 **WooCommerce Integration (29 tools):**
 When WooCommerce is active, AI agents can manage your store end-to-end:
 
-* Browse and search products by category, status, or type
-* Create and update simple and variable products with prices, SKUs, stock levels
-* Manage variable products — list, get, create, update, delete, and batch-update product variations
-* Manage global attributes (`pa_*` taxonomies) — list registered attributes, list attribute terms, register new attributes, assign attributes to a product as variation axes
-* Manage coupons — list, search by code, get, create, update, delete (trash or permanent), and bulk-purge trash; supports all standard WC coupon fields (discount type, expiry, usage limits, product/category restrictions, email allowlists)
-* View orders, order details, and update order status
-* Create and update orders and attach order notes — for B2B, wholesale, phone orders, and support-note trails
-* List customers with order count and total spent
-* Get store statistics — revenue, order count, average order value by period
+* Products — browse, search, create/update simple + variable products with prices, SKUs, stock levels
+* Variations — list, get, create, update, delete, batch-update
+* Global attributes (`pa_*`) — list attributes and terms, register new, assign to products as variation axes
+* Coupons — full CRUD plus bulk-trash purge, with all standard WC fields (discount type, expiry, usage limits, product/category restrictions, email allowlists)
+* Orders — view, create, update status, attach order notes (B2B, wholesale, phone-order workflows)
+* Customers + store statistics — order counts, revenue, average order value by period
 
 **Elementor Integration (11 tools):**
-When Elementor (free or Pro) is active, AI agents can clone and customize existing Elementor pages without trying to generate page-builder JSON from scratch:
+When Elementor (free or Pro) is active, AI agents can clone and customize existing pages without trying to generate page-builder JSON from scratch:
 
-* Clone an existing Elementor page with a new title and fresh element IDs (so the duplicate opens in the editor without ID collisions)
-* Bulk-replace text across heading, text-editor, button, image-box, icon-box, icon-list, testimonial, tabs, accordion, toggle, star-rating, call-to-action, and flip-box widgets, including image alt and title on image, image-box, image-carousel, image-gallery, and basic-gallery widgets
-* Swap image URLs across image, image-box, background_image, and gallery widget settings
-* Get a compact outline of any page (section/container hierarchy with element IDs, widget types, text snippets) so Claude can reason over a full page in a few KB instead of the raw JSON
-* Read full settings for a single widget/container/section/column by ID (for precise agent editing without loading the entire page tree)
-* List saved templates from the Elementor template library and import templates from JSON
-* Insert an existing library template onto any page at top, bottom, or after a specific element (the library-to-page bridge that the Elementor editor exposes as a two-click picker)
-* Rebuild post_content from Elementor page data on a single page or across all pages with damaged post_content (repairs WordPress core search visibility and SEO auto-descriptions on pages built via prior clone operations)
-* Every write returns a 72-hour undo token via mcp_undo_last_operation
-* Atomic widgets (Elementor 4.0+ Editor V4 elements) pass through opaque — we never decode atomic schemas because Elementor itself may shift them. Widget-level creation from scratch is intentionally out of scope; the design commitment is to work from an existing-known-good source.
+* Clone a page with fresh element IDs so the duplicate opens in the editor without collisions
+* Bulk-replace text across heading, text-editor, button, image-box, icon-box, testimonial, tabs, accordion, and 6+ other widget types (plus image alt/title on gallery widgets)
+* Swap image URLs across image, image-box, background, and gallery widget settings
+* Get a compact page outline (element IDs, widget types, text snippets) — a few KB instead of raw JSON
+* Read full settings for a single widget/container by ID for precise agent editing
+* Import templates from JSON, list saved templates, insert templates at any position on any page
+* Rebuild post_content from Elementor data on pages with damaged core content (restores WP search visibility)
+* Every write returns a 72-hour undo token. Atomic widgets (V4) pass through opaque — widget-level creation from scratch is intentionally out of scope
 
 **Divi Integration (9 tools):**
 When Divi (Divi 4 shortcode format or Divi 5 block format) is active, AI agents get safety-first tools for reading and editing Divi content without corrupting builder state:
 
-* Detect a page's Divi format (Divi 4 shortcodes, Divi 5 blocks, mixed, or non-Divi) from postmeta rather than the current theme version — so aged pages read correctly even after the theme was updated
-* Get a compact page outline (section/row/module hierarchy with text snippets) so an agent can reason over a full Divi page in a few KB instead of raw markup
-* Validate a Divi shortcode or block layout string before writing it, catching malformed structure before it corrupts the page
-* List saved layouts from the Divi Library, optionally filtered by category or layout type
-* Read a full Divi Library layout by ID for reuse or template extraction
-* Find-and-replace text inside Divi content with dry-run preview, expected-count safety check, active-editor-session detection, and a warning when literal escape sequences appear in the replacement
-* Clone a Divi 4 or Divi 5 page as a new draft, preserving builder meta and regenerating D5 clientIds so the duplicate opens in the editor without ID collisions (72-hour undo token)
-* Swap an image URL across every image-bearing Divi element on a post, dual-format aware for Divi 4 shortcodes and Divi 5 blocks (72-hour undo token)
+* Detect a page's Divi format from postmeta — aged pages read correctly even after theme updates
+* Get a compact page outline (section/row/module hierarchy with text snippets) — a few KB instead of raw markup
+* Validate a Divi shortcode or block string before writing to catch malformed structure
+* List Divi Library layouts (with category filter) and read a full layout by ID
+* Find-and-replace text with dry-run preview, expected-count safety check, active-editor-session detection
+* Clone a Divi 4 or Divi 5 page as a new draft, regenerating D5 clientIds so the duplicate opens without collisions (72-hour undo token)
+* Swap an image URL across every image-bearing Divi element on a post, dual-format aware (72-hour undo token)
 * Apply a Divi Library entry to a target page in merge or replace mode (72-hour undo token)
 
 **Advanced Custom Fields Integration (4 tools):**
@@ -156,6 +147,12 @@ When John Godley's Redirection plugin is active, AI agents can manage 301 / 302 
 * **Yoast SEO Integration (5 tools)** — read/write Yoast meta (raw + resolved), capture JSON-LD schema graph, list indexed internal links, list Premium redirects
 * **UpdraftPlus Integration (4 tools)** — list backups, read status, trigger async backups with entity filtering, read schedule
 * **WPForms Integration (4 tools)** — list forms, read form schema, (Pro) list submissions, (Pro) read single submission
+* **Solid Security Integration (4 tools)** — read security status, list currently locked-out IPs, read the security event log, add an IP to the ban list
+* **Contact Form 7 Integration (3 tools)** — list forms, read a single form's parsed field schema, list submissions (via Flamingo add-on)
+* **MonsterInsights Integration (4 tools)** — read the analytics overview, top pages, traffic sources, and top Search Console queries
+* **W3 Total Cache Integration (3 tools)** — read cache config across every module, purge cache (all / by URL / by post), read usage statistics
+* **Duplicator Integration (3 tools)** — list migration packages, read per-package status, get the installer URL for a completed package
+* **BuddyPress Integration (4 tools)** — list community members, read a single member profile, list groups, read the activity feed
 
 * **Royal AI Firewall Integration (6 tools)** — review AI bot traffic, dashboard stats, and set allow/block/challenge policies per bot signature
 * **GuardPress Integration (7 tools)** — review your security score, run vulnerability scans, inspect failed logins and blocked IPs
@@ -226,7 +223,7 @@ Security. Most MCP plugins (and 41% of all public MCP servers) have no authentic
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
-No. WordPress 6.9 added the Abilities API (a primitive for registering AI-callable functions), and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations that the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 85 ready-to-use WordPress core tools, and 99 integration tools that auto-load for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, Advanced Custom Fields, Yoast SEO, UpdraftPlus, WPForms, and Redirection.
+No. WordPress 6.9 added the Abilities API (a primitive for registering AI-callable functions), and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 85 ready-to-use WordPress core tools, and 121 integration tools for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Redirection, Solid Security, Contact Form 7, MonsterInsights, W3 Total Cache, Duplicator, and BuddyPress.
 
 = Does Royal MCP work with WooCommerce? =
 
@@ -316,6 +313,19 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.4.45 =
+* Fix: Plugin constant definitions no longer emit PHP notices when Royal MCP is loaded alongside a wrapper plugin that pre-defines the same constants.
+* New: Solid Security integration adds four tools — read the security status summary, list currently locked-out IPs, read the security event log, and add an IP to the ban list.
+* New: Contact Form 7 integration adds three tools — list forms, read a single form's parsed field schema, and list submissions when the Flamingo add-on is active.
+* New: MonsterInsights integration adds four tools — read the analytics overview, top pages, traffic sources, and top Google Search Console queries.
+* New: W3 Total Cache integration adds three tools — read cache configuration across every module, purge cache (all, by URL, or by post), and read usage statistics.
+* New: Duplicator integration adds three tools — list migration packages, read per-package status, and get the installer URL for a completed package.
+* New: BuddyPress integration adds four tools — list community members, read a single member profile, list groups, and read the activity feed.
+* New: MCP server identity now advertises the WordPress Site Icon so connector cards show per-site branding.
+* Enhancement: WooCommerce coupon and product read responses now include ISO 8601 date variants and additional catalog and subscription fields.
+* Enhancement: Help page CSS and admin links now work correctly when the plugin is vendored inside a wrapper plugin.
+* Fix: WooCommerce order tools now register correctly with ChatGPT.
 
 = 1.4.44.1 =
 * Fix: WooCommerce order tools now register correctly with ChatGPT.
