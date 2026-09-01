@@ -16,7 +16,7 @@ Preview-On-WordPress-Playground: yes
 
 **The most complete WordPress MCP server — 200+ tools, OAuth 2.0, and nothing leaves your site.**
 
-Royal MCP gives Claude, ChatGPT, Google Gemini, Perplexity, DeepSeek, Mistral, and every other MCP-compatible AI structured access to your WordPress site: 85 WordPress core tools plus 121 integration tools that auto-load for WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Contact Form 7, MonsterInsights, W3 Total Cache, Duplicator, BuddyPress, and more.
+Royal MCP gives Claude, ChatGPT, Google Gemini, Perplexity, DeepSeek, Mistral, and every other MCP-compatible AI structured access to your WordPress site: 85 WordPress core tools plus 120 integration tools that auto-load for WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Contact Form 7, MonsterInsights, W3 Total Cache, Duplicator, BuddyPress, and more.
 
 = Connect Claude to WordPress =
 
@@ -30,9 +30,17 @@ https://youtu.be/HsEIoDz9WmY
 
 **First-time setup walkthrough:** [royalplugins.com/support/royal-mcp/connecting-to-claude/](https://royalplugins.com/support/royal-mcp/connecting-to-claude/)
 
+= Plugins with dedicated MCP tools =
+
+WooCommerce, Elementor, Divi, Advanced Custom Fields, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Contact Form 7, MonsterInsights, W3 Total Cache, Duplicator, BuddyPress, Redirection — plus every Royal Plugin (Royal AI Firewall, GuardPress, SiteVault, ForgeCache, Royal Ledger, Royal Links).
+
+**Not seeing yours?** MCP still works. WordPress core operations (posts, pages, media, users, taxonomies, custom fields, menus, options) cover most day-to-day AI workflows for any plugin — read/write ACF via `wp_get_post_meta` even without ACF-specific tools, edit posts on any custom post type, moderate any plugin's comments. Shared SEO meta tools automatically work with Rank Math, AIOSEO, SEOPress, and SEObolt. A dedicated integration layers specialized tools on top when that plugin exposes its own data model, request features/plugins support [here on the wp.org support forum](https://wordpress.org/support/plugin/royal-mcp/).
+
 = Connect ChatGPT to WordPress =
 
 ChatGPT on the web, desktop, and iOS supports MCP servers natively. Add Royal MCP in ChatGPT's Plugins panel, authorize once, and ChatGPT can read your posts, publish drafts, update product prices, moderate comments, and audit SEO across your site — all through ordinary conversation.
+
+**First-time setup walkthrough:** [royalplugins.com/support/royal-mcp/connecting-to-chatgpt/](https://royalplugins.com/support/royal-mcp/connecting-to-chatgpt/)
 
 = Works with every MCP-compatible AI client =
 
@@ -52,13 +60,13 @@ Yes. Every MCP client (Claude Desktop, ChatGPT, and the rest) asks you to approv
 
 = Does Royal MCP work with the WordPress Abilities API? =
 
-Yes. Royal MCP surfaces every AI-callable operation through one endpoint, from three sources: the 85 native tools Royal MCP ships, the 121 integration tools that auto-load when WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Contact Form 7, MonsterInsights, W3 Total Cache, Duplicator, BuddyPress, and other supported plugins activate, and every ability any plugin registers through WordPress 6.9's Abilities API. Your AI sees them all as MCP tools — one connector, no per-plugin setup, no per-vendor rewrite.
+Yes. Royal MCP surfaces every AI-callable operation through one endpoint, from three sources: the 85 native tools Royal MCP ships, the 120 integration tools that auto-load when WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Contact Form 7, MonsterInsights, W3 Total Cache, Duplicator, BuddyPress, and other supported plugins activate, and every ability any plugin registers through WordPress 6.9's Abilities API. Your AI sees them all as MCP tools — one connector, no per-plugin setup, no per-vendor rewrite.
 
 = See what AI agents do to your site =
 
 The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) companion shows every AI agent hitting your site at the HTTP layer (training crawlers, retrieval bots, AI search engines), not just the ones connected through Royal MCP. Install both for a unified view across MCP tool calls and HTTP-layer bot hits.
 
-= 85 Core Tools + 121 Integration Tools =
+= 85 Core Tools + 120 Integration Tools =
 
 **WordPress Core (85 tools):**
 
@@ -88,78 +96,35 @@ The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) c
 * Search + Permalink Structure - full-text content search; read/write permalinks (gated)
 * Options - read allowlisted core options, read plugin settings (sensitive keys redacted), write to allowlisted options when enabled
 
-= Plugin Integrations (Conditional) =
+= Third-Party Plugin Integrations (auto-detected) =
 
-Royal MCP automatically detects compatible plugins and adds specialized MCP tools. No configuration needed — if the plugin is active, the tools appear.
+If the plugin is active on your Wordpress site, it's tools auto-register with no additional configuration needed.
 
-**WooCommerce Integration (29 tools):**
-When WooCommerce is active, AI agents can manage your store end-to-end:
+* **WooCommerce (29 tools)** — full store CRUD: products (simple + variable), variations, global attributes (`pa_*`), coupons with bulk-trash purge, orders + notes, customers, and store statistics
+* **Elementor (11 tools, free + Pro)** — clone a page with fresh element IDs, bulk text/image replacement across 12+ widget types, compact page outlines, widget-level settings reads, template library import/insert, `post_content` restoration on damaged pages (72-hour undo per write)
+* **Divi (9 tools, Divi 4 + Divi 5)** — format detection, page outlines, layout validation, library reads, dry-run find-and-replace with active-editor-session detection, page cloning (D5 `clientIds` regenerated), image swaps, library-to-page apply in merge or replace mode (72-hour undo per write)
+* **Advanced Custom Fields (4 tools, free + Pro)** — type-aware field reads (each field's Return Format respected: hydrated post objects, parsed repeater rows, image arrays), bulk-read all fields on a post, type-aware writes, field-group enumeration
+* **Yoast SEO (5 tools)** — read/write Yoast meta (raw + resolved), capture the JSON-LD schema graph, list indexed internal links, list Yoast Premium redirects
+* **UpdraftPlus (4 tools)** — list backups, read status, trigger async backups with per-entity filtering (DB, plugins, themes, uploads), read the backup schedule
+* **WPForms (4 tools, free + Pro)** — list forms, read a form's field schema; submission access (list + read) requires WPForms Pro
+* **Solid Security (4 tools)** — read the security dashboard, list currently locked-out IPs, read the security event log, add an IP to the ban list (also detects iThemes Security and Kadence Security Basic)
+* **Contact Form 7 (3 tools)** — list forms, read a single form's parsed field schema; submission access requires the Flamingo companion plugin
+* **MonsterInsights (4 tools)** — read the analytics overview, top pages, traffic sources, and top Search Console queries
+* **W3 Total Cache (3 tools)** — read cache config across every module, purge (all / by URL / by post), read cache usage stats
+* **Duplicator (3 tools)** — list migration packages, read per-package status, get the installer URL for any completed package
+* **BuddyPress (4 tools)** — list community members, read a single member profile, list groups, read the activity feed
+* **Redirection (4 tools)** — list/create/update 301/302/307 redirects (with regex + group + status), list redirect groups
 
-* Products — browse, search, create/update simple + variable products with prices, SKUs, stock levels
-* Variations — list, get, create, update, delete, batch-update
-* Global attributes (`pa_*`) — list attributes and terms, register new, assign to products as variation axes
-* Coupons — full CRUD plus bulk-trash purge, with all standard WC fields (discount type, expiry, usage limits, product/category restrictions, email allowlists)
-* Orders — view, create, update status, attach order notes (B2B, wholesale, phone-order workflows)
-* Customers + store statistics — order counts, revenue, average order value by period
+= Royal Plugins Integrations (auto-detected) =
 
-**Elementor Integration (11 tools):**
-When Elementor (free or Pro) is active, AI agents can clone and customize existing pages without trying to generate page-builder JSON from scratch:
+Every Royal Plugin auto-exposes MCP tools alongside Royal MCP:
 
-* Clone a page with fresh element IDs so the duplicate opens in the editor without collisions
-* Bulk-replace text across heading, text-editor, button, image-box, icon-box, testimonial, tabs, accordion, and 6+ other widget types (plus image alt/title on gallery widgets)
-* Swap image URLs across image, image-box, background, and gallery widget settings
-* Get a compact page outline (element IDs, widget types, text snippets) — a few KB instead of raw JSON
-* Read full settings for a single widget/container by ID for precise agent editing
-* Import templates from JSON, list saved templates, insert templates at any position on any page
-* Rebuild post_content from Elementor data on pages with damaged core content (restores WP search visibility)
-* Every write returns a 72-hour undo token. Atomic widgets (V4) pass through opaque — widget-level creation from scratch is intentionally out of scope
-
-**Divi Integration (9 tools):**
-When Divi (Divi 4 shortcode format or Divi 5 block format) is active, AI agents get safety-first tools for reading and editing Divi content without corrupting builder state:
-
-* Detect a page's Divi format from postmeta — aged pages read correctly even after theme updates
-* Get a compact page outline (section/row/module hierarchy with text snippets) — a few KB instead of raw markup
-* Validate a Divi shortcode or block string before writing to catch malformed structure
-* List Divi Library layouts (with category filter) and read a full layout by ID
-* Find-and-replace text with dry-run preview, expected-count safety check, active-editor-session detection
-* Clone a Divi 4 or Divi 5 page as a new draft, regenerating D5 clientIds so the duplicate opens without collisions (72-hour undo token)
-* Swap an image URL across every image-bearing Divi element on a post, dual-format aware (72-hour undo token)
-* Apply a Divi Library entry to a target page in merge or replace mode (72-hour undo token)
-
-**Advanced Custom Fields Integration (4 tools):**
-When ACF (free or Pro) is active, AI agents can read and write ACF fields with the field-type-aware formatting the ACF UI uses — instead of the raw serialized values WordPress meta returns:
-
-* Read a single ACF field, formatted per its Return Format setting (hydrated post objects, parsed repeater rows, image arrays, etc.)
-* Read every ACF field on a post in one call, with name/label/type/value bundled — the most efficient way for an AI to discover what fields exist and read them all
-* Update an ACF field with type-aware value handling (scalar for text/number, array for repeaters and flex content, post ID for relationships, attachment ID for images)
-* Enumerate ACF field groups on the site, optionally filtered by post type — for AI-driven discovery of available custom fields before reading/writing
-
-**Redirection Integration (4 tools):**
-When John Godley's Redirection plugin is active, AI agents can manage 301 / 302 / 307 redirects:
-
-* List redirects with group + URL-substring filters
-* Create new redirects (source, target, status code, regex, group, title)
-* Update existing redirects (target, status, enabled state)
-* List redirect groups
-
-**Also auto-detected:**
-
-* **Yoast SEO Integration (5 tools)** — read/write Yoast meta (raw + resolved), capture JSON-LD schema graph, list indexed internal links, list Premium redirects
-* **UpdraftPlus Integration (4 tools)** — list backups, read status, trigger async backups with entity filtering, read schedule
-* **WPForms Integration (4 tools)** — list forms, read form schema, (Pro) list submissions, (Pro) read single submission
-* **Solid Security Integration (4 tools)** — read security status, list currently locked-out IPs, read the security event log, add an IP to the ban list
-* **Contact Form 7 Integration (3 tools)** — list forms, read a single form's parsed field schema, list submissions (via Flamingo add-on)
-* **MonsterInsights Integration (4 tools)** — read the analytics overview, top pages, traffic sources, and top Search Console queries
-* **W3 Total Cache Integration (3 tools)** — read cache config across every module, purge cache (all / by URL / by post), read usage statistics
-* **Duplicator Integration (3 tools)** — list migration packages, read per-package status, get the installer URL for a completed package
-* **BuddyPress Integration (4 tools)** — list community members, read a single member profile, list groups, read the activity feed
-
-* **Royal AI Firewall Integration (6 tools)** — review AI bot traffic, dashboard stats, and set allow/block/challenge policies per bot signature
-* **GuardPress Integration (7 tools)** — review your security score, run vulnerability scans, inspect failed logins and blocked IPs
-* **SiteVault Integration (6 tools)** — list backups, trigger new ones, check progress, review schedules
-* **ForgeCache Integration (3 tools)** — purge and inspect your page cache
-* **Royal Ledger Integration (4 tools)** — review recurring software costs and masked license entries
-* **Royal Links Integration (3 tools)** — manage branded short links and click stats
+* **Royal AI Firewall (6 tools)** — review AI bot traffic, dashboard stats, and set allow/block/challenge policies per bot signature
+* **GuardPress (7 tools)** — review your security score, run vulnerability scans, inspect failed logins and blocked IPs
+* **SiteVault (6 tools)** — list backups, trigger new ones, check progress, review schedules
+* **ForgeCache (3 tools)** — purge and inspect your page cache
+* **Royal Ledger (4 tools)** — review recurring software costs and masked license entries
+* **Royal Links (3 tools)** — manage branded short links and click stats
 
 = Supported AI Platforms =
 
@@ -223,7 +188,7 @@ Security. Most MCP plugins (and 41% of all public MCP servers) have no authentic
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
-No. WordPress 6.9 added the Abilities API (a primitive for registering AI-callable functions), and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 85 ready-to-use WordPress core tools, and 121 integration tools for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Redirection, Solid Security, Contact Form 7, MonsterInsights, W3 Total Cache, Duplicator, and BuddyPress.
+No. WordPress 6.9 added the Abilities API (a primitive for registering AI-callable functions), and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 85 ready-to-use WordPress core tools, and 120 integration tools for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Redirection, Solid Security, Contact Form 7, MonsterInsights, W3 Total Cache, Duplicator, and BuddyPress.
 
 = Does Royal MCP work with WooCommerce? =
 
