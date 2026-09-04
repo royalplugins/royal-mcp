@@ -96,7 +96,7 @@ $royal_mcp_help_logs_url     = defined( 'ROYAL_MCP_LOADED_BY_PRO' )
 			printf(
 				wp_kses(
 					/* translators: %s: link to Activity Log admin page */
-					__( 'Keep %s open in another browser tab while you connect. You will see live entries fire (oauth:register → oauth:authorize → oauth:token) — if something fails, the log shows which step and why.', 'royal-mcp' ),
+					__( 'Keep %s open in another browser tab while you connect. You will see live entries fire (oauth:register → oauth:authorize → oauth:token) during the handshake, then mcp:initialize + mcp:tools/list once the connection is live. If something fails, the log shows which step and why.', 'royal-mcp' ),
 					[ 'a' => [ 'href' => [] ] ]
 				),
 				'<a href="' . esc_url( $royal_mcp_help_logs_url ) . '">' . esc_html__( 'Royal MCP → Activity Log', 'royal-mcp' ) . '</a>'

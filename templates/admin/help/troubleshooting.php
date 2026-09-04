@@ -184,6 +184,43 @@ $royal_mcp_help_permalinks   = admin_url( 'options-permalink.php' );
 	</div>
 
 	<!-- =====================================================
+	     Reading the Activity Log
+	     ===================================================== -->
+	<div class="royal-mcp-help-section">
+		<h3><?php esc_html_e( 'What the Activity Log shows', 'royal-mcp' ); ?></h3>
+		<p><?php esc_html_e( 'The Activity Log is the single fastest diagnostic surface for connection issues. Three prefixes cover the connection lifecycle:', 'royal-mcp' ); ?></p>
+		<ul class="royal-mcp-help-ladder">
+			<li>
+				<strong><code>oauth:*</code></strong>
+				<?php esc_html_e( '— OAuth handshake events (register, authorize, token, revoke). Failed handshakes record the exact validation rule that fired, which is the most useful thing to paste into a support request.', 'royal-mcp' ); ?>
+			</li>
+			<li>
+				<strong><code>mcp:*</code></strong>
+				<?php esc_html_e( '— JSON-RPC method calls (initialize, tools/list, ping, notifications). A successful connection shows mcp:initialize followed by mcp:tools/list. If you see oauth:token succeed but no mcp:initialize row, the token was issued but the client never used it.', 'royal-mcp' ); ?>
+			</li>
+			<li>
+				<strong><code>tools/call:*</code></strong>
+				<?php esc_html_e( '— Individual tool invocations. Records the tool name and success or error status. Argument values are never logged.', 'royal-mcp' ); ?>
+			</li>
+		</ul>
+	</div>
+
+	<!-- =====================================================
+	     Automatic host-compatibility detection
+	     ===================================================== -->
+	<div class="royal-mcp-help-section">
+		<h3><?php esc_html_e( 'Automatic host-compatibility notices', 'royal-mcp' ); ?></h3>
+		<p><?php esc_html_e( 'Royal MCP self-checks for the most common host and plugin configurations that would block the connection, and surfaces a specific admin notice with the fix when it finds one. Watch for these at the top of the Royal MCP admin pages:', 'royal-mcp' ); ?></p>
+		<ul class="royal-mcp-help-ladder">
+			<li><?php esc_html_e( 'Managed-host reservation of /.well-known/ (SiteGround, WP Engine, and similar).', 'royal-mcp' ); ?></li>
+			<li><?php esc_html_e( 'Plain permalinks (Royal MCP\'s discovery routes need pretty permalinks to fire).', 'royal-mcp' ); ?></li>
+			<li><?php esc_html_e( 'Perfmatters, Solid Security, and other plugins that disable the REST API for unauthenticated callers.', 'royal-mcp' ); ?></li>
+			<li><?php esc_html_e( 'BitNinja, Imunify360, Sucuri edge, and other WAF products that intercept the discovery paths.', 'royal-mcp' ); ?></li>
+		</ul>
+		<p><?php esc_html_e( 'Each notice links to a specific fix. Dismiss individually once addressed. The check re-runs when you update Royal MCP settings or change WordPress permalinks.', 'royal-mcp' ); ?></p>
+	</div>
+
+	<!-- =====================================================
 	     Still stuck? Point to Support tab + Activity Log
 	     ===================================================== -->
 	<div class="royal-mcp-help-section royal-mcp-help-nextstep">
