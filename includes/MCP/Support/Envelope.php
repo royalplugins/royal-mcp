@@ -12,8 +12,8 @@
  *     'undo'              => [ ... optional undo envelope ... ],  // omitted when absent
  *   ]
  *
- * Free's Server::handle_tool_call detects the envelope shape (presence of the
- * `isError` key at the top of the tool return) and passes it through
+ * Free's Server::handle_tools_call detects the envelope shape (presence of
+ * the `isError` key at the top of the tool return) and passes it through
  * unwrapped. Legacy tools that return flat arrays continue to be JSON-encoded
  * into a single text block via the fallback path — no back-compat break.
  *
