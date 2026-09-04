@@ -8,14 +8,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 /**
  * MCP Session Store.
  *
- * DB-backed storage for MCP session state.
- *
- * When an object cache drop-in (object-cache.php) is active, set_transient()
- * writes to the cache layer instead of wp_options. Some cache backends evict
- * keys between requests, so a session that writes successfully reads back as
- * `false` milliseconds later — every MCP request after `initialize` returns
- * 404 "Session not found". Direct DB storage with sha256-hashed lookup gives
- * reliable persistence regardless of which cache backend (if any) is active.
+ * DB-backed record of MCP sessions. A session is created on initialize and
+ * the ID is returned in the Mcp-Session-Id response header for clients that
+ * consume it. The ID is not required on subsequent requests — auth alone
+ * gates every non-initialize method, so this table is an audit sidecar
+ * rather than an access gate. Kept DB-backed (not transient) because an
+ * object-cache drop-in can evict keys between requests, which would make
+ * even audit-only lookups unreliable.
  */
 class Session_Store {
 
