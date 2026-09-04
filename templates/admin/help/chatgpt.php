@@ -83,16 +83,8 @@ $royal_mcp_help_logs_url     = defined( 'ROYAL_MCP_LOADED_BY_PRO' )
 				<?php esc_html_e( 'OpenAI gates Create behind an explicit risk acknowledgment for unverified MCP servers.', 'royal-mcp' ); ?>
 			</li>
 			<li>
-				<strong><?php esc_html_e( 'Click "Sign in with [your Plugin name]".', 'royal-mcp' ); ?></strong>
-				<?php esc_html_e( 'ChatGPT shows a confirmation modal titled "Add [your Plugin name] to ChatGPT" with a single Sign in button plus three trust notes (permissions respected / you\'re in control / connectors may introduce risk). Nothing has happened on your WordPress site yet — the OAuth handshake starts the moment you click Sign in.', 'royal-mcp' ); ?>
-			</li>
-			<li>
-				<strong><?php esc_html_e( 'Authorize on your WordPress site.', 'royal-mcp' ); ?></strong>
-				<?php esc_html_e( 'A new browser tab opens the /authorize page on your site. Review the listed permissions (read posts/pages/media, create + edit content, manage taxonomies + menus, view site settings + user info) and click Authorize. Royal MCP issues an access token and the tab closes automatically.', 'royal-mcp' ); ?>
-			</li>
-			<li>
-				<strong><?php esc_html_e( 'Return to ChatGPT — Plugin is Connected.', 'royal-mcp' ); ?></strong>
-				<?php esc_html_e( 'Back on Settings → Plugins, your Plugin now shows a Connected state. Click it to open the detail view: Connection row, Permissions row (defaults to Allow low-risk actions — cover in the next step), and an Actions list showing every Royal MCP tool with its input schema. If you see an "action discovery failed" or "unknown error" banner during this step, it\'s usually cosmetic (see the note further down this tab) — verify by opening the Plugin detail view; if tools are listed, you\'re connected.', 'royal-mcp' ); ?>
+				<strong><?php esc_html_e( 'Approve the OAuth consent.', 'royal-mcp' ); ?></strong>
+				<?php esc_html_e( 'ChatGPT shows a "Sign in with [your Plugin name]" modal. Click Sign in → a browser tab opens your WordPress /authorize page → click Authorize → tab closes → Plugin flips to Connected.', 'royal-mcp' ); ?>
 			</li>
 			<li>
 				<strong><?php esc_html_e( 'Set the Plugin\'s Permissions.', 'royal-mcp' ); ?></strong>

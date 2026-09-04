@@ -115,12 +115,6 @@ class Token_Store {
             KEY expires_at (expires_at)
         ) $charset_collate;" );
 
-        // client_id index is prefixed to 191 chars because a full varchar(255)
-        // index under utf8mb4 is 1020 bytes, which exceeds the max key length
-        // on some MySQL configurations (notably MyISAM at 1000 bytes). 191 is
-        // the standard WordPress utf8mb4-safe prefix (191 * 4 = 764 bytes).
-        // Rejected clients never carry client_id values longer than 191 chars
-        // anyway (RFC 7591 doesn't cap them but generated values are short).
         dbDelta( "CREATE TABLE IF NOT EXISTS $clients_table (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             client_id varchar(255) NOT NULL,
@@ -131,7 +125,7 @@ class Token_Store {
             token_endpoint_auth_method varchar(50) DEFAULT 'none' NOT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY  (id),
-            UNIQUE KEY client_id (client_id(191))
+            UNIQUE KEY client_id (client_id)
         ) $charset_collate;" );
 
         // Authorization codes in a dedicated table (not transients). Object-
