@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.4.45
+ * Version: 1.5.0
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -42,7 +42,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 // guards each MCP request produces 4 warnings + 4 nginx error-log stack
 // traces, which on shared PHP-FPM pools amplifies into cross-site worker
 // starvation.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.4.45' );
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.0' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -247,10 +247,22 @@ class Royal_MCP_Plugin {
      *
      * INVARIANT: db_version only advances when every required migration ran AND
      * required_tables_exist() confirms the tables physically exist.
+     *
+     * Retry-loop guard: when a CREATE TABLE fails (e.g. host-side schema
+     * incompatibility), remember the failure and skip re-running for
+     * DAY_IN_SECONDS. Without this the same failing DDL would fire on every
+     * request, flooding error logs. Guard state is a single option that
+     * gets cleared as soon as a run succeeds, so admins who fix the
+     * underlying issue see recovery on their next request.
      */
     public function maybe_upgrade_db() {
         if (get_option('royal_mcp_db_version') === ROYAL_MCP_VERSION
             && $this->required_tables_exist()) {
+            return;
+        }
+
+        $last_failed = (int) get_option('royal_mcp_db_upgrade_last_failed_at', 0);
+        if ($last_failed > 0 && (time() - $last_failed) < DAY_IN_SECONDS) {
             return;
         }
 
@@ -280,8 +292,11 @@ class Royal_MCP_Plugin {
             }
         }
 
-        if ($token_store_ok && $session_store_ok) {
+        if ($token_store_ok && $session_store_ok && $this->required_tables_exist()) {
             update_option('royal_mcp_db_version', ROYAL_MCP_VERSION);
+            delete_option('royal_mcp_db_upgrade_last_failed_at');
+        } else {
+            update_option('royal_mcp_db_upgrade_last_failed_at', time());
         }
     }
 
@@ -355,6 +370,7 @@ class Royal_MCP_Plugin {
      */
     public function register_oauth_rewrites() {
         add_rewrite_rule( '\.well-known/oauth-protected-resource(/.*)?$', 'index.php?royal_mcp_oauth=protected_resource', 'top' );
+        add_rewrite_rule( '\.well-known/oauth-authorization-server/mcp/?$', 'index.php?royal_mcp_oauth=metadata_mcp', 'top' );
         add_rewrite_rule( '\.well-known/oauth-authorization-server/?$', 'index.php?royal_mcp_oauth=metadata', 'top' );
         foreach ( self::get_oauth_rewrite_paths() as $action => $slug ) {
             $slug = ltrim( trim( (string) $slug ), '/' );
@@ -364,10 +380,14 @@ class Royal_MCP_Plugin {
     }
 
     /**
-     * Strip GET/HEAD rewrites for POST-only OAuth endpoints (/register, /token).
+     * Redirect GET/HEAD requests to POST-only OAuth endpoints (/register,
+     * /token) to a 405 Method Not Allowed handler instead of letting them
+     * fall through to a bare WordPress 404. 405 is the spec-correct
+     * response ("endpoint exists, wrong method") and gives probing MCP
+     * clients an Allow header they can act on.
      *
      * MUST hook option_rewrite_rules, NOT rewrite_rules_array — the latter
-     * feeds update_option() during a flush and would persist the removal.
+     * feeds update_option() during a flush and would persist the rewrite.
      */
     public static function strip_oauth_get_only_rules( $rules ) {
         if ( ! is_array( $rules ) ) {
@@ -386,7 +406,7 @@ class Royal_MCP_Plugin {
             $rule_key = $slug . '/?$';
             if ( isset( $rules[ $rule_key ] )
                 && false !== strpos( (string) $rules[ $rule_key ], 'royal_mcp_oauth=' . $action ) ) {
-                unset( $rules[ $rule_key ] );
+                $rules[ $rule_key ] = 'index.php?royal_mcp_oauth=method_not_allowed&royal_mcp_endpoint=' . $action;
             }
         }
         return $rules;
@@ -397,6 +417,7 @@ class Royal_MCP_Plugin {
      */
     public function register_oauth_query_vars( $vars ) {
         $vars[] = 'royal_mcp_oauth';
+        $vars[] = 'royal_mcp_endpoint';
         return $vars;
     }
 
