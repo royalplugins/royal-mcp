@@ -68,6 +68,96 @@ class Server {
     private $request_session_id   = null;   // MCP session ID from Mcp-Session-Id header, or null (no session for pre-initialize)
 
     /**
+     * MCP protocol versions this server supports on the initialize handshake.
+     *
+     * Each entry corresponds to a published MCP spec revision date. A client
+     * that asks for one of these on initialize gets it echoed back; anything
+     * outside this set is rejected with a JSON-RPC error whose `data.supported`
+     * field lists these values.
+     *
+     * Ordered ascending. To advertise support for a newer spec revision, add
+     * its date and update DEFAULT_NEGOTIATED_PROTOCOL_VERSION if the default
+     * should also advance.
+     */
+    const SUPPORTED_PROTOCOL_VERSIONS = [
+        '2024-11-05',
+        '2025-06-18',
+        '2025-11-25',
+        '2026-07-28',
+    ];
+
+    /**
+     * Protocol version echoed back when the client omits protocolVersion on
+     * initialize. Kept behind the newest supported revision so quiet clients
+     * get a well-tested wire shape rather than the latest spec draft.
+     */
+    const DEFAULT_NEGOTIATED_PROTOCOL_VERSION = '2025-11-25';
+
+    /**
+     * JSON-RPC method dispatch table. Populated by register_default_handlers()
+     * from the constructor; extensible via register_method_handler().
+     *
+     * Every implemented method has an entry here. The presence of a key IS
+     * the source of truth for is_known_method() — no separate hardcoded list
+     * to keep in sync. Method-not-found responses derive from a lookup miss
+     * against this table.
+     *
+     * @var array<string, callable>
+     */
+    private $request_handlers = [];
+
+    public function __construct() {
+        $this->register_default_handlers();
+        // Runs last on royal_mcp_tools so it sees the final Free + Pro tool
+        // list and stamps a permissive baseline outputSchema on any tool
+        // that hasn't declared its own. Filter is idempotent — safe if Pro
+        // also registers it (identical shape wins either way).
+        if ( ! has_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_default_output_schemas' ] ) ) {
+            add_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_default_output_schemas' ], PHP_INT_MAX );
+        }
+    }
+
+    /**
+     * Register the built-in MCP method handlers. Called from the constructor;
+     * split out so tests or extensions can inspect the default set.
+     */
+    private function register_default_handlers() {
+        $this->register_method_handler('initialize',                [ $this, 'handle_initialize' ]);
+        $this->register_method_handler('notifications/initialized', [ $this, 'handle_notification_ack' ]);
+        $this->register_method_handler('initialized',               [ $this, 'handle_notification_ack' ]);
+        $this->register_method_handler('tools/list',                [ $this, 'handle_tools_list' ]);
+        $this->register_method_handler('tools/call',                [ $this, 'handle_tools_call' ]);
+        $this->register_method_handler('ping',                      [ $this, 'handle_ping' ]);
+        $this->register_method_handler('resources/list',            [ $this, 'handle_resources_list' ]);
+        $this->register_method_handler('prompts/list',              [ $this, 'handle_prompts_list' ]);
+    }
+
+    /**
+     * Register a handler for a JSON-RPC method. Idempotent — last write wins.
+     *
+     * Handler signature: `function ($params, $id): array|null` where the
+     * return is a full JSON-RPC response object (or null for notifications
+     * that should not receive a body).
+     *
+     * @param string   $method  JSON-RPC method name, e.g. 'tools/list'.
+     * @param callable $handler Handler with signature ($params, $id) => array|null.
+     */
+    public function register_method_handler($method, $handler) {
+        $this->request_handlers[ (string) $method ] = $handler;
+    }
+
+    /**
+     * Whether $method has a registered handler.
+     *
+     * Public so external code (tests, extensions) can query dispatchability
+     * without invoking. Derives from $request_handlers keys — there is no
+     * separate list to fall out of sync.
+     */
+    public function is_known_method($method) {
+        return isset($this->request_handlers[ (string) $method ]);
+    }
+
+    /**
      * Validate Origin header to prevent DNS rebinding attacks
      * Per MCP spec: Servers MUST validate Origin header
      *
@@ -953,80 +1043,18 @@ class Server {
         $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
         $response->header('Pragma', 'no-cache');
         return $response;
-
-        // Unreachable below — preserved for future SSE support.
-        $session_id = $request->get_header('Mcp-Session-Id');
-        $accept = $request->get_header('Accept');
-
-        // Validate Accept header must include text/event-stream
-        if (empty($accept) || strpos($accept, 'text/event-stream') === false) {
-            return new \WP_REST_Response([
-                'jsonrpc' => '2.0',
-                'error' => [
-                    'code' => -32600,
-                    'message' => 'Accept header must include text/event-stream for GET requests',
-                ],
-            ], 400);
-        }
-
-        // Session ID required for GET streams
-        if (empty($session_id)) {
-            return new \WP_REST_Response([
-                'jsonrpc' => '2.0',
-                'error' => [
-                    'code' => -32600,
-                    'message' => 'Mcp-Session-Id header required',
-                ],
-            ], 400);
-        }
-
-        // Validate session ID format
-        if (!$this->validate_session_id_format($session_id)) {
-            return new \WP_REST_Response([
-                'jsonrpc' => '2.0',
-                'error' => [
-                    'code' => -32600,
-                    'message' => 'Invalid session ID format',
-                ],
-            ], 400);
-        }
-
-        // Check if session exists
-        if (!$this->is_valid_session($session_id)) {
-            return new \WP_REST_Response([
-                'jsonrpc' => '2.0',
-                'error' => [
-                    'code' => -32600,
-                    'message' => 'Session not found or expired',
-                ],
-            ], 404);
-        }
-
-        // Check for Last-Event-ID for resumability
-        $last_event_id = $request->get_header('Last-Event-ID');
-
-        // Set SSE headers
-        $response = new \WP_REST_Response(null, 200);
-        $response->header('Content-Type', 'text/event-stream');
-        $response->header('Cache-Control', 'no-cache');
-        $response->header('Connection', 'keep-alive');
-        $response->header('Access-Control-Allow-Origin', '*');
-        $response->header('Access-Control-Expose-Headers', 'Mcp-Session-Id');
-        $response->header('X-Accel-Buffering', 'no'); // Disable nginx buffering
-
-        // Note: WordPress REST API doesn't support long-lived SSE connections well
-        // For production SSE, consider a dedicated endpoint outside WP REST API
-        // This implementation acknowledges the stream and returns empty
-        // Server-initiated messages would require a different architecture
-
-        return $response;
     }
 
     /**
-     * Handle POST - Process JSON-RPC message
+     * Handle POST - Process JSON-RPC message.
+     *
+     * Auth is the sole gate. The validated credential's fingerprint is the
+     * implicit session identity, so a client that never sends
+     * Mcp-Session-Id gets the same access as one that does. An explicit
+     * Mcp-Session-Id header is accepted for backward compatibility but
+     * never blocks the request, even when it doesn't match the fingerprint.
      */
     private function handle_post_message($request) {
-        // Parse JSON-RPC message
         $body = $request->get_json_params();
 
         if (!$body || !isset($body['jsonrpc']) || $body['jsonrpc'] !== '2.0') {
@@ -1043,80 +1071,47 @@ class Server {
         $params = $body['params'] ?? [];
         $id = $body['id'] ?? null;
 
-        // Get session ID from header
-        $session_id = $request->get_header('Mcp-Session-Id');
+        // Method-first: unknown JSON-RPC methods return -32601 regardless of
+        // auth state. Matches the reference SDK ordering — method-existence
+        // is a property of the server surface, not of the caller's identity,
+        // and clients that read a 401 as "reauthenticate" would otherwise
+        // loop on methods this server doesn't implement.
+        if (!$this->is_known_method($method)) {
+            return $this->json_response([
+                'jsonrpc' => '2.0',
+                'id' => $id,
+                'error' => [
+                    'code' => -32601,
+                    'message' => 'Method not found: ' . $method,
+                ],
+            ], 200);
+        }
 
-        // stash session id for royal_mcp_connection_health diagnostic tool.
+        // Read the session header for the connection-health diagnostic tool.
+        // Not used to gate access — see Session_Store class docstring.
+        $session_id = $request->get_header('Mcp-Session-Id');
         $this->request_session_id = $session_id ? (string) $session_id : null;
 
-        // Authenticate EVERY request — API key or Bearer token required.
         $auth_check = $this->validate_auth($request);
         if ($auth_check !== true) {
             return $auth_check;
         }
 
-        // Build auth fingerprint to bind sessions to credentials.
-        $auth_fingerprint = $this->build_auth_fingerprint($request);
-
-        // For non-initialize requests, validate session
-        if ($method !== 'initialize') {
-            // Per MCP spec: SHOULD respond with 400 Bad Request to requests without session ID
-            if (empty($session_id)) {
-                return $this->json_response([
-                    'jsonrpc' => '2.0',
-                    'id' => $id,
-                    'error' => [
-                        'code' => -32600,
-                        'message' => 'Mcp-Session-Id header required. Please initialize first.',
-                    ],
-                ], 400);
-            }
-
-            // Validate session ID format
-            if (!$this->validate_session_id_format($session_id)) {
-                return $this->json_response([
-                    'jsonrpc' => '2.0',
-                    'id' => $id,
-                    'error' => [
-                        'code' => -32600,
-                        'message' => 'Invalid session ID format',
-                    ],
-                ], 400);
-            }
-
-            // Check if session exists
-            if (!$this->is_valid_session($session_id)) {
-                return $this->json_response([
-                    'jsonrpc' => '2.0',
-                    'id' => $id,
-                    'error' => [
-                        'code' => -32600,
-                        'message' => 'Session not found or expired. Please re-initialize.',
-                    ],
-                ], 404);
-            }
-
-            // Verify session is bound to the same credentials. MUST use hash_equals.
-            $stored_fingerprint = Session_Store::get_fingerprint($session_id);
-            if (!empty($stored_fingerprint) && !hash_equals($stored_fingerprint, $auth_fingerprint)) {
-                return $this->json_response([
-                    'jsonrpc' => '2.0',
-                    'id' => $id,
-                    'error' => [
-                        'code' => -32600,
-                        'message' => 'Session credentials mismatch. Please re-initialize.',
-                    ],
-                ], 403);
-            }
-        }
-
-        // Process the method
         $result = $this->process_method($method, $params, $id);
 
-        // For initialize, generate and return session ID
+        // Log the method call for admin observability. Skip tools/call — it
+        // has its own per-tool log rows via log_tool_call() already. Logging
+        // it a second time at method level would create duplicate noise.
+        if ($method !== 'tools/call') {
+            $this->log_method_call($method, $result);
+        }
+
+        // initialize still emits Mcp-Session-Id for clients that consume it.
+        // Subsequent requests are gated by auth regardless of whether the
+        // client echoes this ID back.
         if ($method === 'initialize' && $result && isset($result['result'])) {
-            $new_session_id = $this->generate_session_id();
-            // Store the session bound to the authenticated credentials
+            $new_session_id   = $this->generate_session_id();
+            $auth_fingerprint = $this->build_auth_fingerprint($request);
             $this->store_session($new_session_id, $auth_fingerprint);
             $response = $this->json_response($result, 200);
             $response->header('Mcp-Session-Id', $new_session_id);
@@ -1129,6 +1124,46 @@ class Server {
         }
 
         return $this->json_response($result, 200);
+    }
+
+    /**
+     * Log a JSON-RPC method call to wp_royal_mcp_logs.
+     *
+     * Complements log_tool_call() with method-level visibility. Without this
+     * row, admins probing the Activity Log to diagnose a connection issue
+     * would see zero traffic even when clients are actively hitting
+     * initialize / tools/list / ping — making them chase phantom
+     * network-layer problems.
+     *
+     * Log shape mirrors log_tool_call(): action = 'mcp:<method>', request
+     * body is a bare method-name marker, response records status +
+     * error_code + error_message when the dispatch returned an error object.
+     */
+    private function log_method_call($method, $result) {
+        global $wpdb;
+
+        $is_error = is_array($result) && isset($result['error']);
+        $status   = $is_error ? 'error' : 'success';
+
+        $request_meta = [ 'method' => (string) $method ];
+        $response_meta = [ 'status' => $status ];
+        if ($is_error) {
+            $response_meta['error_code']    = (int) ($result['error']['code'] ?? 0);
+            $response_meta['error_message'] = (string) ($result['error']['message'] ?? '');
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Intentional direct insert to the logs table.
+        $wpdb->insert(
+            $wpdb->prefix . 'royal_mcp_logs',
+            [
+                'mcp_server'    => 'MCP Server',
+                'action'        => 'mcp:' . sanitize_text_field((string) $method),
+                'request_data'  => wp_json_encode($request_meta),
+                'response_data' => wp_json_encode($response_meta),
+                'status'        => $status,
+            ],
+            [ '%s', '%s', '%s', '%s', '%s' ]
+        );
     }
 
     /**
@@ -1211,88 +1246,123 @@ class Server {
     }
 
     /**
-     * Process JSON-RPC method and return response object
+     * Dispatch a parsed JSON-RPC request via the handler registry.
+     *
+     * Method existence is decided by is_known_method() — the sole source of
+     * truth is the $request_handlers table. Unknown methods return -32601;
+     * known methods invoke their registered handler with ($params, $id).
      */
     private function process_method($method, $params, $id) {
-        switch ($method) {
-            case 'initialize':
-                $server_info = [
-                    'name'    => 'Royal MCP WordPress',
-                    'version' => ROYAL_MCP_VERSION,
-                ];
-                $icon_url = function_exists( 'get_site_icon_url' ) ? get_site_icon_url() : '';
-                if ( $icon_url ) {
-                    $filetype             = wp_check_filetype( $icon_url );
-                    $server_info['icons'] = [
-                        [
-                            'src'      => $icon_url,
-                            'mimeType' => $filetype['type'] ?? 'image/png',
-                            'sizes'    => [ '512x512' ],
-                        ],
-                    ];
-                }
-                return [
-                    'jsonrpc' => '2.0',
-                    'id' => $id,
-                    'result' => [
-                        'protocolVersion' => '2025-11-25',
-                        'serverInfo' => $server_info,
-                        'capabilities' => [
-                            'tools' => new \stdClass(),
-                        ],
-                    ],
-                ];
-
-            case 'notifications/initialized':
-            case 'initialized':
-                return null; // No response for notifications
-
-            case 'tools/list':
-                return [
-                    'jsonrpc' => '2.0',
-                    'id' => $id,
-                    'result' => [
-                        'tools' => $this->get_tools(),
-                    ],
-                ];
-
-            case 'tools/call':
-                return $this->handle_tool_call($id, $params);
-
-            case 'ping':
-                return [
-                    'jsonrpc' => '2.0',
-                    'id' => $id,
-                    'result' => new \stdClass(),
-                ];
-
-            case 'resources/list':
-                return [
-                    'jsonrpc' => '2.0',
-                    'id' => $id,
-                    'result' => ['resources' => []],
-                ];
-
-            case 'prompts/list':
-                return [
-                    'jsonrpc' => '2.0',
-                    'id' => $id,
-                    'result' => ['prompts' => []],
-                ];
-
-            default:
-                return [
-                    'jsonrpc' => '2.0',
-                    'id' => $id,
-                    'error' => [
-                        'code' => -32601,
-                        'message' => 'Method not found: ' . $method,
-                    ],
-                ];
+        if (!$this->is_known_method($method)) {
+            return [
+                'jsonrpc' => '2.0',
+                'id' => $id,
+                'error' => [
+                    'code' => -32601,
+                    'message' => 'Method not found: ' . $method,
+                ],
+            ];
         }
+        return call_user_func($this->request_handlers[$method], $params, $id);
     }
 
-    private function handle_tool_call($id, $params) {
+    private function handle_initialize($params, $id) {
+        // Protocol version negotiation. A client that omits protocolVersion
+        // gets the default; one that names a version we support gets it
+        // echoed back; one that names a version we don't support gets a
+        // JSON-RPC error carrying the supported set so it can retry.
+        $client_version = isset($params['protocolVersion']) ? (string) $params['protocolVersion'] : null;
+
+        if ($client_version === null) {
+            $negotiated = self::DEFAULT_NEGOTIATED_PROTOCOL_VERSION;
+        } elseif (in_array($client_version, self::SUPPORTED_PROTOCOL_VERSIONS, true)) {
+            $negotiated = $client_version;
+        } else {
+            return [
+                'jsonrpc' => '2.0',
+                'id' => $id,
+                'error' => [
+                    'code' => -32602,
+                    'message' => 'Unsupported protocol version',
+                    'data' => [
+                        'requested' => $client_version,
+                        'supported' => self::SUPPORTED_PROTOCOL_VERSIONS,
+                    ],
+                ],
+            ];
+        }
+
+        $server_info = [
+            'name'    => 'Royal MCP WordPress',
+            'version' => ROYAL_MCP_VERSION,
+        ];
+        $icon_url = function_exists('get_site_icon_url') ? get_site_icon_url() : '';
+        if ($icon_url) {
+            $filetype             = wp_check_filetype($icon_url);
+            $server_info['icons'] = [
+                [
+                    'src'      => $icon_url,
+                    'mimeType' => $filetype['type'] ?? 'image/png',
+                    'sizes'    => ['512x512'],
+                ],
+            ];
+        }
+        return [
+            'jsonrpc' => '2.0',
+            'id' => $id,
+            'result' => [
+                'protocolVersion' => $negotiated,
+                'serverInfo' => $server_info,
+                'capabilities' => [
+                    'tools' => new \stdClass(),
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * Handler for both notifications/initialized and initialized. Returns
+     * null so handle_post_message() emits the notification 202-no-body path.
+     */
+    private function handle_notification_ack($params, $id) {
+        return null;
+    }
+
+    private function handle_tools_list($params, $id) {
+        return [
+            'jsonrpc' => '2.0',
+            'id' => $id,
+            'result' => [
+                'tools' => $this->get_tools(),
+            ],
+        ];
+    }
+
+    private function handle_ping($params, $id) {
+        return [
+            'jsonrpc' => '2.0',
+            'id' => $id,
+            'result' => new \stdClass(),
+        ];
+    }
+
+    private function handle_resources_list($params, $id) {
+        return [
+            'jsonrpc' => '2.0',
+            'id' => $id,
+            'result' => ['resources' => []],
+        ];
+    }
+
+    private function handle_prompts_list($params, $id) {
+        return [
+            'jsonrpc' => '2.0',
+            'id' => $id,
+            'result' => ['prompts' => []],
+        ];
+    }
+
+    private function handle_tools_call($params, $id) {
         $name = $params['name'] ?? '';
         $args = $params['arguments'] ?? [];
 
@@ -1313,34 +1383,120 @@ class Server {
                 return [
                     'jsonrpc' => '2.0',
                     'id'      => $id,
-                    'result'  => $result,
+                    'result'  => self::ensure_structured_content( $result ),
                 ];
             }
 
             return [
                 'jsonrpc' => '2.0',
                 'id' => $id,
-                'result' => [
+                'result' => self::ensure_structured_content( [
                     'content' => [[
                         'type' => 'text',
                         'text' => is_string($result) ? $result : wp_json_encode($result, JSON_PRETTY_PRINT),
                     ]],
-                ],
+                    'structuredContent' => self::seed_structured_content( $result ),
+                ] ),
             ];
         } catch (\Exception $e) {
             $this->log_tool_call($name, $args, 'error', $e->getMessage(), $start, null, $e);
             return [
                 'jsonrpc' => '2.0',
                 'id' => $id,
-                'result' => [
+                'result' => self::ensure_structured_content( [
                     'content' => [[
                         'type' => 'text',
                         'text' => 'Error: ' . $e->getMessage(),
                     ]],
                     'isError' => true,
-                ],
+                    'structuredContent' => [
+                        'error'   => 'exception',
+                        'message' => $e->getMessage(),
+                    ],
+                ] ),
             ];
         }
+    }
+
+    /**
+     * Guarantee every tools/call result carries a structuredContent field.
+     * MCP-strict clients treat outputSchema as a contract: when a tool
+     * declares outputSchema, the response MUST include structuredContent
+     * conforming to it. Because tools/list stamps a baseline outputSchema
+     * on every tool, every response must satisfy it — even legacy handlers
+     * that returned text-only results. Empty stdClass serializes to JSON
+     * {} which validates against the {type: object} baseline.
+     */
+    public static function ensure_structured_content( array $result ) : array {
+        if ( ! array_key_exists( 'structuredContent', $result ) ) {
+            $result['structuredContent'] = new \stdClass();
+            return $result;
+        }
+        $sc = $result['structuredContent'];
+        // An empty PHP array serializes to [] which fails a type=object schema.
+        // Convert to stdClass so it serializes to {}.
+        if ( is_array( $sc ) && count( $sc ) === 0 ) {
+            $result['structuredContent'] = new \stdClass();
+        }
+        return $result;
+    }
+
+    /**
+     * Turn a legacy handler's raw return value into a structuredContent-
+     * compatible array. Associative arrays pass through unchanged.
+     * Numerically-indexed lists are wrapped as {results: [...]} so the root
+     * of structuredContent stays an object (satisfies type=object schemas).
+     * Scalars are wrapped as {result: <value>}. Empty and unknown shapes
+     * return an empty array (ensure_structured_content will convert it to
+     * an empty JSON object). Envelope-shaped returns bypass this path
+     * entirely and are handled upstream.
+     */
+    public static function seed_structured_content( $result ) : array {
+        if ( is_array( $result ) ) {
+            if ( count( $result ) === 0 ) {
+                return [];
+            }
+            // array_keys(...) === range(0, count-1) detects numeric-indexed
+            // list; PHP 7.4 compatible (array_is_list is 8.1+).
+            $is_list = array_keys( $result ) === range( 0, count( $result ) - 1 );
+            return $is_list ? [ 'results' => $result ] : $result;
+        }
+        if ( is_scalar( $result ) ) {
+            return [ 'result' => $result ];
+        }
+        return [];
+    }
+
+    /**
+     * Baseline outputSchema stamped on every tool that hasn't declared its
+     * own. Deliberately loose (additionalProperties: true) so any real
+     * envelope shape validates — the point is to make the declared-contract
+     * requirement satisfiable, not to enforce a per-tool contract.
+     *
+     * Registered on royal_mcp_tools at PHP_INT_MAX priority so it runs after
+     * every other tool-list mutator (Pro's Tool_Registry ships the same
+     * filter at the same priority; whichever loads first wins — both
+     * produce the same schema so the outcome is idempotent).
+     */
+    public static function stamp_default_output_schemas( $tools ) {
+        if ( ! is_array( $tools ) ) {
+            return $tools;
+        }
+        $default = [
+            'type'                 => 'object',
+            'description'          => 'Tool result envelope. See tool description for the exact shape returned.',
+            'additionalProperties' => true,
+        ];
+        foreach ( $tools as $i => $tool ) {
+            if ( ! is_array( $tool ) ) {
+                continue;
+            }
+            if ( isset( $tool['outputSchema'] ) ) {
+                continue;
+            }
+            $tools[ $i ]['outputSchema'] = $default;
+        }
+        return $tools;
     }
 
     /**
