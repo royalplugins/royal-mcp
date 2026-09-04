@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.4.45
+Stable tag: 1.4.45.1
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -278,6 +278,11 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.4.45.1 =
+* Enhancement: The internal ChatGPT connection guide splits the OAuth consent step into sign-in modal, WordPress authorize, and post-connection state.
+* Fix: Unknown JSON-RPC methods now return the correct "Method not found" response for stricter MCP client compatibility.
+* Fix: OAuth clients table now creates cleanly on utf8mb4 databases with restrictive index length limits.
 
 = 1.4.45 =
 * Fix: Plugin constant definitions no longer emit PHP notices when Royal MCP is loaded alongside a wrapper plugin that pre-defines the same constants.

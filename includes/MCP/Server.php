@@ -1058,6 +1058,22 @@ class Server {
         // Build auth fingerprint to bind sessions to credentials.
         $auth_fingerprint = $this->build_auth_fingerprint($request);
 
+        // Method-not-found check runs BEFORE the session gate. Unknown methods
+        // must return -32601 with HTTP 200 regardless of session state, per
+        // JSON-RPC spec. Otherwise clients that read a session-required 400 as
+        // "reinitialize" get stuck in an infinite loop calling methods the
+        // server doesn't implement.
+        if ($method !== 'initialize' && !$this->is_known_method($method)) {
+            return $this->json_response([
+                'jsonrpc' => '2.0',
+                'id' => $id,
+                'error' => [
+                    'code' => -32601,
+                    'message' => 'Method not found: ' . $method,
+                ],
+            ], 200);
+        }
+
         // For non-initialize requests, validate session
         if ($method !== 'initialize') {
             // Per MCP spec: SHOULD respond with 400 Bad Request to requests without session ID
@@ -1211,6 +1227,30 @@ class Server {
     }
 
     /**
+     * Whether $method is a JSON-RPC method this server implements.
+     *
+     * Called before the session gate in handle_post_message() so unknown
+     * methods return -32601 (Method not found) per JSON-RPC spec rather than
+     * -32600 (session required). Some MCP clients read a session-required 400
+     * as "reinitialize" and loop forever on methods the server doesn't
+     * implement.
+     *
+     * KEEP THIS LIST IN SYNC with process_method()'s switch cases below.
+     */
+    private function is_known_method($method) {
+        return in_array($method, [
+            'initialize',
+            'notifications/initialized',
+            'initialized',
+            'tools/list',
+            'tools/call',
+            'ping',
+            'resources/list',
+            'prompts/list',
+        ], true);
+    }
+
+    /**
      * Process JSON-RPC method and return response object
      */
     private function process_method($method, $params, $id) {
@@ -1313,34 +1353,88 @@ class Server {
                 return [
                     'jsonrpc' => '2.0',
                     'id'      => $id,
-                    'result'  => $result,
+                    'result'  => self::ensure_structured_content( $result ),
                 ];
             }
 
             return [
                 'jsonrpc' => '2.0',
                 'id' => $id,
-                'result' => [
+                'result' => self::ensure_structured_content( [
                     'content' => [[
                         'type' => 'text',
                         'text' => is_string($result) ? $result : wp_json_encode($result, JSON_PRETTY_PRINT),
                     ]],
-                ],
+                    'structuredContent' => self::seed_structured_content( $result ),
+                ] ),
             ];
         } catch (\Exception $e) {
             $this->log_tool_call($name, $args, 'error', $e->getMessage(), $start, null, $e);
             return [
                 'jsonrpc' => '2.0',
                 'id' => $id,
-                'result' => [
+                'result' => self::ensure_structured_content( [
                     'content' => [[
                         'type' => 'text',
                         'text' => 'Error: ' . $e->getMessage(),
                     ]],
                     'isError' => true,
-                ],
+                    'structuredContent' => [
+                        'error'   => 'exception',
+                        'message' => $e->getMessage(),
+                    ],
+                ] ),
             ];
         }
+    }
+
+    /**
+     * Guarantees every tools/call result carries a structuredContent field.
+     * MCP-strict clients treat outputSchema as a contract: when a tool
+     * declares outputSchema, the response MUST include structuredContent
+     * conforming to it. Because tools/list stamps a baseline outputSchema
+     * on every tool, every response must satisfy it — even legacy handlers
+     * that returned text-only results. Empty stdClass serializes to JSON
+     * {} which validates against the {type: object} baseline.
+     */
+    public static function ensure_structured_content( array $result ) : array {
+        if ( ! array_key_exists( 'structuredContent', $result ) ) {
+            $result['structuredContent'] = new \stdClass();
+            return $result;
+        }
+        $sc = $result['structuredContent'];
+        // An empty PHP array serializes to [] which fails a type=object schema.
+        // Convert to stdClass so it serializes to {}.
+        if ( is_array( $sc ) && count( $sc ) === 0 ) {
+            $result['structuredContent'] = new \stdClass();
+        }
+        return $result;
+    }
+
+    /**
+     * Turn a legacy handler's raw return value into a structuredContent-
+     * compatible array. Associative arrays pass through unchanged.
+     * Numerically-indexed lists are wrapped as {results: [...]} so the root
+     * of structuredContent stays an object (satisfies type=object schemas).
+     * Scalars are wrapped as {result: <value>}. Empty and unknown shapes
+     * return an empty array (ensure_structured_content will convert it to
+     * an empty JSON object). Envelope-shaped returns bypass this path
+     * entirely and are handled upstream.
+     */
+    public static function seed_structured_content( $result ) : array {
+        if ( is_array( $result ) ) {
+            if ( count( $result ) === 0 ) {
+                return [];
+            }
+            // array_keys(...) === range(0, count-1) detects numeric-indexed
+            // list; PHP 7.4 compatible (array_is_list is 8.1+).
+            $is_list = array_keys( $result ) === range( 0, count( $result ) - 1 );
+            return $is_list ? [ 'results' => $result ] : $result;
+        }
+        if ( is_scalar( $result ) ) {
+            return [ 'result' => $result ];
+        }
+        return [];
     }
 
     /**
