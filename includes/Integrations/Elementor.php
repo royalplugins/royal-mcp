@@ -88,11 +88,12 @@ class Elementor {
 			],
 			[
 				'name'        => 'elementor_get_page_outline',
-				'description' => 'Extract a simplified outline of an Elementor page: section/container hierarchy, widget types per slot, and short text snippets from text-bearing widgets. Returns JSON small enough for an AI to reason over without consuming the full _elementor_data budget (~2KB for typical pages). Useful before calling clone or replace_text to understand the structure first.',
+				'description' => 'Extract a simplified outline of an Elementor page: section/container hierarchy, widget types per slot, and short text snippets from text-bearing widgets. Returns JSON small enough for an AI to reason over without consuming the full _elementor_data budget (~2KB for typical pages). Useful before calling clone or replace_text to understand the structure first. Optional include_styles=true augments each entry with the widget-level typography, color, spacing, and background settings — useful for AI that needs to reason about visual design, not just content structure (adds ~2-4x to response size).',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
-						'post_id' => [ 'type' => 'integer' ],
+						'post_id'        => [ 'type' => 'integer' ],
+						'include_styles' => [ 'type' => 'boolean', 'description' => 'When true, each entry includes a styles object with typography, color, spacing, and background settings extracted from the widget/container settings. Default false.' ],
 					],
 					'required'   => [ 'post_id' ],
 				],
@@ -213,6 +214,35 @@ class Elementor {
 				],
 			],
 			[
+				'name'        => 'elementor_get_widget_schema',
+				'description' => 'Return the control-schema for a single Elementor widget type — the settings vocabulary the widget accepts. Use before elementor_add_widget in RAW mode to know which settings keys are valid, what type each expects, and which are grouped under conditional controls. Response includes widget_type, title, categories, keywords, icon, and a controls array where each entry is { name, type, label, default, section, tab, options?, condition? }. Atomic widgets (prefixed a- or e-) surface as opaque with a note — their schemas are not publicly documented.',
+				'inputSchema' => [
+					'type'       => 'object',
+					'properties' => [
+						'widget_type' => [ 'type' => 'string', 'description' => 'Elementor widget slug (e.g. heading, button, image, icon-box).' ],
+					],
+					'required'   => [ 'widget_type' ],
+				],
+			],
+			[
+				'name'        => 'elementor_list_widget_schemas',
+				'description' => 'Enumerate every widget type registered with Elementor on this site — core widgets, third-party plugin widgets, and Editor V4 atomic widgets. Returns an array of { widget_type, title, categories, keywords, icon, is_atomic } entries. Optional category filter narrows to a single category (e.g. "basic", "general", "theme-elements", "woocommerce"). Use before elementor_get_widget_schema to discover what widgets are available, or before elementor_add_widget to confirm a widget_type is registered.',
+				'inputSchema' => [
+					'type'       => 'object',
+					'properties' => [
+						'category' => [ 'type' => 'string', 'description' => 'Optional category to filter by (e.g. "basic", "general", "pro-elements", "woocommerce-elements", "theme-elements").' ],
+					],
+				],
+			],
+			[
+				'name'        => 'elementor_list_dynamic_tags',
+				'description' => 'Enumerate Elementor dynamic tags registered on this site. Dynamic tags let widget settings pull runtime values (post title, ACF field, user meta, WooCommerce price, etc.) instead of holding a static string. Returns an array of { name, title, group, categories } entries. May be empty on sites without Elementor Pro — most dynamic tags ship in Pro. Read-only, no cap check beyond edit_posts.',
+				'inputSchema' => [
+					'type'       => 'object',
+					'properties' => new \stdClass(),
+				],
+			],
+			[
 				'name'        => 'elementor_rebuild_post_content_bulk',
 				'description' => 'Scan all posts with _elementor_data + empty post_content and rebuild them in batch. Fixes bulk SEO / search damage from prior clone operations that shipped without post_content. Pass dry_run=true to preview the count + first 20 candidate post IDs without writing. Batches up to limit posts per call (default 50, max 200). NO undo tokens emitted (bulk rebuild of empty content is generally not something users want to reverse — take a SiteVault snapshot beforehand if reversal capability matters). Cap: edit_posts.',
 				'inputSchema' => [
@@ -282,6 +312,15 @@ class Elementor {
 
 			case 'elementor_rebuild_post_content_bulk':
 				return self::rebuild_post_content_bulk( $args );
+
+			case 'elementor_get_widget_schema':
+				return self::get_widget_schema( $args );
+
+			case 'elementor_list_widget_schemas':
+				return self::list_widget_schemas( $args );
+
+			case 'elementor_list_dynamic_tags':
+				return self::list_dynamic_tags( $args );
 
 			default:
 				throw new \Exception( 'Unknown Elementor tool: ' . esc_html( $name ) );
@@ -1425,6 +1464,7 @@ class Elementor {
 	 */
 	private static function get_page_outline( $args ) {
 		$post_id = (int) ( $args['post_id'] ?? 0 );
+		$include_styles = ! empty( $args['include_styles'] );
 		if ( $post_id <= 0 ) {
 			throw new \Exception( 'post_id is required.' );
 		}
@@ -1440,7 +1480,7 @@ class Elementor {
 			throw new \Exception( 'Could not parse _elementor_data as a JSON array.' );
 		}
 
-		$outline = self::build_outline( $tree, 0 );
+		$outline = self::build_outline( $tree, 0, $include_styles );
 		$post = get_post( $post_id );
 
 		return [
@@ -1449,6 +1489,7 @@ class Elementor {
 			'post_type'      => $post ? $post->post_type : '',
 			'edit_mode'      => get_post_meta( $post_id, '_elementor_edit_mode', true ) ?: null,
 			'template_type'  => get_post_meta( $post_id, '_elementor_template_type', true ) ?: null,
+			'include_styles' => $include_styles,
 			'outline'        => $outline,
 		];
 	}
@@ -1539,7 +1580,7 @@ class Elementor {
 	/**
 	 * Recursively build an outline summary.
 	 */
-	private static function build_outline( $elements, $depth ) {
+	private static function build_outline( $elements, $depth, $include_styles = false ) {
 		$out = [];
 		if ( $depth > 6 ) {
 			return [ '...deep nesting truncated...' ];
@@ -1557,7 +1598,6 @@ class Elementor {
 			}
 			if ( $el_type === 'widget' ) {
 				$entry['widgetType'] = (string) ( $el['widgetType'] ?? 'unknown' );
-				// Surface a short text snippet if the widget has one.
 				$snippet = self::widget_text_snippet( $el );
 				if ( $snippet !== '' ) {
 					$entry['snippet'] = $snippet;
@@ -1565,10 +1605,70 @@ class Elementor {
 			} elseif ( $el_type === 'container' && isset( $el['settings']['flex_direction'] ) ) {
 				$entry['flex_direction'] = (string) $el['settings']['flex_direction'];
 			}
+			if ( $include_styles ) {
+				$styles = self::extract_style_settings( $el['settings'] ?? [] );
+				if ( ! empty( $styles ) ) {
+					$entry['styles'] = $styles;
+				}
+			}
 			if ( isset( $el['elements'] ) && is_array( $el['elements'] ) && count( $el['elements'] ) > 0 ) {
-				$entry['children'] = self::build_outline( $el['elements'], $depth + 1 );
+				$entry['children'] = self::build_outline( $el['elements'], $depth + 1, $include_styles );
 			}
 			$out[] = $entry;
+		}
+		return $out;
+	}
+
+	/**
+	 * Pull a compact "styles" summary from an Elementor settings blob.
+	 *
+	 * Cherry-picks the settings keys an AI most often reasons about (typography,
+	 * color, spacing, background) rather than dumping the entire settings object.
+	 * Returns an assoc array of the found style-ish settings, or [] if none are
+	 * present. Handles Elementor's responsive breakpoint variants (_tablet /
+	 * _mobile) transparently by flattening to a single value when the desktop
+	 * variant is set.
+	 */
+	private static function extract_style_settings( $settings ) {
+		if ( ! is_array( $settings ) ) {
+			return [];
+		}
+		$style_keys = [
+			// Typography
+			'typography_font_family',
+			'typography_font_size',
+			'typography_font_weight',
+			'typography_line_height',
+			'typography_letter_spacing',
+			'typography_text_transform',
+			// Colors
+			'title_color',
+			'text_color',
+			'color',
+			'link_color',
+			'heading_color',
+			// Background
+			'background_color',
+			'background_background',
+			'background_image',
+			// Spacing
+			'padding',
+			'margin',
+			'space_between',
+			// Border
+			'border_color',
+			'border_width',
+			'border_radius',
+			// Alignment
+			'align',
+			'text_align',
+			'content_position',
+		];
+		$out = [];
+		foreach ( $style_keys as $key ) {
+			if ( isset( $settings[ $key ] ) && $settings[ $key ] !== '' && $settings[ $key ] !== [] ) {
+				$out[ $key ] = $settings[ $key ];
+			}
 		}
 		return $out;
 	}
@@ -2273,5 +2373,173 @@ class Elementor {
 		}
 		array_splice( $list, $position, 0, [ $new_element ] );
 		return $list;
+	}
+
+	// ============================================================
+	// Discovery bundle — widget + dynamic-tag introspection
+	// ============================================================
+
+	/**
+	 * Return the control-schema for a single Elementor widget type. Read-only.
+	 *
+	 * Atomic widgets (elType/widgetType prefixed a- or e-) return an opaque
+	 * marker since their control shape is not publicly documented.
+	 */
+	private static function get_widget_schema( $args ) {
+		$widget_type = isset( $args['widget_type'] ) ? (string) $args['widget_type'] : '';
+		if ( $widget_type === '' ) {
+			throw new \Exception( 'widget_type is required.' );
+		}
+
+		$is_atomic = ( strpos( $widget_type, 'a-' ) === 0 || strpos( $widget_type, 'e-' ) === 0 );
+		if ( $is_atomic ) {
+			return [
+				'widget_type' => $widget_type,
+				'is_atomic'   => true,
+				'note'        => 'Atomic widget — control schema is not publicly documented. Use raw pass-through with a known-good settings blob captured from the editor.',
+				'controls'    => [],
+			];
+		}
+
+		$manager = self::widgets_manager();
+		if ( ! $manager ) {
+			throw new \Exception( 'Elementor widget manager unavailable.' );
+		}
+
+		$widget = $manager->get_widget_types( $widget_type );
+		if ( ! $widget ) {
+			throw new \Exception( 'Unknown widget_type: ' . esc_html( $widget_type ) );
+		}
+
+		$controls_raw = method_exists( $widget, 'get_controls' ) ? (array) $widget->get_controls() : [];
+		$controls_out = [];
+		foreach ( $controls_raw as $control_name => $control ) {
+			if ( ! is_array( $control ) ) {
+				continue;
+			}
+			$entry = [
+				'name'  => (string) ( $control['name'] ?? $control_name ),
+				'type'  => (string) ( $control['type'] ?? 'unknown' ),
+				'label' => isset( $control['label'] ) ? (string) $control['label'] : '',
+			];
+			if ( array_key_exists( 'default', $control ) ) {
+				$entry['default'] = $control['default'];
+			}
+			if ( isset( $control['section'] ) ) {
+				$entry['section'] = (string) $control['section'];
+			}
+			if ( isset( $control['tab'] ) ) {
+				$entry['tab'] = (string) $control['tab'];
+			}
+			if ( isset( $control['options'] ) && is_array( $control['options'] ) ) {
+				$entry['options'] = $control['options'];
+			}
+			if ( isset( $control['condition'] ) ) {
+				$entry['condition'] = $control['condition'];
+			}
+			$controls_out[] = $entry;
+		}
+
+		return [
+			'widget_type' => $widget_type,
+			'is_atomic'   => false,
+			'title'       => method_exists( $widget, 'get_title' ) ? (string) $widget->get_title() : '',
+			'icon'        => method_exists( $widget, 'get_icon' ) ? (string) $widget->get_icon() : '',
+			'categories'  => method_exists( $widget, 'get_categories' ) ? array_values( (array) $widget->get_categories() ) : [],
+			'keywords'    => method_exists( $widget, 'get_keywords' ) ? array_values( (array) $widget->get_keywords() ) : [],
+			'controls'    => $controls_out,
+		];
+	}
+
+	/**
+	 * Enumerate every widget type registered with Elementor's widget manager.
+	 * Optional category filter narrows to a single category.
+	 */
+	private static function list_widget_schemas( $args ) {
+		$category_filter = isset( $args['category'] ) ? (string) $args['category'] : '';
+
+		$manager = self::widgets_manager();
+		if ( ! $manager ) {
+			throw new \Exception( 'Elementor widget manager unavailable.' );
+		}
+
+		$widget_types = $manager->get_widget_types();
+		if ( ! is_array( $widget_types ) ) {
+			return [ 'widgets' => [], 'total' => 0 ];
+		}
+
+		$widgets = [];
+		foreach ( $widget_types as $widget_name => $widget ) {
+			$categories = method_exists( $widget, 'get_categories' ) ? array_values( (array) $widget->get_categories() ) : [];
+			if ( $category_filter !== '' && ! in_array( $category_filter, $categories, true ) ) {
+				continue;
+			}
+			$slug = (string) $widget_name;
+			$widgets[] = [
+				'widget_type' => $slug,
+				'title'       => method_exists( $widget, 'get_title' ) ? (string) $widget->get_title() : '',
+				'icon'        => method_exists( $widget, 'get_icon' ) ? (string) $widget->get_icon() : '',
+				'categories'  => $categories,
+				'keywords'    => method_exists( $widget, 'get_keywords' ) ? array_values( (array) $widget->get_keywords() ) : [],
+				'is_atomic'   => ( strpos( $slug, 'a-' ) === 0 || strpos( $slug, 'e-' ) === 0 ),
+			];
+		}
+
+		return [
+			'category_filter' => $category_filter !== '' ? $category_filter : null,
+			'total'           => count( $widgets ),
+			'widgets'         => $widgets,
+		];
+	}
+
+	/**
+	 * Enumerate Elementor dynamic tags registered on this site. Returns empty
+	 * on installations that don't have a dynamic-tags manager (older Elementor
+	 * versions or Free-only installs where no tags are registered).
+	 */
+	private static function list_dynamic_tags( $args ) {
+		$plugin = isset( \Elementor\Plugin::$instance ) ? \Elementor\Plugin::$instance : null;
+		$manager = ( $plugin && isset( $plugin->dynamic_tags ) ) ? $plugin->dynamic_tags : null;
+
+		if ( ! $manager ) {
+			return [ 'tags' => [], 'total' => 0, 'note' => 'Dynamic tags manager unavailable — likely Elementor Free without any registered tags.' ];
+		}
+
+		$tags_out = [];
+
+		// Preferred: get_tags_config() returns a flat name-keyed config array.
+		if ( method_exists( $manager, 'get_tags_config' ) ) {
+			$config = (array) $manager->get_tags_config();
+			foreach ( $config as $name => $tag_cfg ) {
+				if ( ! is_array( $tag_cfg ) ) {
+					continue;
+				}
+				$tags_out[] = [
+					'name'       => (string) $name,
+					'title'      => (string) ( $tag_cfg['title'] ?? '' ),
+					'group'      => (string) ( $tag_cfg['group'] ?? '' ),
+					'categories' => isset( $tag_cfg['categories'] ) ? array_values( (array) $tag_cfg['categories'] ) : [],
+				];
+			}
+		}
+
+		return [
+			'total' => count( $tags_out ),
+			'tags'  => $tags_out,
+		];
+	}
+
+	/**
+	 * Return the Elementor widgets_manager instance, or null if unavailable.
+	 */
+	private static function widgets_manager() {
+		if ( ! class_exists( '\Elementor\Plugin' ) ) {
+			return null;
+		}
+		$plugin = isset( \Elementor\Plugin::$instance ) ? \Elementor\Plugin::$instance : null;
+		if ( ! $plugin || ! isset( $plugin->widgets_manager ) ) {
+			return null;
+		}
+		return $plugin->widgets_manager;
 	}
 }
