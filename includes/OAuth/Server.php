@@ -36,7 +36,7 @@ class Server {
         $request_method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'GET';
 
         // Set CORS headers for token and register endpoints (may be called cross-origin).
-        if ( in_array( $action, [ 'token', 'register', 'metadata', 'protected_resource' ], true ) ) {
+        if ( in_array( $action, [ 'token', 'register', 'metadata', 'metadata_mcp', 'protected_resource', 'method_not_allowed' ], true ) ) {
             header( 'Access-Control-Allow-Origin: *' );
             header( 'Access-Control-Allow-Methods: GET, POST, OPTIONS' );
             header( 'Access-Control-Allow-Headers: Content-Type, Authorization' );
@@ -56,6 +56,10 @@ class Server {
                 $this->metadata();
                 break;
 
+            case 'metadata_mcp':
+                $this->metadata_mcp();
+                break;
+
             case 'register':
                 $this->register( $request_method );
                 break;
@@ -72,10 +76,24 @@ class Server {
                 $this->token( $request_method );
                 break;
 
+            case 'method_not_allowed':
+                $this->method_not_allowed();
+                break;
+
             default:
                 status_header( 404 );
                 exit;
         }
+    }
+
+    /**
+     * Emit 405 Method Not Allowed for GET/HEAD requests to POST-only OAuth
+     * endpoints (/register, /token). Includes an Allow header per RFC 9110
+     * so probing clients can retry with the right method.
+     */
+    private function method_not_allowed() {
+        header( 'Allow: POST, OPTIONS' );
+        $this->json_error( 'method_not_allowed', 'This endpoint only accepts POST requests.', 405 );
     }
 
     /* ------------------------------------------------------------------
@@ -97,23 +115,30 @@ class Server {
     }
 
     /* ------------------------------------------------------------------
-     *  GET /.well-known/oauth-authorization-server
+     *  GET /.well-known/oauth-authorization-server            (RFC 8414)
+     *  GET /.well-known/oauth-authorization-server/mcp        (path-scoped)
      * ----------------------------------------------------------------*/
 
-    private function metadata() {
-        $base = home_url();
-
-        // Read paths from the same filterable source register_oauth_rewrites()
-        // uses, so discovery advertises whatever the site actually serves.
-        // Customers who relocate via royal_mcp_oauth_rewrite_paths get correct
-        // discovery URLs automatically — no separate metadata filter needed.
-        $paths = \Royal_MCP_Plugin::get_oauth_rewrite_paths();
+    /**
+     * Build the OAuth 2.1 Authorization Server metadata payload.
+     *
+     * Reads endpoint paths from the same filterable source
+     * register_oauth_rewrites() uses so discovery advertises whatever the
+     * site actually serves — customers who relocate via
+     * royal_mcp_oauth_rewrite_paths get correct discovery URLs
+     * automatically, no separate metadata filter needed.
+     *
+     * @return array The AS metadata document.
+     */
+    private function build_authorization_server_metadata() {
+        $base     = home_url();
+        $paths    = \Royal_MCP_Plugin::get_oauth_rewrite_paths();
         $slug_for = static function ( array $paths, $action ) {
             $slug = isset( $paths[ $action ] ) ? ltrim( trim( (string) $paths[ $action ] ), '/' ) : $action;
             return $slug === '' ? $action : $slug;
         };
 
-        $metadata = [
+        return [
             'issuer'                                => $base,
             'authorization_endpoint'                => $base . '/' . $slug_for( $paths, 'authorize' ),
             'token_endpoint'                        => $base . '/' . $slug_for( $paths, 'token' ),
@@ -125,7 +150,24 @@ class Server {
             'scopes_supported'                      => [ 'mcp:full' ],
             'service_documentation'                 => 'https://royalplugins.com/support/royal-mcp/',
         ];
+    }
 
+    private function metadata() {
+        $this->json_response( $this->build_authorization_server_metadata(), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+    }
+
+    /**
+     * Path-scoped variant of the AS metadata document. Some MCP clients probe
+     * the RFC 8414 path-scoped location `/.well-known/oauth-authorization-server/mcp`
+     * rather than the RFC 9728 `/.well-known/oauth-protected-resource` endpoint.
+     *
+     * Serves the same AS metadata as the root variant, plus a `resource`
+     * indicator (RFC 8707) pre-embedded so strict clients don't need a
+     * separate protected-resource discovery round-trip.
+     */
+    private function metadata_mcp() {
+        $metadata = $this->build_authorization_server_metadata();
+        $metadata['resource'] = home_url() . '/wp-json/royal-mcp/v1';
         $this->json_response( $metadata, 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
     }
 
