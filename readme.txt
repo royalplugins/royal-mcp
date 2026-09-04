@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.4.45
+Stable tag: 1.5.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -278,6 +278,20 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.5.0 =
+* New: Three Elementor discovery tools (widget schema, widget list, dynamic tags) plus an include-styles option on the page-outline tool.
+* New: A Common Errors section in the Help page surfaces the fix for the most-reported OAuth reconnect issue directly in WordPress admin.
+* Enhancement: Royal MCP now speaks the modern MCP wire, improving compatibility with newer Claude.ai, ChatGPT, and other AI client connectors.
+* Enhancement: Support for multiple MCP protocol versions on the initialize handshake so newer AI clients get the latest wire behavior.
+* Enhancement: OAuth discovery now works for AI clients that probe the alternate path-scoped discovery URL.
+* Enhancement: Every MCP request now appears in the Royal MCP Activity Log for improved diagnostic visibility.
+* Enhancement: A compatibility notice appears when the Perfmatters plugin is set to disable the REST API, which would otherwise block MCP connections.
+* Enhancement: Every tool advertises complete input and response metadata for improved compatibility with strict MCP clients like ChatGPT.
+* Enhancement: The internal ChatGPT connection guide walks the sign-in modal, WordPress authorize page, and post-connection state as distinct steps.
+* Fix: Unknown MCP methods return the correct method-not-found response so probing AI clients do not get stuck in reconnect loops.
+* Fix: The /register OAuth endpoint returns 405 Method Not Allowed with a proper Allow header for GET requests.
+* Fix: When a database table upgrade fails on incompatible host configurations, the plugin now skips retries for 24 hours to prevent error-log flooding.
 
 = 1.4.45 =
 * Fix: Plugin constant definitions no longer emit PHP notices when Royal MCP is loaded alongside a wrapper plugin that pre-defines the same constants.
