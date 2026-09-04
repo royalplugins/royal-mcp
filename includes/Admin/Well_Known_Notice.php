@@ -42,6 +42,8 @@ class Well_Known_Notice {
     const PLAIN_PERMALINKS_SUPPORT_URL     = 'https://royalplugins.com/support/royal-mcp/plain-permalinks-blocks-discovery.html';
     const PAGE_SHADOW_SUPPORT_URL          = 'https://royalplugins.com/support/royal-mcp/oauth-page-shadow.html';
     const MISSING_ENDPOINTS_SUPPORT_URL    = 'https://royalplugins.com/support/royal-mcp/oauth-discovery-missing-endpoints.html';
+    const PERFMATTERS_DISMISS_KEY          = 'royal_mcp_perfmatters_rest_dismissed';
+    const PERFMATTERS_SUPPORT_URL          = 'https://royalplugins.com/support/royal-mcp/perfmatters-disable-rest-api-blocks-mcp.html';
 
     public function __construct() {
         add_action( 'admin_notices', [ $this, 'maybe_render_notice' ] );
@@ -107,6 +109,18 @@ class Well_Known_Notice {
             && ! get_user_meta( $user_id, self::PLAIN_PERMALINKS_DISMISS_KEY, true )
         ) {
             $this->render_plain_permalinks_notice();
+            return;
+        }
+
+        // Perfmatters "Disable REST API when logged out" 401s our discovery
+        // and MCP endpoints for unauthenticated callers, producing the same
+        // "couldn't connect" symptom as a WAF block. Pure get_option()
+        // check — no HTTP needed. Fires before the network probe so we
+        // don't misclassify the 401 as a host-level path reservation.
+        if ( $this->check_perfmatters_rest_blocked()
+            && ! get_user_meta( $user_id, self::PERFMATTERS_DISMISS_KEY, true )
+        ) {
+            $this->render_perfmatters_notice();
             return;
         }
 
@@ -700,6 +714,15 @@ class Well_Known_Notice {
             wp_safe_redirect( remove_query_arg( [ 'royal_mcp_dismiss_sucuri_cloudproxy', '_wpnonce' ] ) );
             exit;
         }
+
+        if ( isset( $_GET['royal_mcp_dismiss_perfmatters'] )
+            && isset( $_GET['_wpnonce'] )
+            && wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'royal_mcp_dismiss_perfmatters' )
+        ) {
+            update_user_meta( get_current_user_id(), self::PERFMATTERS_DISMISS_KEY, time() );
+            wp_safe_redirect( remove_query_arg( [ 'royal_mcp_dismiss_perfmatters', '_wpnonce' ] ) );
+            exit;
+        }
     }
 
     /**
@@ -1185,6 +1208,77 @@ class Well_Known_Notice {
             <p><code style="display:block; white-space:pre; padding:8px; background:#f6f7f7;"><?php echo esc_html( $relocate_snippet ); ?></code></p>
             <p>
                 <a href="<?php echo esc_url( self::PAGE_SHADOW_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
+                    <?php esc_html_e( 'Read the full guidance', 'royal-mcp' ); ?>
+                </a>
+                <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
+                    <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
+                </a>
+            </p>
+        </div>
+        <?php
+    }
+
+    /**
+     * Detect Perfmatters "Disable REST API" set to a value that would 401
+     * our discovery + MCP endpoints for unauthenticated callers.
+     *
+     * Perfmatters stores the setting under perfmatters_options['assets']
+     * ['disable_rest_api']. Values seen in the wild: false / '' / 0 = allow
+     * (no block), 1 / true / 'everywhere' = block for everyone (breaks MCP
+     * entirely), 'logged_out' = block anonymous requests (breaks MCP for
+     * external clients like Claude that don't carry a WP session cookie).
+     *
+     * Returns true when the setting is any truthy value the plugin
+     * recognizes as a block.
+     */
+    public function check_perfmatters_rest_blocked() {
+        if ( ! defined( 'PERFMATTERS_VERSION' ) && ! class_exists( '\Perfmatters\Config' ) ) {
+            return false;
+        }
+        $options = get_option( 'perfmatters_options', [] );
+        if ( ! is_array( $options ) ) {
+            return false;
+        }
+        $rest_setting = null;
+        if ( isset( $options['assets']['disable_rest_api'] ) ) {
+            $rest_setting = $options['assets']['disable_rest_api'];
+        } elseif ( isset( $options['disable_rest_api'] ) ) {
+            $rest_setting = $options['disable_rest_api'];
+        }
+        if ( empty( $rest_setting ) ) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Render the Perfmatters "Disable REST API" notice.
+     */
+    private function render_perfmatters_notice() {
+        $dismiss_url = wp_nonce_url(
+            add_query_arg( 'royal_mcp_dismiss_perfmatters', '1' ),
+            'royal_mcp_dismiss_perfmatters'
+        );
+        ?>
+        <div class="notice notice-warning royal-mcp-well-known-notice">
+            <h3 style="margin-top: 0.5em;">
+                <?php esc_html_e( 'Perfmatters is blocking the REST API', 'royal-mcp' ); ?>
+            </h3>
+            <p>
+                <?php
+                echo wp_kses_post( sprintf(
+                    /* translators: %s: setting name */
+                    __( 'Perfmatters\' %s option currently rejects requests from the AI clients that connect to Royal MCP. Turn the setting off (or set it to "Allow" for the MCP endpoints) so Claude, ChatGPT, and other MCP clients can reach the server.', 'royal-mcp' ),
+                    '<code>' . esc_html__( 'Disable REST API', 'royal-mcp' ) . '</code>'
+                ) );
+                ?>
+            </p>
+            <p>
+                <?php esc_html_e( 'You can find the setting at:', 'royal-mcp' ); ?>
+                <code>Perfmatters → Assets → Disable REST API</code>.
+            </p>
+            <p>
+                <a href="<?php echo esc_url( self::PERFMATTERS_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
                     <?php esc_html_e( 'Read the full guidance', 'royal-mcp' ); ?>
                 </a>
                 <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
