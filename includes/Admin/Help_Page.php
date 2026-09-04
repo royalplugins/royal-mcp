@@ -31,6 +31,7 @@ class Help_Page {
 		'oauth_managed_host'    => 'https://royalplugins.com/support/royal-mcp/oauth-fails-on-managed-host.html',
 		'diagnose_curl'         => 'https://royalplugins.com/support/royal-mcp/diagnose-mcp-with-curl.html',
 		'well_known_404'        => 'https://royalplugins.com/support/royal-mcp/siteground-well-known-404.html',
+		'unknown_client_id'     => 'https://royalplugins.com/support/royal-mcp/unknown-client-id-error.html',
 		'support_hub'           => 'https://royalplugins.com/support/royal-mcp/',
 		'wporg_forum'           => 'https://wordpress.org/support/plugin/royal-mcp/',
 	];
@@ -64,6 +65,7 @@ class Help_Page {
 		'chatgpt'         => 'ChatGPT',
 		'other-clients'   => 'Other Clients',
 		'troubleshooting' => 'Troubleshooting',
+		'common-errors'   => 'Common Errors',
 		'support'         => 'Support',
 	];
 
