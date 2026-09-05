@@ -23,7 +23,7 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 |---|---|
 | **Auth** | API key (`X-Royal-MCP-API-Key`) **or** OAuth 2.1 with PKCE + Dynamic Client Registration (RFC 7591) |
 | **Transport** | MCP 2025-11-25 Streamable HTTP (single `/mcp` endpoint, POST/GET/DELETE) |
-| **Tool count** | Up to 206 (85 WordPress core + 121 conditional plugin integrations) |
+| **Tool count** | Up to 208 (85 WordPress core + 123 conditional plugin integrations) |
 | **Abilities API** | WP 6.9+ — every tool also registers as a WordPress ability, reachable via WP core REST at `/wp-json/wp-abilities/v1/abilities/{name}/run` and via the WordPress MCP Adapter's named `royal-mcp-server` |
 | **Rate limit** | 60 req/min per IP (configurable) |
 | **Session model** | Sliding 24h TTL with refresh-on-access |
@@ -48,14 +48,14 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 - **SEO** — Yoast / Rank Math / AIOSEO meta read/write where the plugin is active
 - **Diagnostics** — Site status (WP/PHP/MySQL/plugins/themes/cron in one call), PHP error-log tail, WP cron schedule, and MCP `royal_mcp_connection_health` (returns route, auth method, session ID, plugin version, and active page-builder versions for Divi + Elementor + Gutenberg)
 
-### Plugin integrations (121 tools, conditional)
+### Plugin integrations (123 tools, conditional)
 
 Auto-register only when the integrated plugin is active.
 
 | Plugin | Tools | What's covered |
 |---|---|---|
 | WooCommerce | 29 | Products, variations, attributes, coupons, orders (create/update/notes), customers, store stats |
-| Elementor | 11 | Clone pages, replace text, swap images, get outline, read single element, list templates, import templates, add widget, rebuild post_content |
+| Elementor | 14 | Clone pages, replace text, swap images, get outline (with optional include-styles), read single element, list templates, import templates, add widget, rebuild post_content, widget-schema discovery, widget-list discovery, dynamic-tag discovery |
 | Divi | 9 | Format detection (D4 shortcode vs D5 block), page outline, layout validation, library list + get, find/replace with builder-format awareness, clone, image swap, library apply |
 | GuardPress | 7 | Security score, failed logins, blocked IPs, vulnerability scans, audit log |
 | SiteVault | 6 | Trigger backups, monitor progress, list schedules |
@@ -74,7 +74,6 @@ Auto-register only when the integrated plugin is active.
 | Duplicator | 3 | List migration packages, read per-package status, get the installer URL for a completed package |
 | Royal Links | 3 | Branded short links, click stats |
 | ForgeCache | 3 | Cache stats, clear cache, purge URL |
-| Google Site Kit | 1 | Read authenticated Site Kit report data |
 
 ## WordPress Abilities API bridge (WP 6.9+)
 

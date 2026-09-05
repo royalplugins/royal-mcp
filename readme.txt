@@ -281,7 +281,7 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 = 1.5.0 =
 * New: Three Elementor discovery tools (widget schema, widget list, dynamic tags) plus an include-styles option on the page-outline tool.
-* New: A Common Errors section in the Help page surfaces the fix for the most-reported OAuth reconnect issue directly in WordPress admin.
+* New: The Troubleshooting Help tab surfaces the fix for the most-reported OAuth reconnect issue directly in WordPress admin.
 * Enhancement: Royal MCP now speaks the modern MCP wire, improving compatibility with newer Claude.ai, ChatGPT, and other AI client connectors.
 * Enhancement: Support for multiple MCP protocol versions on the initialize handshake so newer AI clients get the latest wire behavior.
 * Enhancement: OAuth discovery now works for AI clients that probe the alternate path-scoped discovery URL.
