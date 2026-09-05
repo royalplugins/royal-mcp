@@ -60,8 +60,6 @@ class Royal_MCP_Chrome {
         // past the funnel — skip the entire promo path.
         if ( ! defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) {
             add_action( 'admin_menu',            [ $this, 'register_founding_members_menu' ], 21 );
-            add_action( 'admin_post_' . self::FM_NOTICE_DISMISS_ACTION, [ $this, 'handle_founding_members_dismiss' ] );
-            add_action( 'admin_notices',         [ $this, 'render_founding_members_notice' ] );
             add_action( 'admin_enqueue_scripts', [ $this, 'inject_founding_members_menu_target_blank' ], 100 );
         }
     }
@@ -141,6 +139,11 @@ class Royal_MCP_Chrome {
                 <span class="royal-mcp-chrome-wordmark"><?php echo esc_html( $wordmark ); ?></span>
             </div>
             <div class="royal-mcp-chrome-header-actions">
+                <?php
+                if ( class_exists( '\Royal_MCP\Chrome\Whats_New' ) ) {
+                    \Royal_MCP\Chrome\Whats_New::instance()->render_trigger_button();
+                }
+                ?>
                 <a href="<?php echo esc_url( $docs_url ); ?>" class="royal-mcp-chrome-header-btn" target="_blank" rel="noopener noreferrer">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
                     <?php esc_html_e( 'View Docs', 'royal-mcp' ); ?>
@@ -333,88 +336,7 @@ class Royal_MCP_Chrome {
     }
 
     /* ==================================================================
-     *  6. Founding Members admin notice
-     * ================================================================ */
-
-    /**
-     * Admin notice pointing admins to the Pro waitlist. Version-stamped —
-     * dismissal stores the current plugin version, and the notice re-appears
-     * once on each plugin version update (same pattern as the Founders Bundle
-     * banner). Pre-/post-launch content differs and uses separate dismiss keys
-     * so a user who dismissed the pre-launch notice still sees the post-launch
-     * one when Pro ships.
-     */
-    public function render_founding_members_notice(): void {
-        if ( ! current_user_can( 'manage_options' ) ) {
-            return;
-        }
-        $post_launch  = $this->is_pro_launched();
-        $dismiss_meta = $post_launch ? self::PRO_LAUNCH_NOTICE_DISMISS_META : self::FM_NOTICE_DISMISS_META;
-        $dismissed_at = get_user_meta( get_current_user_id(), $dismiss_meta, true );
-        if ( $dismissed_at && version_compare( (string) $dismissed_at, ROYAL_MCP_VERSION, '>=' ) ) {
-            return;
-        }
-
-        $url_args    = array(
-            'source'  => 'admin_notice',
-            'content' => $post_launch ? 'post_launch' : 'founding_members',
-        );
-        $campaign    = $post_launch ? '1438_postlaunch_notice' : 'waitlist_1438_notice';
-        $cta_url     = $this->pro_url_for( $url_args, $campaign );
-        $dismiss_url = wp_nonce_url(
-            admin_url( 'admin-post.php?action=' . self::FM_NOTICE_DISMISS_ACTION . '&launched=' . ( $post_launch ? '1' : '0' ) ),
-            self::FM_NOTICE_DISMISS_ACTION
-        );
-        ?>
-        <div class="notice notice-info royal-mcp-fm-notice" style="padding: 14px 18px;">
-            <p style="margin: 0 0 8px; font-size: 14px;">
-                <strong>
-                    <?php if ( $post_launch ) : ?>
-                        &#127881; <?php esc_html_e( 'Royal MCP Pro is live!', 'royal-mcp' ); ?>
-                    <?php else : ?>
-                        &#127881; <?php esc_html_e( 'Royal MCP Pro launches Aug 25 — Join the Founding Members waitlist', 'royal-mcp' ); ?>
-                    <?php endif; ?>
-                </strong>
-            </p>
-            <p style="margin: 0 0 12px;">
-                <?php if ( $post_launch ) : ?>
-                    <?php esc_html_e( '280+ MCP tools. The Solo Dev & Agency Workflow — one chat runs every client site. Scoped endpoints per project, bulk ops across whole catalogs, and a 90-day audit log so you can show clients exactly what changed. Get 30-50% off normal price.', 'royal-mcp' ); ?>
-                <?php else : ?>
-                    <?php esc_html_e( 'Lock in $79/yr LIFETIME pricing (going to $149/yr after launch). Limited to 100 spots. No obligation until launch day.', 'royal-mcp' ); ?>
-                <?php endif; ?>
-            </p>
-            <p style="margin: 0;">
-                <a href="<?php echo esc_url( $cta_url ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
-                    <?php if ( $post_launch ) : ?>
-                        <?php esc_html_e( 'Check Out Pro &rarr;', 'royal-mcp' ); ?>
-                    <?php else : ?>
-                        <?php esc_html_e( 'Reserve My Spot &rarr;', 'royal-mcp' ); ?>
-                    <?php endif; ?>
-                </a>
-                &nbsp;
-                <a href="<?php echo esc_url( $dismiss_url ); ?>" style="margin-left: 6px;">
-                    <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
-                </a>
-            </p>
-        </div>
-        <?php
-    }
-
-    public function handle_founding_members_dismiss(): void {
-        if ( ! current_user_can( 'manage_options' ) ) {
-            wp_die( esc_html__( 'You do not have permission to dismiss this notice.', 'royal-mcp' ) );
-        }
-        check_admin_referer( self::FM_NOTICE_DISMISS_ACTION );
-        // Which variant was dismissed? Query arg tells us.
-        $launched     = ! empty( $_GET['launched'] );
-        $dismiss_meta = $launched ? self::PRO_LAUNCH_NOTICE_DISMISS_META : self::FM_NOTICE_DISMISS_META;
-        update_user_meta( get_current_user_id(), $dismiss_meta, ROYAL_MCP_VERSION );
-        wp_safe_redirect( wp_get_referer() ?: admin_url() );
-        exit;
-    }
-
-    /* ==================================================================
-     *  7. Founding Members submenu item (P5c)
+     *  6. Founding Members submenu item
      * ================================================================ */
 
     /**

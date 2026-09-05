@@ -1,0 +1,346 @@
+/**
+ * Royal MCP — What's New modal styles.
+ * Enqueued on Royal MCP admin pages only via Whats_New::enqueue_assets().
+ * Rendered on admin_footer; JS toggles [hidden] attribute for open/close.
+ */
+
+* { box-sizing: border-box; }
+
+.rmcp-wn-backdrop {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(30, 30, 30, 0.55);
+    z-index: 999999;
+    display: none;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 40px 20px;
+    overflow-y: auto;
+}
+.rmcp-wn-backdrop.is-open {
+    display: flex;
+}
+
+.rmcp-wn-modal {
+    background: #fff;
+    width: 100%;
+    max-width: 780px;
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    position: relative;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+}
+
+.rmcp-wn-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 20px 28px;
+    border-bottom: 1px solid #eee;
+}
+.rmcp-wn-header-logo {
+    width: 42px;
+    height: 42px;
+    border-radius: 6px;
+    flex-shrink: 0;
+}
+.rmcp-wn-header-titles h2 {
+    margin: 0 0 2px;
+    font-size: 16px;
+    font-weight: 700;
+    color: #2C2C2C;
+    letter-spacing: -0.01em;
+    line-height: 1.3;
+}
+.rmcp-wn-header-titles p {
+    margin: 0;
+    font-size: 13px;
+    color: #6b6b6b;
+    line-height: 1.4;
+}
+.rmcp-wn-close {
+    position: absolute;
+    top: 18px;
+    right: 22px;
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    font-size: 22px;
+    line-height: 1;
+    color: #8a8a8a;
+    cursor: pointer;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+.rmcp-wn-close:hover {
+    background: #f0f0f0;
+    color: #2C2C2C;
+}
+
+.rmcp-wn-slides {
+    max-height: calc(100vh - 180px);
+    overflow-y: auto;
+    padding: 0;
+}
+
+.rmcp-wn-slide {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 32px;
+    align-items: center;
+    padding: 40px 28px;
+    border-bottom: 1px solid #f0f0f0;
+}
+.rmcp-wn-slide:last-of-type {
+    border-bottom: none;
+}
+.rmcp-wn-slide.is-reversed {
+    grid-template-columns: 1fr 260px;
+}
+.rmcp-wn-slide.is-reversed .rmcp-wn-slide-visual {
+    order: 2;
+}
+.rmcp-wn-slide.is-reversed .rmcp-wn-slide-body {
+    order: 1;
+}
+
+.rmcp-wn-slide-visual {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.rmcp-wn-circle {
+    width: 220px;
+    height: 220px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #FAF8F5 0%, #FEFCF7 100%);
+    border: 2px solid #E8DFC3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 4px 20px rgba(201, 162, 39, 0.10);
+}
+.rmcp-wn-circle img {
+    max-width: 78%;
+    max-height: 78%;
+    object-fit: contain;
+}
+.rmcp-wn-circle.is-screenshot img {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    object-fit: cover;
+    object-position: center;
+}
+.rmcp-wn-code-snippet-standalone {
+    width: 100%;
+    max-width: 280px;
+    padding: 20px 22px;
+    background: #1e1e1e;
+    border-radius: 10px;
+    font-family: "JetBrains Mono", "Consolas", "Monaco", monospace;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: #d4d4d4;
+    overflow: hidden;
+    text-align: left;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+    white-space: pre;
+}
+.rmcp-wn-code-snippet-standalone .k { color: #569cd6; }
+.rmcp-wn-code-snippet-standalone .s { color: #ce9178; }
+.rmcp-wn-code-snippet-standalone .c { color: #6a9955; }
+.rmcp-wn-code-snippet-standalone .hl {
+    background: rgba(201, 162, 39, 0.25);
+    padding: 1px 3px;
+    border-radius: 2px;
+}
+
+.rmcp-wn-slide-body h3 {
+    margin: 0 0 12px;
+    font-size: 22px;
+    font-weight: 700;
+    color: #2C2C2C;
+    letter-spacing: -0.015em;
+    line-height: 1.25;
+}
+.rmcp-wn-slide-body .rmcp-wn-tag {
+    display: inline-block;
+    padding: 3px 10px;
+    background: #C9A227;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    border-radius: 3px;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+}
+.rmcp-wn-slide-body p {
+    margin: 0 0 14px;
+    color: #4b4b4b;
+    font-size: 14px;
+    line-height: 1.6;
+}
+.rmcp-wn-slide-body p:last-of-type {
+    margin-bottom: 20px;
+}
+.rmcp-wn-slide-body .rmcp-wn-big-number {
+    font-size: 42px;
+    font-weight: 800;
+    color: #C9A227;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    margin: 0 0 8px;
+    font-family: Georgia, "Times New Roman", serif;
+}
+
+.rmcp-wn-btn {
+    display: inline-block;
+    padding: 8px 18px;
+    background: #C9A227;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 13px;
+    border: 1px solid #A8871D;
+    transition: background 0.15s;
+}
+.rmcp-wn-btn:hover,
+.rmcp-wn-btn:focus {
+    background: #B89020;
+    color: #fff;
+}
+
+/* Slide 1 confetti circle + Slide 4 R mark */
+.rmcp-wn-circle.is-confetti {
+    background: #2C2C2C;
+}
+.rmcp-wn-circle.is-confetti img {
+    max-width: 65%;
+    max-height: 65%;
+    border-radius: 12px;
+}
+.rmcp-wn-confetti-piece {
+    position: absolute;
+    width: 8px;
+    height: 12px;
+    top: -20px;
+    opacity: 0;
+    animation: rmcp-wn-fall 3s linear infinite;
+    pointer-events: none;
+    z-index: 2;
+}
+@keyframes rmcp-wn-fall {
+    0%   { opacity: 0; transform: translate(0, -20px) rotate(0deg); }
+    10%  { opacity: 1; }
+    90%  { opacity: 1; }
+    100% { opacity: 0; transform: translate(var(--drift, 0px), 260px) rotate(var(--spin, 720deg)); }
+}
+
+.rmcp-wn-mark {
+    width: 180px;
+    height: 180px;
+    border-radius: 26px;
+    background: #2C2C2C;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+}
+.rmcp-wn-mark::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 14px;
+    background: #C9A227;
+}
+.rmcp-wn-mark span {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-weight: 700;
+    font-size: 132px;
+    color: #C9A227;
+    line-height: 1;
+    margin-top: 14px;
+}
+
+/* Pro upsell footer */
+.rmcp-wn-upsell {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 24px 28px;
+    background: #2C2C2C;
+    color: #fff;
+}
+.rmcp-wn-upsell-copy h4 {
+    margin: 0 0 6px;
+    font-size: 17px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.01em;
+    line-height: 1.3;
+}
+.rmcp-wn-upsell-copy p {
+    margin: 0;
+    font-size: 13px;
+    color: #cccccc;
+    line-height: 1.5;
+    max-width: 460px;
+}
+.rmcp-wn-upsell-btn {
+    display: inline-block;
+    padding: 10px 22px;
+    background: #C9A227;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 4px;
+    font-weight: 700;
+    font-size: 14px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.rmcp-wn-upsell-btn:hover,
+.rmcp-wn-upsell-btn:focus {
+    background: #B89020;
+    color: #fff;
+}
+
+/* Chrome header trigger button */
+.royal-mcp-wn-trigger {
+    background: none;
+    border: 1px solid transparent;
+    cursor: pointer;
+    font: inherit;
+}
+
+@media (max-width: 700px) {
+    .rmcp-wn-slide,
+    .rmcp-wn-slide.is-reversed {
+        grid-template-columns: 1fr;
+        text-align: center;
+    }
+    .rmcp-wn-slide.is-reversed .rmcp-wn-slide-visual {
+        order: 0;
+    }
+    .rmcp-wn-slide.is-reversed .rmcp-wn-slide-body {
+        order: 1;
+    }
+    .rmcp-wn-upsell {
+        flex-direction: column;
+        text-align: center;
+    }
+}

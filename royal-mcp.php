@@ -128,7 +128,9 @@ class Royal_MCP_Plugin {
 
         // Royal Plugins Chrome Pack: header/footer/submenu on Royal MCP admin screens only.
         require_once ROYAL_MCP_PLUGIN_DIR . 'includes/chrome/class-royal-mcp-chrome.php';
+        require_once ROYAL_MCP_PLUGIN_DIR . 'includes/chrome/class-royal-mcp-whats-new.php';
         \Royal_MCP\Chrome\Royal_MCP_Chrome::get_instance();
+        \Royal_MCP\Chrome\Whats_New::instance();
 
         // WordPress Abilities API registration (WP 6.9+). Categories hook fires before
         // abilities hook; registering an ability against a non-registered category throws.
