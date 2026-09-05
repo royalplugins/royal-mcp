@@ -65,7 +65,6 @@ class Help_Page {
 		'chatgpt'         => 'ChatGPT',
 		'other-clients'   => 'Other Clients',
 		'troubleshooting' => 'Troubleshooting',
-		'common-errors'   => 'Common Errors',
 		'support'         => 'Support',
 	];
 

@@ -3,12 +3,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$royal_mcp_help_diagnostic   = isset( $royal_mcp_help_diagnostic ) ? $royal_mcp_help_diagnostic : \Royal_MCP\Admin\Help_Page::DIAGNOSTIC_STEPS;
-$royal_mcp_help_settings_url = admin_url( 'admin.php?page=royal-mcp' );
-$royal_mcp_help_logs_url     = defined( 'ROYAL_MCP_LOADED_BY_PRO' )
+$royal_mcp_help_diagnostic    = isset( $royal_mcp_help_diagnostic ) ? $royal_mcp_help_diagnostic : \Royal_MCP\Admin\Help_Page::DIAGNOSTIC_STEPS;
+$royal_mcp_help_support_urls  = isset( $royal_mcp_help_support_urls ) ? $royal_mcp_help_support_urls : \Royal_MCP\Admin\Help_Page::SUPPORT_URLS;
+$royal_mcp_help_settings_url  = admin_url( 'admin.php?page=royal-mcp' );
+$royal_mcp_help_logs_url      = defined( 'ROYAL_MCP_LOADED_BY_PRO' )
 	? admin_url( 'admin.php?page=royal-mcp-pro' )
 	: admin_url( 'admin.php?page=royal-mcp-logs' );
-$royal_mcp_help_permalinks   = admin_url( 'options-permalink.php' );
+$royal_mcp_help_permalinks    = admin_url( 'options-permalink.php' );
+$royal_mcp_unknown_client_url = $royal_mcp_help_support_urls['unknown_client_id'] ?? 'https://royalplugins.com/support/royal-mcp/';
 ?>
 <div class="royal-mcp-help-tab-content royal-mcp-help-tab-troubleshooting">
 
@@ -184,6 +186,77 @@ $royal_mcp_help_permalinks   = admin_url( 'options-permalink.php' );
 	</div>
 
 	<!-- =====================================================
+	     Common Errors — Unknown client_id
+	     ===================================================== -->
+	<div class="royal-mcp-help-section">
+		<h3><?php esc_html_e( 'Common errors — Unknown client_id', 'royal-mcp' ); ?></h3>
+
+		<p>
+			<?php
+			echo wp_kses_post( sprintf(
+				/* translators: %s: literal error string in a <code> tag */
+				__( '<strong>Symptom:</strong> the AI client shows %s (or a variation, e.g. "Unknown client_id: &lt;hash&gt;") when you try to reconnect a connector that used to work.', 'royal-mcp' ),
+				'<code>' . esc_html__( 'Unknown client_id', 'royal-mcp' ) . '</code>'
+			) );
+			?>
+		</p>
+
+		<p>
+			<strong><?php esc_html_e( 'What triggers it:', 'royal-mcp' ); ?></strong>
+			<?php esc_html_e( 'the connector has been idle for 2+ days (OAuth client record expired), rapid Royal MCP updates or an OAuth-state reset invalidated the old client between reconnects, or you switched between Royal MCP Free and Pro and the connector still references a client_id from the previous plugin.', 'royal-mcp' ); ?>
+		</p>
+
+		<p><strong><?php esc_html_e( 'The fix:', 'royal-mcp' ); ?></strong></p>
+
+		<ol class="royal-mcp-help-ladder">
+			<li class="royal-mcp-help-ladder-rung">
+				<h4><?php esc_html_e( 'Reset OAuth State', 'royal-mcp' ); ?></h4>
+				<p>
+					<?php
+					printf(
+						wp_kses(
+							/* translators: %s: link to Royal MCP Settings */
+							__( 'Go to %s and click the Reset OAuth State button. This clears every stored OAuth client, issued access token, and pending authorization code.', 'royal-mcp' ),
+							[ 'a' => [ 'href' => [] ] ]
+						),
+						'<a href="' . esc_url( $royal_mcp_help_settings_url ) . '">' . esc_html__( 'Royal MCP → Settings', 'royal-mcp' ) . '</a>'
+					);
+					?>
+				</p>
+			</li>
+			<li class="royal-mcp-help-ladder-rung">
+				<h4><?php esc_html_e( 'Flush permalinks', 'royal-mcp' ); ?></h4>
+				<p>
+					<?php
+					printf(
+						wp_kses(
+							/* translators: %s: link to Permalinks admin page */
+							__( 'Open %s and click Save Changes without editing anything. Forces WordPress to flush rewrite rules so the OAuth discovery endpoints route correctly.', 'royal-mcp' ),
+							[ 'a' => [ 'href' => [] ] ]
+						),
+						'<a href="' . esc_url( $royal_mcp_help_permalinks ) . '">' . esc_html__( 'Settings → Permalinks', 'royal-mcp' ) . '</a>'
+					);
+					?>
+				</p>
+			</li>
+			<li class="royal-mcp-help-ladder-rung">
+				<h4><?php esc_html_e( 'Delete the connector', 'royal-mcp' ); ?></h4>
+				<p><?php esc_html_e( 'In the AI client (Claude / ChatGPT / other), delete the existing Royal MCP connector entirely.', 'royal-mcp' ); ?></p>
+			</li>
+			<li class="royal-mcp-help-ladder-rung">
+				<h4><?php esc_html_e( 'Re-add from scratch', 'royal-mcp' ); ?></h4>
+				<p><?php esc_html_e( 'Add the connector back fresh. Enter only the MCP endpoint URL, leave every optional field empty so the client requests a new OAuth registration.', 'royal-mcp' ); ?></p>
+			</li>
+		</ol>
+
+		<p style="margin-top: 16px;">
+			<a href="<?php echo esc_url( $royal_mcp_unknown_client_url ); ?>" target="_blank" rel="noopener noreferrer" class="button">
+				<?php esc_html_e( 'Read the full guide', 'royal-mcp' ); ?>
+			</a>
+		</p>
+	</div>
+
+	<!-- =====================================================
 	     Reading the Activity Log
 	     ===================================================== -->
 	<div class="royal-mcp-help-section">
@@ -212,10 +285,10 @@ $royal_mcp_help_permalinks   = admin_url( 'options-permalink.php' );
 		<h3><?php esc_html_e( 'Automatic host-compatibility notices', 'royal-mcp' ); ?></h3>
 		<p><?php esc_html_e( 'Royal MCP self-checks for the most common host and plugin configurations that would block the connection, and surfaces a specific admin notice with the fix when it finds one. Watch for these at the top of the Royal MCP admin pages:', 'royal-mcp' ); ?></p>
 		<ul class="royal-mcp-help-ladder">
-			<li><?php esc_html_e( 'Managed-host reservation of /.well-known/ (SiteGround, WP Engine, and similar).', 'royal-mcp' ); ?></li>
-			<li><?php esc_html_e( 'Plain permalinks (Royal MCP\'s discovery routes need pretty permalinks to fire).', 'royal-mcp' ); ?></li>
-			<li><?php esc_html_e( 'Perfmatters, Solid Security, and other plugins that disable the REST API for unauthenticated callers.', 'royal-mcp' ); ?></li>
-			<li><?php esc_html_e( 'BitNinja, Imunify360, Sucuri edge, and other WAF products that intercept the discovery paths.', 'royal-mcp' ); ?></li>
+			<li><strong><?php esc_html_e( 'Managed-host /.well-known/ reservation', 'royal-mcp' ); ?></strong> &mdash; <?php esc_html_e( 'SiteGround, WP Engine, and similar hosts that intercept the path before WordPress can respond.', 'royal-mcp' ); ?></li>
+			<li><strong><?php esc_html_e( 'Plain permalinks', 'royal-mcp' ); ?></strong> &mdash; <?php esc_html_e( 'Royal MCP\'s discovery routes need pretty permalinks to fire.', 'royal-mcp' ); ?></li>
+			<li><strong><?php esc_html_e( 'REST API disabled by another plugin', 'royal-mcp' ); ?></strong> &mdash; <?php esc_html_e( 'Perfmatters, Solid Security, and other plugins that disable the REST API for unauthenticated callers.', 'royal-mcp' ); ?></li>
+			<li><strong><?php esc_html_e( 'WAF interception on discovery paths', 'royal-mcp' ); ?></strong> &mdash; <?php esc_html_e( 'BitNinja, Imunify360, Sucuri edge, and similar WAF products that block or challenge the OAuth discovery endpoints.', 'royal-mcp' ); ?></li>
 		</ul>
 		<p><?php esc_html_e( 'Each notice links to a specific fix. Dismiss individually once addressed. The check re-runs when you update Royal MCP settings or change WordPress permalinks.', 'royal-mcp' ); ?></p>
 	</div>
