@@ -1298,11 +1298,26 @@ class Server {
         ];
         $icon_url = function_exists('get_site_icon_url') ? get_site_icon_url() : '';
         if ($icon_url) {
-            $filetype             = wp_check_filetype($icon_url);
+            $filetype  = wp_check_filetype($icon_url);
+            $mime_type = (!empty($filetype['type']) && is_string($filetype['type'])) ? $filetype['type'] : null;
+            if (null === $mime_type) {
+                $ext     = strtolower(pathinfo((string) wp_parse_url($icon_url, PHP_URL_PATH), PATHINFO_EXTENSION));
+                $ext_map = [
+                    'svg'  => 'image/svg+xml',
+                    'jpg'  => 'image/jpeg',
+                    'jpeg' => 'image/jpeg',
+                    'png'  => 'image/png',
+                    'gif'  => 'image/gif',
+                    'webp' => 'image/webp',
+                    'avif' => 'image/avif',
+                    'ico'  => 'image/x-icon',
+                ];
+                $mime_type = $ext_map[$ext] ?? 'image/png';
+            }
             $server_info['icons'] = [
                 [
                     'src'      => $icon_url,
-                    'mimeType' => $filetype['type'] ?? 'image/png',
+                    'mimeType' => $mime_type,
                     'sizes'    => ['512x512'],
                 ],
             ];

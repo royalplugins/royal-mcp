@@ -279,6 +279,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Changelog ==
 
+= 1.5.0.1 =
+* Fix: Site icon media type in the server identity response now returns as a string for all icon formats.
+
 = 1.5.0 =
 * New: Three Elementor discovery tools (widget schema, widget list, dynamic tags) plus an include-styles option on the page-outline tool.
 * New: The Troubleshooting Help tab surfaces the fix for the most-reported OAuth reconnect issue directly in WordPress admin.
