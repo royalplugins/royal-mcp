@@ -198,16 +198,24 @@ class Royal_MCP_Plugin {
         return $response;
     }
 
-    /** Force no-store cache headers on every response in the royal-mcp namespace. */
+    /** Force no-store cache headers on every response in the royal-mcp namespace,
+     * except the public /discovery/* sub-routes which are intentionally cacheable
+     * (agent-readiness scanners and downstream agent runtimes poll these documents
+     * at scale — clobbering their Cache-Control forces uncached origin fetches for
+     * every request). */
     public function force_no_store_on_namespace( $response, $server, $request ) {
         if ( ! $response instanceof \WP_REST_Response ) {
             return $response;
         }
         $route = $request->get_route();
-        if ( is_string( $route ) && 0 === strpos( $route, '/royal-mcp/' ) ) {
-            $response->header( 'Cache-Control', 'no-store, no-cache, must-revalidate, private' );
-            $response->header( 'Pragma', 'no-cache' );
+        if ( ! is_string( $route ) || 0 !== strpos( $route, '/royal-mcp/' ) ) {
+            return $response;
         }
+        if ( 0 === strpos( $route, '/royal-mcp/v1/discovery/' ) ) {
+            return $response;
+        }
+        $response->header( 'Cache-Control', 'no-store, no-cache, must-revalidate, private' );
+        $response->header( 'Pragma', 'no-cache' );
         return $response;
     }
 
