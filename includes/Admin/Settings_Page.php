@@ -212,6 +212,74 @@ class Settings_Page {
         ]);
     }
 
+    /**
+     * Log a WebMCP toggle change to the Activity Log. Called from
+     * sanitize_settings() when the master toggle flips in either direction.
+     * Auditability is load-bearing here — toggling this option materially
+     * changes the site's auth posture (adds/removes the cookie-auth path
+     * for browser agents).
+     */
+    private function log_webmcp_toggle_change( $prior, $next ) {
+        global $wpdb;
+        $wpdb->insert(
+            $wpdb->prefix . 'royal_mcp_logs',
+            [
+                'mcp_server'    => 'MCP Server',
+                'action'        => 'settings:webmcp_toggle',
+                'request_data'  => wp_json_encode( [ 'user_id' => get_current_user_id() ] ),
+                'response_data' => wp_json_encode( [
+                    'prior' => (bool) $prior,
+                    'next'  => (bool) $next,
+                ] ),
+                'status'        => 'success',
+            ],
+            [ '%s', '%s', '%s', '%s', '%s' ]
+        );
+    }
+
+    /**
+     * Detect WebMCP bridge presence on the current site by issuing a HEAD
+     * request to /.webmcp/bridge.js. Returns one of:
+     *   'detected'     — HEAD returns 200 (Cloudflare WebMCP is toggled on for this zone)
+     *   'not_detected' — HEAD returns 404 (Cloudflare not fronting this site OR WebMCP not enabled)
+     *   'unknown'      — HEAD returns any other status / connection error / etc.
+     *
+     * Cached in a short-lived transient so the settings page render doesn't
+     * hit the loopback on every load. Manual re-probe via the settings form
+     * (a nonce-gated admin-post handler) invalidates the cache.
+     *
+     * Kept in the settings-page class instead of Well_Known_Notice because
+     * this isn't a "notify the admin" surface — it's a live status pill on
+     * a form field, distinct concern.
+     */
+    public static function detect_webmcp_bridge() {
+        $cached = get_transient( 'royal_mcp_webmcp_bridge_status' );
+        if ( false !== $cached ) {
+            return $cached;
+        }
+
+        $url = home_url( '/.webmcp/bridge.js' );
+        $response = wp_remote_head( $url, [
+            'timeout'     => 3,
+            'redirection' => 0,
+            'sslverify'   => true,
+            'user-agent'  => 'Royal MCP WebMCP Bridge Probe',
+        ] );
+
+        $status = 'unknown';
+        if ( ! is_wp_error( $response ) ) {
+            $code = (int) wp_remote_retrieve_response_code( $response );
+            if ( 200 === $code ) {
+                $status = 'detected';
+            } elseif ( 404 === $code ) {
+                $status = 'not_detected';
+            }
+        }
+
+        set_transient( 'royal_mcp_webmcp_bridge_status', $status, 30 * MINUTE_IN_SECONDS );
+        return $status;
+    }
+
     public function sanitize_settings($input) {
         $sanitized = [];
         $settings = get_option('royal_mcp_settings', []);
@@ -219,6 +287,22 @@ class Settings_Page {
         $sanitized['enabled'] = isset($input['enabled']) ? (bool) $input['enabled'] : false;
         $sanitized['allow_option_writes'] = isset($input['allow_option_writes']) ? (bool) $input['allow_option_writes'] : false;
         $sanitized['allow_theme_writes'] = isset($input['allow_theme_writes']) ? (bool) $input['allow_theme_writes'] : false;
+
+        // WebMCP browser-agent bridge — opt-in cookie-auth path for the Cloudflare
+        // WebMCP bridge. Off by default so the cookie-auth surface is never a
+        // hidden auth path. Toggle change gets an Activity Log row (below) for
+        // auditability since it materially changes the site's auth posture.
+        $prior_webmcp = ! empty( $settings['webmcp_enabled'] );
+        $sanitized['webmcp_enabled'] = isset( $input['webmcp_enabled'] ) ? (bool) $input['webmcp_enabled'] : false;
+        if ( $prior_webmcp !== $sanitized['webmcp_enabled'] ) {
+            $this->log_webmcp_toggle_change( $prior_webmcp, $sanitized['webmcp_enabled'] );
+            // Toggle flips the auth.methods advertised in the server card
+            // and agent-skills index — purge caches so customers don't see
+            // stale "session-cookie" listed after turning WebMCP off, or
+            // miss it right after turning WebMCP on.
+            delete_transient( \Royal_MCP\Discovery\Server_Card::CACHE_KEY );
+            delete_transient( \Royal_MCP\Discovery\Agent_Skills_Index::CACHE_KEY );
+        }
 
         // Access token TTL — whitelist against the 4 UI choices; anything else falls back to the default.
         $posted_ttl = isset($input['access_token_ttl_seconds']) ? (int) $input['access_token_ttl_seconds'] : 0;

@@ -4,17 +4,17 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.5.0
+Stable tag: 1.5.1
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Preview-On-WordPress-Playground: yes
 
-200+ MCP tools. OAuth 2.0. Connect Claude, ChatGPT, Gemini, Cursor & any MCP agent to your WordPress site. 100% self-hosted.
+200+ MCP tools. OAuth 2.0 + WebMCP. Connect Claude, ChatGPT, Gemini, Cursor & any MCP agent to your WordPress site. 100% self-hosted.
 
 == Description ==
 
-**The most complete WordPress MCP server — 200+ tools, OAuth 2.0, and nothing leaves your site.**
+**The most complete WordPress MCP server — 200+ tools, OAuth 2.0, WebMCP-ready, and nothing leaves your site.**
 
 Royal MCP gives Claude, ChatGPT, Google Gemini, Perplexity, DeepSeek, Mistral, and every other MCP-compatible AI structured access to your WordPress site: 85 WordPress core tools plus 120 integration tools that auto-load for WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Contact Form 7, MonsterInsights, W3 Total Cache, Duplicator, BuddyPress, and more.
 
@@ -46,6 +46,10 @@ ChatGPT on the web, desktop, and iOS supports MCP servers natively. Add Royal MC
 
 Royal MCP is not vendor-locked. Claude/Anthropic, ChatGPT/OpenAI, Gemini/Google, Grok/xAI, Llama/Meta, Mistral, DeepSeek, Qwen/Alibaba, Cohere, and Perplexity all work through MCP-compatible clients like Cursor, Windsurf, Cline, Continue, Zed, JetBrains AI Assistant, OpenCode, Warp, Ollama, and LM Studio, all connecting through the same endpoint. Switch AI vendors without rewriting a single connection.
 
+= Ready for browser-based AI agents (WebMCP) =
+
+Royal MCP supports the W3C WebMCP browser-agent standard on the server side. When a visitor is signed into your site, browser-based AI agents from any WebMCP-compatible bridge (Cloudflare's WebMCP is the first shipping today) can call the same MCP tools that Claude Desktop and ChatGPT already use, authenticated with the visitor's existing WordPress login. Turn it on with one toggle in the Browser Agents section of the Royal MCP settings. External clients like Claude Desktop, ChatGPT, and Cursor continue to use OAuth Bearer tokens as before.
+
 = How Royal MCP handles authorization =
 
 Royal MCP speaks full OAuth 2.0 with PKCE and Dynamic Client Registration (RFC 7591) for Claude Desktop, Claude Code, ChatGPT web, and every modern MCP client. Sessions expire, refresh automatically, and can be revoked globally with one button in wp-admin. Clients that don't speak OAuth get timing-safe API-key auth, per-IP rate limits (60 requests per minute), and the same activity log for every tool call.
@@ -65,6 +69,10 @@ Yes. Royal MCP surfaces every AI-callable operation through one endpoint, from t
 = See what AI agents do to your site =
 
 The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) companion shows every AI agent hitting your site at the HTTP layer (training crawlers, retrieval bots, AI search engines), not just the ones connected through Royal MCP. Install both for a unified view across MCP tool calls and HTTP-layer bot hits.
+
+= Discoverable by every AI agent scanner (Agent Readiness) =
+
+Royal MCP publishes machine-readable MCP Server Card, Skills Index, and OAuth Protected Resource metadata at the standard well-known locations. Cloudflare's Agent Readiness scanner, Vercel's is-agentic, and Chrome Lighthouse's Agentic Browsing audit all recognize your site as agent-ready with zero configuration. Every request to your MCP endpoint carries a Link header pointing agent runtimes at these discovery documents.
 
 = 85 Core Tools + 120 Integration Tools =
 
@@ -152,13 +160,17 @@ Royal MCP works with any MCP-compliant client, IDE, or AI agent framework — no
 
 = MCP Spec Compliance =
 
-Royal MCP implements the [MCP 2025-11-25 Streamable HTTP transport specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http):
+Royal MCP implements the [MCP Streamable HTTP transport](https://modelcontextprotocol.io/specification/) across every published spec revision — [2024-11-05](https://modelcontextprotocol.io/specification/2024-11-05/), [2025-06-18](https://modelcontextprotocol.io/specification/2025-06-18/), [2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/), and [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/) — negotiated on the initialize handshake so every client gets the wire behavior it expects:
 
 * Single `/mcp` endpoint for all JSON-RPC communication
 * POST for client messages, GET for server-sent events, DELETE for session termination
-* Cryptographically secure session IDs with transient-based storage
+* Stateless per-request transport — sessions still supported for backwards compatibility but not required
+* Cryptographically secure session IDs with transient-based storage when clients do use them
 * Origin header validation to prevent DNS rebinding attacks
 * Proper CORS handling for browser-based MCP clients
+* W3C WebMCP browser-agent standard supported on the server side
+* Machine-readable Agent Readiness signals published at the standard well-known paths
+* RFC 8288 Link headers on every MCP response pointing agent runtimes at the discovery documents
 
 == External Services ==
 
@@ -278,6 +290,16 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.5.1 =
+* New: Browser-based AI agents can now use Royal MCP tools via any WebMCP-compatible bridge, using the visitor's existing WordPress login.
+* New: Browser Agents section on the settings page toggles the WebMCP path on or off.
+* New: Publishes a machine-readable server card and skills index so Agent Readiness scanners auto-detect the site.
+* Enhancement: Rate-limit responses now include the seconds until retry so MCP clients know exactly when to try again.
+* Enhancement: Authenticated requests get a higher rate-limit ceiling so legitimate bulk operations no longer trip the anti-abuse limit.
+* Fix: Rate limits behind Cloudflare now count per real visitor instead of coalescing everyone at the edge server IP.
+* Fix: The Perfmatters compatibility warning no longer appears when Disable REST API is only blocking logged-out visitors.
+* Fix: The site icon in the server identity response now returns as a string for all icon formats.
 
 = 1.5.0 =
 * New: Three Elementor discovery tools (widget schema, widget list, dynamic tags) plus an include-styles option on the page-outline tool.

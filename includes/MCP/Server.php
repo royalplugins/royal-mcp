@@ -39,10 +39,20 @@ if (!defined('ABSPATH')) {
 class Server {
 
     /**
-     * Rate limit: max requests per window per IP
+     * Rate limit: max requests per window per real client IP.
+     *
+     * Two tiers so an authenticated caller doing legitimate bulk work
+     * (page-by-page schema push, bulk product update, batch SEO meta) doesn't
+     * trip the anti-abuse ceiling that exists for anonymous /register probing.
+     * Tier selection reads resolve_caller()['auth_method'] — 'anonymous' →
+     * anon ceiling, 'bearer'/'session' → authed ceiling.
+     *
+     * Both filterable at runtime via royal_mcp_rate_limit_max ($tier param
+     * passed for context) and royal_mcp_rate_limit_window.
      */
-    private $rate_limit_max = 60;
-    private $rate_limit_window = 60; // seconds
+    private $rate_limit_max_anon   = 60;
+    private $rate_limit_max_authed = 300;
+    private $rate_limit_window     = 60; // seconds
 
     /**
      * Auth fingerprint for the current request. Populated by the credential
@@ -66,6 +76,23 @@ class Server {
     private $request_auth_method  = null;   // 'api-key' | 'oauth-bearer' | null
     private $request_token_ttl    = null;   // int seconds until token expiry, or null (api-key never rotates)
     private $request_session_id   = null;   // MCP session ID from Mcp-Session-Id header, or null (no session for pre-initialize)
+
+    /**
+     * Unified caller-context shape produced by resolve_caller() on success.
+     * Every auth branch (bearer, cookie/session) converges on this shape so
+     * downstream tool gating reads the same fields regardless of how the
+     * caller authenticated.
+     *
+     * Shape: [
+     *   'user_id'        => int|null,
+     *   'capabilities'   => string[],   // WP capability slugs the user holds
+     *   'granted_scopes' => string[]|null,  // OAuth-granted scopes when Bearer, null otherwise
+     *   'auth_method'    => 'bearer'|'session'|'anonymous',
+     * ]
+     *
+     * @var array|null
+     */
+    private $request_caller_context = null;
 
     /**
      * MCP protocol versions this server supports on the initialize handshake.
@@ -237,71 +264,231 @@ class Server {
     }
 
     /**
-     * Validate authentication for MCP requests.
+     * Resolve the caller for the current request into a unified context shape.
      *
-     * Accepts either:
-     *  1. OAuth 2.0 Bearer token (Authorization: Bearer <token>)
-     *  2. API key header (X-Royal-MCP-API-Key: <key>)
+     * Sole insertion point for every auth branch: bearer (OAuth token OR
+     * API key) and cookie/session both dispatch through here so downstream
+     * callers depend on one return contract regardless of which credential
+     * the request presented.
      *
-     * @param \WP_REST_Request $request The request object
-     * @return bool|WP_REST_Response True if valid, error response if invalid
+     * Returns the unified array shape on success, or a WP_REST_Response on
+     * failure (plugin disabled → 403, invalid credential → 401, no credential
+     * present → 401 with RFC 9728 WWW-Authenticate).
+     *
+     * Successful resolution has side effects (unchanged from the pre-refactor
+     * validate_auth): wp_set_current_user() populates the WP user context,
+     * request_auth_method / request_auth_fingerprint / request_token_ttl are
+     * captured for the royal_mcp_connection_health diagnostic tool, and the
+     * unified shape is stashed on request_caller_context for downstream
+     * consumers that need caller info without re-resolving.
+     *
+     * @param \WP_REST_Request $request
+     * @return array|\WP_REST_Response Unified caller shape on success, error response on failure.
      */
-    private function validate_auth($request) {
+    public function resolve_caller($request) {
         $settings = get_option('royal_mcp_settings', []);
 
-        // Check plugin is enabled.
         if (empty($settings['enabled'])) {
-            return new \WP_REST_Response([
-                'jsonrpc' => '2.0',
-                'error' => [
-                    'code' => -32600,
-                    'message' => 'Royal MCP is currently disabled.',
-                ],
-            ], 403);
+            return $this->auth_error_disabled();
         }
 
-        // Try OAuth 2.0 Bearer token first. If that fails, fall back to
-        // trying the same Bearer value as a static API key — most MCP
-        // clients that follow the universal HTTP convention for bearer
-        // credentials send their static API key via
-        // `Authorization: Bearer <key>`, not the Royal-MCP-specific
-        // `X-Royal-MCP-API-Key` header. Route the Bearer value through
-        // API-key validation as a fallback when OAuth validation rejects
-        // it. This is a strict additive change: API keys were ALREADY
-        // accepted as bearer credentials, just under a different header
-        // name, so the security perimeter does not widen — it just
-        // accepts the convention every modern MCP client uses.
+        $bearer_result = $this->resolve_caller__bearer($request, $settings);
+        if ($bearer_result instanceof \WP_REST_Response) {
+            return $bearer_result;
+        }
+        if (is_array($bearer_result)) {
+            $this->request_caller_context = $bearer_result;
+            return $bearer_result;
+        }
+
+        // Cookie-auth branch (WebMCP path). Slots in alongside bearer without
+        // touching the return contract or callsites — the same unified shape
+        // downstream code already consumes.
+        $cookie_result = $this->resolve_caller__cookie($request, $settings);
+        if ($cookie_result instanceof \WP_REST_Response) {
+            return $cookie_result;
+        }
+        if (is_array($cookie_result)) {
+            $this->request_caller_context = $cookie_result;
+            return $cookie_result;
+        }
+
+        // No credential presented — 401 + WWW-Authenticate for OAuth discovery.
+        return $this->auth_error_unauthenticated();
+    }
+
+    /**
+     * Cookie-auth branch (WebMCP). Fires only when:
+     *   1. WebMCP is enabled in settings (opt-in gate — off by default)
+     *   2. wp_get_current_user() returns a real WordPress user (session cookie present)
+     *   3. X-WP-Nonce header is present and validates against the royal_mcp_webmcp action
+     *
+     * Returns the unified caller shape on success, WP_REST_Response with 403
+     * when the WP session is real but the nonce is missing/invalid (CSRF gate),
+     * or null when no cookie-auth is possible so resolve_caller() falls through
+     * to the anonymous 401.
+     *
+     * The nonce requirement is non-negotiable — same-origin JSON-RPC POST from
+     * any page context (including a third-party origin the admin visits) would
+     * otherwise reach every destructive tool the user has capability for. The
+     * WebMCP bootstrap shim (assets/js/webmcp-bootstrap.js) is what mints and
+     * injects the nonce for the Cloudflare bridge; without the shim enqueued,
+     * this branch always 403s and the cookie path is effectively disabled at
+     * runtime even when the option is ON.
+     *
+     * @param \WP_REST_Request $request
+     * @param array            $settings Already-loaded royal_mcp_settings option.
+     * @return array|\WP_REST_Response|null
+     */
+    private function resolve_caller__cookie($request, $settings) {
+        if (empty($settings['webmcp_enabled'])) {
+            return null;
+        }
+
+        $user = wp_get_current_user();
+        if (!$user || 0 === (int) $user->ID) {
+            return null;
+        }
+
+        // Nonce action MUST be 'wp_rest' — that's what WordPress's own REST
+        // cookie-auth (rest_cookie_check_errors) validates against BEFORE
+        // dispatching to any REST handler. When our /mcp alias routes through
+        // the REST bootstrap, WP has already validated the nonce by the time
+        // we get here; this check is defensive in case Server::handle_mcp is
+        // ever invoked outside the REST request lifecycle.
+        $nonce = $request->get_header('X-WP-Nonce');
+        if (empty($nonce) || !wp_verify_nonce($nonce, 'wp_rest')) {
+            return $this->auth_error_nonce_required();
+        }
+
+        // Fingerprint bound to user ID + registration timestamp — stable across
+        // WP sessions of the same user, so the Session_Store diagnostic surface
+        // stays coherent when the user logs out + back in mid-flow.
+        $this->request_auth_fingerprint = hash(
+            'sha256',
+            'session:' . (int) $user->ID . ':' . (string) $user->user_registered
+        );
+        $this->request_auth_method = 'cookie-session';
+        $this->request_token_ttl   = null;
+
+        return $this->build_caller_context('session');
+    }
+
+    /**
+     * 403 response when a WebMCP cookie-auth request arrives without a valid
+     * X-WP-Nonce header. Body names the specific requirement so debugging
+     * the bootstrap-shim wire-up is one round-trip away.
+     */
+    private function auth_error_nonce_required() {
+        $response = new \WP_REST_Response([
+            'jsonrpc' => '2.0',
+            'error' => [
+                'code' => -32600,
+                'message' => 'Valid X-WP-Nonce header required for browser-session authentication. Ensure the Royal MCP WebMCP bootstrap script is enqueued on this page.',
+            ],
+        ], 403);
+        $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+        $response->header('Pragma', 'no-cache');
+        return $response;
+    }
+
+    /**
+     * Bearer / API-key auth branch. Extracted verbatim from the pre-refactor
+     * validate_auth() so behavior is bit-identical: OAuth token first, then
+     * the same Bearer value as an API key (universal HTTP bearer convention
+     * used by most MCP clients), then the Royal-MCP-specific X-Royal-MCP-API-Key
+     * header as a fallback.
+     *
+     * Returns the unified caller shape on success, WP_REST_Response on
+     * credential-validation failure (bad token / bad key), or null when no
+     * bearer credential is present so resolve_caller() can advance to the
+     * cookie-auth branch or return the anonymous 401.
+     *
+     * @param \WP_REST_Request $request
+     * @param array            $settings Already-loaded royal_mcp_settings option.
+     * @return array|\WP_REST_Response|null
+     */
+    private function resolve_caller__bearer($request, $settings) {
+        // Try OAuth Bearer first. If validation rejects, fall back to
+        // treating the same value as an API key — matches the HTTP bearer
+        // convention every modern MCP client uses. Additive: API keys were
+        // already accepted as bearer credentials via X-Royal-MCP-API-Key,
+        // so accepting them under Authorization: Bearer widens no perimeter.
         $auth_header = $request->get_header('Authorization');
         if (!empty($auth_header) && stripos($auth_header, 'Bearer ') === 0) {
             $token = substr($auth_header, 7);
             $oauth_result = $this->validate_bearer_token($token);
             if (true === $oauth_result) {
-                return true;
+                return $this->build_caller_context('bearer');
             }
             $api_key_result = $this->validate_api_key_value($token, $settings);
             if (true === $api_key_result) {
-                return true;
+                return $this->build_caller_context('bearer');
             }
-            // Both failed — return the OAuth error response so OAuth-aware
-            // clients still see the proper RFC 9728 WWW-Authenticate
-            // challenge and can start a fresh authorization flow.
+            // Both failed — surface the OAuth error so RFC 9728-aware
+            // clients can start a fresh authorization flow.
             return $oauth_result;
         }
 
-        // Fall back to API key via the Royal-MCP-specific header (kept for
-        // existing integrations + tighter privacy where the admin doesn't
-        // want the API key to share a header name with OAuth tokens).
         $api_key = $request->get_header('X-Royal-MCP-API-Key');
         if (!empty($api_key)) {
-            return $this->validate_api_key_value($api_key, $settings);
+            $result = $this->validate_api_key_value($api_key, $settings);
+            if (true === $result) {
+                return $this->build_caller_context('bearer');
+            }
+            return $result;
         }
 
-        // Neither provided — return 401 with WWW-Authenticate for OAuth discovery.
-        // Per the MCP spec + RFC 9728, include resource_metadata URL.
-        // Cache-Control: no-store is critical here. Without it, this 401
-        // gets cached at edge (URL-keyed) and served to subsequent
-        // authenticated requests, breaking every MCP client that hits
-        // GET /mcp before sending its credentials.
+        return null;
+    }
+
+    /**
+     * Build the unified caller-context shape from the currently-authenticated
+     * WordPress user. Called by resolve_caller__* branches AFTER their
+     * validator has run wp_set_current_user().
+     *
+     * @param string $auth_method 'bearer' | 'session'
+     * @return array Unified caller shape.
+     */
+    private function build_caller_context($auth_method) {
+        $user    = wp_get_current_user();
+        $user_id = ($user && $user->ID) ? (int) $user->ID : null;
+        $caps    = ($user && is_array($user->allcaps))
+            ? array_keys(array_filter($user->allcaps))
+            : [];
+        return [
+            'user_id'        => $user_id,
+            'capabilities'   => $caps,
+            'granted_scopes' => null,
+            'auth_method'    => $auth_method,
+        ];
+    }
+
+    /**
+     * 403 response for requests that arrive while the plugin is disabled.
+     */
+    private function auth_error_disabled() {
+        return new \WP_REST_Response([
+            'jsonrpc' => '2.0',
+            'error' => [
+                'code' => -32600,
+                'message' => 'Royal MCP is currently disabled.',
+            ],
+        ], 403);
+    }
+
+    /**
+     * 401 response for requests that presented no credential. Includes
+     * RFC 9728 WWW-Authenticate: Bearer with resource_metadata pointing at
+     * the OAuth protected-resource discovery document so OAuth-aware clients
+     * can start a fresh authorization flow.
+     *
+     * Cache-Control: no-store is load-bearing — without it, this 401 gets
+     * cached at edge (URL-keyed) and served to subsequent authenticated
+     * requests, breaking every MCP client that hits GET /mcp before sending
+     * credentials.
+     */
+    private function auth_error_unauthenticated() {
         $resource_metadata_url = self::get_resource_metadata_url();
         $response = new \WP_REST_Response([
             'jsonrpc' => '2.0',
@@ -314,6 +501,33 @@ class Server {
         $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
         $response->header('Pragma', 'no-cache');
         return $response;
+    }
+
+    /**
+     * Accessor for callers that need the unified caller context after
+     * resolve_caller() has run for the current request. Returns null before
+     * resolution or when resolution failed.
+     *
+     * @return array|null
+     */
+    public function get_request_caller_context() {
+        return $this->request_caller_context;
+    }
+
+    /**
+     * Legacy boolean auth check. Delegates to resolve_caller() so there is
+     * exactly one auth-resolution insertion point. Callers
+     * (handle_post_message / handle_get_stream / handle_delete_session) get
+     * a true|WP_REST_Response return contract; the unified shape is
+     * available separately via get_request_caller_context() for consumers
+     * that need caller identity beyond a pass/fail signal.
+     *
+     * @param \WP_REST_Request $request
+     * @return bool|\WP_REST_Response
+     */
+    private function validate_auth($request) {
+        $result = $this->resolve_caller($request);
+        return is_array($result) ? true : $result;
     }
 
     /**
@@ -421,36 +635,109 @@ class Server {
     }
 
     /**
-     * Check rate limit for an IP address.
+     * Resolve the real client IP for the current request.
      *
-     * @param string $ip Client IP address
-     * @return bool|WP_REST_Response True if allowed, error response if rate limited
+     * Preference chain:
+     *   1. CF-Connecting-IP (validated by CF-Ray presence — trust only when
+     *      Cloudflare is actually fronting the request)
+     *   2. X-Forwarded-For leftmost hop (validated via royal_mcp_trusted_proxies
+     *      filter — default empty; opt-in only, never trust arbitrary XFF)
+     *   3. REMOTE_ADDR (direct-to-origin fallback)
+     *
+     * Without this, every visitor on a Cloudflare-fronted install (mandatory
+     * for WebMCP + very common for production) coalesces to CF's edge IP for
+     * rate-limiting — the whole site would share one bucket.
+     *
+     * @return string Real client IP, or 127.0.0.1 if nothing usable.
      */
-    private function check_rate_limit($ip) {
+    public static function resolve_client_ip() {
+        // CF-Connecting-IP is only meaningful when Cloudflare is actually
+        // fronting the request; validate with CF-Ray (present on every CF
+        // response), or fall back to an explicit opt-in filter for setups
+        // where CF-Ray isn't emitted. Any request path that reaches origin
+        // directly can carry an arbitrary CF-Connecting-IP header value.
+        $cf_ip  = isset($_SERVER['HTTP_CF_CONNECTING_IP']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_IP'])) : '';
+        $cf_ray = isset($_SERVER['HTTP_CF_RAY']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_RAY'])) : '';
+        $trust_cf = '' !== $cf_ray || apply_filters('royal_mcp_trust_cloudflare_ip', false);
+        if ('' !== $cf_ip && $trust_cf && filter_var($cf_ip, FILTER_VALIDATE_IP)) {
+            return $cf_ip;
+        }
+
+        // X-Forwarded-For: only trust when caller opts in via the trusted-proxies
+        // filter (list of upstream proxy IPs whose XFF header we accept).
+        $trusted_proxies = (array) apply_filters('royal_mcp_trusted_proxies', []);
+        $remote_addr     = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+        if (!empty($trusted_proxies) && in_array($remote_addr, $trusted_proxies, true)) {
+            $xff = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR'])) : '';
+            if ('' !== $xff) {
+                $leftmost = trim(explode(',', $xff)[0]);
+                if (filter_var($leftmost, FILTER_VALIDATE_IP)) {
+                    return $leftmost;
+                }
+            }
+        }
+
+        return '' !== $remote_addr ? $remote_addr : '127.0.0.1';
+    }
+
+    /**
+     * Check rate limit for an IP + tier. Emits a proper Retry-After header
+     * and includes retry_after_seconds in the JSON body so MCP clients (and
+     * their LLM narrators) have a concrete small number to honor instead of
+     * fabricating a default backoff. Both bucket size and window duration
+     * filterable at runtime.
+     *
+     * @param string $ip   Real client IP (from resolve_client_ip()).
+     * @param string $tier 'anon' | 'authed' — selects ceiling from the two-tier property pair.
+     * @return bool|WP_REST_Response True if allowed, 429 error response if limited.
+     */
+    private function check_rate_limit($ip, $tier = 'anon') {
+        $tier_ceiling = ($tier === 'authed') ? $this->rate_limit_max_authed : $this->rate_limit_max_anon;
+
+        /**
+         * Filter the rate-limit ceiling. Runs per request with tier context so
+         * operators can raise/lower for anon and authed independently.
+         *
+         * @param int    $tier_ceiling Default ceiling for this tier.
+         * @param string $tier         'anon' | 'authed'.
+         */
+        $max    = (int) apply_filters('royal_mcp_rate_limit_max', $tier_ceiling, $tier);
+        $window = (int) apply_filters('royal_mcp_rate_limit_window', $this->rate_limit_window);
+        if ($max < 1)    { $max = $tier_ceiling; }
+        if ($window < 1) { $window = $this->rate_limit_window; }
+
         $transient_key = 'royal_mcp_rate_' . md5($ip);
         $data = get_transient($transient_key);
+        $now  = time();
 
-        if ($data === false) {
-            set_transient($transient_key, ['count' => 1, 'start' => time()], $this->rate_limit_window);
+        if ($data === false || ($now - (int) ($data['start'] ?? 0)) > $window) {
+            set_transient($transient_key, ['count' => 1, 'start' => $now], $window);
             return true;
         }
 
-        if (time() - $data['start'] > $this->rate_limit_window) {
-            set_transient($transient_key, ['count' => 1, 'start' => time()], $this->rate_limit_window);
-            return true;
-        }
+        $data['count'] = (int) ($data['count'] ?? 0) + 1;
+        set_transient($transient_key, $data, $window);
 
-        $data['count']++;
-        set_transient($transient_key, $data, $this->rate_limit_window);
-
-        if ($data['count'] > $this->rate_limit_max) {
-            return new \WP_REST_Response([
+        if ($data['count'] > $max) {
+            $retry_after = max(1, ((int) $data['start'] + $window) - $now);
+            $response = new \WP_REST_Response([
                 'jsonrpc' => '2.0',
                 'error' => [
                     'code' => -32600,
-                    'message' => 'Rate limit exceeded. Maximum ' . $this->rate_limit_max . ' requests per minute.',
+                    'message' => sprintf(
+                        'Rate limit exceeded. Try again in %d seconds. (Maximum %d requests per minute.)',
+                        $retry_after,
+                        $max
+                    ),
+                    'data' => [
+                        'retry_after_seconds' => $retry_after,
+                        'tier'                => $tier,
+                    ],
                 ],
             ], 429);
+            $response->header('Retry-After', (string) $retry_after);
+            $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+            return $response;
         }
 
         return true;
@@ -946,9 +1233,24 @@ class Server {
             return $origin_check;
         }
 
-        // Rate limiting
-        $client_ip = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '127.0.0.1';
-        $rate_check = $this->check_rate_limit($client_ip);
+        // Rate limit — tier heuristic based on the PRESENCE of authentication
+        // material, not its validity. Running before full auth resolution
+        // preserves the method-first invariant (unknown JSON-RPC methods
+        // return -32601 regardless of auth state per 2025-11-25 spec + 1.5.0
+        // architecture) and protects auth resolution from flooding. Cost:
+        // a bad-Bearer flood gets the authed tier ceiling — accepted because
+        // each request 401s cheaply and the method-first ordering matters more.
+        $auth_header    = (string) $request->get_header('Authorization');
+        $has_bearer     = '' !== $auth_header && stripos($auth_header, 'Bearer ') === 0;
+        $has_apikey_hdr = '' !== (string) $request->get_header('X-Royal-MCP-API-Key');
+        $has_cookie_auth = '' !== (string) $request->get_header('X-WP-Nonce') && is_user_logged_in();
+        $tier = ( $has_bearer || $has_apikey_hdr || $has_cookie_auth ) ? 'authed' : 'anon';
+
+        // Real client IP via CF-Connecting-IP preference chain — behind
+        // Cloudflare, REMOTE_ADDR is the CF edge server and would coalesce
+        // every visitor on the site into one rate-limit bucket.
+        $client_ip  = self::resolve_client_ip();
+        $rate_check = $this->check_rate_limit($client_ip, $tier);
         if ($rate_check !== true) {
             return $rate_check;
         }
@@ -1298,11 +1600,26 @@ class Server {
         ];
         $icon_url = function_exists('get_site_icon_url') ? get_site_icon_url() : '';
         if ($icon_url) {
-            $filetype             = wp_check_filetype($icon_url);
+            $filetype  = wp_check_filetype($icon_url);
+            $mime_type = (!empty($filetype['type']) && is_string($filetype['type'])) ? $filetype['type'] : null;
+            if (null === $mime_type) {
+                $ext     = strtolower(pathinfo((string) wp_parse_url($icon_url, PHP_URL_PATH), PATHINFO_EXTENSION));
+                $ext_map = [
+                    'svg'  => 'image/svg+xml',
+                    'jpg'  => 'image/jpeg',
+                    'jpeg' => 'image/jpeg',
+                    'png'  => 'image/png',
+                    'gif'  => 'image/gif',
+                    'webp' => 'image/webp',
+                    'avif' => 'image/avif',
+                    'ico'  => 'image/x-icon',
+                ];
+                $mime_type = $ext_map[$ext] ?? 'image/png';
+            }
             $server_info['icons'] = [
                 [
                     'src'      => $icon_url,
-                    'mimeType' => $filetype['type'] ?? 'image/png',
+                    'mimeType' => $mime_type,
                     'sizes'    => ['512x512'],
                 ],
             ];

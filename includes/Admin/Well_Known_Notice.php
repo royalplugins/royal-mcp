@@ -112,11 +112,11 @@ class Well_Known_Notice {
             return;
         }
 
-        // Perfmatters "Disable REST API when logged out" 401s our discovery
-        // and MCP endpoints for unauthenticated callers, producing the same
-        // "couldn't connect" symptom as a WAF block. Pure get_option()
-        // check — no HTTP needed. Fires before the network probe so we
-        // don't misclassify the 401 as a host-level path reservation.
+        // Perfmatters "Disable REST API" set to full-block 401s our discovery
+        // and MCP endpoints, producing the same "couldn't connect" symptom as
+        // a WAF block. Pure get_option() check — no HTTP needed. Fires before
+        // the network probe so we don't misclassify the 401 as a host-level
+        // path reservation.
         if ( $this->check_perfmatters_rest_blocked()
             && ! get_user_meta( $user_id, self::PERFMATTERS_DISMISS_KEY, true )
         ) {
@@ -1220,16 +1220,17 @@ class Well_Known_Notice {
 
     /**
      * Detect Perfmatters "Disable REST API" set to a value that would 401
-     * our discovery + MCP endpoints for unauthenticated callers.
+     * our discovery + MCP endpoints for the callers we care about.
      *
      * Perfmatters stores the setting under perfmatters_options['assets']
      * ['disable_rest_api']. Values seen in the wild: false / '' / 0 = allow
-     * (no block), 1 / true / 'everywhere' = block for everyone (breaks MCP
-     * entirely), 'logged_out' = block anonymous requests (breaks MCP for
-     * external clients like Claude that don't carry a WP session cookie).
+     * (no block), 1 / true / 'everywhere' = block for everyone, and
+     * 'disable_logged_out' / 'logged_out' = block anonymous only.
      *
-     * Returns true when the setting is any truthy value the plugin
-     * recognizes as a block.
+     * Returns true only for full-block values. Logged-out variants are safe
+     * because OAuth Bearer authentication resolves to a real user during
+     * rest_authentication_errors, so external MCP clients pass the
+     * logged-out gate before Perfmatters rejects the request.
      */
     public function check_perfmatters_rest_blocked() {
         if ( ! defined( 'PERFMATTERS_VERSION' ) && ! class_exists( '\Perfmatters\Config' ) ) {
@@ -1246,6 +1247,9 @@ class Well_Known_Notice {
             $rest_setting = $options['disable_rest_api'];
         }
         if ( empty( $rest_setting ) ) {
+            return false;
+        }
+        if ( 'disable_logged_out' === $rest_setting || 'logged_out' === $rest_setting ) {
             return false;
         }
         return true;

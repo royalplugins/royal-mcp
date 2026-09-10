@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.5.0
+ * Version: 1.5.1
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -42,7 +42,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 // guards each MCP request produces 4 warnings + 4 nginx error-log stack
 // traces, which on shared PHP-FPM pools amplifies into cross-site worker
 // starvation.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.0' );
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.1' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -98,6 +98,13 @@ class Royal_MCP_Plugin {
         // Force Cache-Control: no-store on every response in our namespace.
         add_filter('rest_post_dispatch', [$this, 'force_no_store_on_namespace'], 10, 3);
 
+        // RFC 8288 Link header pointing at the agent-readiness discovery
+        // documents. Emitted on every /mcp response (canonical REST route +
+        // /mcp root alias + namespace-root alias) so any agent runtime that
+        // hits the MCP endpoint discovers the server-card + agent-skills
+        // + OAuth authorization-server without extra probing.
+        add_filter('rest_post_dispatch', [$this, 'add_agent_readiness_link_headers'], 10, 3);
+
         // Re-force jsonrpc="2.0" pre-encode; some transformers float-cast it to "2".
         add_filter('rest_pre_echo_response', [$this, 'force_jsonrpc_version'], 999, 3);
 
@@ -105,6 +112,19 @@ class Royal_MCP_Plugin {
         add_action('init', [$this, 'register_oauth_rewrites']);
         add_filter('query_vars', [$this, 'register_oauth_query_vars']);
         add_action('parse_request', [$this, 'handle_oauth_request']);
+
+        // Rewrite-flush trigger. When ROYAL_MCP_VERSION advances (e.g. 1.5.0
+        // → 1.5.1 adds the /mcp root alias), upgraders who never
+        // deactivate/reactivate would otherwise never see the new rule land
+        // in WP's cached rewrite_rules option. Runs on admin_init so the
+        // flush cost stays off the frontend request path.
+        add_action('admin_init', [$this, 'maybe_flush_rewrites']);
+
+        // WebMCP bootstrap-shim JS — enqueued on the frontend only when the
+        // Browser Agents toggle is ON and the visitor is logged in. Runs at
+        // wp_enqueue_scripts priority 1 so it lands in <head> before any
+        // Cloudflare-injected bridge script that expects to POST to /mcp.
+        add_action('wp_enqueue_scripts', [$this, 'maybe_enqueue_webmcp_bootstrap'], 1);
 
         // Strip GET/HEAD rewrites for POST-only endpoints (/register, /token) so browser visits fall through.
         add_filter('option_rewrite_rules', [__CLASS__, 'strip_oauth_get_only_rules']);
@@ -145,16 +165,60 @@ class Royal_MCP_Plugin {
         }
     }
 
-    /** Force no-store cache headers on every response in the royal-mcp namespace. */
+    /**
+     * Emit RFC 8288 Link header pointing at the three agent-readiness
+     * discovery documents from every /mcp endpoint response. Signals to
+     * scanners + agent runtimes where to find the MCP server card,
+     * agent-skills index, and OAuth authorization-server metadata without
+     * requiring them to guess the well-known paths.
+     */
+    public function add_agent_readiness_link_headers( $response, $server, $request ) {
+        if ( ! $response instanceof \WP_REST_Response ) {
+            return $response;
+        }
+        $route = $request->get_route();
+        if ( ! is_string( $route ) ) {
+            return $response;
+        }
+        // Only /mcp endpoint routes get the Link header — the well-known
+        // documents themselves don't need to self-reference.
+        $mcp_routes = [ '/royal-mcp/v1/mcp', '/royal-mcp/v1', '/royal-mcp/v1/messages' ];
+        if ( ! in_array( $route, $mcp_routes, true ) ) {
+            return $response;
+        }
+
+        // Primary paths match what the Cloudflare-AgentReadiness/1.0 scanner
+        // actually probes; older spec-draft aliases are also served but not
+        // advertised in Link so agent runtimes converge on one URL per resource.
+        $home  = rtrim( (string) home_url(), '/' );
+        $links = [
+            '<' . $home . '/.well-known/mcp/server-cards.json>; rel="mcp-server-card"',
+            '<' . $home . '/.well-known/skills/index.json>; rel="agent-skills"',
+            '<' . $home . '/.well-known/oauth-authorization-server>; rel="oauth-authorization-server"',
+        ];
+        $response->header( 'Link', implode( ', ', $links ) );
+
+        return $response;
+    }
+
+    /** Force no-store cache headers on every response in the royal-mcp namespace,
+     * except the public /discovery/* sub-routes which are intentionally cacheable
+     * (agent-readiness scanners and downstream agent runtimes poll these documents
+     * at scale — clobbering their Cache-Control forces uncached origin fetches for
+     * every request). */
     public function force_no_store_on_namespace( $response, $server, $request ) {
         if ( ! $response instanceof \WP_REST_Response ) {
             return $response;
         }
         $route = $request->get_route();
-        if ( is_string( $route ) && 0 === strpos( $route, '/royal-mcp/' ) ) {
-            $response->header( 'Cache-Control', 'no-store, no-cache, must-revalidate, private' );
-            $response->header( 'Pragma', 'no-cache' );
+        if ( ! is_string( $route ) || 0 !== strpos( $route, '/royal-mcp/' ) ) {
+            return $response;
         }
+        if ( 0 === strpos( $route, '/royal-mcp/v1/discovery/' ) ) {
+            return $response;
+        }
+        $response->header( 'Cache-Control', 'no-store, no-cache, must-revalidate, private' );
+        $response->header( 'Pragma', 'no-cache' );
         return $response;
     }
 
@@ -229,11 +293,15 @@ class Royal_MCP_Plugin {
             'api_key' => bin2hex(random_bytes(16)),
         ]);
 
-        // Register OAuth rewrite rules before flushing.
+        // Register OAuth + /mcp alias rewrite rules before flushing.
         $this->register_oauth_rewrites();
 
         // Flush rewrite rules
         flush_rewrite_rules();
+
+        // Mark rewrite-version current so maybe_flush_rewrites() no-ops on
+        // the first admin_init after activation.
+        update_option( 'royal_mcp_rewrite_version', ROYAL_MCP_VERSION );
 
         // Schedule daily token cleanup.
         if ( ! wp_next_scheduled( 'royal_mcp_token_cleanup' ) ) {
@@ -379,6 +447,33 @@ class Royal_MCP_Plugin {
             if ( $slug === '' ) continue;
             add_rewrite_rule( $slug . '/?$', 'index.php?royal_mcp_oauth=' . $action, 'top' );
         }
+
+        // Root-path /mcp alias — served through WordPress's built-in REST
+        // bootstrap by rewriting to rest_route. The Cloudflare WebMCP bridge
+        // default target is /mcp on the origin with no customer-configurable
+        // override, so the alias is required for zero-config browser-agent
+        // access. Rewrite (not redirect) preserves POST method + JSON body +
+        // Authorization header through the same PHP request.
+        add_rewrite_rule( '^mcp/?$', 'index.php?rest_route=/royal-mcp/v1/mcp', 'top' );
+
+        // Agent-readiness discovery documents. Root .well-known paths dispatched
+        // through the corresponding REST route so response shape + Content-Type
+        // stay under WP_REST_Response control. These are what Cloudflare's
+        // Agent Readiness scanner, Vercel is-agentic, and Chrome Lighthouse
+        // 13.3+ Agentic Browsing audit look for at stable paths.
+        //
+        // Multiple aliases per document — the Cloudflare-AgentReadiness/1.0
+        // scanner checks specific paths ({.well-known/mcp/server-cards.json,
+        // .well-known/mcp.json, .well-known/skills/index.json}); older spec
+        // drafts and other scanners use variations. Serving all known paths
+        // from one REST handler is scanner-agnostic and future-proof.
+        // Server card aliases:
+        add_rewrite_rule( '\.well-known/mcp/server-cards\.json$',      'index.php?rest_route=/royal-mcp/v1/discovery/server-card', 'top' );
+        add_rewrite_rule( '\.well-known/mcp/server-card\.json$',       'index.php?rest_route=/royal-mcp/v1/discovery/server-card', 'top' );
+        add_rewrite_rule( '\.well-known/mcp\.json$',                   'index.php?rest_route=/royal-mcp/v1/discovery/server-card', 'top' );
+        // Skills index aliases:
+        add_rewrite_rule( '\.well-known/skills/index\.json$',          'index.php?rest_route=/royal-mcp/v1/discovery/agent-skills', 'top' );
+        add_rewrite_rule( '\.well-known/agent-skills/index\.json$',    'index.php?rest_route=/royal-mcp/v1/discovery/agent-skills', 'top' );
     }
 
     /**
@@ -412,6 +507,64 @@ class Royal_MCP_Plugin {
             }
         }
         return $rules;
+    }
+
+    /**
+     * Enqueue the WebMCP bootstrap-shim JS on the frontend when:
+     *   1. The Browser Agents (WebMCP) master toggle is ON
+     *   2. The current visitor is logged in (nonces are only meaningful for
+     *      authenticated users; anonymous visitors have no session to
+     *      authorize against anyway)
+     *
+     * The shim monkey-patches window.fetch to inject an X-WP-Nonce header
+     * onto /mcp calls, giving the Cloudflare WebMCP bridge (which never
+     * sends a nonce itself) the auth material Royal MCP requires on the
+     * cookie-auth path.
+     */
+    public function maybe_enqueue_webmcp_bootstrap() {
+        $settings = get_option( 'royal_mcp_settings', [] );
+        if ( empty( $settings['webmcp_enabled'] ) ) {
+            return;
+        }
+        if ( ! is_user_logged_in() ) {
+            return;
+        }
+
+        wp_enqueue_script(
+            'royal-mcp-webmcp-bootstrap',
+            ROYAL_MCP_PLUGIN_URL . 'assets/js/webmcp-bootstrap.js',
+            [],
+            ROYAL_MCP_VERSION,
+            false // in head, not footer — must run before the CF bridge script
+        );
+        wp_localize_script(
+            'royal-mcp-webmcp-bootstrap',
+            'royalMcpWebMcp',
+            [
+                // 'wp_rest' action is load-bearing — WordPress's own REST
+                // cookie-auth (rest_cookie_check_errors) validates X-WP-Nonce
+                // against this specific action before dispatching to any
+                // REST handler. Any other action name would fail WP's check
+                // with rest_cookie_invalid_nonce before Royal MCP sees the
+                // request.
+                'nonce' => wp_create_nonce( 'wp_rest' ),
+            ]
+        );
+    }
+
+    /**
+     * Re-register OAuth + /mcp alias rewrites and flush WordPress's cached
+     * rewrite_rules option when the stored rewrite-version lags the plugin
+     * version. Runs at admin_init so the flush happens on the next admin
+     * page load an upgrader visits, without cost on frontend requests.
+     */
+    public function maybe_flush_rewrites() {
+        if ( get_option( 'royal_mcp_rewrite_version' ) === ROYAL_MCP_VERSION ) {
+            return;
+        }
+        $this->register_oauth_rewrites();
+        flush_rewrite_rules( false );
+        update_option( 'royal_mcp_rewrite_version', ROYAL_MCP_VERSION );
     }
 
     /**
@@ -507,6 +660,22 @@ class Royal_MCP_Plugin {
             'methods' => 'POST',
             'callback' => [$server, 'handle_message'],
             'permission_callback' => '__return_true', // @security-ignore — auth in validate_auth()
+        ]);
+
+        // Agent-readiness discovery documents. Public — served at root
+        // .well-known paths via rewrite rules (see register_oauth_rewrites),
+        // dispatched through REST for a stable Content-Type + WP_REST_Response
+        // response shape. No auth required: categories + counts only, no
+        // tool names or schemas leak.
+        register_rest_route('royal-mcp/v1', '/discovery/server-card', [
+            'methods' => 'GET',
+            'callback' => [ \Royal_MCP\Discovery\Server_Card::class, 'handle_request' ],
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
+        ]);
+        register_rest_route('royal-mcp/v1', '/discovery/agent-skills', [
+            'methods' => 'GET',
+            'callback' => [ \Royal_MCP\Discovery\Agent_Skills_Index::class, 'handle_request' ],
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
         ]);
     }
 }
