@@ -1230,29 +1230,26 @@ class Server {
             return $origin_check;
         }
 
-        // Resolve caller BEFORE rate limit so tier ceiling reflects real auth
-        // state — authenticated bulk callers get the higher ceiling, anonymous
-        // + bad-credential floods stay pinned to the anti-abuse tier. Result
-        // is stashed on request_caller_context so downstream handlers reuse
-        // it without a second option/DB round trip.
-        $auth = $this->resolve_caller($request);
-        $tier = 'anon';
-        if (is_array($auth) && isset($auth['auth_method']) && $auth['auth_method'] !== 'anonymous') {
-            $tier = 'authed';
-        }
+        // Rate limit — tier heuristic based on the PRESENCE of authentication
+        // material, not its validity. Running before full auth resolution
+        // preserves the method-first invariant (unknown JSON-RPC methods
+        // return -32601 regardless of auth state per 2025-11-25 spec + 1.5.0
+        // architecture) and protects auth resolution from flooding. Cost:
+        // a bad-Bearer flood gets the authed tier ceiling — accepted because
+        // each request 401s cheaply and the method-first ordering matters more.
+        $auth_header    = (string) $request->get_header('Authorization');
+        $has_bearer     = '' !== $auth_header && stripos($auth_header, 'Bearer ') === 0;
+        $has_apikey_hdr = '' !== (string) $request->get_header('X-Royal-MCP-API-Key');
+        $has_cookie_auth = '' !== (string) $request->get_header('X-WP-Nonce') && is_user_logged_in();
+        $tier = ( $has_bearer || $has_apikey_hdr || $has_cookie_auth ) ? 'authed' : 'anon';
 
-        // Rate limiting — real client IP via CF-Connecting-IP preference chain
-        // (behind Cloudflare, REMOTE_ADDR is the CF edge server and would
-        // coalesce every visitor into one bucket).
+        // Real client IP via CF-Connecting-IP preference chain — behind
+        // Cloudflare, REMOTE_ADDR is the CF edge server and would coalesce
+        // every visitor on the site into one rate-limit bucket.
         $client_ip  = self::resolve_client_ip();
         $rate_check = $this->check_rate_limit($client_ip, $tier);
         if ($rate_check !== true) {
             return $rate_check;
-        }
-
-        // Rate check passed — if auth failed, surface that error now.
-        if ($auth instanceof \WP_REST_Response) {
-            return $auth;
         }
 
         // GET request = client wants to listen for server-initiated messages
