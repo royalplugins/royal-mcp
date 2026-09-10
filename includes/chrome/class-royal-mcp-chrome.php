@@ -31,6 +31,10 @@ class Royal_MCP_Chrome {
     const PRO_LAUNCH_DATE              = '2026-08-11';
     const PRO_WAITLIST_URL_BASE        = 'https://royalplugins.com/royal-mcp-pro/founding-members/';
     const PRO_POST_LAUNCH_URL_BASE     = 'https://royalplugins.com/royal-mcp-pro/';
+    // Referenced by register_royal_tools_menu() as the Pro Waitlist submenu
+    // slug + by the submenu-href rewrite loop that swaps its URL to the
+    // external waitlist / post-launch landing page.
+    const FM_MENU_SLUG                 = 'royal-mcp-pro-external';
 
     /** @var self|null */
     private static $instance = null;
