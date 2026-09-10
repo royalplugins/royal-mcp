@@ -113,6 +113,12 @@ class Royal_MCP_Plugin {
         // flush cost stays off the frontend request path.
         add_action('admin_init', [$this, 'maybe_flush_rewrites']);
 
+        // WebMCP bootstrap-shim JS — enqueued on the frontend only when the
+        // Browser Agents toggle is ON and the visitor is logged in. Runs at
+        // wp_enqueue_scripts priority 1 so it lands in <head> before any
+        // Cloudflare-injected bridge script that expects to POST to /mcp.
+        add_action('wp_enqueue_scripts', [$this, 'maybe_enqueue_webmcp_bootstrap'], 1);
+
         // Strip GET/HEAD rewrites for POST-only endpoints (/register, /token) so browser visits fall through.
         add_filter('option_rewrite_rules', [__CLASS__, 'strip_oauth_get_only_rules']);
 
@@ -431,6 +437,49 @@ class Royal_MCP_Plugin {
             }
         }
         return $rules;
+    }
+
+    /**
+     * Enqueue the WebMCP bootstrap-shim JS on the frontend when:
+     *   1. The Browser Agents (WebMCP) master toggle is ON
+     *   2. The current visitor is logged in (nonces are only meaningful for
+     *      authenticated users; anonymous visitors have no session to
+     *      authorize against anyway)
+     *
+     * The shim monkey-patches window.fetch to inject an X-WP-Nonce header
+     * onto /mcp calls, giving the Cloudflare WebMCP bridge (which never
+     * sends a nonce itself) the auth material Royal MCP requires on the
+     * cookie-auth path.
+     */
+    public function maybe_enqueue_webmcp_bootstrap() {
+        $settings = get_option( 'royal_mcp_settings', [] );
+        if ( empty( $settings['webmcp_enabled'] ) ) {
+            return;
+        }
+        if ( ! is_user_logged_in() ) {
+            return;
+        }
+
+        wp_enqueue_script(
+            'royal-mcp-webmcp-bootstrap',
+            ROYAL_MCP_PLUGIN_URL . 'assets/js/webmcp-bootstrap.js',
+            [],
+            ROYAL_MCP_VERSION,
+            false // in head, not footer — must run before the CF bridge script
+        );
+        wp_localize_script(
+            'royal-mcp-webmcp-bootstrap',
+            'royalMcpWebMcp',
+            [
+                // 'wp_rest' action is load-bearing — WordPress's own REST
+                // cookie-auth (rest_cookie_check_errors) validates X-WP-Nonce
+                // against this specific action before dispatching to any
+                // REST handler. Any other action name would fail WP's check
+                // with rest_cookie_invalid_nonce before Royal MCP sees the
+                // request.
+                'nonce' => wp_create_nonce( 'wp_rest' ),
+            ]
+        );
     }
 
     /**

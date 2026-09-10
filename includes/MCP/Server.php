@@ -290,8 +290,95 @@ class Server {
             return $bearer_result;
         }
 
+        // Cookie-auth branch (WebMCP path). Slots in alongside bearer without
+        // touching the return contract or callsites — the same unified shape
+        // downstream code already consumes.
+        $cookie_result = $this->resolve_caller__cookie($request, $settings);
+        if ($cookie_result instanceof \WP_REST_Response) {
+            return $cookie_result;
+        }
+        if (is_array($cookie_result)) {
+            $this->request_caller_context = $cookie_result;
+            return $cookie_result;
+        }
+
         // No credential presented — 401 + WWW-Authenticate for OAuth discovery.
         return $this->auth_error_unauthenticated();
+    }
+
+    /**
+     * Cookie-auth branch (WebMCP). Fires only when:
+     *   1. WebMCP is enabled in settings (opt-in gate — off by default)
+     *   2. wp_get_current_user() returns a real WordPress user (session cookie present)
+     *   3. X-WP-Nonce header is present and validates against the royal_mcp_webmcp action
+     *
+     * Returns the unified caller shape on success, WP_REST_Response with 403
+     * when the WP session is real but the nonce is missing/invalid (CSRF gate),
+     * or null when no cookie-auth is possible so resolve_caller() falls through
+     * to the anonymous 401.
+     *
+     * The nonce requirement is non-negotiable — same-origin JSON-RPC POST from
+     * any page context (including a third-party origin the admin visits) would
+     * otherwise reach every destructive tool the user has capability for. The
+     * WebMCP bootstrap shim (assets/js/webmcp-bootstrap.js) is what mints and
+     * injects the nonce for the Cloudflare bridge; without the shim enqueued,
+     * this branch always 403s and the cookie path is effectively disabled at
+     * runtime even when the option is ON.
+     *
+     * @param \WP_REST_Request $request
+     * @param array            $settings Already-loaded royal_mcp_settings option.
+     * @return array|\WP_REST_Response|null
+     */
+    private function resolve_caller__cookie($request, $settings) {
+        if (empty($settings['webmcp_enabled'])) {
+            return null;
+        }
+
+        $user = wp_get_current_user();
+        if (!$user || 0 === (int) $user->ID) {
+            return null;
+        }
+
+        // Nonce action MUST be 'wp_rest' — that's what WordPress's own REST
+        // cookie-auth (rest_cookie_check_errors) validates against BEFORE
+        // dispatching to any REST handler. When our /mcp alias routes through
+        // the REST bootstrap, WP has already validated the nonce by the time
+        // we get here; this check is defensive in case Server::handle_mcp is
+        // ever invoked outside the REST request lifecycle.
+        $nonce = $request->get_header('X-WP-Nonce');
+        if (empty($nonce) || !wp_verify_nonce($nonce, 'wp_rest')) {
+            return $this->auth_error_nonce_required();
+        }
+
+        // Fingerprint bound to user ID + registration timestamp — stable across
+        // WP sessions of the same user, so the Session_Store diagnostic surface
+        // stays coherent when the user logs out + back in mid-flow.
+        $this->request_auth_fingerprint = hash(
+            'sha256',
+            'session:' . (int) $user->ID . ':' . (string) $user->user_registered
+        );
+        $this->request_auth_method = 'cookie-session';
+        $this->request_token_ttl   = null;
+
+        return $this->build_caller_context('session');
+    }
+
+    /**
+     * 403 response when a WebMCP cookie-auth request arrives without a valid
+     * X-WP-Nonce header. Body names the specific requirement so debugging
+     * the bootstrap-shim wire-up is one round-trip away.
+     */
+    private function auth_error_nonce_required() {
+        $response = new \WP_REST_Response([
+            'jsonrpc' => '2.0',
+            'error' => [
+                'code' => -32600,
+                'message' => 'Valid X-WP-Nonce header required for browser-session authentication. Ensure the Royal MCP WebMCP bootstrap script is enqueued on this page.',
+            ],
+        ], 403);
+        $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+        $response->header('Pragma', 'no-cache');
+        return $response;
     }
 
     /**

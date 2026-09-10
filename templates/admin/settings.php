@@ -117,6 +117,42 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                         </tr>
                         <tr>
                             <th scope="row">
+                                <label for="webmcp_enabled"><?php esc_html_e('Enable browser agents (WebMCP)', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[webmcp_enabled]"
+                                           id="webmcp_enabled"
+                                           value="1"
+                                           <?php checked(!empty($royal_mcp_settings['webmcp_enabled'])); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <?php
+                                $webmcp_status = \Royal_MCP\Admin\Settings_Page::detect_webmcp_bridge();
+                                $status_label = [
+                                    'detected'     => __('Cloudflare WebMCP bridge detected on this domain.', 'royal-mcp'),
+                                    'not_detected' => __('No WebMCP bridge detected. Enable Agent Readiness → WebMCP in your Cloudflare dashboard.', 'royal-mcp'),
+                                    'unknown'      => __('WebMCP bridge status unknown — could not reach discovery path.', 'royal-mcp'),
+                                ];
+                                $status_color = [
+                                    'detected'     => '#008a20',
+                                    'not_detected' => '#996800',
+                                    'unknown'      => '#787c82',
+                                ];
+                                ?>
+                                <p class="description" style="margin-top:6px;">
+                                    <span style="display:inline-block;padding:2px 8px;border-radius:10px;background:<?php echo esc_attr($status_color[$webmcp_status] ?? '#787c82'); ?>;color:#fff;font-size:11px;font-weight:600;">
+                                        <?php echo esc_html($status_label[$webmcp_status] ?? $status_label['unknown']); ?>
+                                    </span>
+                                </p>
+                                <p class="description">
+                                    <?php esc_html_e('When ON, browser-based AI agents (via the Cloudflare WebMCP bridge) can call Royal MCP tools using the visitor\'s existing WordPress login session. Every request must carry a WordPress nonce that Royal MCP mints for logged-in users — the same-origin security gate keeps this from being reachable by third-party pages your admin visits. External clients (Claude Desktop, ChatGPT, Cursor) continue to use OAuth Bearer tokens regardless of this setting.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
                                 <label for="api_key"><?php esc_html_e('WordPress API Key', 'royal-mcp'); ?></label>
                             </th>
                             <td>
