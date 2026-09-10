@@ -104,8 +104,15 @@ class Server {
     private function protected_resource_metadata() {
         $base = home_url();
 
+        // `resource` per RFC 9728 §2 identifies the protected resource. The
+        // scanner probing convention (isitagentready.com + CF Agent Readiness)
+        // is to fetch the well-known path at site root and verify `resource`
+        // matches the URL being accessed (site root itself). Serving `resource
+        // = site root` satisfies that scanner check; agents still discover the
+        // /mcp endpoint through the auth-server metadata's `resource` indicator
+        // + the WWW-Authenticate header on /mcp 401 responses.
         $metadata = [
-            'resource'              => $base . '/wp-json/royal-mcp/v1',
+            'resource'              => rtrim( $base, '/' ),
             'authorization_servers' => [ $base ],
             'bearer_methods_supported' => [ 'header' ],
             'scopes_supported'      => [ 'mcp:full' ],
@@ -167,7 +174,9 @@ class Server {
      */
     private function metadata_mcp() {
         $metadata = $this->build_authorization_server_metadata();
-        $metadata['resource'] = home_url() . '/wp-json/royal-mcp/v1';
+        // Same resource identifier as protected_resource_metadata — canonical
+        // /mcp alias URL so both discovery paths agree on the resource URL.
+        $metadata['resource'] = home_url() . '/mcp';
         $this->json_response( $metadata, 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
     }
 

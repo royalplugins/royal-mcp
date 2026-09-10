@@ -83,10 +83,29 @@ class Server_Card {
             ];
         }
 
+        $version = defined( 'ROYAL_MCP_VERSION' ) ? ROYAL_MCP_VERSION : '';
+
+        // Shape follows SEP-1649 (modelcontextprotocol/modelcontextprotocol #2127):
+        //   - serverInfo.name + serverInfo.version REQUIRED
+        //   - endpoint (scalar URL) REQUIRED, transport-agnostic single canonical URL
+        //   - capabilities REQUIRED with tools/resources/prompts booleans
+        // Top-level `name`/`version`/`endpoints` retained as extras for backward
+        // compat with the earlier shape + downstream tooling that reads them.
         $card = [
+            'serverInfo'       => [
+                'name'    => 'Royal MCP',
+                'version' => $version,
+            ],
+            'endpoint'         => $home . '/mcp',
+            'capabilities'     => [
+                'tools'       => true,
+                'resources'   => false,
+                'prompts'     => false,
+                'completions' => false,
+            ],
             'name'             => 'Royal MCP',
             'description'      => 'WordPress MCP server exposing tools for content, WooCommerce, page builders, SEO, and site operations.',
-            'version'          => defined( 'ROYAL_MCP_VERSION' ) ? ROYAL_MCP_VERSION : '',
+            'version'          => $version,
             'protocolVersions' => \Royal_MCP\MCP\Server::SUPPORTED_PROTOCOL_VERSIONS,
             'endpoints'        => [
                 'mcp'                 => $home . '/mcp',
@@ -94,12 +113,6 @@ class Server_Card {
                 'protectedResource'   => $home . '/.well-known/oauth-protected-resource',
             ],
             'auth'             => $auth,
-            'capabilities'     => [
-                'tools'       => true,
-                'resources'   => false,
-                'prompts'     => false,
-                'completions' => false,
-            ],
             'tools_summary'    => $summary,
             'documentation'    => 'https://royalplugins.com/support/royal-mcp/',
             'vendor'           => [
