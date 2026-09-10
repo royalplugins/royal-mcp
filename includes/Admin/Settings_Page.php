@@ -296,6 +296,12 @@ class Settings_Page {
         $sanitized['webmcp_enabled'] = isset( $input['webmcp_enabled'] ) ? (bool) $input['webmcp_enabled'] : false;
         if ( $prior_webmcp !== $sanitized['webmcp_enabled'] ) {
             $this->log_webmcp_toggle_change( $prior_webmcp, $sanitized['webmcp_enabled'] );
+            // Toggle flips the auth.methods advertised in the server card
+            // and agent-skills index — purge caches so customers don't see
+            // stale "session-cookie" listed after turning WebMCP off, or
+            // miss it right after turning WebMCP on.
+            delete_transient( \Royal_MCP\Discovery\Server_Card::CACHE_KEY );
+            delete_transient( \Royal_MCP\Discovery\Agent_Skills_Index::CACHE_KEY );
         }
 
         // Access token TTL — whitelist against the 4 UI choices; anything else falls back to the default.
