@@ -98,6 +98,13 @@ class Royal_MCP_Plugin {
         // Force Cache-Control: no-store on every response in our namespace.
         add_filter('rest_post_dispatch', [$this, 'force_no_store_on_namespace'], 10, 3);
 
+        // RFC 8288 Link header pointing at the agent-readiness discovery
+        // documents. Emitted on every /mcp response (canonical REST route +
+        // /mcp root alias + namespace-root alias) so any agent runtime that
+        // hits the MCP endpoint discovers the server-card + agent-skills
+        // + OAuth authorization-server without extra probing.
+        add_filter('rest_post_dispatch', [$this, 'add_agent_readiness_link_headers'], 10, 3);
+
         // Re-force jsonrpc="2.0" pre-encode; some transformers float-cast it to "2".
         add_filter('rest_pre_echo_response', [$this, 'force_jsonrpc_version'], 999, 3);
 
@@ -156,6 +163,39 @@ class Royal_MCP_Plugin {
                 add_action( 'mcp_adapter_init', array( \Royal_MCP\Abilities\MCP_Adapter_Server::class, 'register' ) );
             }
         }
+    }
+
+    /**
+     * Emit RFC 8288 Link header pointing at the three agent-readiness
+     * discovery documents from every /mcp endpoint response. Signals to
+     * scanners + agent runtimes where to find the MCP server card,
+     * agent-skills index, and OAuth authorization-server metadata without
+     * requiring them to guess the well-known paths.
+     */
+    public function add_agent_readiness_link_headers( $response, $server, $request ) {
+        if ( ! $response instanceof \WP_REST_Response ) {
+            return $response;
+        }
+        $route = $request->get_route();
+        if ( ! is_string( $route ) ) {
+            return $response;
+        }
+        // Only /mcp endpoint routes get the Link header — the well-known
+        // documents themselves don't need to self-reference.
+        $mcp_routes = [ '/royal-mcp/v1/mcp', '/royal-mcp/v1', '/royal-mcp/v1/messages' ];
+        if ( ! in_array( $route, $mcp_routes, true ) ) {
+            return $response;
+        }
+
+        $home  = rtrim( (string) home_url(), '/' );
+        $links = [
+            '<' . $home . '/.well-known/mcp/server-card.json>; rel="mcp-server-card"',
+            '<' . $home . '/.well-known/agent-skills/index.json>; rel="agent-skills"',
+            '<' . $home . '/.well-known/oauth-authorization-server>; rel="oauth-authorization-server"',
+        ];
+        $response->header( 'Link', implode( ', ', $links ) );
+
+        return $response;
     }
 
     /** Force no-store cache headers on every response in the royal-mcp namespace. */
@@ -404,6 +444,14 @@ class Royal_MCP_Plugin {
         // access. Rewrite (not redirect) preserves POST method + JSON body +
         // Authorization header through the same PHP request.
         add_rewrite_rule( '^mcp/?$', 'index.php?rest_route=/royal-mcp/v1/mcp', 'top' );
+
+        // Agent-readiness discovery documents. Root .well-known paths dispatched
+        // through the corresponding REST route so response shape + Content-Type
+        // stay under WP_REST_Response control. These are what Cloudflare's
+        // Agent Readiness scanner, Vercel is-agentic, and Chrome Lighthouse
+        // 13.3+ Agentic Browsing audit look for at stable paths.
+        add_rewrite_rule( '\.well-known/mcp/server-card\.json$',       'index.php?rest_route=/royal-mcp/v1/discovery/server-card', 'top' );
+        add_rewrite_rule( '\.well-known/agent-skills/index\.json$',    'index.php?rest_route=/royal-mcp/v1/discovery/agent-skills', 'top' );
     }
 
     /**
@@ -590,6 +638,22 @@ class Royal_MCP_Plugin {
             'methods' => 'POST',
             'callback' => [$server, 'handle_message'],
             'permission_callback' => '__return_true', // @security-ignore — auth in validate_auth()
+        ]);
+
+        // Agent-readiness discovery documents. Public — served at root
+        // .well-known paths via rewrite rules (see register_oauth_rewrites),
+        // dispatched through REST for a stable Content-Type + WP_REST_Response
+        // response shape. No auth required: categories + counts only, no
+        // tool names or schemas leak.
+        register_rest_route('royal-mcp/v1', '/discovery/server-card', [
+            'methods' => 'GET',
+            'callback' => [ \Royal_MCP\Discovery\Server_Card::class, 'handle_request' ],
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
+        ]);
+        register_rest_route('royal-mcp/v1', '/discovery/agent-skills', [
+            'methods' => 'GET',
+            'callback' => [ \Royal_MCP\Discovery\Agent_Skills_Index::class, 'handle_request' ],
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
         ]);
     }
 }
