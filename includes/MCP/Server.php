@@ -79,9 +79,9 @@ class Server {
 
     /**
      * Unified caller-context shape produced by resolve_caller() on success.
-     * Sole insertion point for future auth branches — Chunk 2 (WebMCP) adds
-     * a cookie-auth branch alongside the existing bearer branch, both
-     * converging on this shape so downstream tool gating stays consistent.
+     * Every auth branch (bearer, cookie/session) converges on this shape so
+     * downstream tool gating reads the same fields regardless of how the
+     * caller authenticated.
      *
      * Shape: [
      *   'user_id'        => int|null,
@@ -266,9 +266,10 @@ class Server {
     /**
      * Resolve the caller for the current request into a unified context shape.
      *
-     * Sole insertion point for auth branches — bearer (OAuth token OR API key)
-     * lives here today; the WebMCP cookie-auth branch will slot in alongside
-     * bearer in Chunk 2 without changing the return contract or the callers.
+     * Sole insertion point for every auth branch: bearer (OAuth token OR
+     * API key) and cookie/session both dispatch through here so downstream
+     * callers depend on one return contract regardless of which credential
+     * the request presented.
      *
      * Returns the unified array shape on success, or a WP_REST_Response on
      * failure (plugin disabled → 403, invalid credential → 401, no credential
@@ -401,7 +402,7 @@ class Server {
      * Returns the unified caller shape on success, WP_REST_Response on
      * credential-validation failure (bad token / bad key), or null when no
      * bearer credential is present so resolve_caller() can advance to the
-     * next branch (Chunk 2: cookie auth) or the anonymous 401.
+     * cookie-auth branch or return the anonymous 401.
      *
      * @param \WP_REST_Request $request
      * @param array            $settings Already-loaded royal_mcp_settings option.
@@ -515,10 +516,11 @@ class Server {
 
     /**
      * Legacy boolean auth check. Delegates to resolve_caller() so there is
-     * exactly one auth-resolution insertion point. Existing callers
+     * exactly one auth-resolution insertion point. Callers
      * (handle_post_message / handle_get_stream / handle_delete_session) get
-     * the same true|WP_REST_Response return contract they had pre-refactor;
-     * Chunk 2 migrates each callsite to consume the unified shape directly.
+     * a true|WP_REST_Response return contract; the unified shape is
+     * available separately via get_request_caller_context() for consumers
+     * that need caller identity beyond a pass/fail signal.
      *
      * @param \WP_REST_Request $request
      * @return bool|\WP_REST_Response
@@ -649,10 +651,11 @@ class Server {
      * @return string Real client IP, or 127.0.0.1 if nothing usable.
      */
     public static function resolve_client_ip() {
-        // CF-Connecting-IP: trust when CF is actually fronting (CF-Ray
-        // header present as validator). Attackers can spoof CF-Connecting-IP
-        // if the origin is directly reachable, so gate on CF-Ray or an
-        // explicit opt-in filter.
+        // CF-Connecting-IP is only meaningful when Cloudflare is actually
+        // fronting the request; validate with CF-Ray (present on every CF
+        // response), or fall back to an explicit opt-in filter for setups
+        // where CF-Ray isn't emitted. Any request path that reaches origin
+        // directly can carry an arbitrary CF-Connecting-IP header value.
         $cf_ip  = isset($_SERVER['HTTP_CF_CONNECTING_IP']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_IP'])) : '';
         $cf_ray = isset($_SERVER['HTTP_CF_RAY']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_RAY'])) : '';
         $trust_cf = '' !== $cf_ray || apply_filters('royal_mcp_trust_cloudflare_ip', false);
