@@ -43,7 +43,10 @@ class Agent_Skills_Index {
         $home     = rtrim( (string) home_url(), '/' );
         $server   = new \Royal_MCP\MCP\Server();
         $tools    = $server->get_all_tools();
-        $card_url = $home . '/.well-known/mcp/server-card.json';
+        // Cross-link at the primary path the Cloudflare Agent Readiness
+        // scanner probes so agent runtimes following the link converge on
+        // the same URL the scanner recognises.
+        $card_url = $home . '/.well-known/mcp/server-cards.json';
 
         // Reuse the same prefix → category mapping the server card uses so
         // scanners that cross-reference the two documents see consistent

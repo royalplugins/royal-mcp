@@ -187,10 +187,13 @@ class Royal_MCP_Plugin {
             return $response;
         }
 
+        // Primary paths match what the Cloudflare-AgentReadiness/1.0 scanner
+        // actually probes; older spec-draft aliases are also served but not
+        // advertised in Link so agent runtimes converge on one URL per resource.
         $home  = rtrim( (string) home_url(), '/' );
         $links = [
-            '<' . $home . '/.well-known/mcp/server-card.json>; rel="mcp-server-card"',
-            '<' . $home . '/.well-known/agent-skills/index.json>; rel="agent-skills"',
+            '<' . $home . '/.well-known/mcp/server-cards.json>; rel="mcp-server-card"',
+            '<' . $home . '/.well-known/skills/index.json>; rel="agent-skills"',
             '<' . $home . '/.well-known/oauth-authorization-server>; rel="oauth-authorization-server"',
         ];
         $response->header( 'Link', implode( ', ', $links ) );
@@ -458,7 +461,18 @@ class Royal_MCP_Plugin {
         // stay under WP_REST_Response control. These are what Cloudflare's
         // Agent Readiness scanner, Vercel is-agentic, and Chrome Lighthouse
         // 13.3+ Agentic Browsing audit look for at stable paths.
+        //
+        // Multiple aliases per document — the Cloudflare-AgentReadiness/1.0
+        // scanner checks specific paths ({.well-known/mcp/server-cards.json,
+        // .well-known/mcp.json, .well-known/skills/index.json}); older spec
+        // drafts and other scanners use variations. Serving all known paths
+        // from one REST handler is scanner-agnostic and future-proof.
+        // Server card aliases:
+        add_rewrite_rule( '\.well-known/mcp/server-cards\.json$',      'index.php?rest_route=/royal-mcp/v1/discovery/server-card', 'top' );
         add_rewrite_rule( '\.well-known/mcp/server-card\.json$',       'index.php?rest_route=/royal-mcp/v1/discovery/server-card', 'top' );
+        add_rewrite_rule( '\.well-known/mcp\.json$',                   'index.php?rest_route=/royal-mcp/v1/discovery/server-card', 'top' );
+        // Skills index aliases:
+        add_rewrite_rule( '\.well-known/skills/index\.json$',          'index.php?rest_route=/royal-mcp/v1/discovery/agent-skills', 'top' );
         add_rewrite_rule( '\.well-known/agent-skills/index\.json$',    'index.php?rest_route=/royal-mcp/v1/discovery/agent-skills', 'top' );
     }
 
