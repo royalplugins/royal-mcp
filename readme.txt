@@ -292,12 +292,13 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 == Changelog ==
 
 = 1.5.1 =
-* New: Browser-based AI agents can now use Royal MCP tools when a WebMCP-compatible bridge is installed on the site, authenticating with the same WordPress login the visitor is already using.
-* New: A Browser Agents section on the settings page turns the WebMCP path on or off and shows whether a compatible bridge is detected on the current domain.
-* New: Machine-readable server card and skills index published at the standard well-known locations so Agent Readiness scanners like Cloudflare's and Vercel's find your MCP server automatically.
-* Improvement: Rate-limit responses now tell your MCP client exactly how many seconds to wait before retrying, and authenticated requests get a higher ceiling so legitimate bulk operations no longer trip the anti-abuse limit.
-* Fix: Rate limits behind Cloudflare now count per real visitor instead of coalescing every visitor into one bucket at the edge server IP.
-* Fix: The Perfmatters compatibility warning no longer appears when the Disable REST API option is only blocking logged-out visitors.
+* New: Browser-based AI agents can now use Royal MCP tools via any WebMCP-compatible bridge, using the visitor's existing WordPress login.
+* New: Browser Agents section on the settings page toggles the WebMCP path on or off.
+* New: Publishes a machine-readable server card and skills index so Agent Readiness scanners auto-detect the site.
+* Enhancement: Rate-limit responses now include the seconds until retry so MCP clients know exactly when to try again.
+* Enhancement: Authenticated requests get a higher rate-limit ceiling so legitimate bulk operations no longer trip the anti-abuse limit.
+* Fix: Rate limits behind Cloudflare now count per real visitor instead of coalescing everyone at the edge server IP.
+* Fix: The Perfmatters compatibility warning no longer appears when Disable REST API is only blocking logged-out visitors.
 * Fix: The site icon in the server identity response now returns as a string for all icon formats.
 
 = 1.5.0 =
