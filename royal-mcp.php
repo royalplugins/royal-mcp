@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.5.0
+ * Version: 1.5.1
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -42,7 +42,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 // guards each MCP request produces 4 warnings + 4 nginx error-log stack
 // traces, which on shared PHP-FPM pools amplifies into cross-site worker
 // starvation.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.0' );
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.1' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -105,6 +105,13 @@ class Royal_MCP_Plugin {
         add_action('init', [$this, 'register_oauth_rewrites']);
         add_filter('query_vars', [$this, 'register_oauth_query_vars']);
         add_action('parse_request', [$this, 'handle_oauth_request']);
+
+        // Rewrite-flush trigger. When ROYAL_MCP_VERSION advances (e.g. 1.5.0
+        // → 1.5.1 adds the /mcp root alias), upgraders who never
+        // deactivate/reactivate would otherwise never see the new rule land
+        // in WP's cached rewrite_rules option. Runs on admin_init so the
+        // flush cost stays off the frontend request path.
+        add_action('admin_init', [$this, 'maybe_flush_rewrites']);
 
         // Strip GET/HEAD rewrites for POST-only endpoints (/register, /token) so browser visits fall through.
         add_filter('option_rewrite_rules', [__CLASS__, 'strip_oauth_get_only_rules']);
@@ -229,11 +236,15 @@ class Royal_MCP_Plugin {
             'api_key' => bin2hex(random_bytes(16)),
         ]);
 
-        // Register OAuth rewrite rules before flushing.
+        // Register OAuth + /mcp alias rewrite rules before flushing.
         $this->register_oauth_rewrites();
 
         // Flush rewrite rules
         flush_rewrite_rules();
+
+        // Mark rewrite-version current so maybe_flush_rewrites() no-ops on
+        // the first admin_init after activation.
+        update_option( 'royal_mcp_rewrite_version', ROYAL_MCP_VERSION );
 
         // Schedule daily token cleanup.
         if ( ! wp_next_scheduled( 'royal_mcp_token_cleanup' ) ) {
@@ -379,6 +390,14 @@ class Royal_MCP_Plugin {
             if ( $slug === '' ) continue;
             add_rewrite_rule( $slug . '/?$', 'index.php?royal_mcp_oauth=' . $action, 'top' );
         }
+
+        // Root-path /mcp alias — served through WordPress's built-in REST
+        // bootstrap by rewriting to rest_route. The Cloudflare WebMCP bridge
+        // default target is /mcp on the origin with no customer-configurable
+        // override, so the alias is required for zero-config browser-agent
+        // access. Rewrite (not redirect) preserves POST method + JSON body +
+        // Authorization header through the same PHP request.
+        add_rewrite_rule( '^mcp/?$', 'index.php?rest_route=/royal-mcp/v1/mcp', 'top' );
     }
 
     /**
@@ -412,6 +431,21 @@ class Royal_MCP_Plugin {
             }
         }
         return $rules;
+    }
+
+    /**
+     * Re-register OAuth + /mcp alias rewrites and flush WordPress's cached
+     * rewrite_rules option when the stored rewrite-version lags the plugin
+     * version. Runs at admin_init so the flush happens on the next admin
+     * page load an upgrader visits, without cost on frontend requests.
+     */
+    public function maybe_flush_rewrites() {
+        if ( get_option( 'royal_mcp_rewrite_version' ) === ROYAL_MCP_VERSION ) {
+            return;
+        }
+        $this->register_oauth_rewrites();
+        flush_rewrite_rules( false );
+        update_option( 'royal_mcp_rewrite_version', ROYAL_MCP_VERSION );
     }
 
     /**

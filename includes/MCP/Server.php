@@ -68,6 +68,23 @@ class Server {
     private $request_session_id   = null;   // MCP session ID from Mcp-Session-Id header, or null (no session for pre-initialize)
 
     /**
+     * Unified caller-context shape produced by resolve_caller() on success.
+     * Sole insertion point for future auth branches — Chunk 2 (WebMCP) adds
+     * a cookie-auth branch alongside the existing bearer branch, both
+     * converging on this shape so downstream tool gating stays consistent.
+     *
+     * Shape: [
+     *   'user_id'        => int|null,
+     *   'capabilities'   => string[],   // WP capability slugs the user holds
+     *   'granted_scopes' => string[]|null,  // OAuth-granted scopes when Bearer, null otherwise
+     *   'auth_method'    => 'bearer'|'session'|'anonymous',
+     * ]
+     *
+     * @var array|null
+     */
+    private $request_caller_context = null;
+
+    /**
      * MCP protocol versions this server supports on the initialize handshake.
      *
      * Each entry corresponds to a published MCP spec revision date. A client
@@ -237,71 +254,143 @@ class Server {
     }
 
     /**
-     * Validate authentication for MCP requests.
+     * Resolve the caller for the current request into a unified context shape.
      *
-     * Accepts either:
-     *  1. OAuth 2.0 Bearer token (Authorization: Bearer <token>)
-     *  2. API key header (X-Royal-MCP-API-Key: <key>)
+     * Sole insertion point for auth branches — bearer (OAuth token OR API key)
+     * lives here today; the WebMCP cookie-auth branch will slot in alongside
+     * bearer in Chunk 2 without changing the return contract or the callers.
      *
-     * @param \WP_REST_Request $request The request object
-     * @return bool|WP_REST_Response True if valid, error response if invalid
+     * Returns the unified array shape on success, or a WP_REST_Response on
+     * failure (plugin disabled → 403, invalid credential → 401, no credential
+     * present → 401 with RFC 9728 WWW-Authenticate).
+     *
+     * Successful resolution has side effects (unchanged from the pre-refactor
+     * validate_auth): wp_set_current_user() populates the WP user context,
+     * request_auth_method / request_auth_fingerprint / request_token_ttl are
+     * captured for the royal_mcp_connection_health diagnostic tool, and the
+     * unified shape is stashed on request_caller_context for downstream
+     * consumers that need caller info without re-resolving.
+     *
+     * @param \WP_REST_Request $request
+     * @return array|\WP_REST_Response Unified caller shape on success, error response on failure.
      */
-    private function validate_auth($request) {
+    public function resolve_caller($request) {
         $settings = get_option('royal_mcp_settings', []);
 
-        // Check plugin is enabled.
         if (empty($settings['enabled'])) {
-            return new \WP_REST_Response([
-                'jsonrpc' => '2.0',
-                'error' => [
-                    'code' => -32600,
-                    'message' => 'Royal MCP is currently disabled.',
-                ],
-            ], 403);
+            return $this->auth_error_disabled();
         }
 
-        // Try OAuth 2.0 Bearer token first. If that fails, fall back to
-        // trying the same Bearer value as a static API key — most MCP
-        // clients that follow the universal HTTP convention for bearer
-        // credentials send their static API key via
-        // `Authorization: Bearer <key>`, not the Royal-MCP-specific
-        // `X-Royal-MCP-API-Key` header. Route the Bearer value through
-        // API-key validation as a fallback when OAuth validation rejects
-        // it. This is a strict additive change: API keys were ALREADY
-        // accepted as bearer credentials, just under a different header
-        // name, so the security perimeter does not widen — it just
-        // accepts the convention every modern MCP client uses.
+        $bearer_result = $this->resolve_caller__bearer($request, $settings);
+        if ($bearer_result instanceof \WP_REST_Response) {
+            return $bearer_result;
+        }
+        if (is_array($bearer_result)) {
+            $this->request_caller_context = $bearer_result;
+            return $bearer_result;
+        }
+
+        // No credential presented — 401 + WWW-Authenticate for OAuth discovery.
+        return $this->auth_error_unauthenticated();
+    }
+
+    /**
+     * Bearer / API-key auth branch. Extracted verbatim from the pre-refactor
+     * validate_auth() so behavior is bit-identical: OAuth token first, then
+     * the same Bearer value as an API key (universal HTTP bearer convention
+     * used by most MCP clients), then the Royal-MCP-specific X-Royal-MCP-API-Key
+     * header as a fallback.
+     *
+     * Returns the unified caller shape on success, WP_REST_Response on
+     * credential-validation failure (bad token / bad key), or null when no
+     * bearer credential is present so resolve_caller() can advance to the
+     * next branch (Chunk 2: cookie auth) or the anonymous 401.
+     *
+     * @param \WP_REST_Request $request
+     * @param array            $settings Already-loaded royal_mcp_settings option.
+     * @return array|\WP_REST_Response|null
+     */
+    private function resolve_caller__bearer($request, $settings) {
+        // Try OAuth Bearer first. If validation rejects, fall back to
+        // treating the same value as an API key — matches the HTTP bearer
+        // convention every modern MCP client uses. Additive: API keys were
+        // already accepted as bearer credentials via X-Royal-MCP-API-Key,
+        // so accepting them under Authorization: Bearer widens no perimeter.
         $auth_header = $request->get_header('Authorization');
         if (!empty($auth_header) && stripos($auth_header, 'Bearer ') === 0) {
             $token = substr($auth_header, 7);
             $oauth_result = $this->validate_bearer_token($token);
             if (true === $oauth_result) {
-                return true;
+                return $this->build_caller_context('bearer');
             }
             $api_key_result = $this->validate_api_key_value($token, $settings);
             if (true === $api_key_result) {
-                return true;
+                return $this->build_caller_context('bearer');
             }
-            // Both failed — return the OAuth error response so OAuth-aware
-            // clients still see the proper RFC 9728 WWW-Authenticate
-            // challenge and can start a fresh authorization flow.
+            // Both failed — surface the OAuth error so RFC 9728-aware
+            // clients can start a fresh authorization flow.
             return $oauth_result;
         }
 
-        // Fall back to API key via the Royal-MCP-specific header (kept for
-        // existing integrations + tighter privacy where the admin doesn't
-        // want the API key to share a header name with OAuth tokens).
         $api_key = $request->get_header('X-Royal-MCP-API-Key');
         if (!empty($api_key)) {
-            return $this->validate_api_key_value($api_key, $settings);
+            $result = $this->validate_api_key_value($api_key, $settings);
+            if (true === $result) {
+                return $this->build_caller_context('bearer');
+            }
+            return $result;
         }
 
-        // Neither provided — return 401 with WWW-Authenticate for OAuth discovery.
-        // Per the MCP spec + RFC 9728, include resource_metadata URL.
-        // Cache-Control: no-store is critical here. Without it, this 401
-        // gets cached at edge (URL-keyed) and served to subsequent
-        // authenticated requests, breaking every MCP client that hits
-        // GET /mcp before sending its credentials.
+        return null;
+    }
+
+    /**
+     * Build the unified caller-context shape from the currently-authenticated
+     * WordPress user. Called by resolve_caller__* branches AFTER their
+     * validator has run wp_set_current_user().
+     *
+     * @param string $auth_method 'bearer' | 'session'
+     * @return array Unified caller shape.
+     */
+    private function build_caller_context($auth_method) {
+        $user    = wp_get_current_user();
+        $user_id = ($user && $user->ID) ? (int) $user->ID : null;
+        $caps    = ($user && is_array($user->allcaps))
+            ? array_keys(array_filter($user->allcaps))
+            : [];
+        return [
+            'user_id'        => $user_id,
+            'capabilities'   => $caps,
+            'granted_scopes' => null,
+            'auth_method'    => $auth_method,
+        ];
+    }
+
+    /**
+     * 403 response for requests that arrive while the plugin is disabled.
+     */
+    private function auth_error_disabled() {
+        return new \WP_REST_Response([
+            'jsonrpc' => '2.0',
+            'error' => [
+                'code' => -32600,
+                'message' => 'Royal MCP is currently disabled.',
+            ],
+        ], 403);
+    }
+
+    /**
+     * 401 response for requests that presented no credential. Includes
+     * RFC 9728 WWW-Authenticate: Bearer with resource_metadata pointing at
+     * the OAuth protected-resource discovery document so OAuth-aware clients
+     * can start a fresh authorization flow.
+     *
+     * Cache-Control: no-store is load-bearing — without it, this 401 gets
+     * cached at edge (URL-keyed) and served to subsequent authenticated
+     * requests, breaking every MCP client that hits GET /mcp before sending
+     * credentials.
+     */
+    private function auth_error_unauthenticated() {
         $resource_metadata_url = self::get_resource_metadata_url();
         $response = new \WP_REST_Response([
             'jsonrpc' => '2.0',
@@ -314,6 +403,32 @@ class Server {
         $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
         $response->header('Pragma', 'no-cache');
         return $response;
+    }
+
+    /**
+     * Accessor for callers that need the unified caller context after
+     * resolve_caller() has run for the current request. Returns null before
+     * resolution or when resolution failed.
+     *
+     * @return array|null
+     */
+    public function get_request_caller_context() {
+        return $this->request_caller_context;
+    }
+
+    /**
+     * Legacy boolean auth check. Delegates to resolve_caller() so there is
+     * exactly one auth-resolution insertion point. Existing callers
+     * (handle_post_message / handle_get_stream / handle_delete_session) get
+     * the same true|WP_REST_Response return contract they had pre-refactor;
+     * Chunk 2 migrates each callsite to consume the unified shape directly.
+     *
+     * @param \WP_REST_Request $request
+     * @return bool|\WP_REST_Response
+     */
+    private function validate_auth($request) {
+        $result = $this->resolve_caller($request);
+        return is_array($result) ? true : $result;
     }
 
     /**
