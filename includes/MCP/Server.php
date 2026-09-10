@@ -39,10 +39,20 @@ if (!defined('ABSPATH')) {
 class Server {
 
     /**
-     * Rate limit: max requests per window per IP
+     * Rate limit: max requests per window per real client IP.
+     *
+     * Two tiers so an authenticated caller doing legitimate bulk work
+     * (page-by-page schema push, bulk product update, batch SEO meta) doesn't
+     * trip the anti-abuse ceiling that exists for anonymous /register probing.
+     * Tier selection reads resolve_caller()['auth_method'] — 'anonymous' →
+     * anon ceiling, 'bearer'/'session' → authed ceiling.
+     *
+     * Both filterable at runtime via royal_mcp_rate_limit_max ($tier param
+     * passed for context) and royal_mcp_rate_limit_window.
      */
-    private $rate_limit_max = 60;
-    private $rate_limit_window = 60; // seconds
+    private $rate_limit_max_anon   = 60;
+    private $rate_limit_max_authed = 300;
+    private $rate_limit_window     = 60; // seconds
 
     /**
      * Auth fingerprint for the current request. Populated by the credential
@@ -623,36 +633,108 @@ class Server {
     }
 
     /**
-     * Check rate limit for an IP address.
+     * Resolve the real client IP for the current request.
      *
-     * @param string $ip Client IP address
-     * @return bool|WP_REST_Response True if allowed, error response if rate limited
+     * Preference chain:
+     *   1. CF-Connecting-IP (validated by CF-Ray presence — trust only when
+     *      Cloudflare is actually fronting the request)
+     *   2. X-Forwarded-For leftmost hop (validated via royal_mcp_trusted_proxies
+     *      filter — default empty; opt-in only, never trust arbitrary XFF)
+     *   3. REMOTE_ADDR (direct-to-origin fallback)
+     *
+     * Without this, every visitor on a Cloudflare-fronted install (mandatory
+     * for WebMCP + very common for production) coalesces to CF's edge IP for
+     * rate-limiting — the whole site would share one bucket.
+     *
+     * @return string Real client IP, or 127.0.0.1 if nothing usable.
      */
-    private function check_rate_limit($ip) {
+    public static function resolve_client_ip() {
+        // CF-Connecting-IP: trust when CF is actually fronting (CF-Ray
+        // header present as validator). Attackers can spoof CF-Connecting-IP
+        // if the origin is directly reachable, so gate on CF-Ray or an
+        // explicit opt-in filter.
+        $cf_ip  = isset($_SERVER['HTTP_CF_CONNECTING_IP']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_IP'])) : '';
+        $cf_ray = isset($_SERVER['HTTP_CF_RAY']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_RAY'])) : '';
+        $trust_cf = '' !== $cf_ray || apply_filters('royal_mcp_trust_cloudflare_ip', false);
+        if ('' !== $cf_ip && $trust_cf && filter_var($cf_ip, FILTER_VALIDATE_IP)) {
+            return $cf_ip;
+        }
+
+        // X-Forwarded-For: only trust when caller opts in via the trusted-proxies
+        // filter (list of upstream proxy IPs whose XFF header we accept).
+        $trusted_proxies = (array) apply_filters('royal_mcp_trusted_proxies', []);
+        $remote_addr     = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+        if (!empty($trusted_proxies) && in_array($remote_addr, $trusted_proxies, true)) {
+            $xff = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR'])) : '';
+            if ('' !== $xff) {
+                $leftmost = trim(explode(',', $xff)[0]);
+                if (filter_var($leftmost, FILTER_VALIDATE_IP)) {
+                    return $leftmost;
+                }
+            }
+        }
+
+        return '' !== $remote_addr ? $remote_addr : '127.0.0.1';
+    }
+
+    /**
+     * Check rate limit for an IP + tier. Emits a proper Retry-After header
+     * and includes retry_after_seconds in the JSON body so MCP clients (and
+     * their LLM narrators) have a concrete small number to honor instead of
+     * fabricating a default backoff. Both bucket size and window duration
+     * filterable at runtime.
+     *
+     * @param string $ip   Real client IP (from resolve_client_ip()).
+     * @param string $tier 'anon' | 'authed' — selects ceiling from the two-tier property pair.
+     * @return bool|WP_REST_Response True if allowed, 429 error response if limited.
+     */
+    private function check_rate_limit($ip, $tier = 'anon') {
+        $tier_ceiling = ($tier === 'authed') ? $this->rate_limit_max_authed : $this->rate_limit_max_anon;
+
+        /**
+         * Filter the rate-limit ceiling. Runs per request with tier context so
+         * operators can raise/lower for anon and authed independently.
+         *
+         * @param int    $tier_ceiling Default ceiling for this tier.
+         * @param string $tier         'anon' | 'authed'.
+         */
+        $max    = (int) apply_filters('royal_mcp_rate_limit_max', $tier_ceiling, $tier);
+        $window = (int) apply_filters('royal_mcp_rate_limit_window', $this->rate_limit_window);
+        if ($max < 1)    { $max = $tier_ceiling; }
+        if ($window < 1) { $window = $this->rate_limit_window; }
+
         $transient_key = 'royal_mcp_rate_' . md5($ip);
         $data = get_transient($transient_key);
+        $now  = time();
 
-        if ($data === false) {
-            set_transient($transient_key, ['count' => 1, 'start' => time()], $this->rate_limit_window);
+        if ($data === false || ($now - (int) ($data['start'] ?? 0)) > $window) {
+            set_transient($transient_key, ['count' => 1, 'start' => $now], $window);
             return true;
         }
 
-        if (time() - $data['start'] > $this->rate_limit_window) {
-            set_transient($transient_key, ['count' => 1, 'start' => time()], $this->rate_limit_window);
-            return true;
-        }
+        $data['count'] = (int) ($data['count'] ?? 0) + 1;
+        set_transient($transient_key, $data, $window);
 
-        $data['count']++;
-        set_transient($transient_key, $data, $this->rate_limit_window);
-
-        if ($data['count'] > $this->rate_limit_max) {
-            return new \WP_REST_Response([
+        if ($data['count'] > $max) {
+            $retry_after = max(1, ((int) $data['start'] + $window) - $now);
+            $response = new \WP_REST_Response([
                 'jsonrpc' => '2.0',
                 'error' => [
                     'code' => -32600,
-                    'message' => 'Rate limit exceeded. Maximum ' . $this->rate_limit_max . ' requests per minute.',
+                    'message' => sprintf(
+                        'Rate limit exceeded. Try again in %d seconds. (Maximum %d requests per minute.)',
+                        $retry_after,
+                        $max
+                    ),
+                    'data' => [
+                        'retry_after_seconds' => $retry_after,
+                        'tier'                => $tier,
+                    ],
                 ],
             ], 429);
+            $response->header('Retry-After', (string) $retry_after);
+            $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+            return $response;
         }
 
         return true;
@@ -1148,11 +1230,29 @@ class Server {
             return $origin_check;
         }
 
-        // Rate limiting
-        $client_ip = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '127.0.0.1';
-        $rate_check = $this->check_rate_limit($client_ip);
+        // Resolve caller BEFORE rate limit so tier ceiling reflects real auth
+        // state — authenticated bulk callers get the higher ceiling, anonymous
+        // + bad-credential floods stay pinned to the anti-abuse tier. Result
+        // is stashed on request_caller_context so downstream handlers reuse
+        // it without a second option/DB round trip.
+        $auth = $this->resolve_caller($request);
+        $tier = 'anon';
+        if (is_array($auth) && isset($auth['auth_method']) && $auth['auth_method'] !== 'anonymous') {
+            $tier = 'authed';
+        }
+
+        // Rate limiting — real client IP via CF-Connecting-IP preference chain
+        // (behind Cloudflare, REMOTE_ADDR is the CF edge server and would
+        // coalesce every visitor into one bucket).
+        $client_ip  = self::resolve_client_ip();
+        $rate_check = $this->check_rate_limit($client_ip, $tier);
         if ($rate_check !== true) {
             return $rate_check;
+        }
+
+        // Rate check passed — if auth failed, surface that error now.
+        if ($auth instanceof \WP_REST_Response) {
+            return $auth;
         }
 
         // GET request = client wants to listen for server-initiated messages
