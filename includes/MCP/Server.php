@@ -157,6 +157,7 @@ class Server {
         $this->register_method_handler('ping',                      [ $this, 'handle_ping' ]);
         $this->register_method_handler('resources/list',            [ $this, 'handle_resources_list' ]);
         $this->register_method_handler('prompts/list',              [ $this, 'handle_prompts_list' ]);
+        $this->register_method_handler('server/discover',           [ $this, 'handle_server_discover' ]);
     }
 
     /**
@@ -1643,6 +1644,73 @@ class Server {
      */
     private function handle_notification_ack($params, $id) {
         return null;
+    }
+
+    /**
+     * The MCP protocol revision that first introduced server/discover as a
+     * spec-forward alternative to the initialize handshake. Requests that
+     * negotiate an older revision receive JSON-RPC method-not-found so clients
+     * that speak an older era continue to see the discovery method as absent.
+     */
+    const SERVER_DISCOVER_MIN_PROTOCOL_VERSION = '2026-07-28';
+
+    /**
+     * Handler for server/discover — spec-forward discovery method that returns
+     * server capabilities without requiring an initialize handshake.
+     *
+     * Era-gated inside the handler (not at registration) because the stateless-
+     * per-request architecture doesn't retain negotiated state across requests.
+     * The caller declares its version each request in one of two ways:
+     *   1. params.protocolVersion in the JSON-RPC body (like initialize does)
+     *   2. MCP-Protocol-Version HTTP header (spec-recommended post-initialize)
+     * Missing or unsupported values fall back to DEFAULT_NEGOTIATED_PROTOCOL_VERSION,
+     * which sits below the SERVER_DISCOVER_MIN threshold on purpose so a silent
+     * client sees the discovery method as absent rather than mismatched.
+     *
+     * Response mirrors the initialize result — protocolVersion + serverInfo +
+     * capabilities — so a client can bootstrap without a full handshake.
+     */
+    private function handle_server_discover($params, $id) {
+        $requested_version = null;
+        if (is_array($params) && isset($params['protocolVersion']) && is_string($params['protocolVersion'])) {
+            $requested_version = $params['protocolVersion'];
+        } elseif (!empty($_SERVER['HTTP_MCP_PROTOCOL_VERSION'])) {
+            $requested_version = sanitize_text_field(wp_unslash($_SERVER['HTTP_MCP_PROTOCOL_VERSION']));
+        }
+
+        $effective_version = ($requested_version !== null && in_array($requested_version, self::SUPPORTED_PROTOCOL_VERSIONS, true))
+            ? $requested_version
+            : self::DEFAULT_NEGOTIATED_PROTOCOL_VERSION;
+
+        if (strcmp($effective_version, self::SERVER_DISCOVER_MIN_PROTOCOL_VERSION) < 0) {
+            return [
+                'jsonrpc' => '2.0',
+                'id' => $id,
+                'error' => [
+                    'code' => -32601,
+                    'message' => 'Method not found: server/discover',
+                ],
+            ];
+        }
+
+        $server_info = [
+            'name'    => 'Royal MCP WordPress',
+            'version' => ROYAL_MCP_VERSION,
+        ];
+
+        return [
+            'jsonrpc' => '2.0',
+            'id' => $id,
+            'result' => [
+                'protocolVersion' => $effective_version,
+                'serverInfo'      => $server_info,
+                'capabilities'    => [
+                    'tools'     => new \stdClass(),
+                    'resources' => new \stdClass(),
+                    'prompts'   => new \stdClass(),
+                ],
+            ],
+        ];
     }
 
     private function handle_tools_list($params, $id) {
