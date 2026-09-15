@@ -228,7 +228,7 @@ class Server {
             }
         }
 
-        // Chunk 12: pending-approval gate. When the site owner enables the
+        // Pending-approval gate. When the site owner enables the
         // "Require approval before new AI clients can connect" toggle,
         // /register still mints a client_id but saves it with status
         // pending_approval. /authorize then rejects that client until an
@@ -357,8 +357,8 @@ class Server {
             );
         }
 
-        // Chunk 12: pending-approval gate. Client exists but is waiting for
-        // an admin approve/reject decision. Refuse to redirect until it clears.
+        // Pending-approval gate. Client exists but is waiting for an admin
+        // approve/reject decision. Refuse to redirect until it clears.
         if ( Token_Store::is_pending_approval( $client ) ) {
             $this->log_event( 'client_pending_approval', 'Authorize attempted on client awaiting admin approval.', 403 );
             wp_die(
@@ -472,9 +472,9 @@ class Server {
             wp_die( esc_html__( 'Unknown client.', 'royal-mcp' ), '', [ 'response' => 400 ] );
         }
 
-        // Chunk 12: pending-approval gate. Second-line defense — the GET path
-        // already blocks pending clients, but a client that got approved mid-
-        // flow between GET + POST would slip through without this check.
+        // Second-line pending-approval check. The GET path already blocks
+        // pending clients, but a client that got approved mid-flow between
+        // GET + POST would slip through without this check.
         if ( Token_Store::is_pending_approval( $client ) ) {
             $this->log_event( 'client_pending_approval', 'Authorize POST attempted on client awaiting admin approval.', 403 );
             wp_die( esc_html__( 'This client is still waiting for site-owner approval.', 'royal-mcp' ), '', [ 'response' => 403 ] );

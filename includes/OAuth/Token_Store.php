@@ -893,7 +893,7 @@ class Token_Store {
     }
 
     /* ------------------------------------------------------------------
-     *  Pending-approval helpers (Chunk 12 opt-in DCR gate)
+     *  Pending-approval helpers (opt-in DCR gate)
      * ----------------------------------------------------------------*/
 
     /**
