@@ -56,6 +56,10 @@ $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_ro
 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_session_%' OR option_name LIKE '_transient_timeout_royal_mcp_session_%'");
 
+// Clean up cached CIMD metadata documents keyed by sha256 of the client_id URL.
+// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+$wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_cimd_meta_%' OR option_name LIKE '_transient_timeout_royal_mcp_cimd_meta_%'");
+
 // Clean up undo-snapshot options (populated by Undo_Store for reversible tools like wp_reorder_menu_items).
 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal_mcp_undo_%'");

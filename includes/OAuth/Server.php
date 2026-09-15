@@ -156,6 +156,11 @@ class Server {
             'code_challenge_methods_supported'       => [ 'S256' ],
             'scopes_supported'                      => [ 'mcp:full' ],
             'service_documentation'                 => 'https://royalplugins.com/support/royal-mcp/',
+            // Clients whose client_id is the URL of a JSON metadata document are
+            // treated as registered when the document validates. Filterable off
+            // via royal_mcp_cimd_enabled for site owners who want to lock to
+            // dynamic-registration only.
+            'client_id_metadata_document_supported' => (bool) apply_filters( 'royal_mcp_cimd_enabled', true ),
         ];
     }
 
@@ -249,6 +254,11 @@ class Server {
         $code_challenge_method = isset( $_GET['code_challenge_method'] ) ? sanitize_text_field( wp_unslash( $_GET['code_challenge_method'] ) ) : '';
         $state                 = isset( $_GET['state'] ) ? sanitize_text_field( wp_unslash( $_GET['state'] ) ) : '';
         $scope                 = isset( $_GET['scope'] ) ? sanitize_text_field( wp_unslash( $_GET['scope'] ) ) : 'mcp:full';
+
+        // Resolve URL-shaped client_ids against their metadata document before
+        // the standard lookup. Non-URL client_ids short-circuit to null so this
+        // is a no-op for the dynamic-registration path.
+        Token_Store::resolve_cimd_client( $client_id );
 
         // Validate client FIRST — never redirect to unvalidated redirect_uri (OAuth 2.1 §4.1.2.1).
         $client = Token_Store::get_client( $client_id );
@@ -353,6 +363,10 @@ class Server {
         if ( 'deny' === $action ) {
             $this->authorize_error( $redirect_uri, $state, 'access_denied', 'The user denied the authorization request.' );
         }
+
+        // Refresh CIMD metadata if the cached document has expired between
+        // /authorize GET and this POST. Idempotent for DCR client_ids.
+        Token_Store::resolve_cimd_client( $client_id );
 
         // Validate client still exists.
         $client = Token_Store::get_client( $client_id );
@@ -462,6 +476,10 @@ class Server {
         if ( ! PKCE::verify( $code_verifier, $code_data['code_challenge'] ) ) {
             $this->json_error( 'invalid_grant', 'PKCE verification failed.', 400 );
         }
+
+        // Refresh CIMD metadata for URL-shaped client_ids. Idempotent no-op
+        // for standard dynamic-registration client_ids.
+        Token_Store::resolve_cimd_client( $client_id );
 
         // Authenticate confidential clients.
         $client = Token_Store::get_client( $client_id );

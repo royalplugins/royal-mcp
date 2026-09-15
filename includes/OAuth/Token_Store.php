@@ -582,6 +582,223 @@ class Token_Store {
         return false;
     }
 
+    /* ------------------------------------------------------------------
+     *  Client ID Metadata Document (CIMD) support
+     * ----------------------------------------------------------------*/
+
+    /**
+     * Detect a CIMD client_id by shape. CIMD client_ids are absolute https URLs
+     * that point to a JSON metadata document; standard dynamic-registration
+     * client_ids use the `rmcp_` prefix. Detection by prefix avoids a false
+     * positive on any future non-URL identifier scheme.
+     *
+     * @param mixed $client_id Value from the OAuth request; may be non-string.
+     * @return bool
+     */
+    public static function is_cimd_client( $client_id ) {
+        return is_string( $client_id )
+            && strlen( $client_id ) > 8
+            && 0 === strncasecmp( $client_id, 'https://', 8 );
+    }
+
+    /**
+     * Resolve a URL-shaped client_id against its metadata document.
+     *
+     * Called by Server.php entry points BEFORE get_client() so the client row
+     * is persisted before downstream lookup runs. Non-URL client_ids
+     * short-circuit to null immediately, making this a no-op on the standard
+     * dynamic-registration path.
+     *
+     * @param string $client_id The client identifier from the OAuth request.
+     * @return array|null Client row (same shape as get_client) or null if
+     *                    not a CIMD client, feature disabled, or fetch/validate failed.
+     */
+    public static function resolve_cimd_client( $client_id ) {
+        if ( ! self::is_cimd_client( $client_id ) ) {
+            return null;
+        }
+
+        if ( ! apply_filters( 'royal_mcp_cimd_enabled', true ) ) {
+            return null;
+        }
+
+        $metadata = self::fetch_cimd_metadata( $client_id );
+        if ( null === $metadata ) {
+            return null;
+        }
+
+        if ( ! self::validate_cimd_metadata( $metadata ) ) {
+            return null;
+        }
+
+        $result = self::register_cimd_client( $client_id, $metadata );
+        if ( is_wp_error( $result ) ) {
+            return null;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Fetch and transient-cache a CIMD metadata document.
+     *
+     * SSRF hardening: wp_safe_remote_get blocks private / loopback / link-local
+     * hosts by default via wp_http_validate_url, and reject_unsafe_urls is on.
+     * On top of that this method enforces an https scheme prefix explicitly,
+     * caps response size at 64KB, timeouts at 5s, and allows at most 3
+     * redirects.
+     *
+     * @param string $url The metadata document URL.
+     * @return array|null Parsed metadata document on success, null on any failure.
+     */
+    private static function fetch_cimd_metadata( $url ) {
+        $ttl       = (int) apply_filters( 'royal_mcp_cimd_cache_ttl', HOUR_IN_SECONDS );
+        $cache_key = 'royal_mcp_cimd_meta_' . hash( 'sha256', $url );
+
+        $cached = get_transient( $cache_key );
+        if ( false !== $cached && is_array( $cached ) ) {
+            return $cached;
+        }
+
+        if ( 0 !== strncasecmp( $url, 'https://', 8 ) ) {
+            return null;
+        }
+
+        if ( false === wp_http_validate_url( $url ) ) {
+            return null;
+        }
+
+        $response = wp_safe_remote_get(
+            $url,
+            [
+                'timeout'     => 5,
+                'redirection' => 3,
+                'user-agent'  => 'RoyalMCP/' . ROYAL_MCP_VERSION . ' (+https://royalplugins.com/support/royal-mcp/)',
+                'headers'     => [ 'Accept' => 'application/json' ],
+            ]
+        );
+
+        if ( is_wp_error( $response ) ) {
+            return null;
+        }
+
+        $status = (int) wp_remote_retrieve_response_code( $response );
+        if ( 200 !== $status ) {
+            return null;
+        }
+
+        $body = wp_remote_retrieve_body( $response );
+        if ( strlen( $body ) > 64 * 1024 ) {
+            return null;
+        }
+
+        $data = json_decode( $body, true );
+        if ( ! is_array( $data ) ) {
+            return null;
+        }
+
+        set_transient( $cache_key, $data, $ttl );
+
+        return $data;
+    }
+
+    /**
+     * Validate a CIMD metadata document against RFC 7591 required fields.
+     *
+     * Required: `redirect_uris` (non-empty array of strings).
+     * Optional but typed: `client_name` (string when present).
+     *
+     * @param array $metadata Parsed metadata document.
+     * @return bool
+     */
+    private static function validate_cimd_metadata( array $metadata ) {
+        if ( empty( $metadata['redirect_uris'] ) || ! is_array( $metadata['redirect_uris'] ) ) {
+            return false;
+        }
+
+        foreach ( $metadata['redirect_uris'] as $uri ) {
+            if ( ! is_string( $uri ) || '' === trim( $uri ) ) {
+                return false;
+            }
+        }
+
+        if ( isset( $metadata['client_name'] ) && ! is_string( $metadata['client_name'] ) ) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Persist (upsert) a CIMD-registered client into the clients table.
+     *
+     * Unlike register_client(), the client_id is provided by the caller (the
+     * metadata document URL) rather than randomly generated. Idempotent: an
+     * existing row with the same client_id is replaced so a refreshed
+     * metadata document overrides the prior snapshot.
+     *
+     * @param string $client_id The URL-shaped client_id (metadata document URL).
+     * @param array  $metadata  The validated metadata document.
+     * @return array|\WP_Error Client record on success.
+     */
+    public static function register_cimd_client( $client_id, array $metadata ) {
+        global $wpdb;
+
+        if ( strlen( $client_id ) > 191 ) {
+            return new \WP_Error(
+                'royal_mcp_cimd_client_id_too_long',
+                'CIMD client_id URL exceeds the 191-character index limit for the clients table.'
+            );
+        }
+
+        $redirect_uris = array_map( 'sanitize_url', $metadata['redirect_uris'] );
+        $client_name   = isset( $metadata['client_name'] )
+            ? sanitize_text_field( $metadata['client_name'] )
+            : 'CIMD Client';
+        $grant_types = isset( $metadata['grant_types'] ) && is_array( $metadata['grant_types'] )
+            ? sanitize_text_field( implode( ' ', $metadata['grant_types'] ) )
+            : 'authorization_code';
+
+        $table = self::clients_table();
+
+        // Upsert. UNIQUE KEY on client_id(191) makes REPLACE delete-then-insert
+        // the row with the same client_id. tokens.client_id is a plain KEY (not
+        // FK) on the varchar identity, so existing tokens continue to resolve
+        // after the row's auto-inc id churns.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $replaced = $wpdb->replace(
+            $table,
+            [
+                'client_id'                  => $client_id,
+                'client_secret_hash'         => null,
+                'client_name'                => $client_name,
+                'redirect_uris'              => wp_json_encode( $redirect_uris ),
+                'grant_types'                => $grant_types,
+                'token_endpoint_auth_method' => 'none',
+            ],
+            [ '%s', '%s', '%s', '%s', '%s', '%s' ]
+        );
+
+        if ( false === $replaced ) {
+            return new \WP_Error(
+                'royal_mcp_cimd_register_failed',
+                'Failed to persist CIMD client registration.',
+                [ 'db_error' => $wpdb->last_error ]
+            );
+        }
+
+        return [
+            'client_id'                  => $client_id,
+            'client_name'                => $client_name,
+            'redirect_uris'              => $redirect_uris,
+            'grant_types'                => explode( ' ', $grant_types ),
+            'token_endpoint_auth_method' => 'none',
+            'response_types'             => [ 'code' ],
+            'client_id_issued_at'        => time(),
+            'is_cimd'                    => true,
+        ];
+    }
+
     /**
      * Validate a redirect URI against a client's registered URIs.
      *
