@@ -30,7 +30,9 @@ class Pending_Clients_Page {
     const REJECT_NONCE       = 'royal_mcp_reject_pending_client_nonce';
 
     public function __construct() {
-        add_action( 'admin_menu', [ $this, 'add_menu' ], 30 );
+        // Priority 11 places this submenu directly after Settings + Activity Log
+        // (both registered at default priority 10 in Settings_Page).
+        add_action( 'admin_menu', [ $this, 'add_menu' ], 11 );
         add_action( 'admin_post_' . self::APPROVE_ACTION, [ $this, 'handle_approve' ] );
         add_action( 'admin_post_' . self::REJECT_ACTION, [ $this, 'handle_reject' ] );
         add_action( 'admin_bar_menu', [ $this, 'admin_bar_count' ], 90 );
@@ -90,7 +92,7 @@ class Pending_Clients_Page {
         $rows = Token_Store::get_pending_clients();
         ?>
         <div class="wrap">
-            <h1><?php esc_html_e( 'Royal MCP: Pending Clients', 'royal-mcp' ); ?></h1>
+            <h1><?php esc_html_e( 'Pending Clients', 'royal-mcp' ); ?></h1>
             <p><?php esc_html_e( 'AI clients that registered via dynamic client registration while the "Require approval" toggle was enabled. Approve to allow connection, reject to remove the registration.', 'royal-mcp' ); ?></p>
             <?php if ( empty( $rows ) ) : ?>
                 <p><strong><?php esc_html_e( 'No pending clients.', 'royal-mcp' ); ?></strong></p>

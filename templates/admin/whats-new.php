@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 $rmcp_wn_img_base   = ROYAL_MCP_PLUGIN_URL . 'assets/img/whats-new/';
 $rmcp_wn_review_url = 'https://wordpress.org/support/plugin/royal-mcp/reviews/?rate=5#new-post';
 $rmcp_wn_help_url   = admin_url( 'admin.php?page=royal-mcp-help&view=troubleshooting' );
-$rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_1&utm_content=footer_cta';
+$rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_2&utm_content=footer_cta';
 ?>
 <div class="rmcp-wn-backdrop" data-royal-mcp-wn-backdrop hidden>
     <div class="rmcp-wn-modal" role="dialog" aria-modal="true" aria-labelledby="rmcp-wn-title">
@@ -26,7 +26,7 @@ $rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_
             <img class="rmcp-wn-header-logo" src="<?php echo esc_url( $rmcp_wn_img_base . 'royal-shield.png' ); ?>" alt="">
             <div class="rmcp-wn-header-titles">
                 <h2 id="rmcp-wn-title"><?php esc_html_e( "What's New in Royal MCP", 'royal-mcp' ); ?></h2>
-                <p><?php esc_html_e( 'Version 1.5.1: WebMCP support + Agent Readiness signals', 'royal-mcp' ); ?></p>
+                <p><?php esc_html_e( 'Version 1.5.2: approval-gated AI clients and modern OAuth discovery', 'royal-mcp' ); ?></p>
             </div>
             <button type="button" class="rmcp-wn-close" data-royal-mcp-wn-close aria-label="<?php esc_attr_e( 'Close', 'royal-mcp' ); ?>">&times;</button>
         </div>
@@ -52,102 +52,97 @@ $rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_
                 </div>
             </div>
 
-            <!-- SLIDE 2 — WEBMCP BROWSER AGENTS -->
+            <!-- SLIDE 2 — DCR PRE-APPROVAL TOGGLE (flagship 1.5.2 feature) -->
             <div class="rmcp-wn-slide is-reversed">
                 <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Browser Agents', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'Browser AI can now use your MCP tools', 'royal-mcp' ); ?></h3>
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v1.5.2', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'Approve new AI clients before they connect', 'royal-mcp' ); ?></h3>
                     <p>
                         <?php
                         echo wp_kses(
-                            __( 'Royal MCP now supports the <strong>WebMCP browser-agent standard</strong> on the server side. When a visitor is signed into your site, browser-based AI agents from any WebMCP-compatible bridge can call the same Royal MCP tools that Claude Desktop and ChatGPT already use, without any extra login step. Cloudflare\'s WebMCP is the first bridge implementation shipping today; more are on the way.', 'royal-mcp' ),
+                            __( 'New optional setting under Royal MCP &rsaquo; Settings: <strong>Require approval before new AI clients can connect</strong>. Turn it on and every dynamically-registered OAuth client lands in a <strong>Pending Clients</strong> queue instead of connecting straight away.', 'royal-mcp' ),
                             [ 'strong' => [] ]
                         );
                         ?>
                     </p>
-                    <p>
-                        <?php
-                        echo wp_kses(
-                            __( 'New <strong>Browser agents (WebMCP)</strong> section on the Royal MCP settings page turns it on or off with one toggle. Off by default so nothing changes for existing installs.', 'royal-mcp' ),
-                            [ 'strong' => [] ]
-                        );
-                        ?>
-                    </p>
-                    <p><?php esc_html_e( 'External clients like Claude Desktop, ChatGPT, and Cursor keep using OAuth Bearer tokens as before. Fully backwards compatible.', 'royal-mcp' ); ?></p>
-                    <a href="https://royalplugins.com/support/royal-mcp/webmcp.html" target="_blank" rel="noopener noreferrer" class="rmcp-wn-btn">
-                        <?php esc_html_e( 'Read the setup guide →', 'royal-mcp' ); ?>
-                    </a>
+                    <p><?php esc_html_e( 'Each pending row shows client name, requested redirect URIs, source IP, and user agent. Approve or reject per row. An admin bar badge tells you when the queue has anything waiting so nothing slips through unnoticed.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'Default is off, so nothing changes for existing sites. Turn it on when you want every AI-client connection reviewed before it goes live.', 'royal-mcp' ); ?></p>
                 </div>
                 <div class="rmcp-wn-slide-visual">
-                    <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone">
-<span class="c">// Browser agent calls a Royal MCP tool</span>
-<span class="k">fetch</span>(<span class="s">'/mcp'</span>, <span class="k">{</span>
-  <span class="s">method</span>: <span class="s">'POST'</span>,
-  <span class="s">credentials</span>: <span class="s">'same-origin'</span>,
-  <span class="s">headers</span>: <span class="k">{</span>
-    <span class="s">'Content-Type'</span>: <span class="s">'application/json'</span>,
-    <span class="s">'X-WP-Nonce'</span>: <span class="s hl">royalMcpWebMcp.nonce</span>
-  <span class="k">}</span>,
-  <span class="s">body</span>: JSON.stringify(<span class="k">{</span>
-    <span class="s">jsonrpc</span>: <span class="s">'2.0'</span>, <span class="s">id</span>: 1,
-    <span class="s">method</span>: <span class="s">'tools/call'</span>,
-    <span class="s">params</span>: <span class="k">{</span> <span class="s">name</span>: <span class="s">'wp_create_post'</span> <span class="k">}</span>
-  <span class="k">}</span>)
-<span class="k">}</span>)
-                    </div>
-                </div>
-            </div>
-
-            <!-- SLIDE 3 — AGENT READINESS DISCOVERY DOCS -->
-            <div class="rmcp-wn-slide">
-                <div class="rmcp-wn-slide-visual">
-                    <div class="rmcp-wn-circle" role="img" aria-label="<?php esc_attr_e( 'Agent Readiness metadata published', 'royal-mcp' ); ?>">
+                    <div class="rmcp-wn-circle" role="img" aria-label="<?php esc_attr_e( 'Pending clients queue', 'royal-mcp' ); ?>">
                         <svg viewBox="0 0 200 200" width="170" height="170" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-                            <rect x="35" y="35" width="130" height="150" rx="10" fill="#FEFCF7" stroke="#C9A227" stroke-width="2.5"/>
-                            <path d="M37 45 Q37 37 45 37 L155 37 Q163 37 163 45 L163 59 L37 59 Z" fill="#C9A227"/>
-                            <circle cx="47" cy="48" r="2.5" fill="#FEFCF7"/>
-                            <circle cx="56" cy="48" r="2.5" fill="#FEFCF7"/>
-                            <circle cx="65" cy="48" r="2.5" fill="#FEFCF7"/>
-                            <circle cx="55" cy="85" r="8" fill="#22C55E"/>
-                            <path d="M51 85 L54 88 L60 81" stroke="white" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-                            <rect x="72" y="81" width="72" height="8" rx="2" fill="#2C2C2C" opacity="0.15"/>
-                            <circle cx="55" cy="110" r="8" fill="#22C55E"/>
-                            <path d="M51 110 L54 113 L60 106" stroke="white" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-                            <rect x="72" y="106" width="55" height="8" rx="2" fill="#2C2C2C" opacity="0.15"/>
-                            <circle cx="55" cy="135" r="8" fill="#22C55E"/>
-                            <path d="M51 135 L54 138 L60 131" stroke="white" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-                            <rect x="72" y="131" width="80" height="8" rx="2" fill="#2C2C2C" opacity="0.15"/>
-                            <text x="100" y="170" text-anchor="middle" font-family="Inter, -apple-system, sans-serif" font-size="9" font-weight="700" letter-spacing="1.5" fill="#C9A227">AGENT READY</text>
+                            <rect x="30" y="35" width="140" height="130" rx="10" fill="#FEFCF7" stroke="#C9A227" stroke-width="2.5"/>
+                            <rect x="30" y="35" width="140" height="26" rx="10" fill="#C9A227"/>
+                            <text x="100" y="53" text-anchor="middle" font-family="Inter, -apple-system, sans-serif" font-size="12" font-weight="700" fill="#FEFCF7">PENDING CLIENTS</text>
+                            <rect x="42" y="72" width="116" height="24" rx="4" fill="#F6F7F7" stroke="#DDD" stroke-width="1"/>
+                            <circle cx="53" cy="84" r="5" fill="#FBBF24"/>
+                            <rect x="63" y="79" width="55" height="4" rx="1" fill="#2C2C2C" opacity="0.35"/>
+                            <rect x="63" y="87" width="35" height="3" rx="1" fill="#2C2C2C" opacity="0.2"/>
+                            <rect x="125" y="77" width="14" height="14" rx="2" fill="#22C55E"/>
+                            <rect x="142" y="77" width="14" height="14" rx="2" fill="#EF4444" opacity="0.85"/>
+                            <rect x="42" y="104" width="116" height="24" rx="4" fill="#F6F7F7" stroke="#DDD" stroke-width="1"/>
+                            <circle cx="53" cy="116" r="5" fill="#FBBF24"/>
+                            <rect x="63" y="111" width="45" height="4" rx="1" fill="#2C2C2C" opacity="0.35"/>
+                            <rect x="63" y="119" width="30" height="3" rx="1" fill="#2C2C2C" opacity="0.2"/>
+                            <rect x="125" y="109" width="14" height="14" rx="2" fill="#22C55E"/>
+                            <rect x="142" y="109" width="14" height="14" rx="2" fill="#EF4444" opacity="0.85"/>
+                            <rect x="42" y="136" width="116" height="24" rx="4" fill="#F6F7F7" stroke="#DDD" stroke-width="1"/>
+                            <circle cx="53" cy="148" r="5" fill="#FBBF24"/>
+                            <rect x="63" y="143" width="60" height="4" rx="1" fill="#2C2C2C" opacity="0.35"/>
+                            <rect x="63" y="151" width="42" height="3" rx="1" fill="#2C2C2C" opacity="0.2"/>
+                            <rect x="125" y="141" width="14" height="14" rx="2" fill="#22C55E"/>
+                            <rect x="142" y="141" width="14" height="14" rx="2" fill="#EF4444" opacity="0.85"/>
                         </svg>
                     </div>
                 </div>
+            </div>
+
+            <!-- SLIDE 3 — CIMD + OAUTH DISCOVERY POLISH -->
+            <div class="rmcp-wn-slide">
+                <div class="rmcp-wn-slide-visual">
+                    <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone">
+<span class="c">// OAuth discovery metadata</span>
+<span class="k">{</span>
+  <span class="s">"issuer"</span>: <span class="s">"https://yoursite.com"</span>,
+  <span class="s">"authorization_endpoint"</span>: <span class="s">"..."</span>,
+  <span class="s">"token_endpoint"</span>: <span class="s">"..."</span>,
+  <span class="s hl">"client_id_metadata_document_supported"</span>: <span class="k">true</span>,
+  <span class="s">"code_challenge_methods_supported"</span>: <span class="k">[</span><span class="s">"S256"</span><span class="k">]</span>
+<span class="k">}</span>
+                    </div>
+                </div>
                 <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Agent Readiness', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'Your MCP server, discoverable by every AI scanner', 'royal-mcp' ); ?></h3>
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v1.5.2', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'Modern OAuth discovery, on any host', 'royal-mcp' ); ?></h3>
                     <p>
                         <?php
                         echo wp_kses(
-                            __( 'Royal MCP now publishes an <strong>MCP Server Card</strong>, a <strong>Skills Index</strong>, and <strong>OAuth Protected Resource</strong> metadata at the standard well-known paths. Cloudflare\'s Agent Readiness scanner, Vercel\'s is-agentic, and Chrome Lighthouse\'s Agentic Browsing audit all recognize your site as agent-ready with no extra setup.', 'royal-mcp' ),
+                            __( 'Royal MCP now advertises <strong>client_id_metadata_document</strong> support so AI clients using that flow (the one Claude\'s connector wizard promotes as "Recommended") can point at a metadata document URL instead of running a full dynamic-registration handshake.', 'royal-mcp' ),
                             [ 'strong' => [] ]
                         );
                         ?>
                     </p>
-                    <p><?php esc_html_e( 'Every /mcp response also carries an RFC 8288 Link header pointing at these documents so agent runtimes that hit the endpoint find the metadata without extra probing.', 'royal-mcp' ); ?></p>
-                    <a href="https://royalplugins.com/support/royal-mcp/agent-readiness.html" target="_blank" rel="noopener noreferrer" class="rmcp-wn-btn">
-                        <?php esc_html_e( 'Read the guide →', 'royal-mcp' ); ?>
-                    </a>
-                </div>
-            </div>
-
-            <!-- SLIDE 4 — WHAT'S COMING (1.5.2+ roadmap) -->
-            <div class="rmcp-wn-slide is-reversed">
-                <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'On the roadmap', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( "What's coming", 'royal-mcp' ); ?></h3>
                     <p>
                         <?php
                         echo wp_kses(
-                            __( '<strong>Native WebMCP registration.</strong> Browser agents will call Royal MCP tools directly through <code>navigator.modelContext</code> without needing Cloudflare in the middle. Works in any browser that ships the WebMCP API (Chrome 149+ with the experimental flag today, stable rollout later this year).', 'royal-mcp' ),
+                            __( 'OAuth discovery is also served under <code>/wp-json/royal-mcp/v1/.well-known/oauth-authorization-server</code> as a fallback for managed hosts (SiteGround, WP Engine, some cPanel setups) that block the root <code>.well-known/</code> path at their edge.', 'royal-mcp' ),
+                            [ 'code' => [] ]
+                        );
+                        ?>
+                    </p>
+                    <p><?php esc_html_e( 'A new admin notice also detects when your web server strips Authorization headers before WordPress sees them, with copy-paste Apache and nginx fix guidance.', 'royal-mcp' ); ?></p>
+                </div>
+            </div>
+
+            <!-- SLIDE 4 — TOOL SURFACE POLISH -->
+            <div class="rmcp-wn-slide is-reversed">
+                <div class="rmcp-wn-slide-body">
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v1.5.2', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'Sharper tools for real workflows', 'royal-mcp' ); ?></h3>
+                    <p>
+                        <?php
+                        echo wp_kses(
+                            __( '<strong>Twitter card fields on wp_update_seo_meta.</strong> Set <code>twitter_title</code>, <code>twitter_description</code>, and <code>twitter_image</code> alongside the existing Open Graph fields. Routed per active SEO plugin (Yoast, Rank Math, SEOPress, SEObolt).', 'royal-mcp' ),
                             [ 'strong' => [], 'code' => [] ]
                         );
                         ?>
@@ -155,16 +150,16 @@ $rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_
                     <p>
                         <?php
                         echo wp_kses(
-                            __( '<strong>Deeper OAuth spec coverage.</strong> Client Identifier Metadata Documents (CIMD) so external MCP clients discover client registrations without a database round trip. OAuth client garbage collection for cleaner long-term audit logs.', 'royal-mcp' ),
-                            [ 'strong' => [] ]
+                            __( '<strong>Targeted custom CSS edits.</strong> <code>wp_replace_in_post</code> now works against the WordPress custom_css post so a two-line stylesheet change no longer sends the whole file over the wire.', 'royal-mcp' ),
+                            [ 'strong' => [], 'code' => [] ]
                         );
                         ?>
                     </p>
                     <p>
                         <?php
                         echo wp_kses(
-                            __( '<strong>More integrations.</strong> Every popular WordPress plugin eventually becomes a first-class Royal MCP tool surface.', 'royal-mcp' ),
-                            [ 'strong' => [] ]
+                            __( '<strong>Core Web Vitals via ForgeCache.</strong> New <code>fc_get_rum_stats</code> tool exposes ForgeCache\'s real-visitor INP, LCP, CLS, and TTFB data so AI assistants can identify the worst-performing pages on your site.', 'royal-mcp' ),
+                            [ 'strong' => [], 'code' => [] ]
                         );
                         ?>
                     </p>

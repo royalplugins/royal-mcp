@@ -162,7 +162,9 @@ class Royal_MCP_Plugin {
 
         // WordPress Abilities API registration (WP 6.9+). Categories hook fires before
         // abilities hook; registering an ability against a non-registered category throws.
-        if ( function_exists( 'wp_register_ability_category' ) && (bool) get_option( 'royal_mcp_abilities_registration_enabled', true ) ) {
+        $rmcp_abilities_raw     = get_option( 'royal_mcp_abilities_registration_enabled', null );
+        $rmcp_abilities_enabled = ( null === $rmcp_abilities_raw || '' === $rmcp_abilities_raw ) ? true : (bool) $rmcp_abilities_raw;
+        if ( function_exists( 'wp_register_ability_category' ) && $rmcp_abilities_enabled ) {
             add_action( 'wp_abilities_api_categories_init', array( \Royal_MCP\Abilities\Categories::class, 'register' ) );
             add_action( 'wp_abilities_api_init', array( \Royal_MCP\Abilities\Registrar::class, 'register' ) );
 

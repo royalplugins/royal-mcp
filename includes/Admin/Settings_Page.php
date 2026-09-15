@@ -311,9 +311,12 @@ class Settings_Page {
         // depend on the settings array being present or well-formed. This
         // preserves backwards compatibility with installs that opted out
         // via WP-CLI or a WPCode snippet before this UI shipped.
+        // Store as string '1' / '0' — booleans serialize false to empty string,
+        // which is indistinguishable from "option missing" and defeats the
+        // default-on fallback at read sites.
         update_option(
             'royal_mcp_abilities_registration_enabled',
-            isset( $input['abilities_registration_enabled'] ) ? (bool) $input['abilities_registration_enabled'] : false
+            isset( $input['abilities_registration_enabled'] ) ? '1' : '0'
         );
 
         // Access token TTL — whitelist against the 4 UI choices; anything else falls back to the default.

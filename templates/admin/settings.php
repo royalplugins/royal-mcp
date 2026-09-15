@@ -6,7 +6,8 @@ if (!defined('ABSPATH')) {
 use Royal_MCP\Platform\Registry;
 
 $royal_mcp_settings = isset($settings) ? $settings : get_option('royal_mcp_settings', []);
-$royal_mcp_abilities_registration_enabled = (bool) get_option('royal_mcp_abilities_registration_enabled', true);
+$royal_mcp_abilities_raw = get_option('royal_mcp_abilities_registration_enabled', null);
+$royal_mcp_abilities_registration_enabled = (null === $royal_mcp_abilities_raw || '' === $royal_mcp_abilities_raw) ? true : (bool) $royal_mcp_abilities_raw;
 $royal_mcp_platforms = isset($platforms) ? $platforms : Registry::get_platforms();
 $royal_mcp_platform_groups = isset($royal_mcp_platform_groups) ? $royal_mcp_platform_groups : Registry::get_platform_groups();
 $royal_mcp_configured_platforms = $royal_mcp_settings['platforms'] ?? [];
