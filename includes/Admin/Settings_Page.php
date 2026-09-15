@@ -287,6 +287,7 @@ class Settings_Page {
         $sanitized['enabled'] = isset($input['enabled']) ? (bool) $input['enabled'] : false;
         $sanitized['allow_option_writes'] = isset($input['allow_option_writes']) ? (bool) $input['allow_option_writes'] : false;
         $sanitized['allow_theme_writes'] = isset($input['allow_theme_writes']) ? (bool) $input['allow_theme_writes'] : false;
+        $sanitized['require_client_approval'] = isset($input['require_client_approval']) ? (bool) $input['require_client_approval'] : false;
 
         // WebMCP browser-agent bridge — opt-in cookie-auth path for the Cloudflare
         // WebMCP bridge. Off by default so the cookie-auth surface is never a

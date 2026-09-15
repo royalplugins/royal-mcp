@@ -129,9 +129,13 @@ class Token_Store {
             redirect_uris text NOT NULL,
             grant_types varchar(255) DEFAULT 'authorization_code' NOT NULL,
             token_endpoint_auth_method varchar(50) DEFAULT 'none' NOT NULL,
+            status varchar(20) DEFAULT 'active' NOT NULL,
+            ip_address varchar(45) DEFAULT '' NOT NULL,
+            user_agent varchar(255) DEFAULT '' NOT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY  (id),
-            UNIQUE KEY client_id (client_id(191))
+            UNIQUE KEY client_id (client_id(191)),
+            KEY status (status)
         ) $charset_collate;" );
 
         // Authorization codes in a dedicated table (not transients). Object-
@@ -572,6 +576,20 @@ class Token_Store {
             ? sanitize_text_field( implode( ' ', $data['grant_types'] ) )
             : 'authorization_code';
 
+        // Pending-approval gate. Site owners flip this on to require a manual
+        // approve/reject decision before every newly-registered OAuth client
+        // can complete an /authorize handshake. Default remains active for
+        // backwards compatibility — installs that don't touch the toggle keep
+        // the standard open-DCR behavior with no change to any existing flow.
+        $require_approval = ! empty( $data['_require_approval'] );
+        $status           = $require_approval ? 'pending_approval' : 'active';
+
+        // Requester metadata for the Pending Clients admin surface. Captured
+        // from the OAuth Server dispatch (which pulls REMOTE_ADDR + UA) and
+        // passed through as sanitized strings.
+        $ip_address = isset( $data['_ip_address'] ) ? substr( (string) $data['_ip_address'], 0, 45 ) : '';
+        $user_agent = isset( $data['_user_agent'] ) ? substr( sanitize_text_field( (string) $data['_user_agent'] ), 0, 255 ) : '';
+
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $inserted = $wpdb->insert(
             self::clients_table(),
@@ -582,8 +600,11 @@ class Token_Store {
                 'redirect_uris'              => wp_json_encode( $redirect_uris ),
                 'grant_types'                => $grant_types,
                 'token_endpoint_auth_method' => $auth_method,
+                'status'                     => $status,
+                'ip_address'                 => $ip_address,
+                'user_agent'                 => $user_agent,
             ],
-            [ '%s', '%s', '%s', '%s', '%s', '%s' ]
+            [ '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
         );
 
         if ( false === $inserted ) {
@@ -602,6 +623,7 @@ class Token_Store {
             'token_endpoint_auth_method' => $auth_method,
             'response_types'             => [ 'code' ],
             'client_id_issued_at'        => time(),
+            'status'                     => $status,
         ];
 
         if ( $client_secret ) {
@@ -644,6 +666,7 @@ class Token_Store {
                 'client_name'                => get_bloginfo( 'name' ) . ' (static)',
                 'redirect_uris'              => [], // Static clients accept any localhost/HTTPS redirect.
                 'grant_types'                => 'authorization_code',
+                'status'                     => 'active', // Static clients are always active — never gated by approval.
                 'token_endpoint_auth_method' => ! empty( $settings['oauth_client_secret'] ) ? 'client_secret_post' : 'none',
                 'is_static'                  => true,
             ];
@@ -867,6 +890,125 @@ class Token_Store {
             'client_id_issued_at'        => time(),
             'is_cimd'                    => true,
         ];
+    }
+
+    /* ------------------------------------------------------------------
+     *  Pending-approval helpers (Chunk 12 opt-in DCR gate)
+     * ----------------------------------------------------------------*/
+
+    /**
+     * True if the client row's status is 'pending_approval'. Wraps the raw
+     * column read so callers don't hardcode the sentinel value.
+     */
+    public static function is_pending_approval( array $client ) {
+        return 'pending_approval' === ( $client['status'] ?? 'active' );
+    }
+
+    /**
+     * Flip a client from pending_approval to active. Idempotent — already-
+     * active clients are a no-op.
+     *
+     * @param string $client_id
+     * @return bool True on state change, false on no-op / missing row.
+     */
+    public static function approve_client( $client_id ) {
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        return (bool) $wpdb->update(
+            self::clients_table(),
+            [ 'status' => 'active' ],
+            [ 'client_id' => $client_id, 'status' => 'pending_approval' ],
+            [ '%s' ],
+            [ '%s', '%s' ]
+        );
+    }
+
+    /**
+     * Reject a pending client by deleting the row and any auth codes it
+     * accumulated. Tokens shouldn't exist for a pending client but delete
+     * those defensively too.
+     *
+     * @param string $client_id
+     * @return bool True if a row was deleted, false if not found.
+     */
+    public static function reject_client( $client_id ) {
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->delete( self::auth_codes_table(), [ 'client_id' => $client_id ], [ '%s' ] );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->delete( self::tokens_table(), [ 'client_id' => $client_id ], [ '%s' ] );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        return (bool) $wpdb->delete(
+            self::clients_table(),
+            [ 'client_id' => $client_id, 'status' => 'pending_approval' ],
+            [ '%s', '%s' ]
+        );
+    }
+
+    /**
+     * List every client row with status = pending_approval. Includes IP + UA
+     * + created_at for the admin surface. Ordered oldest-first so the admin
+     * works through the queue in FIFO.
+     *
+     * @return array
+     */
+    public static function get_pending_clients() {
+        global $wpdb;
+        $table = self::clients_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $rows = $wpdb->get_results(
+            "SELECT client_id, client_name, redirect_uris, ip_address, user_agent, created_at
+             FROM `{$table}`
+             WHERE status = 'pending_approval'
+             ORDER BY created_at ASC",
+            ARRAY_A
+        );
+        if ( ! is_array( $rows ) ) {
+            return [];
+        }
+        foreach ( $rows as &$row ) {
+            $row['redirect_uris'] = json_decode( $row['redirect_uris'], true ) ?: [];
+        }
+        return $rows;
+    }
+
+    /**
+     * Fast count of pending rows for the admin bar badge.
+     */
+    public static function count_pending_clients() {
+        global $wpdb;
+        $table = self::clients_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        return (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM `{$table}` WHERE status = 'pending_approval'"
+        );
+    }
+
+    /**
+     * Auto-expire pending client rows older than the TTL window. Ships alongside
+     * the daily royal_mcp_token_cleanup cron so the pending queue can't grow
+     * unbounded if an admin stops triaging.
+     *
+     * TTL default 48 hours, filterable via royal_mcp_pending_client_ttl_hours.
+     *
+     * @return int Number of pending rows deleted.
+     */
+    public static function gc_expired_pending_clients() {
+        global $wpdb;
+        $ttl_hours = (int) apply_filters( 'royal_mcp_pending_client_ttl_hours', 48 );
+        if ( $ttl_hours < 1 ) {
+            $ttl_hours = 1;
+        }
+        $table = self::clients_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        return (int) $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM `{$table}`
+                 WHERE status = 'pending_approval'
+                   AND created_at < DATE_SUB(NOW(), INTERVAL %d HOUR)",
+                $ttl_hours
+            )
+        );
     }
 
     /**

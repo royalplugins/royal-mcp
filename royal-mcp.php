@@ -140,6 +140,10 @@ class Royal_MCP_Plugin {
         // same daily cron. Older-than-TTL clients with zero tokens are pruned.
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'gc_stale_clients']);
 
+        // Auto-expire pending-approval clients that the admin never acted on.
+        // Default 48h TTL, filterable via royal_mcp_pending_client_ttl_hours.
+        add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'gc_expired_pending_clients']);
+
         // Add plugin action links (Settings, Docs)
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), [$this, 'add_action_links']);
 
@@ -617,6 +621,12 @@ class Royal_MCP_Plugin {
     public function init() {
         // Endpoint tool-profile filter — trims tools/list by ?tools=<profile>.
         Royal_MCP\MCP\Tool_Profiles::register();
+
+        // Pending clients admin bar count also renders on the front-end when
+        // an admin is logged in and browsing the site, so instantiate outside
+        // the is_admin() branch. The class's admin_menu / admin_post hooks
+        // only fire in the admin context regardless.
+        new Royal_MCP\Admin\Pending_Clients_Page();
 
         // Initialize components
         if (is_admin()) {

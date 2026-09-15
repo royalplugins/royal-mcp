@@ -154,6 +154,24 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                         </tr>
                         <tr>
                             <th scope="row">
+                                <label for="require_client_approval"><?php esc_html_e('Require approval before new AI clients can connect', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[require_client_approval]"
+                                           id="require_client_approval"
+                                           value="1"
+                                           <?php checked(!empty($royal_mcp_settings['require_client_approval'])); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When ON, dynamic OAuth client registrations are saved as pending and cannot connect until you approve them from Royal MCP > Pending Clients. Default OFF preserves the standard dynamic-registration behavior. Turn ON for high-security postures where every AI-client connection should be reviewed by an admin.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
                                 <label for="abilities_registration_enabled"><?php esc_html_e('Register tools with the WordPress Abilities API', 'royal-mcp'); ?></label>
                             </th>
                             <td>
