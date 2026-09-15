@@ -136,6 +136,10 @@ class Royal_MCP_Plugin {
         // sessions cleanup rides on the same daily cron action.
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Session_Store::class, 'cleanup_expired']);
 
+        // Stale OAuth client GC (rows created but never authorized) rides on the
+        // same daily cron. Older-than-TTL clients with zero tokens are pruned.
+        add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'gc_stale_clients']);
+
         // Add plugin action links (Settings, Docs)
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), [$this, 'add_action_links']);
 

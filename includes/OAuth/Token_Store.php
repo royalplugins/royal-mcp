@@ -443,6 +443,76 @@ class Token_Store {
     }
 
     /**
+     * Delete OAuth clients that have never had a successful authorization AND
+     * are older than the TTL window. Failed handshake attempts (network hiccups
+     * on token exchange, wizard retries, abandoned setups) leave orphan client
+     * rows that never issue a token. Left alone, these accumulate over time,
+     * so a periodic sweep keeps the clients and auth_codes tables lean.
+     *
+     * TTL default 14 days, filterable via royal_mcp_oauth_gc_ttl_days. Applies
+     * to both dynamic-registration (rmcp_ prefix) and CIMD (https:// prefix)
+     * client rows uniformly — the "never authorized" signal is authoritative
+     * for both origin types.
+     *
+     * Cascade: auth codes for the deleted clients are also removed. Tokens
+     * cascade is a no-op by construction (a client with zero tokens has none
+     * to delete), but the DELETE is defensive against manual DB mutations.
+     *
+     * @return int Number of stale clients deleted.
+     */
+    public static function gc_stale_clients() {
+        global $wpdb;
+
+        $ttl_days = (int) apply_filters( 'royal_mcp_oauth_gc_ttl_days', 14 );
+        if ( $ttl_days < 1 ) {
+            $ttl_days = 1;
+        }
+
+        $clients_table    = self::clients_table();
+        $tokens_table     = self::tokens_table();
+        $auth_codes_table = self::auth_codes_table();
+
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $stale_ids = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT c.client_id
+                 FROM `{$clients_table}` c
+                 LEFT JOIN `{$tokens_table}` t ON t.client_id = c.client_id
+                 WHERE c.created_at < DATE_SUB(NOW(), INTERVAL %d DAY)
+                   AND t.id IS NULL
+                 GROUP BY c.client_id",
+                $ttl_days
+            )
+        );
+
+        if ( empty( $stale_ids ) ) {
+            return 0;
+        }
+
+        $placeholders = implode( ',', array_fill( 0, count( $stale_ids ), '%s' ) );
+
+        // Drop orphan auth codes first so the client row deletion doesn't leave
+        // dangling FK-like references for anyone reading the auth_codes table.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM `{$auth_codes_table}` WHERE client_id IN ({$placeholders})",
+                $stale_ids
+            )
+        );
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $deleted = $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM `{$clients_table}` WHERE client_id IN ({$placeholders})",
+                $stale_ids
+            )
+        );
+
+        return (int) $deleted;
+    }
+
+    /**
      * Delete expired and revoked tokens, plus expired and consumed auth codes.
      * Called by scheduled cleanup.
      */
