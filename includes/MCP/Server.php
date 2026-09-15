@@ -142,6 +142,9 @@ class Server {
         if ( ! has_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_default_output_schemas' ] ) ) {
             add_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_default_output_schemas' ], PHP_INT_MAX );
         }
+        if ( ! has_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_site_host_suffix' ] ) ) {
+            add_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_site_host_suffix' ], PHP_INT_MAX );
+        }
     }
 
     /**
@@ -1881,6 +1884,49 @@ class Server {
             }
             $tools[ $i ]['outputSchema'] = $default;
         }
+        return $tools;
+    }
+
+    /**
+     * Suffix each tool description with the site host so a Claude workspace
+     * with multiple Royal MCP connectors registered gets a useful tie-breaking
+     * signal in the tool picker. Same tool name across sites — renaming would
+     * break existing bookmarks and instrumentation — but distinct descriptions.
+     *
+     * Idempotent: a second application detects the existing suffix and no-ops,
+     * so ordering across the royal_mcp_tools filter chain never double-stamps.
+     * Filterable via royal_mcp_disambiguate_tool_descriptions (default true)
+     * for site owners who want the raw descriptions unchanged.
+     *
+     * @param array $tools Tool definitions from get_tools().
+     * @return array Modified tool definitions with host suffix appended.
+     */
+    public static function stamp_site_host_suffix( $tools ) {
+        if ( ! is_array( $tools ) ) {
+            return $tools;
+        }
+        if ( ! apply_filters( 'royal_mcp_disambiguate_tool_descriptions', true ) ) {
+            return $tools;
+        }
+
+        $host = wp_parse_url( home_url(), PHP_URL_HOST );
+        if ( ! is_string( $host ) || '' === $host ) {
+            return $tools;
+        }
+
+        $suffix     = ' (site: ' . $host . ')';
+        $suffix_len = strlen( $suffix );
+
+        foreach ( $tools as $i => $tool ) {
+            if ( ! is_array( $tool ) || ! isset( $tool['description'] ) || ! is_string( $tool['description'] ) ) {
+                continue;
+            }
+            if ( substr( $tool['description'], -$suffix_len ) === $suffix ) {
+                continue;
+            }
+            $tools[ $i ]['description'] = rtrim( $tool['description'] ) . $suffix;
+        }
+
         return $tools;
     }
 
