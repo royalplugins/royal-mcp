@@ -142,8 +142,8 @@ class WooCommerce {
 					'type'       => 'object',
 					'properties' => [
 						'customer_id'    => [ 'type' => 'integer', 'description' => 'Optional WP user ID for the customer. Omit to create a guest order.' ],
-						'billing'        => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true, 'description' => 'Billing address: first_name, last_name, address_1, address_2, city, state, postcode, country, email, phone.' ],
-						'shipping'       => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true, 'description' => 'Shipping address (same shape as billing, minus email/phone).' ],
+						'billing'        => [ 'type' => 'object', 'additionalProperties' => true, 'description' => 'Billing address: first_name, last_name, address_1, address_2, city, state, postcode, country, email, phone.' ],
+						'shipping'       => [ 'type' => 'object', 'additionalProperties' => true, 'description' => 'Shipping address (same shape as billing, minus email/phone).' ],
 						'line_items'     => [
 							'type'        => 'array',
 							'description' => 'Array of {product_id, quantity, variation_id?}. variation_id must belong to product_id.',
@@ -207,8 +207,8 @@ class WooCommerce {
 					'type'       => 'object',
 					'properties' => [
 						'order_id'      => [ 'type' => 'integer', 'description' => 'Order ID to update.' ],
-						'billing'       => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true, 'description' => 'Partial billing address — only provided keys are updated.' ],
-						'shipping'      => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true, 'description' => 'Partial shipping address — only provided keys are updated.' ],
+						'billing'       => [ 'type' => 'object', 'additionalProperties' => true, 'description' => 'Partial billing address — only provided keys are updated.' ],
+						'shipping'      => [ 'type' => 'object', 'additionalProperties' => true, 'description' => 'Partial shipping address — only provided keys are updated.' ],
 						'customer_note' => [ 'type' => 'string', 'description' => 'Replace customer-facing order note.' ],
 						'status'        => [ 'type' => 'string', 'description' => 'New order status.' ],
 						'meta_data'     => [
@@ -402,12 +402,12 @@ class WooCommerce {
 						'create'     => [
 							'type'        => 'array',
 							'description' => 'Variations to create (same fields as wc_create_variation minus product_id)',
-							'items'       => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true ],
+							'items'       => [ 'type' => 'object', 'additionalProperties' => true ],
 						],
 						'update'     => [
 							'type'        => 'array',
 							'description' => 'Variations to update — each must include variation_id',
-							'items'       => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true ],
+							'items'       => [ 'type' => 'object', 'additionalProperties' => true ],
 						],
 						'delete'     => [
 							'type'        => 'array',

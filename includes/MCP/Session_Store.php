@@ -40,7 +40,7 @@ class Session_Store {
 
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
-        dbDelta( "CREATE TABLE IF NOT EXISTS $table (
+        dbDelta( "CREATE TABLE $table (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             session_hash varchar(64) NOT NULL,
             auth_fingerprint varchar(64) NOT NULL DEFAULT '',

@@ -98,7 +98,7 @@ class Token_Store {
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
         // dbDelta needs each CREATE TABLE as a separate call.
-        dbDelta( "CREATE TABLE IF NOT EXISTS $tokens_table (
+        dbDelta( "CREATE TABLE $tokens_table (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             token_hash varchar(64) NOT NULL,
             token_type varchar(20) NOT NULL,
@@ -121,7 +121,7 @@ class Token_Store {
         // the standard WordPress utf8mb4-safe prefix (191 * 4 = 764 bytes).
         // Rejected clients never carry client_id values longer than 191 chars
         // anyway (RFC 7591 doesn't cap them but generated values are short).
-        dbDelta( "CREATE TABLE IF NOT EXISTS $clients_table (
+        dbDelta( "CREATE TABLE $clients_table (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             client_id varchar(255) NOT NULL,
             client_secret_hash varchar(64) DEFAULT NULL,
@@ -129,9 +129,13 @@ class Token_Store {
             redirect_uris text NOT NULL,
             grant_types varchar(255) DEFAULT 'authorization_code' NOT NULL,
             token_endpoint_auth_method varchar(50) DEFAULT 'none' NOT NULL,
+            status varchar(20) DEFAULT 'active' NOT NULL,
+            ip_address varchar(45) DEFAULT '' NOT NULL,
+            user_agent varchar(255) DEFAULT '' NOT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY  (id),
-            UNIQUE KEY client_id (client_id(191))
+            UNIQUE KEY client_id (client_id(191)),
+            KEY status (status)
         ) $charset_collate;" );
 
         // Authorization codes in a dedicated table (not transients). Object-
@@ -139,7 +143,7 @@ class Token_Store {
         // between /authorize and /token, breaking the OAuth handshake. Direct
         // DB storage with sha256-hashed lookup gives reliable consume semantics
         // regardless of which cache backend is active.
-        dbDelta( "CREATE TABLE IF NOT EXISTS $auth_codes_table (
+        dbDelta( "CREATE TABLE $auth_codes_table (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             code_hash varchar(64) NOT NULL,
             user_id bigint(20) NOT NULL,
@@ -443,6 +447,76 @@ class Token_Store {
     }
 
     /**
+     * Delete OAuth clients that have never had a successful authorization AND
+     * are older than the TTL window. Failed handshake attempts (network hiccups
+     * on token exchange, wizard retries, abandoned setups) leave orphan client
+     * rows that never issue a token. Left alone, these accumulate over time,
+     * so a periodic sweep keeps the clients and auth_codes tables lean.
+     *
+     * TTL default 14 days, filterable via royal_mcp_oauth_gc_ttl_days. Applies
+     * to both dynamic-registration (rmcp_ prefix) and CIMD (https:// prefix)
+     * client rows uniformly — the "never authorized" signal is authoritative
+     * for both origin types.
+     *
+     * Cascade: auth codes for the deleted clients are also removed. Tokens
+     * cascade is a no-op by construction (a client with zero tokens has none
+     * to delete), but the DELETE is defensive against manual DB mutations.
+     *
+     * @return int Number of stale clients deleted.
+     */
+    public static function gc_stale_clients() {
+        global $wpdb;
+
+        $ttl_days = (int) apply_filters( 'royal_mcp_oauth_gc_ttl_days', 14 );
+        if ( $ttl_days < 1 ) {
+            $ttl_days = 1;
+        }
+
+        $clients_table    = self::clients_table();
+        $tokens_table     = self::tokens_table();
+        $auth_codes_table = self::auth_codes_table();
+
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $stale_ids = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT c.client_id
+                 FROM `{$clients_table}` c
+                 LEFT JOIN `{$tokens_table}` t ON t.client_id = c.client_id
+                 WHERE c.created_at < DATE_SUB(NOW(), INTERVAL %d DAY)
+                   AND t.id IS NULL
+                 GROUP BY c.client_id",
+                $ttl_days
+            )
+        );
+
+        if ( empty( $stale_ids ) ) {
+            return 0;
+        }
+
+        $placeholders = implode( ',', array_fill( 0, count( $stale_ids ), '%s' ) );
+
+        // Drop orphan auth codes first so the client row deletion doesn't leave
+        // dangling FK-like references for anyone reading the auth_codes table.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM `{$auth_codes_table}` WHERE client_id IN ({$placeholders})",
+                $stale_ids
+            )
+        );
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $deleted = $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM `{$clients_table}` WHERE client_id IN ({$placeholders})",
+                $stale_ids
+            )
+        );
+
+        return (int) $deleted;
+    }
+
+    /**
      * Delete expired and revoked tokens, plus expired and consumed auth codes.
      * Called by scheduled cleanup.
      */
@@ -502,6 +576,20 @@ class Token_Store {
             ? sanitize_text_field( implode( ' ', $data['grant_types'] ) )
             : 'authorization_code';
 
+        // Pending-approval gate. Site owners flip this on to require a manual
+        // approve/reject decision before every newly-registered OAuth client
+        // can complete an /authorize handshake. Default remains active for
+        // backwards compatibility — installs that don't touch the toggle keep
+        // the standard open-DCR behavior with no change to any existing flow.
+        $require_approval = ! empty( $data['_require_approval'] );
+        $status           = $require_approval ? 'pending_approval' : 'active';
+
+        // Requester metadata for the Pending Clients admin surface. Captured
+        // from the OAuth Server dispatch (which pulls REMOTE_ADDR + UA) and
+        // passed through as sanitized strings.
+        $ip_address = isset( $data['_ip_address'] ) ? substr( (string) $data['_ip_address'], 0, 45 ) : '';
+        $user_agent = isset( $data['_user_agent'] ) ? substr( sanitize_text_field( (string) $data['_user_agent'] ), 0, 255 ) : '';
+
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $inserted = $wpdb->insert(
             self::clients_table(),
@@ -512,8 +600,11 @@ class Token_Store {
                 'redirect_uris'              => wp_json_encode( $redirect_uris ),
                 'grant_types'                => $grant_types,
                 'token_endpoint_auth_method' => $auth_method,
+                'status'                     => $status,
+                'ip_address'                 => $ip_address,
+                'user_agent'                 => $user_agent,
             ],
-            [ '%s', '%s', '%s', '%s', '%s', '%s' ]
+            [ '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
         );
 
         if ( false === $inserted ) {
@@ -532,6 +623,7 @@ class Token_Store {
             'token_endpoint_auth_method' => $auth_method,
             'response_types'             => [ 'code' ],
             'client_id_issued_at'        => time(),
+            'status'                     => $status,
         ];
 
         if ( $client_secret ) {
@@ -574,12 +666,349 @@ class Token_Store {
                 'client_name'                => get_bloginfo( 'name' ) . ' (static)',
                 'redirect_uris'              => [], // Static clients accept any localhost/HTTPS redirect.
                 'grant_types'                => 'authorization_code',
+                'status'                     => 'active', // Static clients are always active — never gated by approval.
                 'token_endpoint_auth_method' => ! empty( $settings['oauth_client_secret'] ) ? 'client_secret_post' : 'none',
                 'is_static'                  => true,
             ];
         }
 
         return false;
+    }
+
+    /* ------------------------------------------------------------------
+     *  Client ID Metadata Document (CIMD) support
+     * ----------------------------------------------------------------*/
+
+    /**
+     * Detect a CIMD client_id by shape. CIMD client_ids are absolute https URLs
+     * that point to a JSON metadata document; standard dynamic-registration
+     * client_ids use the `rmcp_` prefix. Detection by prefix avoids a false
+     * positive on any future non-URL identifier scheme.
+     *
+     * @param mixed $client_id Value from the OAuth request; may be non-string.
+     * @return bool
+     */
+    public static function is_cimd_client( $client_id ) {
+        return is_string( $client_id )
+            && strlen( $client_id ) > 8
+            && 0 === strncasecmp( $client_id, 'https://', 8 );
+    }
+
+    /**
+     * Resolve a URL-shaped client_id against its metadata document.
+     *
+     * Called by Server.php entry points BEFORE get_client() so the client row
+     * is persisted before downstream lookup runs. Non-URL client_ids
+     * short-circuit to null immediately, making this a no-op on the standard
+     * dynamic-registration path.
+     *
+     * @param string $client_id The client identifier from the OAuth request.
+     * @return array|null Client row (same shape as get_client) or null if
+     *                    not a CIMD client, feature disabled, or fetch/validate failed.
+     */
+    public static function resolve_cimd_client( $client_id ) {
+        if ( ! self::is_cimd_client( $client_id ) ) {
+            return null;
+        }
+
+        if ( ! apply_filters( 'royal_mcp_cimd_enabled', true ) ) {
+            return null;
+        }
+
+        $metadata = self::fetch_cimd_metadata( $client_id );
+        if ( null === $metadata ) {
+            return null;
+        }
+
+        if ( ! self::validate_cimd_metadata( $metadata ) ) {
+            return null;
+        }
+
+        $result = self::register_cimd_client( $client_id, $metadata );
+        if ( is_wp_error( $result ) ) {
+            return null;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Fetch and transient-cache a CIMD metadata document.
+     *
+     * SSRF hardening: wp_safe_remote_get blocks private / loopback / link-local
+     * hosts by default via wp_http_validate_url, and reject_unsafe_urls is on.
+     * On top of that this method enforces an https scheme prefix explicitly,
+     * caps response size at 64KB, timeouts at 5s, and allows at most 3
+     * redirects.
+     *
+     * @param string $url The metadata document URL.
+     * @return array|null Parsed metadata document on success, null on any failure.
+     */
+    private static function fetch_cimd_metadata( $url ) {
+        $ttl       = (int) apply_filters( 'royal_mcp_cimd_cache_ttl', HOUR_IN_SECONDS );
+        $cache_key = 'royal_mcp_cimd_meta_' . hash( 'sha256', $url );
+
+        $cached = get_transient( $cache_key );
+        if ( false !== $cached && is_array( $cached ) ) {
+            return $cached;
+        }
+
+        if ( 0 !== strncasecmp( $url, 'https://', 8 ) ) {
+            return null;
+        }
+
+        if ( false === wp_http_validate_url( $url ) ) {
+            return null;
+        }
+
+        $response = wp_safe_remote_get(
+            $url,
+            [
+                'timeout'     => 5,
+                'redirection' => 3,
+                'user-agent'  => 'RoyalMCP/' . ROYAL_MCP_VERSION . ' (+https://royalplugins.com/support/royal-mcp/)',
+                'headers'     => [ 'Accept' => 'application/json' ],
+            ]
+        );
+
+        if ( is_wp_error( $response ) ) {
+            return null;
+        }
+
+        $status = (int) wp_remote_retrieve_response_code( $response );
+        if ( 200 !== $status ) {
+            return null;
+        }
+
+        $body = wp_remote_retrieve_body( $response );
+        if ( strlen( $body ) > 64 * 1024 ) {
+            return null;
+        }
+
+        $data = json_decode( $body, true );
+        if ( ! is_array( $data ) ) {
+            return null;
+        }
+
+        set_transient( $cache_key, $data, $ttl );
+
+        return $data;
+    }
+
+    /**
+     * Validate a CIMD metadata document against RFC 7591 required fields.
+     *
+     * Required: `redirect_uris` (non-empty array of strings).
+     * Optional but typed: `client_name` (string when present).
+     *
+     * @param array $metadata Parsed metadata document.
+     * @return bool
+     */
+    private static function validate_cimd_metadata( array $metadata ) {
+        if ( empty( $metadata['redirect_uris'] ) || ! is_array( $metadata['redirect_uris'] ) ) {
+            return false;
+        }
+
+        foreach ( $metadata['redirect_uris'] as $uri ) {
+            if ( ! is_string( $uri ) || '' === trim( $uri ) ) {
+                return false;
+            }
+        }
+
+        if ( isset( $metadata['client_name'] ) && ! is_string( $metadata['client_name'] ) ) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Persist (upsert) a CIMD-registered client into the clients table.
+     *
+     * Unlike register_client(), the client_id is provided by the caller (the
+     * metadata document URL) rather than randomly generated. Idempotent: an
+     * existing row with the same client_id is replaced so a refreshed
+     * metadata document overrides the prior snapshot.
+     *
+     * @param string $client_id The URL-shaped client_id (metadata document URL).
+     * @param array  $metadata  The validated metadata document.
+     * @return array|\WP_Error Client record on success.
+     */
+    public static function register_cimd_client( $client_id, array $metadata ) {
+        global $wpdb;
+
+        if ( strlen( $client_id ) > 191 ) {
+            return new \WP_Error(
+                'royal_mcp_cimd_client_id_too_long',
+                'CIMD client_id URL exceeds the 191-character index limit for the clients table.'
+            );
+        }
+
+        $redirect_uris = array_map( 'sanitize_url', $metadata['redirect_uris'] );
+        $client_name   = isset( $metadata['client_name'] )
+            ? sanitize_text_field( $metadata['client_name'] )
+            : 'CIMD Client';
+        $grant_types = isset( $metadata['grant_types'] ) && is_array( $metadata['grant_types'] )
+            ? sanitize_text_field( implode( ' ', $metadata['grant_types'] ) )
+            : 'authorization_code';
+
+        $table = self::clients_table();
+
+        // Upsert. UNIQUE KEY on client_id(191) makes REPLACE delete-then-insert
+        // the row with the same client_id. tokens.client_id is a plain KEY (not
+        // FK) on the varchar identity, so existing tokens continue to resolve
+        // after the row's auto-inc id churns.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $replaced = $wpdb->replace(
+            $table,
+            [
+                'client_id'                  => $client_id,
+                'client_secret_hash'         => null,
+                'client_name'                => $client_name,
+                'redirect_uris'              => wp_json_encode( $redirect_uris ),
+                'grant_types'                => $grant_types,
+                'token_endpoint_auth_method' => 'none',
+            ],
+            [ '%s', '%s', '%s', '%s', '%s', '%s' ]
+        );
+
+        if ( false === $replaced ) {
+            return new \WP_Error(
+                'royal_mcp_cimd_register_failed',
+                'Failed to persist CIMD client registration.',
+                [ 'db_error' => $wpdb->last_error ]
+            );
+        }
+
+        return [
+            'client_id'                  => $client_id,
+            'client_name'                => $client_name,
+            'redirect_uris'              => $redirect_uris,
+            'grant_types'                => explode( ' ', $grant_types ),
+            'token_endpoint_auth_method' => 'none',
+            'response_types'             => [ 'code' ],
+            'client_id_issued_at'        => time(),
+            'is_cimd'                    => true,
+        ];
+    }
+
+    /* ------------------------------------------------------------------
+     *  Pending-approval helpers (Chunk 12 opt-in DCR gate)
+     * ----------------------------------------------------------------*/
+
+    /**
+     * True if the client row's status is 'pending_approval'. Wraps the raw
+     * column read so callers don't hardcode the sentinel value.
+     */
+    public static function is_pending_approval( array $client ) {
+        return 'pending_approval' === ( $client['status'] ?? 'active' );
+    }
+
+    /**
+     * Flip a client from pending_approval to active. Idempotent — already-
+     * active clients are a no-op.
+     *
+     * @param string $client_id
+     * @return bool True on state change, false on no-op / missing row.
+     */
+    public static function approve_client( $client_id ) {
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        return (bool) $wpdb->update(
+            self::clients_table(),
+            [ 'status' => 'active' ],
+            [ 'client_id' => $client_id, 'status' => 'pending_approval' ],
+            [ '%s' ],
+            [ '%s', '%s' ]
+        );
+    }
+
+    /**
+     * Reject a pending client by deleting the row and any auth codes it
+     * accumulated. Tokens shouldn't exist for a pending client but delete
+     * those defensively too.
+     *
+     * @param string $client_id
+     * @return bool True if a row was deleted, false if not found.
+     */
+    public static function reject_client( $client_id ) {
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->delete( self::auth_codes_table(), [ 'client_id' => $client_id ], [ '%s' ] );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->delete( self::tokens_table(), [ 'client_id' => $client_id ], [ '%s' ] );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        return (bool) $wpdb->delete(
+            self::clients_table(),
+            [ 'client_id' => $client_id, 'status' => 'pending_approval' ],
+            [ '%s', '%s' ]
+        );
+    }
+
+    /**
+     * List every client row with status = pending_approval. Includes IP + UA
+     * + created_at for the admin surface. Ordered oldest-first so the admin
+     * works through the queue in FIFO.
+     *
+     * @return array
+     */
+    public static function get_pending_clients() {
+        global $wpdb;
+        $table = self::clients_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $rows = $wpdb->get_results(
+            "SELECT client_id, client_name, redirect_uris, ip_address, user_agent, created_at
+             FROM `{$table}`
+             WHERE status = 'pending_approval'
+             ORDER BY created_at ASC",
+            ARRAY_A
+        );
+        if ( ! is_array( $rows ) ) {
+            return [];
+        }
+        foreach ( $rows as &$row ) {
+            $row['redirect_uris'] = json_decode( $row['redirect_uris'], true ) ?: [];
+        }
+        return $rows;
+    }
+
+    /**
+     * Fast count of pending rows for the admin bar badge.
+     */
+    public static function count_pending_clients() {
+        global $wpdb;
+        $table = self::clients_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        return (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM `{$table}` WHERE status = 'pending_approval'"
+        );
+    }
+
+    /**
+     * Auto-expire pending client rows older than the TTL window. Ships alongside
+     * the daily royal_mcp_token_cleanup cron so the pending queue can't grow
+     * unbounded if an admin stops triaging.
+     *
+     * TTL default 48 hours, filterable via royal_mcp_pending_client_ttl_hours.
+     *
+     * @return int Number of pending rows deleted.
+     */
+    public static function gc_expired_pending_clients() {
+        global $wpdb;
+        $ttl_hours = (int) apply_filters( 'royal_mcp_pending_client_ttl_hours', 48 );
+        if ( $ttl_hours < 1 ) {
+            $ttl_hours = 1;
+        }
+        $table = self::clients_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        return (int) $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM `{$table}`
+                 WHERE status = 'pending_approval'
+                   AND created_at < DATE_SUB(NOW(), INTERVAL %d HOUR)",
+                $ttl_hours
+            )
+        );
     }
 
     /**

@@ -798,6 +798,16 @@ class Well_Known_Notice {
                 ?>
             </p>
             <p>
+                <?php
+                printf(
+                    /* translators: 1: literal URL path code for wp-json alternate, 2: literal URL path code for wp-json alternate */
+                    esc_html__( 'Royal MCP also serves the same metadata under %1$s and %2$s. If your MCP client supports pointing at those paths, you can bypass the host-level block without waiting for a fix.', 'royal-mcp' ),
+                    '<code>/wp-json/royal-mcp/v1/.well-known/oauth-authorization-server</code>',
+                    '<code>/wp-json/royal-mcp/v1/.well-known/oauth-protected-resource</code>'
+                );
+                ?>
+            </p>
+            <p>
                 <a href="<?php echo esc_url( self::SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
                     <?php esc_html_e( 'See the 5-minute fix', 'royal-mcp' ); ?>
                 </a>

@@ -6,6 +6,8 @@ if (!defined('ABSPATH')) {
 use Royal_MCP\Platform\Registry;
 
 $royal_mcp_settings = isset($settings) ? $settings : get_option('royal_mcp_settings', []);
+$royal_mcp_abilities_raw = get_option('royal_mcp_abilities_registration_enabled', null);
+$royal_mcp_abilities_registration_enabled = (null === $royal_mcp_abilities_raw || '' === $royal_mcp_abilities_raw) ? true : (bool) $royal_mcp_abilities_raw;
 $royal_mcp_platforms = isset($platforms) ? $platforms : Registry::get_platforms();
 $royal_mcp_platform_groups = isset($royal_mcp_platform_groups) ? $royal_mcp_platform_groups : Registry::get_platform_groups();
 $royal_mcp_configured_platforms = $royal_mcp_settings['platforms'] ?? [];
@@ -148,6 +150,42 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                                 </p>
                                 <p class="description">
                                     <?php esc_html_e('When ON, browser-based AI agents (via the Cloudflare WebMCP bridge) can call Royal MCP tools using the visitor\'s existing WordPress login session. Every request must carry a WordPress nonce that Royal MCP mints for logged-in users — the same-origin security gate keeps this from being reachable by third-party pages your admin visits. External clients (Claude Desktop, ChatGPT, Cursor) continue to use OAuth Bearer tokens regardless of this setting.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="require_client_approval"><?php esc_html_e('Require approval before new AI clients can connect', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[require_client_approval]"
+                                           id="require_client_approval"
+                                           value="1"
+                                           <?php checked(!empty($royal_mcp_settings['require_client_approval'])); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When ON, dynamic OAuth client registrations are saved as pending and cannot connect until you approve them from Royal MCP > Pending Clients. Default OFF preserves the standard dynamic-registration behavior. Turn ON for high-security postures where every AI-client connection should be reviewed by an admin.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="abilities_registration_enabled"><?php esc_html_e('Register tools with the WordPress Abilities API', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[abilities_registration_enabled]"
+                                           id="abilities_registration_enabled"
+                                           value="1"
+                                           <?php checked($royal_mcp_abilities_registration_enabled); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When ON (default), Royal MCP tools are registered with the WordPress Abilities API so other MCP endpoints on this site (for example a page-builder module that ships its own MCP server) can auto-discover them. Turn this OFF if you run a separate MCP endpoint alongside Royal MCP and want to keep each server\'s tool list scoped to that server. Requires WordPress 6.9 or later.', 'royal-mcp'); ?>
                                 </p>
                             </td>
                         </tr>

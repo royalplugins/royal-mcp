@@ -287,6 +287,7 @@ class Settings_Page {
         $sanitized['enabled'] = isset($input['enabled']) ? (bool) $input['enabled'] : false;
         $sanitized['allow_option_writes'] = isset($input['allow_option_writes']) ? (bool) $input['allow_option_writes'] : false;
         $sanitized['allow_theme_writes'] = isset($input['allow_theme_writes']) ? (bool) $input['allow_theme_writes'] : false;
+        $sanitized['require_client_approval'] = isset($input['require_client_approval']) ? (bool) $input['require_client_approval'] : false;
 
         // WebMCP browser-agent bridge — opt-in cookie-auth path for the Cloudflare
         // WebMCP bridge. Off by default so the cookie-auth surface is never a
@@ -303,6 +304,20 @@ class Settings_Page {
             delete_transient( \Royal_MCP\Discovery\Server_Card::CACHE_KEY );
             delete_transient( \Royal_MCP\Discovery\Agent_Skills_Index::CACHE_KEY );
         }
+
+        // Abilities API registration — written to a standalone option key,
+        // NOT nested inside royal_mcp_settings. The bootstrap gate at
+        // royal-mcp.php reads the standalone option directly so it doesn't
+        // depend on the settings array being present or well-formed. This
+        // preserves backwards compatibility with installs that opted out
+        // via WP-CLI or a WPCode snippet before this UI shipped.
+        // Store as string '1' / '0' — booleans serialize false to empty string,
+        // which is indistinguishable from "option missing" and defeats the
+        // default-on fallback at read sites.
+        update_option(
+            'royal_mcp_abilities_registration_enabled',
+            isset( $input['abilities_registration_enabled'] ) ? '1' : '0'
+        );
 
         // Access token TTL — whitelist against the 4 UI choices; anything else falls back to the default.
         $posted_ttl = isset($input['access_token_ttl_seconds']) ? (int) $input['access_token_ttl_seconds'] : 0;

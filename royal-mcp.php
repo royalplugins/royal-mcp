@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.5.1
+ * Version: 1.5.2
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -42,7 +42,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 // guards each MCP request produces 4 warnings + 4 nginx error-log stack
 // traces, which on shared PHP-FPM pools amplifies into cross-site worker
 // starvation.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.1' );
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.2' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -136,6 +136,14 @@ class Royal_MCP_Plugin {
         // sessions cleanup rides on the same daily cron action.
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Session_Store::class, 'cleanup_expired']);
 
+        // Stale OAuth client GC (rows created but never authorized) rides on the
+        // same daily cron. Older-than-TTL clients with zero tokens are pruned.
+        add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'gc_stale_clients']);
+
+        // Auto-expire pending-approval clients that the admin never acted on.
+        // Default 48h TTL, filterable via royal_mcp_pending_client_ttl_hours.
+        add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'gc_expired_pending_clients']);
+
         // Add plugin action links (Settings, Docs)
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), [$this, 'add_action_links']);
 
@@ -154,7 +162,9 @@ class Royal_MCP_Plugin {
 
         // WordPress Abilities API registration (WP 6.9+). Categories hook fires before
         // abilities hook; registering an ability against a non-registered category throws.
-        if ( function_exists( 'wp_register_ability_category' ) && (bool) get_option( 'royal_mcp_abilities_registration_enabled', true ) ) {
+        $rmcp_abilities_raw     = get_option( 'royal_mcp_abilities_registration_enabled', null );
+        $rmcp_abilities_enabled = ( null === $rmcp_abilities_raw || '' === $rmcp_abilities_raw ) ? true : (bool) $rmcp_abilities_raw;
+        if ( function_exists( 'wp_register_ability_category' ) && $rmcp_abilities_enabled ) {
             add_action( 'wp_abilities_api_categories_init', array( \Royal_MCP\Abilities\Categories::class, 'register' ) );
             add_action( 'wp_abilities_api_init', array( \Royal_MCP\Abilities\Registrar::class, 'register' ) );
 
@@ -400,7 +410,7 @@ class Royal_MCP_Plugin {
 
         $table_name = $wpdb->prefix . 'royal_mcp_logs';
 
-        $sql = "CREATE TABLE IF NOT EXISTS $table_name (
+        $sql = "CREATE TABLE $table_name (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             timestamp datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             mcp_server varchar(255) NOT NULL,
@@ -614,10 +624,17 @@ class Royal_MCP_Plugin {
         // Endpoint tool-profile filter — trims tools/list by ?tools=<profile>.
         Royal_MCP\MCP\Tool_Profiles::register();
 
+        // Pending clients admin bar count also renders on the front-end when
+        // an admin is logged in and browsing the site, so instantiate outside
+        // the is_admin() branch. The class's admin_menu / admin_post hooks
+        // only fire in the admin context regardless.
+        new Royal_MCP\Admin\Pending_Clients_Page();
+
         // Initialize components
         if (is_admin()) {
             new Royal_MCP\Admin\Settings_Page();
             new Royal_MCP\Admin\Well_Known_Notice();
+            new Royal_MCP\Admin\Authorization_Header_Notice();
             new Royal_MCP\Admin\Help_Page();
         }
     }
@@ -676,6 +693,47 @@ class Royal_MCP_Plugin {
             'methods' => 'GET',
             'callback' => [ \Royal_MCP\Discovery\Agent_Skills_Index::class, 'handle_request' ],
             'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
+        ]);
+
+        // OAuth discovery endpoints dual-served under /wp-json/royal-mcp/v1/
+        // as a fallback for managed hosts (SiteGround, WP Engine, some cPanel)
+        // whose edge layer reserves the root /.well-known/* path prefix before
+        // the request reaches PHP. Both paths return the identical payload
+        // built by OAuth\Server, so a client that finds either one succeeds
+        // without host cooperation.
+        register_rest_route('royal-mcp/v1', '/.well-known/oauth-authorization-server', [
+            'methods'             => 'GET',
+            'callback'            => function () {
+                return new \WP_REST_Response(
+                    \Royal_MCP\OAuth\Server::build_authorization_server_metadata(),
+                    200,
+                    [ 'Cache-Control' => 'public, max-age=3600' ]
+                );
+            },
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
+        ]);
+        register_rest_route('royal-mcp/v1', '/.well-known/oauth-protected-resource', [
+            'methods'             => 'GET',
+            'callback'            => function () {
+                return new \WP_REST_Response(
+                    \Royal_MCP\OAuth\Server::build_protected_resource_metadata(),
+                    200,
+                    [ 'Cache-Control' => 'public, max-age=3600' ]
+                );
+            },
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
+        ]);
+
+        // Internal diagnostic route used by Authorization_Header_Notice to detect
+        // when the web server strips the Authorization header before WordPress
+        // sees it. Nonce-gated at the callback level (probe_id must match a
+        // freshly-set single-use transient) so a bare request without the
+        // matching probe_id returns 404 — no header-state leaks to unauthenticated
+        // scanners.
+        register_rest_route('royal-mcp/v1', '/diagnostics/header-echo', [
+            'methods'             => 'POST',
+            'callback'            => [ \Royal_MCP\Admin\Authorization_Header_Notice::class, 'handle_echo_request' ],
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — nonce-gated at callback via probe_id transient consume
         ]);
     }
 }

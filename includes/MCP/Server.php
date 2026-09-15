@@ -142,6 +142,9 @@ class Server {
         if ( ! has_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_default_output_schemas' ] ) ) {
             add_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_default_output_schemas' ], PHP_INT_MAX );
         }
+        if ( ! has_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_site_host_suffix' ] ) ) {
+            add_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_site_host_suffix' ], PHP_INT_MAX );
+        }
     }
 
     /**
@@ -157,6 +160,7 @@ class Server {
         $this->register_method_handler('ping',                      [ $this, 'handle_ping' ]);
         $this->register_method_handler('resources/list',            [ $this, 'handle_resources_list' ]);
         $this->register_method_handler('prompts/list',              [ $this, 'handle_prompts_list' ]);
+        $this->register_method_handler('server/discover',           [ $this, 'handle_server_discover' ]);
     }
 
     /**
@@ -925,10 +929,24 @@ class Server {
      * @return array Response with id, occurrences, replaced, verified, lengths, message.
      */
     private static function replace_in_post_content(int $post_id, array $args, string $noun): array {
-        // object-level edit_post resolves to the PT-specific cap
-        // (edit_page etc.) automatically via map_meta_cap — same gate as
-        // wp_update_post / wp_update_page.
-        if (!current_user_can('edit_post', $post_id)) {
+        // Route the permission check by post type. `custom_css` is a
+        // WordPress-core post type used to store the active theme's custom
+        // CSS; WP gates it behind the `edit_css` meta cap (single-site:
+        // maps to unfiltered_html; multisite: super-admin-only), not a
+        // plain edit_post grant. A raw `edit_post` check fails for admins
+        // who do have edit_css because WP's map_meta_cap routing doesn't
+        // apply to a direct edit_post query on this post type. Every
+        // other post type gets the standard object-level check, which
+        // resolves to edit_page / etc. automatically via map_meta_cap.
+        $target_post = get_post($post_id);
+        if (!$target_post) {
+            throw new \Exception('Post not found.');
+        }
+        if ('custom_css' === $target_post->post_type) {
+            if (!current_user_can('edit_css')) {
+                throw new \Exception('You do not have permission to edit the custom CSS.');
+            }
+        } elseif (!current_user_can('edit_post', $post_id)) {
             throw new \Exception('You do not have permission to edit this ' . esc_html($noun) . '.');
         }
         if (!isset($args['find']) || !is_string($args['find']) || $args['find'] === '') {
@@ -1161,11 +1179,11 @@ class Server {
             ['name' => 'wp_update_custom_css', 'description' => 'Update the active theme\'s custom CSS. CSS is filtered through wp_kses (script tags stripped). Requires the "Allow AI to modify theme appearance" admin toggle and unfiltered_html capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['css' => ['type' => 'string'], 'theme_slug' => ['type' => 'string', 'description' => 'Theme slug (defaults to active theme)']], 'required' => ['css']]],
             ['name' => 'wp_get_widgets', 'description' => 'List widget instances. Uses the WordPress core /wp/v2/widgets REST endpoint in edit context so both rendered output AND full instance payload are returned uniformly for classic and block widgets. Classic widgets: instance carries the widget-specific settings (text, title, filter, etc.). Block widgets: instance.raw.content carries the raw block markup, and a blocks field is added with the parsed block tree for structured inspection. Omit sidebar to return widgets across ALL sidebars including wp_inactive_widgets (orphaned widgets from prior themes — these have rendered:"" and produce no front-end output). Filter by a specific sidebar ID (discover IDs via wp_get_sidebars) to scope results; a non-existent sidebar ID returns an empty array, not an error.', 'inputSchema' => ['type' => 'object', 'properties' => ['sidebar' => ['type' => 'string', 'description' => 'Optional sidebar ID to filter by. Omit to return widgets across all sidebars (includes wp_inactive_widgets).']]]],
             ['name' => 'wp_get_sidebars', 'description' => 'List registered sidebars (widget areas) on the active theme with their IDs, names, description, and status. Use to discover sidebar IDs before calling wp_get_widgets or wp_update_widget.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
-            ['name' => 'wp_update_widget', 'description' => 'Update a widget instance by ID. Requires the "Allow AI to modify theme appearance" admin toggle AND edit_theme_options capability. Uses WordPress core /wp/v2/widgets so classic and block widgets are handled uniformly. Pass the id returned by wp_get_widgets. Response includes a 72-hour undo token that restores the prior widget instance via mcp_undo_last_operation. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string', 'description' => 'Widget ID (e.g. text-2, block-15)'], 'sidebar' => ['type' => 'string', 'description' => 'Sidebar ID to place the widget in (omit to leave unchanged)'], 'instance' => ['type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true, 'description' => 'Widget instance data. For classic widgets, either pass the same {encoded, hash} object returned by wp_get_widgets or wrap raw settings as {raw: {…}}.'], 'form_data' => ['type' => 'string', 'description' => 'Serialized form data (classic widgets alternative to instance)']], 'required' => ['id']]],
+            ['name' => 'wp_update_widget', 'description' => 'Update a widget instance by ID. Requires the "Allow AI to modify theme appearance" admin toggle AND edit_theme_options capability. Uses WordPress core /wp/v2/widgets so classic and block widgets are handled uniformly. Pass the id returned by wp_get_widgets. Response includes a 72-hour undo token that restores the prior widget instance via mcp_undo_last_operation. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string', 'description' => 'Widget ID (e.g. text-2, block-15)'], 'sidebar' => ['type' => 'string', 'description' => 'Sidebar ID to place the widget in (omit to leave unchanged)'], 'instance' => ['type' => 'object', 'additionalProperties' => true, 'description' => 'Widget instance data. For classic widgets, either pass the same {encoded, hash} object returned by wp_get_widgets or wrap raw settings as {raw: {…}}.'], 'form_data' => ['type' => 'string', 'description' => 'Serialized form data (classic widgets alternative to instance)']], 'required' => ['id']]],
 
             // SEO Meta (auto-detects Yoast SEO / Rank Math / AIOSEO / SEObolt)
-            ['name' => 'wp_get_seo_meta', 'description' => 'Get the SEO meta fields for a post (title, description, focus keyword, noindex, OG overrides where supported, URL slug). Auto-detects the active SEO plugin — Yoast SEO, Rank Math, AIOSEO, or SEObolt — and returns that plugin\'s fields plus the post slug (which is a WordPress-native field, returned regardless of SEO plugin). AIOSEO + SEObolt return the four core fields (title/description/focus_keyword/noindex); og_title/og_description are populated for Yoast + Rank Math only. Returns RAW stored templates (e.g. Yoast\'s default "%%page%% %%sep%% %%sitename%%") — do NOT measure length from these values, they contain template markup that never appears in the rendered <title> tag and will produce false-positive title_too_short / title_too_long flags. For measured/rendered SEO values, use Royal MCP Pro\'s wp_audit_seo_bulk which resolves per-engine template variables before measuring.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer']], 'required' => ['post_id']]],
-            ['name' => 'wp_update_seo_meta', 'description' => 'Update SEO meta fields on a post. Auto-routes title/description/focus_keyword/noindex to whichever SEO plugin is active (Yoast, Rank Math, AIOSEO, or SEObolt). og_title/og_description route to Yoast + Rank Math; for AIOSEO/SEObolt they are silently skipped since those plugins store OG data in different shapes. The slug field is a WordPress-native field and works regardless of SEO plugin. Requires edit_post capability on the target post.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'title' => ['type' => 'string', 'description' => 'SEO title (replaces the meta title used in browser tabs and SERPs)'], 'description' => ['type' => 'string', 'description' => 'SEO meta description (used in SERPs)'], 'focus_keyword' => ['type' => 'string', 'description' => 'Primary focus keyword for SEO scoring (AIOSEO stores this as focus_keyphrase internally)'], 'noindex' => ['type' => 'boolean', 'description' => 'Tell search engines not to index this URL'], 'og_title' => ['type' => 'string', 'description' => 'Open Graph title (Facebook / Slack / LinkedIn previews). Yoast + Rank Math only.'], 'og_description' => ['type' => 'string', 'description' => 'Open Graph description. Yoast + Rank Math only.'], 'slug' => ['type' => 'string', 'description' => 'URL slug (post_name). WordPress will sanitize and ensure uniqueness; the actually-saved value is returned in the response so the caller can confirm.']], 'required' => ['post_id']]],
+            ['name' => 'wp_get_seo_meta', 'description' => 'Get the SEO meta fields for a post (title, description, focus keyword, noindex, OG overrides where supported, URL slug). Auto-detects the active SEO plugin — Yoast SEO, Rank Math, AIOSEO, SEOPress, or SEObolt — and returns that plugin\'s fields plus the post slug (which is a WordPress-native field, returned regardless of SEO plugin). AIOSEO + SEObolt return the four core fields (title/description/focus_keyword/noindex); og_title/og_description are populated for Yoast + Rank Math only. Returns RAW stored templates (e.g. Yoast\'s default "%%page%% %%sep%% %%sitename%%") — do NOT measure length from these values, they contain template markup that never appears in the rendered <title> tag and will produce false-positive title_too_short / title_too_long flags. For measured/rendered SEO values, use Royal MCP Pro\'s wp_audit_seo_bulk which resolves per-engine template variables before measuring.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer']], 'required' => ['post_id']]],
+            ['name' => 'wp_update_seo_meta', 'description' => 'Update SEO meta fields on a post. Auto-routes title/description/focus_keyword/noindex to whichever SEO plugin is active (Yoast, Rank Math, AIOSEO, SEOPress, or SEObolt). og_title / og_description route to Yoast, Rank Math, and SEOPress; AIOSEO + SEObolt store OG data in different shapes so those fields fall through to unsupported_fields. twitter_title / twitter_description / twitter_image route to Yoast, Rank Math, SEOPress, and SEObolt; AIOSEO stores twitter data in its own database table so all three twitter fields fall through to unsupported_fields until a dedicated AIOSEO adapter lands. The slug field is a WordPress-native field and works regardless of SEO plugin. Requires edit_post capability on the target post.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'title' => ['type' => 'string', 'description' => 'SEO title (replaces the meta title used in browser tabs and SERPs)'], 'description' => ['type' => 'string', 'description' => 'SEO meta description (used in SERPs)'], 'focus_keyword' => ['type' => 'string', 'description' => 'Primary focus keyword for SEO scoring (AIOSEO stores this as focus_keyphrase internally)'], 'noindex' => ['type' => 'boolean', 'description' => 'Tell search engines not to index this URL'], 'og_title' => ['type' => 'string', 'description' => 'Open Graph title (Facebook / Slack / LinkedIn previews). Yoast + Rank Math only.'], 'og_description' => ['type' => 'string', 'description' => 'Open Graph description. Yoast + Rank Math only.'], 'twitter_title' => ['type' => 'string', 'description' => 'Twitter card title. Routed to the active SEO plugin\'s Twitter-title meta key (Yoast, Rank Math, AIOSEO, SEObolt).'], 'twitter_description' => ['type' => 'string', 'description' => 'Twitter card description. Same per-plugin routing as twitter_title.'], 'twitter_image' => ['type' => 'string', 'description' => 'Twitter card image URL. Routed to Yoast, Rank Math, and SEObolt; AIOSEO stores this in a custom table and returns as unsupported_field.'], 'slug' => ['type' => 'string', 'description' => 'URL slug (post_name). WordPress will sanitize and ensure uniqueness; the actually-saved value is returned in the response so the caller can confirm.']], 'required' => ['post_id']]],
             ['name' => 'seo_audit_meta_tags', 'description' => 'Fetch a post\'s actual rendered HTML and parse the head for title, meta description, canonical, viewport, Open Graph and Twitter Card tags. Catches theme/plugin/cache conflicts that only appear in the served output — duplicate title tags, mismatched canonicals, missing OG images, viewport misconfiguration. Complements wp_get_seo_meta (which reads DB fields) by validating what actually reaches crawlers. Pass a post_id (URL is resolved via get_permalink) or a same-site url. Read-only.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer', 'description' => 'Post ID whose permalink to audit. Either post_id or url is required.'], 'url' => ['type' => 'string', 'description' => 'Absolute URL to audit. Must be on this site (same host as home_url). Either post_id or url is required.']]]],
 
             // Permalink Structure
@@ -1631,7 +1649,9 @@ class Server {
                 'protocolVersion' => $negotiated,
                 'serverInfo' => $server_info,
                 'capabilities' => [
-                    'tools' => new \stdClass(),
+                    'tools'     => new \stdClass(),
+                    'resources' => new \stdClass(),
+                    'prompts'   => new \stdClass(),
                 ],
             ],
         ];
@@ -1643,6 +1663,73 @@ class Server {
      */
     private function handle_notification_ack($params, $id) {
         return null;
+    }
+
+    /**
+     * The MCP protocol revision that first introduced server/discover as a
+     * spec-forward alternative to the initialize handshake. Requests that
+     * negotiate an older revision receive JSON-RPC method-not-found so clients
+     * that speak an older era continue to see the discovery method as absent.
+     */
+    const SERVER_DISCOVER_MIN_PROTOCOL_VERSION = '2026-07-28';
+
+    /**
+     * Handler for server/discover — spec-forward discovery method that returns
+     * server capabilities without requiring an initialize handshake.
+     *
+     * Era-gated inside the handler (not at registration) because the stateless-
+     * per-request architecture doesn't retain negotiated state across requests.
+     * The caller declares its version each request in one of two ways:
+     *   1. params.protocolVersion in the JSON-RPC body (like initialize does)
+     *   2. MCP-Protocol-Version HTTP header (spec-recommended post-initialize)
+     * Missing or unsupported values fall back to DEFAULT_NEGOTIATED_PROTOCOL_VERSION,
+     * which sits below the SERVER_DISCOVER_MIN threshold on purpose so a silent
+     * client sees the discovery method as absent rather than mismatched.
+     *
+     * Response mirrors the initialize result — protocolVersion + serverInfo +
+     * capabilities — so a client can bootstrap without a full handshake.
+     */
+    private function handle_server_discover($params, $id) {
+        $requested_version = null;
+        if (is_array($params) && isset($params['protocolVersion']) && is_string($params['protocolVersion'])) {
+            $requested_version = $params['protocolVersion'];
+        } elseif (!empty($_SERVER['HTTP_MCP_PROTOCOL_VERSION'])) {
+            $requested_version = sanitize_text_field(wp_unslash($_SERVER['HTTP_MCP_PROTOCOL_VERSION']));
+        }
+
+        $effective_version = ($requested_version !== null && in_array($requested_version, self::SUPPORTED_PROTOCOL_VERSIONS, true))
+            ? $requested_version
+            : self::DEFAULT_NEGOTIATED_PROTOCOL_VERSION;
+
+        if (strcmp($effective_version, self::SERVER_DISCOVER_MIN_PROTOCOL_VERSION) < 0) {
+            return [
+                'jsonrpc' => '2.0',
+                'id' => $id,
+                'error' => [
+                    'code' => -32601,
+                    'message' => 'Method not found: server/discover',
+                ],
+            ];
+        }
+
+        $server_info = [
+            'name'    => 'Royal MCP WordPress',
+            'version' => ROYAL_MCP_VERSION,
+        ];
+
+        return [
+            'jsonrpc' => '2.0',
+            'id' => $id,
+            'result' => [
+                'protocolVersion' => $effective_version,
+                'serverInfo'      => $server_info,
+                'capabilities'    => [
+                    'tools'     => new \stdClass(),
+                    'resources' => new \stdClass(),
+                    'prompts'   => new \stdClass(),
+                ],
+            ],
+        ];
     }
 
     private function handle_tools_list($params, $id) {
@@ -1813,6 +1900,49 @@ class Server {
             }
             $tools[ $i ]['outputSchema'] = $default;
         }
+        return $tools;
+    }
+
+    /**
+     * Suffix each tool description with the site host so a Claude workspace
+     * with multiple Royal MCP connectors registered gets a useful tie-breaking
+     * signal in the tool picker. Same tool name across sites — renaming would
+     * break existing bookmarks and instrumentation — but distinct descriptions.
+     *
+     * Idempotent: a second application detects the existing suffix and no-ops,
+     * so ordering across the royal_mcp_tools filter chain never double-stamps.
+     * Filterable via royal_mcp_disambiguate_tool_descriptions (default true)
+     * for site owners who want the raw descriptions unchanged.
+     *
+     * @param array $tools Tool definitions from get_tools().
+     * @return array Modified tool definitions with host suffix appended.
+     */
+    public static function stamp_site_host_suffix( $tools ) {
+        if ( ! is_array( $tools ) ) {
+            return $tools;
+        }
+        if ( ! apply_filters( 'royal_mcp_disambiguate_tool_descriptions', true ) ) {
+            return $tools;
+        }
+
+        $host = wp_parse_url( home_url(), PHP_URL_HOST );
+        if ( ! is_string( $host ) || '' === $host ) {
+            return $tools;
+        }
+
+        $suffix     = ' (site: ' . $host . ')';
+        $suffix_len = strlen( $suffix );
+
+        foreach ( $tools as $i => $tool ) {
+            if ( ! is_array( $tool ) || ! isset( $tool['description'] ) || ! is_string( $tool['description'] ) ) {
+                continue;
+            }
+            if ( substr( $tool['description'], -$suffix_len ) === $suffix ) {
+                continue;
+            }
+            $tools[ $i ]['description'] = rtrim( $tool['description'] ) . $suffix;
+        }
+
         return $tools;
     }
 
@@ -6587,28 +6717,47 @@ class Server {
                         // Adapter-specific field map (mirrors the write handler).
                         $undo_seo_map = [
                             'yoast'    => [
-                                'title'          => '_yoast_wpseo_title',
-                                'description'    => '_yoast_wpseo_metadesc',
-                                'focus_keyword'  => '_yoast_wpseo_focuskw',
-                                'og_title'       => '_yoast_wpseo_opengraph-title',
-                                'og_description' => '_yoast_wpseo_opengraph-description',
+                                'title'               => '_yoast_wpseo_title',
+                                'description'         => '_yoast_wpseo_metadesc',
+                                'focus_keyword'       => '_yoast_wpseo_focuskw',
+                                'og_title'            => '_yoast_wpseo_opengraph-title',
+                                'og_description'      => '_yoast_wpseo_opengraph-description',
+                                'twitter_title'       => '_yoast_wpseo_twitter-title',
+                                'twitter_description' => '_yoast_wpseo_twitter-description',
+                                'twitter_image'       => '_yoast_wpseo_twitter-image',
                             ],
                             'rankmath' => [
-                                'title'          => 'rank_math_title',
-                                'description'    => 'rank_math_description',
-                                'focus_keyword'  => 'rank_math_focus_keyword',
-                                'og_title'       => 'rank_math_facebook_title',
-                                'og_description' => 'rank_math_facebook_description',
+                                'title'               => 'rank_math_title',
+                                'description'         => 'rank_math_description',
+                                'focus_keyword'       => 'rank_math_focus_keyword',
+                                'og_title'            => 'rank_math_facebook_title',
+                                'og_description'      => 'rank_math_facebook_description',
+                                'twitter_title'       => 'rank_math_twitter_title',
+                                'twitter_description' => 'rank_math_twitter_description',
+                                'twitter_image'       => 'rank_math_twitter_image',
                             ],
                             'aioseo'   => [
-                                'title'          => '_aioseo_title',
-                                'description'    => '_aioseo_description',
-                                'focus_keyword'  => '_aioseo_focus_keyphrase',
+                                'title'               => '_aioseo_title',
+                                'description'         => '_aioseo_description',
+                                'focus_keyword'       => '_aioseo_focus_keyphrase',
+                            ],
+                            'seopress' => [
+                                'title'               => '_seopress_titles_title',
+                                'description'         => '_seopress_titles_desc',
+                                'focus_keyword'       => '_seopress_analysis_target_kw',
+                                'og_title'            => '_seopress_social_fb_title',
+                                'og_description'      => '_seopress_social_fb_desc',
+                                'twitter_title'       => '_seopress_social_twitter_title',
+                                'twitter_description' => '_seopress_social_twitter_desc',
+                                'twitter_image'       => '_seopress_social_twitter_img',
                             ],
                             'seobolt'  => [
-                                'title'          => '_seobolt_meta_title',
-                                'description'    => '_seobolt_meta_description',
-                                'focus_keyword'  => '_seobolt_focus_keyword',
+                                'title'               => '_seobolt_meta_title',
+                                'description'         => '_seobolt_meta_description',
+                                'focus_keyword'       => '_seobolt_focus_keyword',
+                                'twitter_title'       => '_seobolt_twitter_title',
+                                'twitter_description' => '_seobolt_twitter_description',
+                                'twitter_image'       => '_seobolt_twitter_image',
                             ],
                         ];
                         $undo_seo_field_map = $undo_seo_map[ $undo_seo_adapt ] ?? [];
@@ -6623,6 +6772,7 @@ class Server {
                                 if ( $undo_seo_adapt === 'yoast' )    return get_post_meta( $undo_seo_pid, '_yoast_wpseo_meta-robots-noindex', true ) === '1';
                                 if ( $undo_seo_adapt === 'rankmath' ) return in_array( 'noindex', (array) get_post_meta( $undo_seo_pid, 'rank_math_robots', true ), true );
                                 if ( $undo_seo_adapt === 'aioseo' )   return (bool) get_post_meta( $undo_seo_pid, '_aioseo_noindex', true );
+                                if ( $undo_seo_adapt === 'seopress' ) return 'yes' === get_post_meta( $undo_seo_pid, '_seopress_robots_index', true );
                                 if ( $undo_seo_adapt === 'seobolt' )  return (bool) get_post_meta( $undo_seo_pid, '_seobolt_noindex', true );
                                 return false;
                             }
@@ -6660,6 +6810,12 @@ class Server {
                                     update_post_meta( $undo_seo_pid, 'rank_math_robots', $robots );
                                 } elseif ( $undo_seo_adapt === 'aioseo' ) {
                                     update_post_meta( $undo_seo_pid, '_aioseo_noindex', $prior_bool ? '1' : '' );
+                                } elseif ( $undo_seo_adapt === 'seopress' ) {
+                                    if ( $prior_bool ) {
+                                        update_post_meta( $undo_seo_pid, '_seopress_robots_index', 'yes' );
+                                    } else {
+                                        delete_post_meta( $undo_seo_pid, '_seopress_robots_index' );
+                                    }
                                 } elseif ( $undo_seo_adapt === 'seobolt' ) {
                                     update_post_meta( $undo_seo_pid, '_seobolt_noindex', $prior_bool ? '1' : '' );
                                 }
@@ -7509,6 +7665,19 @@ class Server {
                         'slug'          => $slug,
                     ];
                 }
+                if ($detected === 'seopress') {
+                    return [
+                        'plugin'         => 'seopress',
+                        'post_id'        => $post_id,
+                        'title'          => (string) get_post_meta($post_id, '_seopress_titles_title', true),
+                        'description'    => (string) get_post_meta($post_id, '_seopress_titles_desc', true),
+                        'focus_keyword'  => (string) get_post_meta($post_id, '_seopress_analysis_target_kw', true),
+                        'noindex'        => 'yes' === get_post_meta($post_id, '_seopress_robots_index', true),
+                        'og_title'       => (string) get_post_meta($post_id, '_seopress_social_fb_title', true),
+                        'og_description' => (string) get_post_meta($post_id, '_seopress_social_fb_desc', true),
+                        'slug'           => $slug,
+                    ];
+                }
                 if ($detected === 'seobolt') {
                     return [
                         'plugin'        => 'seobolt',
@@ -7524,7 +7693,7 @@ class Server {
                     'plugin'  => 'none',
                     'post_id' => $post_id,
                     'slug'    => $slug,
-                    'note'    => 'No SEO plugin (Yoast SEO, Rank Math, AIOSEO, or SEObolt) detected on this site. The slug field is still returned because it is a WordPress-native field.',
+                    'note'    => 'No SEO plugin (Yoast SEO, Rank Math, AIOSEO, SEOPress, or SEObolt) detected on this site. The slug field is still returned because it is a WordPress-native field.',
                 ];
 
             case 'wp_update_seo_meta':
@@ -7535,13 +7704,13 @@ class Server {
                     throw new \Exception('edit_post capability required for this post.');
                 }
                 $detected = $this->detect_seo_plugin();
-                $seo_field_keys = ['title', 'description', 'focus_keyword', 'og_title', 'og_description', 'noindex'];
+                $seo_field_keys = ['title', 'description', 'focus_keyword', 'og_title', 'og_description', 'twitter_title', 'twitter_description', 'twitter_image', 'noindex'];
                 $wants_seo_field = false;
                 foreach ($seo_field_keys as $k) {
                     if (array_key_exists($k, $args)) { $wants_seo_field = true; break; }
                 }
                 if ($wants_seo_field && $detected === 'none') {
-                    throw new \Exception('No SEO plugin (Yoast SEO, Rank Math, AIOSEO, or SEObolt) is active. Install one first, or pass only the slug field (which is WordPress-native and works without an SEO plugin).');
+                    throw new \Exception('No SEO plugin (Yoast SEO, Rank Math, AIOSEO, SEOPress, or SEObolt) is active. Install one first, or pass only the slug field (which is WordPress-native and works without an SEO plugin).');
                 }
 
                 // Per-plugin field maps. AIOSEO + SEObolt omit og_* here because
@@ -7550,28 +7719,57 @@ class Server {
                 // wp_update_post_meta directly if needed for those plugins.
                 $field_maps = [
                     'yoast'    => [
-                        'title'          => '_yoast_wpseo_title',
-                        'description'    => '_yoast_wpseo_metadesc',
-                        'focus_keyword'  => '_yoast_wpseo_focuskw',
-                        'og_title'       => '_yoast_wpseo_opengraph-title',
-                        'og_description' => '_yoast_wpseo_opengraph-description',
+                        'title'               => '_yoast_wpseo_title',
+                        'description'         => '_yoast_wpseo_metadesc',
+                        'focus_keyword'       => '_yoast_wpseo_focuskw',
+                        'og_title'            => '_yoast_wpseo_opengraph-title',
+                        'og_description'      => '_yoast_wpseo_opengraph-description',
+                        'twitter_title'       => '_yoast_wpseo_twitter-title',
+                        'twitter_description' => '_yoast_wpseo_twitter-description',
+                        'twitter_image'       => '_yoast_wpseo_twitter-image',
                     ],
                     'rankmath' => [
-                        'title'          => 'rank_math_title',
-                        'description'    => 'rank_math_description',
-                        'focus_keyword'  => 'rank_math_focus_keyword',
-                        'og_title'       => 'rank_math_facebook_title',
-                        'og_description' => 'rank_math_facebook_description',
+                        'title'               => 'rank_math_title',
+                        'description'         => 'rank_math_description',
+                        'focus_keyword'       => 'rank_math_focus_keyword',
+                        'og_title'            => 'rank_math_facebook_title',
+                        'og_description'      => 'rank_math_facebook_description',
+                        'twitter_title'       => 'rank_math_twitter_title',
+                        'twitter_description' => 'rank_math_twitter_description',
+                        'twitter_image'       => 'rank_math_twitter_image',
                     ],
                     'aioseo'   => [
-                        'title'          => '_aioseo_title',
-                        'description'    => '_aioseo_description',
-                        'focus_keyword'  => '_aioseo_focus_keyphrase',
+                        // AIOSEO's authoritative storage is the wp_aioseo_posts
+                        // custom database table (columns: title, description,
+                        // keyphrases, og_*, twitter_*). Post_meta rows below
+                        // are legacy import bridges and don't reliably serve
+                        // to the front-end. Title/description/focus_keyword
+                        // stay in the map for compatibility with callers that
+                        // depend on the current behavior; twitter_* fields
+                        // are intentionally omitted so they surface as
+                        // unsupported_fields until a proper custom-table
+                        // adapter lands.
+                        'title'               => '_aioseo_title',
+                        'description'         => '_aioseo_description',
+                        'focus_keyword'       => '_aioseo_focus_keyphrase',
+                    ],
+                    'seopress' => [
+                        'title'               => '_seopress_titles_title',
+                        'description'         => '_seopress_titles_desc',
+                        'focus_keyword'       => '_seopress_analysis_target_kw',
+                        'og_title'            => '_seopress_social_fb_title',
+                        'og_description'      => '_seopress_social_fb_desc',
+                        'twitter_title'       => '_seopress_social_twitter_title',
+                        'twitter_description' => '_seopress_social_twitter_desc',
+                        'twitter_image'       => '_seopress_social_twitter_img',
                     ],
                     'seobolt'  => [
-                        'title'          => '_seobolt_meta_title',
-                        'description'    => '_seobolt_meta_description',
-                        'focus_keyword'  => '_seobolt_focus_keyword',
+                        'title'               => '_seobolt_meta_title',
+                        'description'         => '_seobolt_meta_description',
+                        'focus_keyword'       => '_seobolt_focus_keyword',
+                        'twitter_title'       => '_seobolt_twitter_title',
+                        'twitter_description' => '_seobolt_twitter_description',
+                        'twitter_image'       => '_seobolt_twitter_image',
                     ],
                 ];
                 $field_map = $field_maps[$detected] ?? [];
@@ -7588,6 +7786,7 @@ class Server {
                         if ( $detected === 'yoast' )    return get_post_meta( $post_id, '_yoast_wpseo_meta-robots-noindex', true ) === '1';
                         if ( $detected === 'rankmath' ) return in_array( 'noindex', (array) get_post_meta( $post_id, 'rank_math_robots', true ), true );
                         if ( $detected === 'aioseo' )   return (bool) get_post_meta( $post_id, '_aioseo_noindex', true );
+                        if ( $detected === 'seopress' ) return 'yes' === get_post_meta( $post_id, '_seopress_robots_index', true );
                         if ( $detected === 'seobolt' )  return (bool) get_post_meta( $post_id, '_seobolt_noindex', true );
                         return false;
                     }
@@ -7603,16 +7802,19 @@ class Server {
                 $seo_requested = [];
                 $seo_before    = [];
                 $unsupported_fields = [];
-                foreach ( [ 'title', 'description', 'focus_keyword', 'og_title', 'og_description' ] as $arg_key ) {
+                foreach ( [ 'title', 'description', 'focus_keyword', 'og_title', 'og_description', 'twitter_title', 'twitter_description', 'twitter_image' ] as $arg_key ) {
                     if ( ! array_key_exists( $arg_key, $args ) ) continue;
                     if ( isset( $field_map[ $arg_key ] ) ) {
+                        // twitter_image accepts a URL literal — sanitize_text_field
+                        // strips control chars while preserving the URL form. Deeper
+                        // URL validation is up to the SEO plugin's own display path.
                         $seo_requested[ $arg_key ] = sanitize_text_field( (string) $args[ $arg_key ] );
                         $seo_before[ $arg_key ]    = $seo_read( $arg_key );
                     } else {
                         $unsupported_fields[] = $arg_key;
                     }
                 }
-                if ( array_key_exists( 'noindex', $args ) && in_array( $detected, [ 'yoast', 'rankmath', 'aioseo', 'seobolt' ], true ) ) {
+                if ( array_key_exists( 'noindex', $args ) && in_array( $detected, [ 'yoast', 'rankmath', 'aioseo', 'seopress', 'seobolt' ], true ) ) {
                     $seo_requested['noindex'] = (bool) $args['noindex'];
                     $seo_before['noindex']    = (bool) $seo_read( 'noindex' );
                 }
@@ -7644,6 +7846,12 @@ class Server {
                         update_post_meta( $post_id, 'rank_math_robots', $robots );
                     } elseif ( $detected === 'aioseo' ) {
                         update_post_meta( $post_id, '_aioseo_noindex', $noindex_bool ? '1' : '' );
+                    } elseif ( $detected === 'seopress' ) {
+                        if ( $noindex_bool ) {
+                            update_post_meta( $post_id, '_seopress_robots_index', 'yes' );
+                        } else {
+                            delete_post_meta( $post_id, '_seopress_robots_index' );
+                        }
                     } elseif ( $detected === 'seobolt' ) {
                         update_post_meta( $post_id, '_seobolt_noindex', $noindex_bool ? '1' : '' );
                     }
@@ -8138,6 +8346,9 @@ class Server {
         }
         if ( defined( 'AIOSEO_VERSION' ) || function_exists( 'aioseo' ) ) {
             return 'aioseo';
+        }
+        if ( defined( 'SEOPRESS_VERSION' ) ) {
+            return 'seopress';
         }
         if ( defined( 'SEOBOLT_VERSION' ) ) {
             return 'seobolt';

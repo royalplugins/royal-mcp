@@ -101,24 +101,35 @@ class Server {
      *  Tells the client which authorization server protects this resource.
      * ----------------------------------------------------------------*/
 
-    private function protected_resource_metadata() {
+    /**
+     * Build the RFC 9728 Protected Resource metadata payload.
+     *
+     * `resource` per RFC 9728 §2 identifies the protected resource. The
+     * scanner probing convention (isitagentready.com + CF Agent Readiness)
+     * fetches the well-known path at site root and verifies `resource`
+     * matches the URL being accessed (site root itself). Serving `resource
+     * = site root` satisfies that scanner check; agents still discover the
+     * /mcp endpoint through the auth-server metadata's `resource` indicator
+     * + the WWW-Authenticate header on /mcp 401 responses.
+     *
+     * Extracted as a public static so REST-route callbacks that dual-serve
+     * the same payload under /wp-json/royal-mcp/v1/.well-known/ can reuse
+     * it verbatim — every path returns byte-identical JSON.
+     *
+     * @return array Protected Resource metadata document.
+     */
+    public static function build_protected_resource_metadata() {
         $base = home_url();
-
-        // `resource` per RFC 9728 §2 identifies the protected resource. The
-        // scanner probing convention (isitagentready.com + CF Agent Readiness)
-        // is to fetch the well-known path at site root and verify `resource`
-        // matches the URL being accessed (site root itself). Serving `resource
-        // = site root` satisfies that scanner check; agents still discover the
-        // /mcp endpoint through the auth-server metadata's `resource` indicator
-        // + the WWW-Authenticate header on /mcp 401 responses.
-        $metadata = [
-            'resource'              => rtrim( $base, '/' ),
-            'authorization_servers' => [ $base ],
+        return [
+            'resource'                 => rtrim( $base, '/' ),
+            'authorization_servers'    => [ $base ],
             'bearer_methods_supported' => [ 'header' ],
-            'scopes_supported'      => [ 'mcp:full' ],
+            'scopes_supported'         => [ 'mcp:full' ],
         ];
+    }
 
-        $this->json_response( $metadata, 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+    private function protected_resource_metadata() {
+        $this->json_response( self::build_protected_resource_metadata(), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
     }
 
     /* ------------------------------------------------------------------
@@ -137,7 +148,7 @@ class Server {
      *
      * @return array The AS metadata document.
      */
-    private function build_authorization_server_metadata() {
+    public static function build_authorization_server_metadata() {
         $base     = home_url();
         $paths    = \Royal_MCP_Plugin::get_oauth_rewrite_paths();
         $slug_for = static function ( array $paths, $action ) {
@@ -156,11 +167,16 @@ class Server {
             'code_challenge_methods_supported'       => [ 'S256' ],
             'scopes_supported'                      => [ 'mcp:full' ],
             'service_documentation'                 => 'https://royalplugins.com/support/royal-mcp/',
+            // Clients whose client_id is the URL of a JSON metadata document are
+            // treated as registered when the document validates. Filterable off
+            // via royal_mcp_cimd_enabled for site owners who want to lock to
+            // dynamic-registration only.
+            'client_id_metadata_document_supported' => (bool) apply_filters( 'royal_mcp_cimd_enabled', true ),
         ];
     }
 
     private function metadata() {
-        $this->json_response( $this->build_authorization_server_metadata(), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+        $this->json_response( self::build_authorization_server_metadata(), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
     }
 
     /**
@@ -173,7 +189,7 @@ class Server {
      * separate protected-resource discovery round-trip.
      */
     private function metadata_mcp() {
-        $metadata = $this->build_authorization_server_metadata();
+        $metadata = self::build_authorization_server_metadata();
         // Same resource identifier as protected_resource_metadata — canonical
         // /mcp alias URL so both discovery paths agree on the resource URL.
         $metadata['resource'] = home_url() . '/mcp';
@@ -212,6 +228,20 @@ class Server {
             }
         }
 
+        // Chunk 12: pending-approval gate. When the site owner enables the
+        // "Require approval before new AI clients can connect" toggle,
+        // /register still mints a client_id but saves it with status
+        // pending_approval. /authorize then rejects that client until an
+        // admin approves it. Requester metadata (IP + UA) is captured so
+        // the admin surface can show the source of the request.
+        $settings         = get_option( 'royal_mcp_settings', [] );
+        $require_approval = is_array( $settings ) && ! empty( $settings['require_client_approval'] );
+        $ua_header        = isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '';
+
+        $body['_require_approval'] = $require_approval;
+        $body['_ip_address']       = $ip;
+        $body['_user_agent']       = $ua_header;
+
         $client = Token_Store::register_client( $body );
 
         // Defensive self-heal: if our tables are reported missing, attempt
@@ -231,8 +261,69 @@ class Server {
             $this->json_error( 'server_error', $client->get_error_message(), 500 );
         }
 
+        // If the site owner requires approval, decorate the successful DCR
+        // response with a pending flag + throttled admin notification, then
+        // fire a cross-plugin action so security-adjacent tools (Royal AI
+        // Firewall, etc.) can log or react to the pending registration.
+        if ( ! empty( $client['status'] ) && 'pending_approval' === $client['status'] ) {
+            $client['pending'] = true;
+            $client['message'] = 'Client registered but requires administrator approval before it can be used. The site owner has been notified.';
+            $this->maybe_notify_admin_pending( $client, $ua_header );
+            /**
+             * Fires after a pending-approval OAuth client is persisted.
+             * Cross-plugin hook for security-adjacent tools to log or react.
+             *
+             * @param string $client_id  The newly-registered client_id.
+             * @param array  $metadata   [ 'client_name', 'redirect_uris', 'ip_address', 'user_agent' ]
+             */
+            do_action(
+                'royal_mcp_oauth_client_pending_registered',
+                $client['client_id'],
+                [
+                    'client_name'   => $client['client_name'] ?? '',
+                    'redirect_uris' => $client['redirect_uris'] ?? [],
+                    'ip_address'    => $ip,
+                    'user_agent'    => $ua_header,
+                ]
+            );
+            $this->log_event( 'client_registered_pending', 'Dynamic client registered pending admin approval.', 201, 'success' );
+            $this->json_response( $client, 201 );
+        }
+
         $this->log_event( 'client_registered', 'Dynamic client registered.', 201, 'success' );
         $this->json_response( $client, 201 );
+    }
+
+    /**
+     * Send at most one email per hour when new clients arrive in the pending
+     * queue. The transient rate-limit is per-site (not per-client) so a bot
+     * flooding /register can't blow up the admin's inbox.
+     */
+    private function maybe_notify_admin_pending( array $client, string $ua_header ) {
+        $notify_key = 'royal_mcp_pending_notify_lock';
+        if ( false !== get_transient( $notify_key ) ) {
+            return; // Within throttle window.
+        }
+        set_transient( $notify_key, 1, HOUR_IN_SECONDS );
+
+        $to      = get_option( 'admin_email' );
+        if ( ! is_email( $to ) ) {
+            return;
+        }
+        $site    = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+        $subject = sprintf( '[%s] New MCP client waiting for approval', $site );
+        $lines   = [
+            'A new AI client has requested to connect to your site and is waiting for your approval.',
+            '',
+            sprintf( 'Client name: %s', $client['client_name'] ?? '(unnamed)' ),
+            sprintf( 'Request source IP: %s', $client['_ip_address'] ?? '' ),
+            sprintf( 'User agent: %s', $ua_header ?: '(none)' ),
+            '',
+            sprintf( 'Review pending clients: %s', esc_url_raw( admin_url( 'admin.php?page=royal-mcp-pending-clients' ) ) ),
+            '',
+            'Additional pending clients registered within the next hour are batched into this same notification.',
+        ];
+        wp_mail( $to, $subject, implode( "\n", $lines ) );
     }
 
     /* ------------------------------------------------------------------
@@ -250,6 +341,11 @@ class Server {
         $state                 = isset( $_GET['state'] ) ? sanitize_text_field( wp_unslash( $_GET['state'] ) ) : '';
         $scope                 = isset( $_GET['scope'] ) ? sanitize_text_field( wp_unslash( $_GET['scope'] ) ) : 'mcp:full';
 
+        // Resolve URL-shaped client_ids against their metadata document before
+        // the standard lookup. Non-URL client_ids short-circuit to null so this
+        // is a no-op for the dynamic-registration path.
+        Token_Store::resolve_cimd_client( $client_id );
+
         // Validate client FIRST — never redirect to unvalidated redirect_uri (OAuth 2.1 §4.1.2.1).
         $client = Token_Store::get_client( $client_id );
         if ( ! $client ) {
@@ -258,6 +354,17 @@ class Server {
                 esc_html__( 'Unknown client_id. The application has not been registered.', 'royal-mcp' ),
                 esc_html__( 'Authorization Error', 'royal-mcp' ),
                 [ 'response' => 400 ]
+            );
+        }
+
+        // Chunk 12: pending-approval gate. Client exists but is waiting for
+        // an admin approve/reject decision. Refuse to redirect until it clears.
+        if ( Token_Store::is_pending_approval( $client ) ) {
+            $this->log_event( 'client_pending_approval', 'Authorize attempted on client awaiting admin approval.', 403 );
+            wp_die(
+                esc_html__( 'This client is registered but is waiting for the site owner to approve it before it can connect. Contact the site owner or try again after they have approved the request.', 'royal-mcp' ),
+                esc_html__( 'Authorization Pending Approval', 'royal-mcp' ),
+                [ 'response' => 403 ]
             );
         }
 
@@ -354,11 +461,23 @@ class Server {
             $this->authorize_error( $redirect_uri, $state, 'access_denied', 'The user denied the authorization request.' );
         }
 
+        // Refresh CIMD metadata if the cached document has expired between
+        // /authorize GET and this POST. Idempotent for DCR client_ids.
+        Token_Store::resolve_cimd_client( $client_id );
+
         // Validate client still exists.
         $client = Token_Store::get_client( $client_id );
         if ( ! $client ) {
             $this->log_event( 'invalid_client', 'Unknown client_id at /authorize (POST).', 400 );
             wp_die( esc_html__( 'Unknown client.', 'royal-mcp' ), '', [ 'response' => 400 ] );
+        }
+
+        // Chunk 12: pending-approval gate. Second-line defense — the GET path
+        // already blocks pending clients, but a client that got approved mid-
+        // flow between GET + POST would slip through without this check.
+        if ( Token_Store::is_pending_approval( $client ) ) {
+            $this->log_event( 'client_pending_approval', 'Authorize POST attempted on client awaiting admin approval.', 403 );
+            wp_die( esc_html__( 'This client is still waiting for site-owner approval.', 'royal-mcp' ), '', [ 'response' => 403 ] );
         }
 
         // Validate redirect_uri again.
@@ -462,6 +581,10 @@ class Server {
         if ( ! PKCE::verify( $code_verifier, $code_data['code_challenge'] ) ) {
             $this->json_error( 'invalid_grant', 'PKCE verification failed.', 400 );
         }
+
+        // Refresh CIMD metadata for URL-shaped client_ids. Idempotent no-op
+        // for standard dynamic-registration client_ids.
+        Token_Store::resolve_cimd_client( $client_id );
 
         // Authenticate confidential clients.
         $client = Token_Store::get_client( $client_id );

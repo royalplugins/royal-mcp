@@ -20,6 +20,7 @@ if ( file_exists( WP_PLUGIN_DIR . '/royal-mcp-pro/royal-mcp-pro.php' ) ) {
 
 // Delete plugin options
 delete_option('royal_mcp_settings');
+delete_option('royal_mcp_abilities_registration_enabled');
 
 // MUST clear db_version so a reinstall re-runs maybe_upgrade_db().
 delete_option('royal_mcp_db_version');
@@ -55,6 +56,10 @@ $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_ro
 // Clean up any leftover transient-based MCP sessions from older installs that upgraded mid-flow.
 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_session_%' OR option_name LIKE '_transient_timeout_royal_mcp_session_%'");
+
+// Clean up cached CIMD metadata documents keyed by sha256 of the client_id URL.
+// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+$wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_cimd_meta_%' OR option_name LIKE '_transient_timeout_royal_mcp_cimd_meta_%'");
 
 // Clean up undo-snapshot options (populated by Undo_Store for reversible tools like wp_reorder_menu_items).
 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching

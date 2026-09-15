@@ -2,12 +2,12 @@
 
 # Royal MCP
 
-**Security-first MCP server for WordPress.** Connect Claude, ChatGPT, and Gemini to your WordPress site with API key + OAuth 2.1 authentication, full activity logging, and capability-gated access.
+Royal MCP is an open-source, security-first WordPress plugin that connects Claude, ChatGPT, Perplexity, Gemini, and any other MCP agent to your site.
 
 [![WordPress](https://img.shields.io/badge/WordPress-5.8+-21759B?style=flat-square&logo=wordpress)](https://wordpress.org/plugins/royal-mcp/)
 [![PHP](https://img.shields.io/badge/PHP-7.4+-777BB4?style=flat-square&logo=php)](https://www.php.net/)
 [![License](https://img.shields.io/badge/License-GPLv2-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-2.0.html)
-[![Version](https://img.shields.io/badge/Version-1.5.1-C9A227?style=flat-square)](https://wordpress.org/plugins/royal-mcp/)
+[![Version](https://img.shields.io/badge/Version-1.5.2-C9A227?style=flat-square)](https://wordpress.org/plugins/royal-mcp/)
 
 [Download on WordPress.org](https://wordpress.org/plugins/royal-mcp/) · [Documentation](https://royalplugins.com/support/royal-mcp/) · [Royal Plugins](https://royalplugins.com)
 
@@ -15,22 +15,7 @@
 
 ---
 
-A WordPress plugin that exposes your site as a [Model Context Protocol](https://modelcontextprotocol.io/) server. AI agents — Claude.ai web, Claude Desktop, ChatGPT, custom clients — can read and write posts, pages, media, users, menus, WooCommerce orders, and Elementor pages, with every call going through capability gating, rate limiting, and an audit log. Distributed via the official WordPress.org plugin directory.
-
-## Quick facts
-
-| | |
-|---|---|
-| **Auth** | API key (`X-Royal-MCP-API-Key`) **or** OAuth 2.1 with PKCE + Dynamic Client Registration (RFC 7591) |
-| **Transport** | MCP 2025-11-25 Streamable HTTP (single `/mcp` endpoint, POST/GET/DELETE) |
-| **Tool count** | Up to 208 (85 WordPress core + 123 conditional plugin integrations) |
-| **Abilities API** | WP 6.9+ — every tool also registers as a WordPress ability, reachable via WP core REST at `/wp-json/wp-abilities/v1/abilities/{name}/run` and via the WordPress MCP Adapter's named `royal-mcp-server` |
-| **Rate limit** | 60 req/min per IP (configurable) |
-| **Session model** | Sliding 24h TTL with refresh-on-access |
-| **Activity log** | Every tool call logged (tool name + arg keys; argument values are never recorded) |
-| **Distribution** | [wp.org plugin directory](https://wordpress.org/plugins/royal-mcp/) + GitHub releases + auto-update via WP admin |
-| **Tested** | PHP 7.4 → 8.3, WordPress 5.8 → 7.0 |
-| **License** | GPLv2+ |
+Agents can read and write posts, pages, media, users, menus, WooCommerce orders, and Elementor pages over the [Model Context Protocol](https://modelcontextprotocol.io/). Every call is capability-gated, rate-limited, and audit-logged.
 
 ## Capabilities
 
@@ -48,7 +33,7 @@ A WordPress plugin that exposes your site as a [Model Context Protocol](https://
 - **SEO** — Yoast / Rank Math / AIOSEO meta read/write where the plugin is active
 - **Diagnostics** — Site status (WP/PHP/MySQL/plugins/themes/cron in one call), PHP error-log tail, WP cron schedule, and MCP `royal_mcp_connection_health` (returns route, auth method, session ID, plugin version, and active page-builder versions for Divi + Elementor + Gutenberg)
 
-### Plugin integrations (123 tools, conditional)
+### Plugin integrations (124 tools, conditional)
 
 Auto-register only when the integrated plugin is active.
 
@@ -73,7 +58,7 @@ Auto-register only when the integrated plugin is active.
 | W3 Total Cache | 3 | Read cache configuration across every module, purge cache (all / by URL / by post), read usage statistics |
 | Duplicator | 3 | List migration packages, read per-package status, get the installer URL for a completed package |
 | Royal Links | 3 | Branded short links, click stats |
-| ForgeCache | 3 | Cache stats, clear cache, purge URL |
+| ForgeCache | 4 | Cache stats, clear cache, purge URL, real-user Core Web Vitals (INP/LCP/CLS/TTFB) |
 
 ## WordPress Abilities API bridge (WP 6.9+)
 
@@ -95,18 +80,6 @@ Explicit scope boundaries — the integration model is "narrow tools that work r
 - **No core file modifications** — Royal MCP never writes to `wp-content/themes`, `wp-includes`, or `wp-admin`.
 - **No plugin installation or upgrades via MCP.** Discovery yes; install/activate/deactivate no.
 - **No raw SQL.** Queries go through `WP_Query` and `$wpdb->prepare()` only.
-
-## Royal MCP Pro (paid)
-
-The Free plugin is fully featured for individual site owners. Royal MCP Pro extends it for agencies and multi-site operators:
-
-- **Divi Pro suite** — page clone, image swap, template import, full library CRUD, D4→D5 Migrator, global preset bulk-apply (8 tools)
-- **Elementor Pro depth** — additional Elementor tools beyond the Free integration
-- **Universal audit log** — every AI operation logged with attribution + export
-- **72-hour undo on every write** — every destructive Pro tool returns an undo token; reverse any operation within the window
-- **License-gated updates** through the standard WordPress updater — no runtime dependencies on external license servers
-
-[Learn more at royalplugins.com/royal-mcp-pro](https://royalplugins.com/royal-mcp-pro/)
 
 ## Connect
 
@@ -214,12 +187,17 @@ curl -X POST https://yoursite.com/wp-json/royal-mcp/v1/mcp \
 
 Full security architecture: [royalplugins.com/support/royal-mcp/](https://royalplugins.com/support/royal-mcp/)
 
-## Project status
+## Royal MCP Pro (paid)
 
-- **Active maintenance** — releases roughly weekly. See [releases](https://github.com/royalplugins/royal-mcp/releases) for changelog.
-- **MCP spec compliance** — implements the [Streamable HTTP transport (2025-11-25)](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http).
-- **Issues** — [github.com/royalplugins/royal-mcp/issues](https://github.com/royalplugins/royal-mcp/issues). Customer-impact issues are typically acknowledged within 24h and triaged with version targets.
-- **Source access** — This repo mirrors the plugin's wp.org SVN trunk for transparency. Report bugs and feature requests in [Issues](https://github.com/royalplugins/royal-mcp/issues). Releases ship through the wp.org review pipeline.
+The Free plugin is fully featured for individual site owners. Royal MCP Pro extends it for agencies and multi-site operators:
+
+- **Divi Pro suite** — page clone, image swap, template import, full library CRUD, D4→D5 Migrator, global preset bulk-apply (8 tools)
+- **Elementor Pro depth** — additional Elementor tools beyond the Free integration
+- **Universal audit log** — every AI operation logged with attribution + export
+- **72-hour undo on every write** — every destructive Pro tool returns an undo token; reverse any operation within the window
+- **License-gated updates** through the standard WordPress updater — no runtime dependencies on external license servers
+
+[Learn more at royalplugins.com/royal-mcp-pro](https://royalplugins.com/royal-mcp-pro/)
 
 ## Further reading
 
