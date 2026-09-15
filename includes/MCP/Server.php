@@ -929,10 +929,24 @@ class Server {
      * @return array Response with id, occurrences, replaced, verified, lengths, message.
      */
     private static function replace_in_post_content(int $post_id, array $args, string $noun): array {
-        // object-level edit_post resolves to the PT-specific cap
-        // (edit_page etc.) automatically via map_meta_cap — same gate as
-        // wp_update_post / wp_update_page.
-        if (!current_user_can('edit_post', $post_id)) {
+        // Route the permission check by post type. `custom_css` is a
+        // WordPress-core post type used to store the active theme's custom
+        // CSS; WP gates it behind the `edit_css` meta cap (single-site:
+        // maps to unfiltered_html; multisite: super-admin-only), not a
+        // plain edit_post grant. A raw `edit_post` check fails for admins
+        // who do have edit_css because WP's map_meta_cap routing doesn't
+        // apply to a direct edit_post query on this post type. Every
+        // other post type gets the standard object-level check, which
+        // resolves to edit_page / etc. automatically via map_meta_cap.
+        $target_post = get_post($post_id);
+        if (!$target_post) {
+            throw new \Exception('Post not found.');
+        }
+        if ('custom_css' === $target_post->post_type) {
+            if (!current_user_can('edit_css')) {
+                throw new \Exception('You do not have permission to edit the custom CSS.');
+            }
+        } elseif (!current_user_can('edit_post', $post_id)) {
             throw new \Exception('You do not have permission to edit this ' . esc_html($noun) . '.');
         }
         if (!isset($args['find']) || !is_string($args['find']) || $args['find'] === '') {
