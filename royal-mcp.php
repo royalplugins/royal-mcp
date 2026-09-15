@@ -681,6 +681,35 @@ class Royal_MCP_Plugin {
             'callback' => [ \Royal_MCP\Discovery\Agent_Skills_Index::class, 'handle_request' ],
             'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
         ]);
+
+        // OAuth discovery endpoints dual-served under /wp-json/royal-mcp/v1/
+        // as a fallback for managed hosts (SiteGround, WP Engine, some cPanel)
+        // whose edge layer reserves the root /.well-known/* path prefix before
+        // the request reaches PHP. Both paths return the identical payload
+        // built by OAuth\Server, so a client that finds either one succeeds
+        // without host cooperation.
+        register_rest_route('royal-mcp/v1', '/.well-known/oauth-authorization-server', [
+            'methods'             => 'GET',
+            'callback'            => function () {
+                return new \WP_REST_Response(
+                    \Royal_MCP\OAuth\Server::build_authorization_server_metadata(),
+                    200,
+                    [ 'Cache-Control' => 'public, max-age=3600' ]
+                );
+            },
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
+        ]);
+        register_rest_route('royal-mcp/v1', '/.well-known/oauth-protected-resource', [
+            'methods'             => 'GET',
+            'callback'            => function () {
+                return new \WP_REST_Response(
+                    \Royal_MCP\OAuth\Server::build_protected_resource_metadata(),
+                    200,
+                    [ 'Cache-Control' => 'public, max-age=3600' ]
+                );
+            },
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
+        ]);
     }
 }
 

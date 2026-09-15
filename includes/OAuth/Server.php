@@ -101,24 +101,35 @@ class Server {
      *  Tells the client which authorization server protects this resource.
      * ----------------------------------------------------------------*/
 
-    private function protected_resource_metadata() {
+    /**
+     * Build the RFC 9728 Protected Resource metadata payload.
+     *
+     * `resource` per RFC 9728 §2 identifies the protected resource. The
+     * scanner probing convention (isitagentready.com + CF Agent Readiness)
+     * fetches the well-known path at site root and verifies `resource`
+     * matches the URL being accessed (site root itself). Serving `resource
+     * = site root` satisfies that scanner check; agents still discover the
+     * /mcp endpoint through the auth-server metadata's `resource` indicator
+     * + the WWW-Authenticate header on /mcp 401 responses.
+     *
+     * Extracted as a public static so REST-route callbacks that dual-serve
+     * the same payload under /wp-json/royal-mcp/v1/.well-known/ can reuse
+     * it verbatim — every path returns byte-identical JSON.
+     *
+     * @return array Protected Resource metadata document.
+     */
+    public static function build_protected_resource_metadata() {
         $base = home_url();
-
-        // `resource` per RFC 9728 §2 identifies the protected resource. The
-        // scanner probing convention (isitagentready.com + CF Agent Readiness)
-        // is to fetch the well-known path at site root and verify `resource`
-        // matches the URL being accessed (site root itself). Serving `resource
-        // = site root` satisfies that scanner check; agents still discover the
-        // /mcp endpoint through the auth-server metadata's `resource` indicator
-        // + the WWW-Authenticate header on /mcp 401 responses.
-        $metadata = [
-            'resource'              => rtrim( $base, '/' ),
-            'authorization_servers' => [ $base ],
+        return [
+            'resource'                 => rtrim( $base, '/' ),
+            'authorization_servers'    => [ $base ],
             'bearer_methods_supported' => [ 'header' ],
-            'scopes_supported'      => [ 'mcp:full' ],
+            'scopes_supported'         => [ 'mcp:full' ],
         ];
+    }
 
-        $this->json_response( $metadata, 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+    private function protected_resource_metadata() {
+        $this->json_response( self::build_protected_resource_metadata(), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
     }
 
     /* ------------------------------------------------------------------
@@ -137,7 +148,7 @@ class Server {
      *
      * @return array The AS metadata document.
      */
-    private function build_authorization_server_metadata() {
+    public static function build_authorization_server_metadata() {
         $base     = home_url();
         $paths    = \Royal_MCP_Plugin::get_oauth_rewrite_paths();
         $slug_for = static function ( array $paths, $action ) {
@@ -165,7 +176,7 @@ class Server {
     }
 
     private function metadata() {
-        $this->json_response( $this->build_authorization_server_metadata(), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+        $this->json_response( self::build_authorization_server_metadata(), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
     }
 
     /**
@@ -178,7 +189,7 @@ class Server {
      * separate protected-resource discovery round-trip.
      */
     private function metadata_mcp() {
-        $metadata = $this->build_authorization_server_metadata();
+        $metadata = self::build_authorization_server_metadata();
         // Same resource identifier as protected_resource_metadata — canonical
         // /mcp alias URL so both discovery paths agree on the resource URL.
         $metadata['resource'] = home_url() . '/mcp';
