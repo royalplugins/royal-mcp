@@ -304,6 +304,17 @@ class Settings_Page {
             delete_transient( \Royal_MCP\Discovery\Agent_Skills_Index::CACHE_KEY );
         }
 
+        // Abilities API registration — written to a standalone option key,
+        // NOT nested inside royal_mcp_settings. The bootstrap gate at
+        // royal-mcp.php reads the standalone option directly so it doesn't
+        // depend on the settings array being present or well-formed. This
+        // preserves backwards compatibility with installs that opted out
+        // via WP-CLI or a WPCode snippet before this UI shipped.
+        update_option(
+            'royal_mcp_abilities_registration_enabled',
+            isset( $input['abilities_registration_enabled'] ) ? (bool) $input['abilities_registration_enabled'] : false
+        );
+
         // Access token TTL — whitelist against the 4 UI choices; anything else falls back to the default.
         $posted_ttl = isset($input['access_token_ttl_seconds']) ? (int) $input['access_token_ttl_seconds'] : 0;
         $sanitized['access_token_ttl_seconds'] = in_array($posted_ttl, \Royal_MCP\OAuth\Token_Store::ACCESS_TOKEN_TTL_CHOICES, true)

@@ -142,7 +142,7 @@ class Elementor {
 					'properties' => [
 						'post_id'          => [ 'type' => 'integer', 'description' => 'Target post or page ID. Must be Elementor-edited.' ],
 						'widget_type'      => [ 'type' => 'string', 'description' => 'Elementor widget slug (e.g. heading, button, html, wp-widget-text), or "container" for a Flexbox container.' ],
-						'settings'         => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true, 'description' => 'RAW path: full Elementor settings object for this widget. When supplied, raw wins (curated params ignored). Required for non-curated widget_types.' ],
+						'settings'         => [ 'type' => 'object', 'additionalProperties' => true, 'description' => 'RAW path: full Elementor settings object for this widget. When supplied, raw wins (curated params ignored). Required for non-curated widget_types.' ],
 						'parent_id'        => [ 'type' => 'string', 'description' => 'Optional. Element ID to insert under. Must be a container, section, or column. If omitted, appended at document top level.' ],
 						'position'         => [ 'type' => 'integer', 'description' => 'Optional. Zero-indexed position within parent. If omitted, appended at end.' ],
 						'flex_direction'   => [ 'type' => 'string', 'enum' => [ 'row', 'column' ], 'description' => 'Curated container: row or column. Default column.' ],
@@ -150,7 +150,7 @@ class Elementor {
 						'children'         => [
 							'type'        => 'array',
 							'description' => 'Curated container: inline child widget definitions. Each item is an object with widget_type + curated params or settings.',
-							'items'       => [ 'type' => 'object', 'properties' => new \stdClass(), 'additionalProperties' => true ],
+							'items'       => [ 'type' => 'object', 'additionalProperties' => true ],
 						],
 						'title'            => [ 'type' => 'string', 'description' => 'Curated heading: title text.' ],
 						'header_size'      => [ 'type' => 'string', 'description' => 'Curated heading: HTML tag (h1-h6, div, span, p). Default h2.' ],

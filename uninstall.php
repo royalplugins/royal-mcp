@@ -20,6 +20,7 @@ if ( file_exists( WP_PLUGIN_DIR . '/royal-mcp-pro/royal-mcp-pro.php' ) ) {
 
 // Delete plugin options
 delete_option('royal_mcp_settings');
+delete_option('royal_mcp_abilities_registration_enabled');
 
 // MUST clear db_version so a reinstall re-runs maybe_upgrade_db().
 delete_option('royal_mcp_db_version');
