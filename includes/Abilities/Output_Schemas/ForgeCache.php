@@ -39,6 +39,35 @@ class ForgeCache {
 					'post_id' => array( 'type' => array( 'integer', 'null' ) ),
 				),
 			),
+			'fc_get_rum_stats' => array(
+				'type'                 => 'object',
+				'additionalProperties' => true,
+				'properties'           => array(
+					'rum_enabled'   => array( 'type' => 'boolean' ),
+					'window_days'   => array( 'type' => 'integer' ),
+					'total_urls'    => array( 'type' => 'integer' ),
+					'total_samples' => array( 'type' => 'integer' ),
+					'site_score'    => array( 'type' => array( 'integer', 'null' ) ),
+					'sort_by'       => array( 'type' => 'string' ),
+					'urls'          => array(
+						'type'  => 'array',
+						'items' => array(
+							'type'                 => 'object',
+							'additionalProperties' => true,
+							'properties'           => array(
+								'url'      => array( 'type' => 'string' ),
+								'score'    => array( 'type' => 'integer' ),
+								'p75_lcp'  => array( 'type' => 'integer' ),
+								'p75_inp'  => array( 'type' => 'integer' ),
+								'p75_cls'  => array( 'type' => 'number' ),
+								'p75_ttfb' => array( 'type' => 'integer' ),
+								'samples'  => array( 'type' => 'integer' ),
+							),
+						),
+					),
+					'message' => array( 'type' => 'string' ),
+				),
+			),
 		);
 	}
 }

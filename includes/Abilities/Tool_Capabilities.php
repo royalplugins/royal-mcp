@@ -106,6 +106,7 @@ class Tool_Capabilities {
 			// ==================== ForgeCache: admin ops ====================
 			'fc_clear_cache'     => 'manage_options',
 			'fc_get_cache_stats' => 'manage_options',
+			'fc_get_rum_stats'   => 'manage_options',
 		);
 	}
 
