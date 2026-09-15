@@ -98,7 +98,7 @@ class Token_Store {
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
         // dbDelta needs each CREATE TABLE as a separate call.
-        dbDelta( "CREATE TABLE IF NOT EXISTS $tokens_table (
+        dbDelta( "CREATE TABLE $tokens_table (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             token_hash varchar(64) NOT NULL,
             token_type varchar(20) NOT NULL,
@@ -121,7 +121,7 @@ class Token_Store {
         // the standard WordPress utf8mb4-safe prefix (191 * 4 = 764 bytes).
         // Rejected clients never carry client_id values longer than 191 chars
         // anyway (RFC 7591 doesn't cap them but generated values are short).
-        dbDelta( "CREATE TABLE IF NOT EXISTS $clients_table (
+        dbDelta( "CREATE TABLE $clients_table (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             client_id varchar(255) NOT NULL,
             client_secret_hash varchar(64) DEFAULT NULL,
@@ -143,7 +143,7 @@ class Token_Store {
         // between /authorize and /token, breaking the OAuth handshake. Direct
         // DB storage with sha256-hashed lookup gives reliable consume semantics
         // regardless of which cache backend is active.
-        dbDelta( "CREATE TABLE IF NOT EXISTS $auth_codes_table (
+        dbDelta( "CREATE TABLE $auth_codes_table (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             code_hash varchar(64) NOT NULL,
             user_id bigint(20) NOT NULL,
