@@ -1649,7 +1649,9 @@ class Server {
                 'protocolVersion' => $negotiated,
                 'serverInfo' => $server_info,
                 'capabilities' => [
-                    'tools' => new \stdClass(),
+                    'tools'     => new \stdClass(),
+                    'resources' => new \stdClass(),
+                    'prompts'   => new \stdClass(),
                 ],
             ],
         ];
