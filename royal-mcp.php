@@ -410,7 +410,7 @@ class Royal_MCP_Plugin {
 
         $table_name = $wpdb->prefix . 'royal_mcp_logs';
 
-        $sql = "CREATE TABLE IF NOT EXISTS $table_name (
+        $sql = "CREATE TABLE $table_name (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             timestamp datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             mcp_server varchar(255) NOT NULL,
