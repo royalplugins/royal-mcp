@@ -622,6 +622,7 @@ class Royal_MCP_Plugin {
         if (is_admin()) {
             new Royal_MCP\Admin\Settings_Page();
             new Royal_MCP\Admin\Well_Known_Notice();
+            new Royal_MCP\Admin\Authorization_Header_Notice();
             new Royal_MCP\Admin\Help_Page();
         }
     }
@@ -709,6 +710,18 @@ class Royal_MCP_Plugin {
                 );
             },
             'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
+        ]);
+
+        // Internal diagnostic route used by Authorization_Header_Notice to detect
+        // when the web server strips the Authorization header before WordPress
+        // sees it. Nonce-gated at the callback level (probe_id must match a
+        // freshly-set single-use transient) so a bare request without the
+        // matching probe_id returns 404 — no header-state leaks to unauthenticated
+        // scanners.
+        register_rest_route('royal-mcp/v1', '/diagnostics/header-echo', [
+            'methods'             => 'POST',
+            'callback'            => [ \Royal_MCP\Admin\Authorization_Header_Notice::class, 'handle_echo_request' ],
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — nonce-gated at callback via probe_id transient consume
         ]);
     }
 }
