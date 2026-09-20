@@ -78,6 +78,20 @@ class Server {
     private $request_session_id   = null;   // MCP session ID from Mcp-Session-Id header, or null (no session for pre-initialize)
 
     /**
+     * Client-declared observability hints from MCP 2026-07-28 optional headers.
+     * Neither participates in dispatch — the JSON-RPC method is authoritative.
+     * Both are captured for admin-log visibility so operators can correlate a
+     * spike in a specific tool call to the client-side operation that fired it
+     * (e.g. every `Mcp-Name: search-orders` request came from the same agent
+     * flow, even though ten different tools/call methods were emitted).
+     *
+     * Null encodes "header not sent" so telemetry can distinguish a client that
+     * never sent the header from a client that sent an empty string.
+     */
+    private $request_mcp_method_hint = null; // Mcp-Method header value, or null when not sent
+    private $request_mcp_name_hint   = null; // Mcp-Name   header value, or null when not sent
+
+    /**
      * Unified caller-context shape produced by resolve_caller() on success.
      * Every auth branch (bearer, cookie/session) converges on this shape so
      * downstream tool gating reads the same fields regardless of how the
@@ -1412,6 +1426,12 @@ class Server {
         $session_id = $request->get_header('Mcp-Session-Id');
         $this->request_session_id = $session_id ? (string) $session_id : null;
 
+        // Client-declared observability hints from MCP 2026-07-28 optional
+        // headers. Read here so both log_method_call() and log_tool_call()
+        // pick them up via $this->request_mcp_*_hint on this dispatch pass.
+        $this->request_mcp_method_hint = self::read_mcp_hint_header( $request, 'Mcp-Method' );
+        $this->request_mcp_name_hint   = self::read_mcp_hint_header( $request, 'Mcp-Name' );
+
         $auth_check = $this->validate_auth($request);
         if ($auth_check !== true) {
             return $auth_check;
@@ -1447,6 +1467,26 @@ class Server {
     }
 
     /**
+     * Read an MCP observability-hint header off a request and normalize the
+     * value for logging. Returns null for missing / non-string headers so
+     * downstream JSON serialization can distinguish "header not sent" (null)
+     * from "empty string" (rare but valid). Values are sanitized + capped at
+     * 256 chars — hint text is expected to be short labels ("search-orders",
+     * "user-approve"), not free-form user content.
+     *
+     * @param \WP_REST_Request $request The current request.
+     * @param string           $header  Header name (e.g. 'Mcp-Method').
+     * @return string|null Sanitized header value, or null when not sent.
+     */
+    private static function read_mcp_hint_header( $request, $header ) {
+        $value = $request->get_header( $header );
+        if ( ! is_string( $value ) || '' === $value ) {
+            return null;
+        }
+        return substr( sanitize_text_field( $value ), 0, 256 );
+    }
+
+    /**
      * Log a JSON-RPC method call to wp_royal_mcp_logs.
      *
      * Complements log_tool_call() with method-level visibility. Without this
@@ -1465,7 +1505,11 @@ class Server {
         $is_error = is_array($result) && isset($result['error']);
         $status   = $is_error ? 'error' : 'success';
 
-        $request_meta = [ 'method' => (string) $method ];
+        $request_meta = [
+            'method'          => (string) $method,
+            'mcp_method_hint' => $this->request_mcp_method_hint,
+            'mcp_name_hint'   => $this->request_mcp_name_hint,
+        ];
         $response_meta = [ 'status' => $status ];
         if ($is_error) {
             $response_meta['error_code']    = (int) ($result['error']['code'] ?? 0);
@@ -2029,8 +2073,10 @@ class Server {
         global $wpdb;
 
         $request_meta = [
-            'tool'     => (string) $tool_name,
-            'arg_keys' => is_array($args) ? array_keys($args) : [],
+            'tool'            => (string) $tool_name,
+            'arg_keys'        => is_array($args) ? array_keys($args) : [],
+            'mcp_method_hint' => $this->request_mcp_method_hint,
+            'mcp_name_hint'   => $this->request_mcp_name_hint,
         ];
 
         $response_meta = [ 'status' => $status ];
