@@ -1612,6 +1612,30 @@ class Server {
             ];
         }
 
+        return [
+            'jsonrpc' => '2.0',
+            'id' => $id,
+            'result' => [
+                'protocolVersion' => $negotiated,
+                'serverInfo' => $this->build_server_info_with_icons(),
+                'capabilities' => [
+                    'tools'     => new \stdClass(),
+                    'resources' => new \stdClass(),
+                    'prompts'   => new \stdClass(),
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * Server identity block shared between handle_initialize and
+     * handle_server_discover. Always returns name + version; adds an icons
+     * array when the site has a configured site icon (WP customizer or
+     * Site Editor). Returns bare metadata — the caller is responsible for
+     * placing it in the correct spec location (top-level for legacy era,
+     * under `_meta['io.modelcontextprotocol/serverInfo']` for modern era).
+     */
+    private function build_server_info_with_icons() {
         $server_info = [
             'name'    => 'Royal MCP WordPress',
             'version' => ROYAL_MCP_VERSION,
@@ -1642,19 +1666,7 @@ class Server {
                 ],
             ];
         }
-        return [
-            'jsonrpc' => '2.0',
-            'id' => $id,
-            'result' => [
-                'protocolVersion' => $negotiated,
-                'serverInfo' => $server_info,
-                'capabilities' => [
-                    'tools'     => new \stdClass(),
-                    'resources' => new \stdClass(),
-                    'prompts'   => new \stdClass(),
-                ],
-            ],
-        ];
+        return $server_info;
     }
 
     /**
@@ -1674,33 +1686,79 @@ class Server {
     const SERVER_DISCOVER_MIN_PROTOCOL_VERSION = '2026-07-28';
 
     /**
+     * server/discover response cache TTL exposed to clients via the
+     * `ttlMs` hint. 1 hour matches the MCP 2026-07-28 spec example and
+     * keeps connectors from re-issuing discover on every request.
+     */
+    const SERVER_DISCOVER_TTL_MS = 3600000;
+
+    /**
+     * Instructions string surfaced in the modern-era DiscoverResult.
+     * Kept short and non-versioned so it stays valid across minor bumps.
+     */
+    const SERVER_DISCOVER_INSTRUCTIONS = 'Royal MCP for WordPress — see the plugin admin Help tab for connector setup guidance.';
+
+    /**
      * Handler for server/discover — spec-forward discovery method that returns
      * server capabilities without requiring an initialize handshake.
      *
      * Era-gated inside the handler (not at registration) because the stateless-
      * per-request architecture doesn't retain negotiated state across requests.
-     * The caller declares its version each request in one of two ways:
-     *   1. params.protocolVersion in the JSON-RPC body (like initialize does)
-     *   2. MCP-Protocol-Version HTTP header (spec-recommended post-initialize)
-     * Missing or unsupported values fall back to DEFAULT_NEGOTIATED_PROTOCOL_VERSION,
-     * which sits below the SERVER_DISCOVER_MIN threshold on purpose so a silent
-     * client sees the discovery method as absent rather than mismatched.
+     * The caller declares its version each request in one of three ways:
+     *   1. params.protocolVersion in the JSON-RPC body (initialize-style)
+     *   2. params._meta['io.modelcontextprotocol/protocolVersion'] (modern-era hint)
+     *   3. MCP-Protocol-Version HTTP header (spec-recommended post-initialize)
+     * Missing values fall back to DEFAULT_NEGOTIATED_PROTOCOL_VERSION, which sits
+     * below the SERVER_DISCOVER_MIN threshold on purpose so a silent client sees
+     * the discovery method as absent rather than mismatched.
      *
-     * Response mirrors the initialize result — protocolVersion + serverInfo +
-     * capabilities — so a client can bootstrap without a full handshake.
+     * Response shape is era-gated:
+     *   - 2026-07-28 and newer: modern DiscoverResult (resultType + supportedVersions
+     *     array + _meta['io.modelcontextprotocol/serverInfo'] + capabilities +
+     *     instructions + cacheScope + ttlMs) per the 2026-07-28 spec.
+     *   - Older: JSON-RPC -32601 method-not-found (clients on older eras never
+     *     had server/discover and fall back to the initialize handshake).
+     *
+     * A caller that explicitly names an unsupported protocol version gets
+     * -32022 with data.supported per the 2026-07-28 UnsupportedProtocolVersionError
+     * schema. handle_initialize keeps -32602 for backwards compat with legacy
+     * clients that expect that code.
      */
     private function handle_server_discover($params, $id) {
         $requested_version = null;
         if (is_array($params) && isset($params['protocolVersion']) && is_string($params['protocolVersion'])) {
             $requested_version = $params['protocolVersion'];
+        } elseif (is_array($params)
+            && isset($params['_meta']['io.modelcontextprotocol/protocolVersion'])
+            && is_string($params['_meta']['io.modelcontextprotocol/protocolVersion'])) {
+            $requested_version = $params['_meta']['io.modelcontextprotocol/protocolVersion'];
         } elseif (!empty($_SERVER['HTTP_MCP_PROTOCOL_VERSION'])) {
             $requested_version = sanitize_text_field(wp_unslash($_SERVER['HTTP_MCP_PROTOCOL_VERSION']));
         }
 
-        $effective_version = ($requested_version !== null && in_array($requested_version, self::SUPPORTED_PROTOCOL_VERSIONS, true))
-            ? $requested_version
-            : self::DEFAULT_NEGOTIATED_PROTOCOL_VERSION;
+        // Modern-era spec-conforming error path: an explicit protocolVersion
+        // we don't support returns -32022 with the list of supported versions
+        // so the client can retry. Silent clients (no version declared) fall
+        // through to the default-negotiation path below.
+        if ($requested_version !== null && !in_array($requested_version, self::SUPPORTED_PROTOCOL_VERSIONS, true)) {
+            return [
+                'jsonrpc' => '2.0',
+                'id' => $id,
+                'error' => [
+                    'code' => -32022,
+                    'message' => 'Unsupported protocol version',
+                    'data' => [
+                        'requested' => $requested_version,
+                        'supported' => self::SUPPORTED_PROTOCOL_VERSIONS,
+                    ],
+                ],
+            ];
+        }
 
+        $effective_version = $requested_version ?? self::DEFAULT_NEGOTIATED_PROTOCOL_VERSION;
+
+        // Legacy-era gate: server/discover did not exist before 2026-07-28,
+        // so older clients get method-not-found and fall back to initialize.
         if (strcmp($effective_version, self::SERVER_DISCOVER_MIN_PROTOCOL_VERSION) < 0) {
             return [
                 'jsonrpc' => '2.0',
@@ -1712,22 +1770,28 @@ class Server {
             ];
         }
 
-        $server_info = [
-            'name'    => 'Royal MCP WordPress',
-            'version' => ROYAL_MCP_VERSION,
-        ];
+        // Modern-era DiscoverResult per MCP 2026-07-28 /server/discover schema.
+        // supportedVersions is ordered newest-first — SUPPORTED_PROTOCOL_VERSIONS
+        // is stored ascending, so reverse for the wire.
+        $supported_desc = array_values(array_reverse(self::SUPPORTED_PROTOCOL_VERSIONS));
 
         return [
             'jsonrpc' => '2.0',
             'id' => $id,
             'result' => [
-                'protocolVersion' => $effective_version,
-                'serverInfo'      => $server_info,
-                'capabilities'    => [
+                'resultType'        => 'complete',
+                'supportedVersions' => $supported_desc,
+                'capabilities'      => [
                     'tools'     => new \stdClass(),
                     'resources' => new \stdClass(),
                     'prompts'   => new \stdClass(),
                 ],
+                '_meta' => [
+                    'io.modelcontextprotocol/serverInfo' => $this->build_server_info_with_icons(),
+                ],
+                'instructions' => self::SERVER_DISCOVER_INSTRUCTIONS,
+                'cacheScope'   => 'public',
+                'ttlMs'        => self::SERVER_DISCOVER_TTL_MS,
             ],
         ];
     }

@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.5.2
+Stable tag: 1.5.3
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -290,6 +290,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.5.3 =
+* Fix: `server/discover` response now conforms to the MCP 2026-07-28 modern-era schema for connectors that require the newer wire shape.
 
 = 1.5.2 =
 * New: Optional "Require approval before new AI clients can connect" setting with a Pending Clients admin page for reviewing dynamically-registered OAuth clients.
