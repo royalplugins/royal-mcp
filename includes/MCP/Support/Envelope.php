@@ -88,6 +88,7 @@ final class Envelope {
                 . ' (72h, pass to mcp_undo_last_operation to reverse).';
         }
         $out = [
+            'resultType'        => 'complete',
             'isError'           => false,
             'content'           => [ [ 'type' => 'text', 'text' => $summary ] ],
             'structuredContent' => $struct,

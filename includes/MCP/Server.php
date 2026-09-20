@@ -1859,6 +1859,7 @@ class Server {
                 'jsonrpc' => '2.0',
                 'id' => $id,
                 'result' => self::ensure_structured_content( [
+                    'resultType' => 'complete',
                     'content' => [[
                         'type' => 'text',
                         'text' => is_string($result) ? $result : wp_json_encode($result, JSON_PRETTY_PRINT),
