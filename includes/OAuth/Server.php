@@ -505,12 +505,12 @@ class Server {
         ] );
 
         // Redirect back to the client with the code.
-        $redirect = add_query_arg(
+        $redirect = self::build_authorize_redirect_url(
+            $redirect_uri,
             [
                 'code'  => $code,
                 'state' => $state,
-            ],
-            $redirect_uri
+            ]
         );
 
         $this->log_event( 'code_issued', 'Authorization code issued; redirecting to client callback.', 302, 'success' );
@@ -771,18 +771,43 @@ class Server {
             wp_die( esc_html( $description ), esc_html__( 'Authorization Error', 'royal-mcp' ), [ 'response' => 400 ] );
         }
 
-        $redirect = add_query_arg(
+        $redirect = self::build_authorize_redirect_url(
+            $redirect_uri,
             [
                 'error'             => $error,
                 'error_description' => $description,
                 'state'             => $state,
-            ],
-            $redirect_uri
+            ]
         );
 
         // phpcs:ignore WordPress.Security.SafeRedirect.wp_redirect_wp_redirect -- OAuth error redirect to client's registered callback URI.
         wp_redirect( $redirect );
         exit;
+    }
+
+    /**
+     * Build an /authorize response redirect URL with the RFC 9207 `iss`
+     * parameter automatically appended. Both the success path (code + state)
+     * and the error path (error + error_description + state) route through
+     * this helper so every /authorize response carries the issuer identifier —
+     * clients that speak RFC 9207 can verify the redirect came from the
+     * authorization server they authorized against, defeating mix-up attacks
+     * where a rogue AS proxies its own responses back through a legitimate
+     * client's callback.
+     *
+     * The `iss` value is sourced from the AS metadata document so it stays
+     * consistent with `.well-known/oauth-authorization-server` — clients that
+     * pinned to the metadata issuer on registration will match the redirect
+     * without a separate discovery round-trip.
+     *
+     * @param string $redirect_uri Client callback URI to append to.
+     * @param array  $params       Response parameters (code/state, or error/state).
+     * @return string The final redirect URL with iss appended.
+     */
+    public static function build_authorize_redirect_url( $redirect_uri, array $params ) {
+        $metadata      = self::build_authorization_server_metadata();
+        $params['iss'] = $metadata['issuer'];
+        return add_query_arg( $params, $redirect_uri );
     }
 
     /**
