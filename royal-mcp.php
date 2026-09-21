@@ -153,6 +153,12 @@ class Royal_MCP_Plugin {
         // Preview_Link redirect handler for rmcp_preview token URLs.
         \Royal_MCP\MCP\Support\Preview_Link::register();
 
+        // Weekly per-protocol / per-client / per-method request rollups.
+        // Passive observer on rest_pre_dispatch; wp_options storage keyed by
+        // ISO year-week, no custom table. Data feeds the Pro Protocol
+        // Insights dashboard.
+        \Royal_MCP\MCP\Protocol_Counter::register();
+
 
         // Royal Plugins Chrome Pack: header/footer/submenu on Royal MCP admin screens only.
         require_once ROYAL_MCP_PLUGIN_DIR . 'includes/chrome/class-royal-mcp-chrome.php';
