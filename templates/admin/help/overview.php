@@ -23,7 +23,7 @@ $royal_mcp_help_endpoint     = preg_replace( '/^http:/', 'https:', $royal_mcp_he
 			<?php esc_html_e( 'Connect your AI assistant to WordPress', 'royal-mcp' ); ?>
 		</h2>
 		<p class="royal-mcp-help-hero-lede">
-			<?php esc_html_e( 'Royal MCP turns your WordPress site into a Model Context Protocol (MCP) server. Any MCP-compatible client — Claude, ChatGPT, Cursor, VS Code, Claude Code — can then read from and write to your site through a single secure endpoint.', 'royal-mcp' ); ?>
+			<?php esc_html_e( 'Royal MCP turns your WordPress site into a Model Context Protocol (MCP) server. Any MCP-compatible client can read from and write to your site through a single secure endpoint, including Claude, ChatGPT, Cursor, VS Code, and Claude Code.', 'royal-mcp' ); ?>
 		</p>
 	</div>
 
