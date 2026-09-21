@@ -155,9 +155,14 @@ class Royal_MCP_Plugin {
 
         // Weekly per-protocol / per-client / per-method request rollups.
         // Passive observer on rest_pre_dispatch; wp_options storage keyed by
-        // ISO year-week, no custom table. Data feeds the Pro Protocol
-        // Insights dashboard.
+        // ISO year-week, no custom table. Data feeds the Protocol Insights
+        // admin submenu below (and the Pro dashboard when Pro is active).
         \Royal_MCP\MCP\Protocol_Counter::register();
+
+        // Protocol Insights admin submenu — renders the counter rollups as
+        // per-week cards + version/client distributions + method frequency +
+        // 12-week trend chart. Read-only, no JS, no external network calls.
+        \Royal_MCP\Admin\Protocol_Insights::register();
 
 
         // Royal Plugins Chrome Pack: header/footer/submenu on Royal MCP admin screens only.
