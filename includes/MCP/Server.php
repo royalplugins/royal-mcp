@@ -8730,6 +8730,16 @@ class Server {
         // path Tomasz reported. Redact the whole subtree regardless of
         // shape when the containing key is credential-shaped.
         if ($key_hint !== '' && $this->is_sensitive_key($key_hint)) {
+            // Preserve falsy sentinels — an empty/null/false/[]/'0' value
+            // under a sensitive-named key is a "not set" signal, not a
+            // secret worth masking. Returning [REDACTED] for these would
+            // be indistinguishable from "set to a secret we won't tell you"
+            // and gives operators no way to see that a slot is unconfigured
+            // (e.g. oauth_client_id === '' means DCR is in play, not that
+            // a static client_id exists but is being hidden).
+            if ($value === '' || $value === null || $value === [] || $value === '0' || $value === false) {
+                return $value;
+            }
             return '[REDACTED]';
         }
 
