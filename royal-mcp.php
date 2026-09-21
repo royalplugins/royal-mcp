@@ -460,6 +460,12 @@ class Royal_MCP_Plugin {
      * Register rewrite rules for OAuth endpoints at domain root.
      */
     public function register_oauth_rewrites() {
+        // RFC 9728 §3.1 path-suffixed PRM for the canonical /mcp endpoint.
+        // MUST come before the general oauth-protected-resource(/.*)?$ rule
+        // — WordPress evaluates rewrite rules in registration order and the
+        // general rule would otherwise match this path first and dispatch
+        // to the bare handler with the wrong `resource` field.
+        add_rewrite_rule( '\.well-known/oauth-protected-resource/wp-json/royal-mcp/v1/mcp/?$', 'index.php?royal_mcp_oauth=protected_resource_endpoint', 'top' );
         add_rewrite_rule( '\.well-known/oauth-protected-resource(/.*)?$', 'index.php?royal_mcp_oauth=protected_resource', 'top' );
         add_rewrite_rule( '\.well-known/oauth-authorization-server/mcp/?$', 'index.php?royal_mcp_oauth=metadata_mcp', 'top' );
         add_rewrite_rule( '\.well-known/oauth-authorization-server/?$', 'index.php?royal_mcp_oauth=metadata', 'top' );
@@ -728,6 +734,25 @@ class Royal_MCP_Plugin {
             'callback'            => function () {
                 return new \WP_REST_Response(
                     \Royal_MCP\OAuth\Server::build_protected_resource_metadata(),
+                    200,
+                    [ 'Cache-Control' => 'public, max-age=3600' ]
+                );
+            },
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
+        ]);
+
+        // RFC 9728 §3.1 path-suffixed PRM served via the wp-json fallback.
+        // Full URL: /wp-json/royal-mcp/v1/.well-known/oauth-protected-resource/wp-json/royal-mcp/v1/mcp
+        // Returns the same PRM as the root path-suffixed handler with
+        // resource=<canonical /wp-json/royal-mcp/v1/mcp URL>. Managed-host
+        // coverage for strict RFC 8707 clients that can't reach the root
+        // well-known prefix.
+        register_rest_route('royal-mcp/v1', '/.well-known/oauth-protected-resource/wp-json/royal-mcp/v1/mcp', [
+            'methods'             => 'GET',
+            'callback'            => function () {
+                $endpoint_url = home_url( '/wp-json/royal-mcp/v1/mcp' );
+                return new \WP_REST_Response(
+                    \Royal_MCP\OAuth\Server::build_protected_resource_metadata_for_endpoint( $endpoint_url ),
                     200,
                     [ 'Cache-Control' => 'public, max-age=3600' ]
                 );

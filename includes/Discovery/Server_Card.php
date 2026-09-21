@@ -108,9 +108,16 @@ class Server_Card {
             'version'          => $version,
             'protocolVersions' => \Royal_MCP\MCP\Server::SUPPORTED_PROTOCOL_VERSIONS,
             'endpoints'        => [
-                'mcp'                 => $home . '/mcp',
-                'authorizationServer' => $home . '/.well-known/oauth-authorization-server',
-                'protectedResource'   => $home . '/.well-known/oauth-protected-resource',
+                'mcp'                         => $home . '/mcp',
+                'authorizationServer'         => $home . '/.well-known/oauth-authorization-server',
+                'protectedResource'           => $home . '/.well-known/oauth-protected-resource',
+                // wp-json fallback URLs for managed hosts whose edge layer
+                // reserves the root /.well-known/* prefix before requests
+                // reach PHP (SiteGround, WP Engine, some cPanel edge). Both
+                // fallback paths return byte-identical JSON to the root
+                // paths, so scanners that discover either URL succeed.
+                'authorizationServerFallback' => $home . '/wp-json/royal-mcp/v1/.well-known/oauth-authorization-server',
+                'protectedResourceFallback'   => $home . '/wp-json/royal-mcp/v1/.well-known/oauth-protected-resource',
             ],
             'auth'             => $auth,
             'tools_summary'    => $summary,

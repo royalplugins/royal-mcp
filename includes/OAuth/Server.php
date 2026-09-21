@@ -52,6 +52,10 @@ class Server {
                 $this->protected_resource_metadata();
                 break;
 
+            case 'protected_resource_endpoint':
+                $this->protected_resource_metadata_endpoint();
+                break;
+
             case 'metadata':
                 $this->metadata();
                 break;
@@ -128,8 +132,53 @@ class Server {
         ];
     }
 
+    /**
+     * Build a Protected Resource Metadata document scoped to a specific
+     * endpoint resource URL, per RFC 9728 §3.1 path-suffixed URL semantics.
+     *
+     * The bare `.well-known/oauth-protected-resource` endpoint returns
+     * `resource: home_url()` for backwards compatibility with agent-readiness
+     * scanners (isitagentready.com, CF Agent Readiness) that fetch the bare
+     * path and verify `resource` matches the URL they accessed (site root).
+     * Strict clients per RFC 8707 pass a specific `resource=<canonical URL>`
+     * on their authorization + token requests and expect the PRM document
+     * for THAT resource to name that same URL — which the bare document
+     * cannot do without breaking scanner compat. This helper produces the
+     * per-endpoint PRM served at RFC 9728 §3.1 path-suffixed URLs.
+     *
+     * The output shares `authorization_servers`, `bearer_methods_supported`,
+     * `scopes_supported` with the bare document — only `resource` differs.
+     *
+     * @param string $endpoint_url The canonical endpoint URL the PRM covers.
+     * @return array PRM document with `resource` set to $endpoint_url.
+     */
+    public static function build_protected_resource_metadata_for_endpoint( $endpoint_url ) {
+        $bare               = self::build_protected_resource_metadata();
+        $bare['resource']   = rtrim( (string) $endpoint_url, '/' );
+        return $bare;
+    }
+
     private function protected_resource_metadata() {
         $this->json_response( self::build_protected_resource_metadata(), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+    }
+
+    /**
+     * RFC 9728 §3.1 path-suffixed PRM handler scoped to the /mcp endpoint.
+     * Serves the same PRM shape as the bare handler but with `resource` set
+     * to the canonical wp-json /mcp URL so strict RFC 8707 clients whose
+     * `resource=` request parameter names the endpoint URL find a matching
+     * PRM document.
+     *
+     * URL: `GET /.well-known/oauth-protected-resource/wp-json/royal-mcp/v1/mcp`
+     * (mirrored under wp-json fallback for managed-host coverage).
+     */
+    private function protected_resource_metadata_endpoint() {
+        $endpoint_url = home_url( '/wp-json/royal-mcp/v1/mcp' );
+        $this->json_response(
+            self::build_protected_resource_metadata_for_endpoint( $endpoint_url ),
+            200,
+            [ 'Cache-Control' => 'public, max-age=3600' ]
+        );
     }
 
     /* ------------------------------------------------------------------

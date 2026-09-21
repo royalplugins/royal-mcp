@@ -282,6 +282,21 @@ class Server {
     }
 
     /**
+     * wp-json fallback URL for the RFC 9728 Protected Resource Metadata
+     * document. Serves the identical payload as the root well-known URL —
+     * clients that can't reach the root path (managed hosts that reserve
+     * the /.well-known/* prefix at the edge layer) discover the same
+     * metadata here. Advertised alongside the root URL in every 401
+     * WWW-Authenticate response so RFC-9728-aware clients that hit the
+     * root variant and fail can retry against the fallback.
+     *
+     * @return string
+     */
+    public static function get_resource_metadata_fallback_url() {
+        return home_url( '/wp-json/royal-mcp/v1/.well-known/oauth-protected-resource' );
+    }
+
+    /**
      * Resolve the caller for the current request into a unified context shape.
      *
      * Sole insertion point for every auth branch: bearer (OAuth token OR
@@ -508,6 +523,7 @@ class Server {
      */
     private function auth_error_unauthenticated() {
         $resource_metadata_url = self::get_resource_metadata_url();
+        $fallback_url          = self::get_resource_metadata_fallback_url();
         $response = new \WP_REST_Response([
             'jsonrpc' => '2.0',
             'error' => [
@@ -516,6 +532,13 @@ class Server {
             ],
         ], 401);
         $response->header('WWW-Authenticate', 'Bearer resource_metadata="' . $resource_metadata_url . '"');
+        // Second WWW-Authenticate challenge advertising the wp-json fallback
+        // PRM URL. Emitted as a separate header (RFC 7235 §4.1 permits
+        // multiple challenges per response). Clients that can't reach the
+        // root well-known path — managed hosts reserve the /.well-known/*
+        // prefix at the edge — pick up the fallback here and complete
+        // discovery without host cooperation.
+        $response->header('WWW-Authenticate', 'Bearer resource_metadata="' . $fallback_url . '"', false);
         $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
         $response->header('Pragma', 'no-cache');
         return $response;
@@ -567,6 +590,7 @@ class Server {
             // start the OAuth flow on 401 but not 403, so returning 403 here
             // would suppress legitimate retries.
             $resource_metadata_url = self::get_resource_metadata_url();
+            $fallback_url          = self::get_resource_metadata_fallback_url();
             $response = new \WP_REST_Response([
                 'jsonrpc' => '2.0',
                 'error' => [
@@ -575,6 +599,7 @@ class Server {
                 ],
             ], 401);
             $response->header('WWW-Authenticate', 'Bearer error="invalid_token", resource_metadata="' . $resource_metadata_url . '"');
+            $response->header('WWW-Authenticate', 'Bearer error="invalid_token", resource_metadata="' . $fallback_url . '"', false);
             $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
             $response->header('Pragma', 'no-cache');
             return $response;
@@ -623,7 +648,9 @@ class Server {
                 ],
             ], 401);
             $resource_metadata_url = self::get_resource_metadata_url();
+            $fallback_url          = self::get_resource_metadata_fallback_url();
             $response->header('WWW-Authenticate', 'Bearer error="invalid_token", resource_metadata="' . $resource_metadata_url . '"');
+            $response->header('WWW-Authenticate', 'Bearer error="invalid_token", resource_metadata="' . $fallback_url . '"', false);
             $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
             $response->header('Pragma', 'no-cache');
             return $response;
