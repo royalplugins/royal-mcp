@@ -56,11 +56,9 @@ class Protocol_Counter {
 
     // Per-week cap on unique entries in each counter bucket. Excess entries
     // funnel into an 'other' aggregate rather than growing the row unboundedly
-    // when a rogue client rotates its clientInfo.name per-request. Empirical
-    // upper bound observed on our own public-facing install
-    // (demo.royalplugins.com week 2026-38): ~130 unique client names across
-    // ~5,000 requests. 200 gives a real-agent + real-scanner ceiling with
-    // headroom.
+    // when a rogue client rotates its clientInfo.name per-request. 200 gives
+    // real-agent + real-scanner traffic on a public-facing install ample
+    // headroom while bounding worst-case row size.
     const MAX_UNIQUE_PER_BUCKET = 200;
 
     // Cleanup horizon — rollups older than this many ISO weeks are reaped
