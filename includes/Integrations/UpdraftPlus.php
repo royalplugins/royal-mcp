@@ -355,7 +355,7 @@ class UpdraftPlus {
 				'service'    => $service,
 				'entities'   => $entities,
 				'event'      => $event,
-				'started_at' => time(),
+				'started_at' => gmdate( 'c', time() ),
 				'poll_hint'  => 'updraftplus_get_backup_status',
 				'label'      => $label,
 			],

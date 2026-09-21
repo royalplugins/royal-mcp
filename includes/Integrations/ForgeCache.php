@@ -116,8 +116,8 @@ class ForgeCache {
 					'total_files'      => (int) ( $stats['total_files'] ?? 0 ),
 					'total_size_bytes' => (int) ( $stats['total_size'] ?? 0 ),
 					'total_size_human' => size_format( (int) ( $stats['total_size'] ?? 0 ) ),
-					'oldest_file'      => isset( $stats['oldest_file'] ) && $stats['oldest_file'] ? gmdate( 'Y-m-d H:i:s', (int) $stats['oldest_file'] ) : null,
-					'newest_file'      => isset( $stats['newest_file'] ) && $stats['newest_file'] ? gmdate( 'Y-m-d H:i:s', (int) $stats['newest_file'] ) : null,
+					'oldest_file'      => isset( $stats['oldest_file'] ) && $stats['oldest_file'] ? gmdate( 'c', (int) $stats['oldest_file'] ) : null,
+					'newest_file'      => isset( $stats['newest_file'] ) && $stats['newest_file'] ? gmdate( 'c', (int) $stats['newest_file'] ) : null,
 				];
 
 			case 'fc_purge_url':
