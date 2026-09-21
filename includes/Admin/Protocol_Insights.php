@@ -33,7 +33,11 @@ class Protocol_Insights {
     const TOP_METHODS    = 20;
 
     public static function register() {
-        add_action( 'admin_menu',                       array( __CLASS__, 'add_submenu' ), 25 );
+        // Priority 12 slots the submenu between Pending Clients (11) and
+        // Help (15) in the Royal MCP admin sidebar, so the data-viewing
+        // pages (Activity Log, Pending Clients, Protocol Insights) group
+        // together above the Help entry.
+        add_action( 'admin_menu',                       array( __CLASS__, 'add_submenu' ), 12 );
         add_action( 'admin_post_' . self::EXPORT_ACTION, array( __CLASS__, 'handle_export' ) );
     }
 
