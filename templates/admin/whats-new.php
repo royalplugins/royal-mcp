@@ -18,7 +18,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 $rmcp_wn_img_base   = ROYAL_MCP_PLUGIN_URL . 'assets/img/whats-new/';
 $rmcp_wn_review_url = 'https://wordpress.org/support/plugin/royal-mcp/reviews/?rate=5#new-post';
 $rmcp_wn_help_url   = admin_url( 'admin.php?page=royal-mcp-help&view=troubleshooting' );
-$rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_2&utm_content=footer_cta';
+$rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_3&utm_content=footer_cta';
+$rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_3&utm_content=slide_1_cta';
 ?>
 <div class="rmcp-wn-backdrop" data-royal-mcp-wn-backdrop hidden>
     <div class="rmcp-wn-modal" role="dialog" aria-modal="true" aria-labelledby="rmcp-wn-title">
@@ -26,98 +27,119 @@ $rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_
             <img class="rmcp-wn-header-logo" src="<?php echo esc_url( $rmcp_wn_img_base . 'royal-shield.png' ); ?>" alt="">
             <div class="rmcp-wn-header-titles">
                 <h2 id="rmcp-wn-title"><?php esc_html_e( "What's New in Royal MCP", 'royal-mcp' ); ?></h2>
-                <p><?php esc_html_e( 'Version 1.5.2: approval-gated AI clients and modern OAuth discovery', 'royal-mcp' ); ?></p>
+                <p><?php esc_html_e( 'Version 1.5.3: Protocol Insights Dashboard & More MCP compliance', 'royal-mcp' ); ?></p>
             </div>
             <button type="button" class="rmcp-wn-close" data-royal-mcp-wn-close aria-label="<?php esc_attr_e( 'Close', 'royal-mcp' ); ?>">&times;</button>
         </div>
 
         <div class="rmcp-wn-slides">
 
-            <!-- SLIDE 1 — 100K DOWNLOADS -->
+            <!-- SLIDE 1 — ROYAL MCP PRO PITCH (flagship marketing spot) -->
             <div class="rmcp-wn-slide">
                 <div class="rmcp-wn-slide-visual">
-                    <div class="rmcp-wn-circle is-confetti" data-royal-mcp-wn-confetti>
-                        <img src="<?php echo esc_url( $rmcp_wn_img_base . 'royal-shield.png' ); ?>" alt="Royal Plugins">
+                    <div class="rmcp-wn-circle is-confetti">
+                        <img src="<?php echo esc_url( $rmcp_wn_img_base . 'royal-shield.png' ); ?>" alt="Royal MCP Pro">
                     </div>
                 </div>
                 <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Milestone', 'royal-mcp' ); ?></span>
-                    <p class="rmcp-wn-big-number"><?php esc_html_e( '100,000 Downloads', 'royal-mcp' ); ?></p>
-                    <h3><?php esc_html_e( 'Thank You!', 'royal-mcp' ); ?></h3>
-                    <p><?php esc_html_e( 'We recently crossed over 100,000 downloads and wanted to say thank you for using our tool. This has always been a dream of ours, and we\'re excited to keep building alongside you.', 'royal-mcp' ); ?></p>
-                    <p><?php esc_html_e( 'Every install, tool call, and support ticket helps us build a better plugin. Here\'s to the next 100k!', 'royal-mcp' ); ?></p>
-                    <a href="<?php echo esc_url( $rmcp_wn_review_url ); ?>" target="_blank" rel="noopener noreferrer" class="rmcp-wn-btn">
-                        <?php esc_html_e( 'Leave us a review →', 'royal-mcp' ); ?>
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Royal MCP Pro', 'royal-mcp' ); ?></span>
+                    <p class="rmcp-wn-big-number"><?php esc_html_e( 'Supercharge your workflow', 'royal-mcp' ); ?></p>
+                    <h3><?php esc_html_e( '300+ MCP tools, bulk operations, undo tokens — agency ready', 'royal-mcp' ); ?></h3>
+                    <p><?php esc_html_e( "Bulk-edit thousands of WooCommerce products or Elementor pages in a single tool call. Manage ACF field groups programmatically. Scope MCP endpoints per project so your AI's write access can't cross client boundaries.", 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( "Every destructive Pro tool returns an undo token good for 3\xE2\x80\x937 days. A 90-day activity log lets clients audit what your AI actually touched. Priority support, no data sharing, no token pricing.", 'royal-mcp' ); ?></p>
+                    <a href="<?php echo esc_url( $rmcp_wn_pro_slide_url ); ?>" target="_blank" rel="noopener noreferrer" class="rmcp-wn-btn">
+                        <?php esc_html_e( 'See Pro features →', 'royal-mcp' ); ?>
                     </a>
                 </div>
             </div>
 
-            <!-- SLIDE 2 — DCR PRE-APPROVAL TOGGLE (flagship 1.5.2 feature) -->
+            <!-- SLIDE 2 — PROTOCOL INSIGHTS DASHBOARD (flagship 1.5.3 feature) -->
             <div class="rmcp-wn-slide is-reversed">
                 <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v1.5.2', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'Approve new AI clients before they connect', 'royal-mcp' ); ?></h3>
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Peakaboo', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( "See who's using your MCP endpoint", 'royal-mcp' ); ?></h3>
                     <p>
                         <?php
                         echo wp_kses(
-                            __( 'New optional setting under Royal MCP &rsaquo; Settings: <strong>Require approval before new AI clients can connect</strong>. Turn it on and every dynamically-registered OAuth client lands in a <strong>Pending Clients</strong> queue instead of connecting straight away.', 'royal-mcp' ),
+                            __( 'New admin page under Royal MCP &rsaquo; <strong>Protocol Insights</strong> shows weekly rollups of protocol-version share, top MCP clients, and method-call frequency across every request hitting your site.', 'royal-mcp' ),
                             [ 'strong' => [] ]
                         );
                         ?>
                     </p>
-                    <p><?php esc_html_e( 'Each pending row shows client name, requested redirect URIs, source IP, and user agent. Approve or reject per row. An admin bar badge tells you when the queue has anything waiting so nothing slips through unnoticed.', 'royal-mcp' ); ?></p>
-                    <p><?php esc_html_e( 'Default is off, so nothing changes for existing sites. Turn it on when you want every AI-client connection reviewed before it goes live.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'Instantly answer questions like "is Anthropic\'s client still on the old protocol?" or "which methods are getting the most traffic this week?" without opening the raw activity log.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'Includes a 12-week trend chart and a one-click JSON export of the current week for offline analysis. Data stays on your site, with no external calls or third-party analytics.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'Royal MCP Pro will build on this dashboard, extending it with a security-first principle: classify real agents versus scanner traffic, then let you block suspicious clients right at your MCP endpoint.', 'royal-mcp' ); ?></p>
                 </div>
                 <div class="rmcp-wn-slide-visual">
-                    <div class="rmcp-wn-circle" role="img" aria-label="<?php esc_attr_e( 'Pending clients queue', 'royal-mcp' ); ?>">
+                    <div class="rmcp-wn-circle" role="img" aria-label="<?php esc_attr_e( 'Protocol Insights dashboard', 'royal-mcp' ); ?>">
                         <svg viewBox="0 0 200 200" width="170" height="170" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
                             <rect x="30" y="35" width="140" height="130" rx="10" fill="#FEFCF7" stroke="#C9A227" stroke-width="2.5"/>
                             <rect x="30" y="35" width="140" height="26" rx="10" fill="#C9A227"/>
-                            <text x="100" y="53" text-anchor="middle" font-family="Inter, -apple-system, sans-serif" font-size="12" font-weight="700" fill="#FEFCF7">PENDING CLIENTS</text>
-                            <rect x="42" y="72" width="116" height="24" rx="4" fill="#F6F7F7" stroke="#DDD" stroke-width="1"/>
-                            <circle cx="53" cy="84" r="5" fill="#FBBF24"/>
-                            <rect x="63" y="79" width="55" height="4" rx="1" fill="#2C2C2C" opacity="0.35"/>
-                            <rect x="63" y="87" width="35" height="3" rx="1" fill="#2C2C2C" opacity="0.2"/>
-                            <rect x="125" y="77" width="14" height="14" rx="2" fill="#22C55E"/>
-                            <rect x="142" y="77" width="14" height="14" rx="2" fill="#EF4444" opacity="0.85"/>
-                            <rect x="42" y="104" width="116" height="24" rx="4" fill="#F6F7F7" stroke="#DDD" stroke-width="1"/>
-                            <circle cx="53" cy="116" r="5" fill="#FBBF24"/>
-                            <rect x="63" y="111" width="45" height="4" rx="1" fill="#2C2C2C" opacity="0.35"/>
-                            <rect x="63" y="119" width="30" height="3" rx="1" fill="#2C2C2C" opacity="0.2"/>
-                            <rect x="125" y="109" width="14" height="14" rx="2" fill="#22C55E"/>
-                            <rect x="142" y="109" width="14" height="14" rx="2" fill="#EF4444" opacity="0.85"/>
-                            <rect x="42" y="136" width="116" height="24" rx="4" fill="#F6F7F7" stroke="#DDD" stroke-width="1"/>
-                            <circle cx="53" cy="148" r="5" fill="#FBBF24"/>
-                            <rect x="63" y="143" width="60" height="4" rx="1" fill="#2C2C2C" opacity="0.35"/>
-                            <rect x="63" y="151" width="42" height="3" rx="1" fill="#2C2C2C" opacity="0.2"/>
-                            <rect x="125" y="141" width="14" height="14" rx="2" fill="#22C55E"/>
-                            <rect x="142" y="141" width="14" height="14" rx="2" fill="#EF4444" opacity="0.85"/>
+                            <text x="100" y="53" text-anchor="middle" font-family="Inter, -apple-system, sans-serif" font-size="11" font-weight="700" fill="#FEFCF7">PROTOCOL INSIGHTS</text>
+                            <text x="42" y="82" font-family="monospace" font-size="6.5" fill="#2C2C2C">2026-07-28</text>
+                            <rect x="42" y="85" width="88" height="8" rx="2" fill="#2271B1"/>
+                            <text x="163" y="92" text-anchor="end" font-family="Inter, sans-serif" font-size="7" font-weight="600" fill="#2C2C2C">4,238</text>
+                            <text x="42" y="105" font-family="monospace" font-size="6.5" fill="#2C2C2C">2025-11-25</text>
+                            <rect x="42" y="108" width="54" height="8" rx="2" fill="#2271B1" opacity="0.75"/>
+                            <text x="163" y="115" text-anchor="end" font-family="Inter, sans-serif" font-size="7" font-weight="600" fill="#2C2C2C">1,634</text>
+                            <text x="42" y="128" font-family="monospace" font-size="6.5" fill="#2C2C2C">unknown</text>
+                            <rect x="42" y="131" width="27" height="8" rx="2" fill="#787c82"/>
+                            <text x="163" y="138" text-anchor="end" font-family="Inter, sans-serif" font-size="7" font-weight="600" fill="#2C2C2C">318</text>
+                            <line x1="42" y1="156" x2="158" y2="156" stroke="#dcdcde" stroke-width="0.6"/>
+                            <polyline points="42,153 60,149 78,151 96,146 114,142 132,145 150,140 158,138" fill="none" stroke="#2271B1" stroke-width="1.6"/>
+                            <circle cx="158" cy="138" r="2" fill="#2271B1"/>
                         </svg>
                     </div>
                 </div>
             </div>
 
-            <!-- SLIDE 3 — CIMD + OAUTH DISCOVERY POLISH -->
+            <!-- SLIDE 3 — MCP 2026-07-28 SPEC COMPLIANCE -->
             <div class="rmcp-wn-slide">
                 <div class="rmcp-wn-slide-visual">
                     <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone">
-<span class="c">// OAuth discovery metadata</span>
+<span class="c">// server/discover — MCP 2026-07-28</span>
 <span class="k">{</span>
-  <span class="s">"issuer"</span>: <span class="s">"https://yoursite.com"</span>,
-  <span class="s">"authorization_endpoint"</span>: <span class="s">"..."</span>,
-  <span class="s">"token_endpoint"</span>: <span class="s">"..."</span>,
-  <span class="s hl">"client_id_metadata_document_supported"</span>: <span class="k">true</span>,
-  <span class="s">"code_challenge_methods_supported"</span>: <span class="k">[</span><span class="s">"S256"</span><span class="k">]</span>
+  <span class="s hl">"resultType"</span>: <span class="s">"complete"</span>,
+  <span class="s hl">"supportedVersions"</span>: <span class="k">[</span><span class="s">"2026-07-28"</span><span class="k">, ...]</span>,
+  <span class="s">"capabilities"</span>: <span class="k">{ ... }</span>,
+  <span class="s">"_meta"</span>: <span class="k">{</span>
+    <span class="s">"io.modelcontextprotocol/serverInfo"</span>: <span class="k">{ ... }</span>
+  <span class="k">}</span>
 <span class="k">}</span>
                     </div>
                 </div>
                 <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v1.5.2', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'Modern OAuth discovery, on any host', 'royal-mcp' ); ?></h3>
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Ready Freedy', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'Ready for the newest MCP connectors', 'royal-mcp' ); ?></h3>
                     <p>
                         <?php
                         echo wp_kses(
-                            __( 'Royal MCP now advertises <strong>client_id_metadata_document</strong> support so AI clients using that flow (the one Claude\'s connector wizard promotes as "Recommended") can point at a metadata document URL instead of running a full dynamic-registration handshake.', 'royal-mcp' ),
+                            __( "Royal MCP now speaks the full <strong>MCP 2026-07-28</strong> wire shape, the newer spec that ChatGPT's connectors and the latest Anthropic clients expect. The <code>server/discover</code> response, OAuth <code>iss</code> parameter (RFC 9207), and RFC 9728 path-suffixed Protected Resource Metadata all land in this release.", 'royal-mcp' ),
+                            [ 'strong' => [], 'code' => [] ]
+                        );
+                        ?>
+                    </p>
+                    <p><?php esc_html_e( 'Older MCP clients keep working unchanged. The era-gated handler returns the legacy shape for pre-2026-07-28 protocol versions, so nothing on your existing setup breaks.', 'royal-mcp' ); ?></p>
+                    <p>
+                        <?php
+                        echo wp_kses(
+                            __( 'OAuth discovery also gets a wp-json fallback URL advertised in the server card and 401 responses, so managed hosts that reserve the root <code>.well-known/</code> prefix still route AI clients through successfully.', 'royal-mcp' ),
+                            [ 'code' => [] ]
+                        );
+                        ?>
+                    </p>
+                </div>
+            </div>
+
+            <!-- SLIDE 4 — POLISH TRIO (Chunks 7 / 10 / 11) -->
+            <div class="rmcp-wn-slide is-reversed">
+                <div class="rmcp-wn-slide-body">
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Polish', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'Small wins that add up', 'royal-mcp' ); ?></h3>
+                    <p>
+                        <?php
+                        echo wp_kses(
+                            __( '<strong>ISO 8601 timestamps on the wire.</strong> ForgeCache cache-stats fields, UpdraftPlus backup start times, and undo-envelope expiry timestamps now use the ISO 8601 UTC format that MCP clients already parse everywhere else.', 'royal-mcp' ),
                             [ 'strong' => [] ]
                         );
                         ?>
@@ -125,41 +147,16 @@ $rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_
                     <p>
                         <?php
                         echo wp_kses(
-                            __( 'OAuth discovery is also served under <code>/wp-json/royal-mcp/v1/.well-known/oauth-authorization-server</code> as a fallback for managed hosts (SiteGround, WP Engine, some cPanel setups) that block the root <code>.well-known/</code> path at their edge.', 'royal-mcp' ),
-                            [ 'code' => [] ]
-                        );
-                        ?>
-                    </p>
-                    <p><?php esc_html_e( 'A new admin notice also detects when your web server strips Authorization headers before WordPress sees them, with copy-paste Apache and nginx fix guidance.', 'royal-mcp' ); ?></p>
-                </div>
-            </div>
-
-            <!-- SLIDE 4 — TOOL SURFACE POLISH -->
-            <div class="rmcp-wn-slide is-reversed">
-                <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v1.5.2', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'Sharper tools for real workflows', 'royal-mcp' ); ?></h3>
-                    <p>
-                        <?php
-                        echo wp_kses(
-                            __( '<strong>Twitter card fields on wp_update_seo_meta.</strong> Set <code>twitter_title</code>, <code>twitter_description</code>, and <code>twitter_image</code> alongside the existing Open Graph fields. Routed per active SEO plugin (Yoast, Rank Math, SEOPress, SEObolt).', 'royal-mcp' ),
-                            [ 'strong' => [], 'code' => [] ]
+                            __( '<strong>Cleaner settings page.</strong> The WebMCP bridge status pill only appears when a WebMCP bridge is actually detected on your domain, so the 99% of sites that don\'t run one no longer see an amber "not detected" nag.', 'royal-mcp' ),
+                            [ 'strong' => [] ]
                         );
                         ?>
                     </p>
                     <p>
                         <?php
                         echo wp_kses(
-                            __( '<strong>Targeted custom CSS edits.</strong> <code>wp_replace_in_post</code> now works against the WordPress custom_css post so a two-line stylesheet change no longer sends the whole file over the wire.', 'royal-mcp' ),
-                            [ 'strong' => [], 'code' => [] ]
-                        );
-                        ?>
-                    </p>
-                    <p>
-                        <?php
-                        echo wp_kses(
-                            __( '<strong>Core Web Vitals via ForgeCache.</strong> New <code>fc_get_rum_stats</code> tool exposes ForgeCache\'s real-visitor INP, LCP, CLS, and TTFB data so AI assistants can identify the worst-performing pages on your site.', 'royal-mcp' ),
-                            [ 'strong' => [], 'code' => [] ]
+                            __( '<strong>Empty values stay empty.</strong> Reading a plugin setting via MCP now returns an empty string for unconfigured secret slots instead of masking them as "[REDACTED]", so AI assistants can tell a not-yet-set OAuth client ID from one that\'s actually populated.', 'royal-mcp' ),
+                            [ 'strong' => [] ]
                         );
                         ?>
                     </p>
