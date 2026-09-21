@@ -132,6 +132,7 @@ class Royal_MCP_Plugin {
         // Scheduled token cleanup.
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'cleanup_expired']);
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Undo_Store::class, 'cleanup_expired']);
+        add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Protocol_Counter::class, 'cleanup_expired']);
 
         // sessions cleanup rides on the same daily cron action.
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Session_Store::class, 'cleanup_expired']);
@@ -386,6 +387,13 @@ class Royal_MCP_Plugin {
         if ($token_store_ok && $session_store_ok && $this->required_tables_exist()) {
             update_option('royal_mcp_db_version', ROYAL_MCP_VERSION);
             delete_option('royal_mcp_db_upgrade_last_failed_at');
+            // Invalidate the Server_Card transient so any card-shape additions
+            // in this release (new endpoint URLs, new capability flags, etc.)
+            // appear on the very next scanner probe instead of waiting up to
+            // 5 minutes for the transient to expire naturally.
+            if ( class_exists( '\Royal_MCP\Discovery\Server_Card' ) ) {
+                delete_transient( \Royal_MCP\Discovery\Server_Card::CACHE_KEY );
+            }
         } else {
             update_option('royal_mcp_db_upgrade_last_failed_at', time());
         }

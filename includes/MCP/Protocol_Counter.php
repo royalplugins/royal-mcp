@@ -54,6 +54,21 @@ class Protocol_Counter {
     const MAX_CLIENT_NAME_LEN      = 128;
     const MAX_METHOD_LEN           = 128;
 
+    // Per-week cap on unique entries in each counter bucket. Excess entries
+    // funnel into an 'other' aggregate rather than growing the row unboundedly
+    // when a rogue client rotates its clientInfo.name per-request. Empirical
+    // upper bound observed on our own public-facing install
+    // (demo.royalplugins.com week 2026-38): ~130 unique client names across
+    // ~5,000 requests. 200 gives a real-agent + real-scanner ceiling with
+    // headroom.
+    const MAX_UNIQUE_PER_BUCKET = 200;
+
+    // Cleanup horizon — rollups older than this many ISO weeks are reaped
+    // by cleanup_expired(). 26 weeks = 6 months; the admin dashboard shows
+    // the last 12 weeks so this leaves 14 weeks of margin for on-demand
+    // export before old data disappears.
+    const RETENTION_WEEKS = 26;
+
     /**
      * Register the rest_pre_dispatch hook. Called once during plugin bootstrap.
      * Idempotent — repeated calls collapse via WP's filter dedupe.
@@ -144,16 +159,77 @@ class Protocol_Counter {
         $mmh  = ! empty( $signals['mcp_method_hint'] );
         $mnh  = ! empty( $signals['mcp_name_hint'] );
 
-        $rollup['protocol_version_counts'][ $pv ]  = ( $rollup['protocol_version_counts'][ $pv ] ?? 0 ) + 1;
-        $rollup['client_name_counts'][ $cn ]       = ( $rollup['client_name_counts'][ $cn ] ?? 0 ) + 1;
-        $rollup['method_counts'][ $mt ]            = ( $rollup['method_counts'][ $mt ] ?? 0 ) + 1;
-        $rollup['mcp_method_header_present']      += $mmh ? 1 : 0;
-        $rollup['mcp_name_header_present']        += $mnh ? 1 : 0;
-        $rollup['total_requests']                 += 1;
+        $rollup['protocol_version_counts'] = self::increment_bucket_with_cap( $rollup['protocol_version_counts'], $pv );
+        $rollup['client_name_counts']      = self::increment_bucket_with_cap( $rollup['client_name_counts'], $cn );
+        $rollup['method_counts']           = self::increment_bucket_with_cap( $rollup['method_counts'], $mt );
+        $rollup['mcp_method_header_present'] += $mmh ? 1 : 0;
+        $rollup['mcp_name_header_present']   += $mnh ? 1 : 0;
+        $rollup['total_requests']            += 1;
 
         // autoload=false so the option table scan on every request stays
         // small; the rollup is only read by the admin dashboard.
         update_option( $week_key, $rollup, false );
+    }
+
+    /**
+     * Increment a counter bucket with a per-week unique-key cap. Once the
+     * bucket has MAX_UNIQUE_PER_BUCKET entries, new keys are funnelled into
+     * an 'other' aggregate rather than growing the row. Existing keys still
+     * increment normally regardless of the cap.
+     *
+     * Protects against a rogue client rotating its clientInfo.name (or any
+     * other signal) per-request to balloon one week's wp_options row.
+     *
+     * @param array  $bucket Current bucket state ('key' => count).
+     * @param string $key    Key to increment.
+     * @return array Updated bucket.
+     */
+    private static function increment_bucket_with_cap( array $bucket, $key ) {
+        if ( array_key_exists( $key, $bucket ) ) {
+            $bucket[ $key ] += 1;
+            return $bucket;
+        }
+        if ( count( $bucket ) >= self::MAX_UNIQUE_PER_BUCKET ) {
+            $bucket['other'] = ( $bucket['other'] ?? 0 ) + 1;
+            return $bucket;
+        }
+        $bucket[ $key ] = 1;
+        return $bucket;
+    }
+
+    /**
+     * Reap rollups older than RETENTION_WEEKS. Hooked to the shared
+     * royal_mcp_token_cleanup daily cron alongside Token_Store,
+     * Session_Store, and Undo_Store cleanup handlers.
+     *
+     * @return int Number of expired rollup rows removed.
+     */
+    public static function cleanup_expired() {
+        global $wpdb;
+        $prefix = $wpdb->esc_like( self::OPTION_PREFIX ) . '%';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Options-table scan for ISO-week-keyed rollup rows.
+        $option_names = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s",
+                $prefix
+            )
+        );
+        if ( empty( $option_names ) ) {
+            return 0;
+        }
+        $cutoff_ts = strtotime( sprintf( '-%d weeks', self::RETENTION_WEEKS ) );
+        $cutoff_week_id = gmdate( 'o-W', (int) $cutoff_ts );
+        $deleted = 0;
+        foreach ( (array) $option_names as $option_name ) {
+            $week_id = substr( (string) $option_name, strlen( self::OPTION_PREFIX ) );
+            // ISO week ids are lexicographically comparable in YYYY-WW format
+            // (zero-padded week number, so 2025-02 < 2025-13 < 2026-01).
+            if ( strcmp( $week_id, $cutoff_week_id ) < 0 ) {
+                delete_option( $option_name );
+                $deleted++;
+            }
+        }
+        return $deleted;
     }
 
     /**
