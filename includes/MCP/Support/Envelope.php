@@ -72,7 +72,7 @@ final class Envelope {
                 [
                     'undo_available'  => true,
                     'undo_token'      => (string) $undo['token'],
-                    'undo_expires_at' => isset( $undo['expires_at'] ) ? (int) $undo['expires_at'] : null,
+                    'undo_expires_at' => isset( $undo['expires_at'] ) ? (string) $undo['expires_at'] : null,
                     'undo_ttl_hours'  => isset( $undo['ttl_hours'] ) ? (int) $undo['ttl_hours'] : null,
                     'undo_summary'    => isset( $undo['summary'] ) ? (string) $undo['summary'] : '',
                 ]

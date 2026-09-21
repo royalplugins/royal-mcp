@@ -31,15 +31,18 @@ class Undo_Store {
      *                        - `target`  (array)  identifying info about the mutated object
      *                        - `pre_op_state` (mixed) whatever the consumer needs to restore
      * @return array `{token, expires_at, summary, ttl_hours}` — merge into the tool's response as `undo`.
+     *               `expires_at` is emitted as an ISO 8601 UTC string on the wire (matches the fleet
+     *               Bug 17 pattern); storage keeps epoch int for internal TTL arithmetic.
      */
     public static function store( array $snapshot ): array {
-        $token      = bin2hex( random_bytes( 16 ) );
-        $expires_at = time() + self::DEFAULT_TTL;
+        $token          = bin2hex( random_bytes( 16 ) );
+        $created_at_int = time();
+        $expires_at_int = $created_at_int + self::DEFAULT_TTL;
 
         $envelope = array_merge( $snapshot, [
             'token'      => $token,
-            'created_at' => time(),
-            'expires_at' => $expires_at,
+            'created_at' => $created_at_int,
+            'expires_at' => $expires_at_int,
         ] );
 
         // Compress + base64 so the option value stays plain-text (some hosts
@@ -50,7 +53,7 @@ class Undo_Store {
 
         return [
             'token'      => $token,
-            'expires_at' => $expires_at,
+            'expires_at' => gmdate( 'c', $expires_at_int ),
             'summary'    => isset( $snapshot['summary'] ) ? (string) $snapshot['summary'] : '',
             'ttl_hours'  => (int) ( self::DEFAULT_TTL / 3600 ),
         ];
