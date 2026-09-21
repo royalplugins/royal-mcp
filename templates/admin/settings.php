@@ -131,25 +131,23 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                                     <span class="slider"></span>
                                 </label>
                                 <?php
+                                // Render the bridge-detected pill only when the probe positively
+                                // confirms a WebMCP bridge on this domain. The not_detected +
+                                // unknown states are noise for the ~99% of admins who don't run
+                                // one; the toggle description below already explains what WebMCP
+                                // is and where to enable it. Probe path is the W3C WebMCP spec
+                                // location (`/.webmcp/bridge.js`), so any conforming bridge
+                                // implementation is detected here, not just Cloudflare's.
                                 $webmcp_status = \Royal_MCP\Admin\Settings_Page::detect_webmcp_bridge();
-                                $status_label = [
-                                    'detected'     => __('Cloudflare WebMCP bridge detected on this domain.', 'royal-mcp'),
-                                    'not_detected' => __('No WebMCP bridge detected. Enable Agent Readiness → WebMCP in your Cloudflare dashboard.', 'royal-mcp'),
-                                    'unknown'      => __('WebMCP bridge status unknown — could not reach discovery path.', 'royal-mcp'),
-                                ];
-                                $status_color = [
-                                    'detected'     => '#008a20',
-                                    'not_detected' => '#996800',
-                                    'unknown'      => '#787c82',
-                                ];
-                                ?>
+                                if ( 'detected' === $webmcp_status ) : ?>
                                 <p class="description" style="margin-top:6px;">
-                                    <span style="display:inline-block;padding:2px 8px;border-radius:10px;background:<?php echo esc_attr($status_color[$webmcp_status] ?? '#787c82'); ?>;color:#fff;font-size:11px;font-weight:600;">
-                                        <?php echo esc_html($status_label[$webmcp_status] ?? $status_label['unknown']); ?>
+                                    <span style="display:inline-block;padding:2px 8px;border-radius:10px;background:#008a20;color:#fff;font-size:11px;font-weight:600;">
+                                        <?php esc_html_e('WebMCP bridge detected on this domain.', 'royal-mcp'); ?>
                                     </span>
                                 </p>
+                                <?php endif; ?>
                                 <p class="description">
-                                    <?php esc_html_e('When ON, browser-based AI agents (via the Cloudflare WebMCP bridge) can call Royal MCP tools using the visitor\'s existing WordPress login session. Every request must carry a WordPress nonce that Royal MCP mints for logged-in users — the same-origin security gate keeps this from being reachable by third-party pages your admin visits. External clients (Claude Desktop, ChatGPT, Cursor) continue to use OAuth Bearer tokens regardless of this setting.', 'royal-mcp'); ?>
+                                    <?php esc_html_e('When ON, browser-based AI agents (via any WebMCP-compatible bridge) can call Royal MCP tools using the visitor\'s existing WordPress login session. Every request must carry a WordPress nonce that Royal MCP mints for logged-in users — the same-origin security gate keeps this from being reachable by third-party pages your admin visits. External clients (Claude Desktop, ChatGPT, Cursor) continue to use OAuth Bearer tokens regardless of this setting.', 'royal-mcp'); ?>
                                 </p>
                             </td>
                         </tr>
@@ -805,7 +803,6 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                     </div>
                 </div>
             </div>
-        </div>
 
         <!-- OAuth Sessions -->
         <div class="postbox royal-mcp-oauth-sessions" style="margin-top: 20px;">
@@ -875,6 +872,8 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                 </table>
             </div>
         </div>
+
+        </div><!-- /.royal-mcp-settings-container -->
 
         <?php submit_button(); ?>
     </form>

@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.5.2
+Stable tag: 1.5.3
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -290,6 +290,19 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.5.3 =
+* Fix: `server/discover` response now conforms to the MCP 2026-07-28 modern-era schema for connectors that require the newer wire shape.
+* New: Local Protocol Insights admin page shows per-protocol-version request volume, top MCP clients, and method-call frequency across your Royal MCP endpoint.
+* New: OAuth authorization responses include the `iss` parameter per RFC 9207.
+* New: Protected Resource Metadata is now also served at the RFC 9728 path-suffixed URL for the MCP endpoint, satisfying strict connectors that expect the per-endpoint discovery path.
+* Enhancement: Tool responses tag successful envelopes with `resultType` for downstream observability.
+* Enhancement: Server accepts and logs the `Mcp-Method` and `Mcp-Name` request headers for client-side tracing.
+* Enhancement: OAuth discovery advertises the wp-json fallback URLs directly in the server card and 401 responses.
+* Enhancement: Timestamp fields in ForgeCache, UpdraftPlus, and undo-envelope responses now use ISO 8601 UTC format on the wire.
+* Enhancement: WebMCP bridge status badge on the settings page is silent unless a bridge is actively detected.
+* Fix: Empty plugin-setting values return as empty in tool responses so callers can distinguish unconfigured fields from set-but-redacted ones.
+* Housekeeping: Protocol-usage rollups are pruned by the daily maintenance cron.
 
 = 1.5.2 =
 * New: Optional "Require approval before new AI clients can connect" setting with a Pending Clients admin page for reviewing dynamically-registered OAuth clients.

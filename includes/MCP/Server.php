@@ -78,6 +78,20 @@ class Server {
     private $request_session_id   = null;   // MCP session ID from Mcp-Session-Id header, or null (no session for pre-initialize)
 
     /**
+     * Client-declared observability hints from MCP 2026-07-28 optional headers.
+     * Neither participates in dispatch — the JSON-RPC method is authoritative.
+     * Both are captured for admin-log visibility so operators can correlate a
+     * spike in a specific tool call to the client-side operation that fired it
+     * (e.g. every `Mcp-Name: search-orders` request came from the same agent
+     * flow, even though ten different tools/call methods were emitted).
+     *
+     * Null encodes "header not sent" so telemetry can distinguish a client that
+     * never sent the header from a client that sent an empty string.
+     */
+    private $request_mcp_method_hint = null; // Mcp-Method header value, or null when not sent
+    private $request_mcp_name_hint   = null; // Mcp-Name   header value, or null when not sent
+
+    /**
      * Unified caller-context shape produced by resolve_caller() on success.
      * Every auth branch (bearer, cookie/session) converges on this shape so
      * downstream tool gating reads the same fields regardless of how the
@@ -265,6 +279,21 @@ class Server {
         $default = home_url( '/.well-known/oauth-protected-resource' );
         $filtered = apply_filters( 'royal_mcp_protected_resource_metadata_url', $default );
         return is_string( $filtered ) && $filtered !== '' ? $filtered : $default;
+    }
+
+    /**
+     * wp-json fallback URL for the RFC 9728 Protected Resource Metadata
+     * document. Serves the identical payload as the root well-known URL —
+     * clients that can't reach the root path (managed hosts that reserve
+     * the /.well-known/* prefix at the edge layer) discover the same
+     * metadata here. Advertised alongside the root URL in every 401
+     * WWW-Authenticate response so RFC-9728-aware clients that hit the
+     * root variant and fail can retry against the fallback.
+     *
+     * @return string
+     */
+    public static function get_resource_metadata_fallback_url() {
+        return home_url( '/wp-json/royal-mcp/v1/.well-known/oauth-protected-resource' );
     }
 
     /**
@@ -494,6 +523,7 @@ class Server {
      */
     private function auth_error_unauthenticated() {
         $resource_metadata_url = self::get_resource_metadata_url();
+        $fallback_url          = self::get_resource_metadata_fallback_url();
         $response = new \WP_REST_Response([
             'jsonrpc' => '2.0',
             'error' => [
@@ -502,6 +532,13 @@ class Server {
             ],
         ], 401);
         $response->header('WWW-Authenticate', 'Bearer resource_metadata="' . $resource_metadata_url . '"');
+        // Second WWW-Authenticate challenge advertising the wp-json fallback
+        // PRM URL. Emitted as a separate header (RFC 7235 §4.1 permits
+        // multiple challenges per response). Clients that can't reach the
+        // root well-known path — managed hosts reserve the /.well-known/*
+        // prefix at the edge — pick up the fallback here and complete
+        // discovery without host cooperation.
+        $response->header('WWW-Authenticate', 'Bearer resource_metadata="' . $fallback_url . '"', false);
         $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
         $response->header('Pragma', 'no-cache');
         return $response;
@@ -553,6 +590,7 @@ class Server {
             // start the OAuth flow on 401 but not 403, so returning 403 here
             // would suppress legitimate retries.
             $resource_metadata_url = self::get_resource_metadata_url();
+            $fallback_url          = self::get_resource_metadata_fallback_url();
             $response = new \WP_REST_Response([
                 'jsonrpc' => '2.0',
                 'error' => [
@@ -561,6 +599,7 @@ class Server {
                 ],
             ], 401);
             $response->header('WWW-Authenticate', 'Bearer error="invalid_token", resource_metadata="' . $resource_metadata_url . '"');
+            $response->header('WWW-Authenticate', 'Bearer error="invalid_token", resource_metadata="' . $fallback_url . '"', false);
             $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
             $response->header('Pragma', 'no-cache');
             return $response;
@@ -609,7 +648,9 @@ class Server {
                 ],
             ], 401);
             $resource_metadata_url = self::get_resource_metadata_url();
+            $fallback_url          = self::get_resource_metadata_fallback_url();
             $response->header('WWW-Authenticate', 'Bearer error="invalid_token", resource_metadata="' . $resource_metadata_url . '"');
+            $response->header('WWW-Authenticate', 'Bearer error="invalid_token", resource_metadata="' . $fallback_url . '"', false);
             $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
             $response->header('Pragma', 'no-cache');
             return $response;
@@ -1412,6 +1453,12 @@ class Server {
         $session_id = $request->get_header('Mcp-Session-Id');
         $this->request_session_id = $session_id ? (string) $session_id : null;
 
+        // Client-declared observability hints from MCP 2026-07-28 optional
+        // headers. Read here so both log_method_call() and log_tool_call()
+        // pick them up via $this->request_mcp_*_hint on this dispatch pass.
+        $this->request_mcp_method_hint = self::read_mcp_hint_header( $request, 'Mcp-Method' );
+        $this->request_mcp_name_hint   = self::read_mcp_hint_header( $request, 'Mcp-Name' );
+
         $auth_check = $this->validate_auth($request);
         if ($auth_check !== true) {
             return $auth_check;
@@ -1447,6 +1494,26 @@ class Server {
     }
 
     /**
+     * Read an MCP observability-hint header off a request and normalize the
+     * value for logging. Returns null for missing / non-string headers so
+     * downstream JSON serialization can distinguish "header not sent" (null)
+     * from "empty string" (rare but valid). Values are sanitized + capped at
+     * 256 chars — hint text is expected to be short labels ("search-orders",
+     * "user-approve"), not free-form user content.
+     *
+     * @param \WP_REST_Request $request The current request.
+     * @param string           $header  Header name (e.g. 'Mcp-Method').
+     * @return string|null Sanitized header value, or null when not sent.
+     */
+    private static function read_mcp_hint_header( $request, $header ) {
+        $value = $request->get_header( $header );
+        if ( ! is_string( $value ) || '' === $value ) {
+            return null;
+        }
+        return substr( sanitize_text_field( $value ), 0, 256 );
+    }
+
+    /**
      * Log a JSON-RPC method call to wp_royal_mcp_logs.
      *
      * Complements log_tool_call() with method-level visibility. Without this
@@ -1465,7 +1532,11 @@ class Server {
         $is_error = is_array($result) && isset($result['error']);
         $status   = $is_error ? 'error' : 'success';
 
-        $request_meta = [ 'method' => (string) $method ];
+        $request_meta = [
+            'method'          => (string) $method,
+            'mcp_method_hint' => $this->request_mcp_method_hint,
+            'mcp_name_hint'   => $this->request_mcp_name_hint,
+        ];
         $response_meta = [ 'status' => $status ];
         if ($is_error) {
             $response_meta['error_code']    = (int) ($result['error']['code'] ?? 0);
@@ -1612,6 +1683,30 @@ class Server {
             ];
         }
 
+        return [
+            'jsonrpc' => '2.0',
+            'id' => $id,
+            'result' => [
+                'protocolVersion' => $negotiated,
+                'serverInfo' => $this->build_server_info_with_icons(),
+                'capabilities' => [
+                    'tools'     => new \stdClass(),
+                    'resources' => new \stdClass(),
+                    'prompts'   => new \stdClass(),
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * Server identity block shared between handle_initialize and
+     * handle_server_discover. Always returns name + version; adds an icons
+     * array when the site has a configured site icon (WP customizer or
+     * Site Editor). Returns bare metadata — the caller is responsible for
+     * placing it in the correct spec location (top-level for legacy era,
+     * under `_meta['io.modelcontextprotocol/serverInfo']` for modern era).
+     */
+    private function build_server_info_with_icons() {
         $server_info = [
             'name'    => 'Royal MCP WordPress',
             'version' => ROYAL_MCP_VERSION,
@@ -1642,19 +1737,7 @@ class Server {
                 ],
             ];
         }
-        return [
-            'jsonrpc' => '2.0',
-            'id' => $id,
-            'result' => [
-                'protocolVersion' => $negotiated,
-                'serverInfo' => $server_info,
-                'capabilities' => [
-                    'tools'     => new \stdClass(),
-                    'resources' => new \stdClass(),
-                    'prompts'   => new \stdClass(),
-                ],
-            ],
-        ];
+        return $server_info;
     }
 
     /**
@@ -1674,33 +1757,79 @@ class Server {
     const SERVER_DISCOVER_MIN_PROTOCOL_VERSION = '2026-07-28';
 
     /**
+     * server/discover response cache TTL exposed to clients via the
+     * `ttlMs` hint. 1 hour matches the MCP 2026-07-28 spec example and
+     * keeps connectors from re-issuing discover on every request.
+     */
+    const SERVER_DISCOVER_TTL_MS = 3600000;
+
+    /**
+     * Instructions string surfaced in the modern-era DiscoverResult.
+     * Kept short and non-versioned so it stays valid across minor bumps.
+     */
+    const SERVER_DISCOVER_INSTRUCTIONS = 'Royal MCP for WordPress — see the plugin admin Help tab for connector setup guidance.';
+
+    /**
      * Handler for server/discover — spec-forward discovery method that returns
      * server capabilities without requiring an initialize handshake.
      *
      * Era-gated inside the handler (not at registration) because the stateless-
      * per-request architecture doesn't retain negotiated state across requests.
-     * The caller declares its version each request in one of two ways:
-     *   1. params.protocolVersion in the JSON-RPC body (like initialize does)
-     *   2. MCP-Protocol-Version HTTP header (spec-recommended post-initialize)
-     * Missing or unsupported values fall back to DEFAULT_NEGOTIATED_PROTOCOL_VERSION,
-     * which sits below the SERVER_DISCOVER_MIN threshold on purpose so a silent
-     * client sees the discovery method as absent rather than mismatched.
+     * The caller declares its version each request in one of three ways:
+     *   1. params.protocolVersion in the JSON-RPC body (initialize-style)
+     *   2. params._meta['io.modelcontextprotocol/protocolVersion'] (modern-era hint)
+     *   3. MCP-Protocol-Version HTTP header (spec-recommended post-initialize)
+     * Missing values fall back to DEFAULT_NEGOTIATED_PROTOCOL_VERSION, which sits
+     * below the SERVER_DISCOVER_MIN threshold on purpose so a silent client sees
+     * the discovery method as absent rather than mismatched.
      *
-     * Response mirrors the initialize result — protocolVersion + serverInfo +
-     * capabilities — so a client can bootstrap without a full handshake.
+     * Response shape is era-gated:
+     *   - 2026-07-28 and newer: modern DiscoverResult (resultType + supportedVersions
+     *     array + _meta['io.modelcontextprotocol/serverInfo'] + capabilities +
+     *     instructions + cacheScope + ttlMs) per the 2026-07-28 spec.
+     *   - Older: JSON-RPC -32601 method-not-found (clients on older eras never
+     *     had server/discover and fall back to the initialize handshake).
+     *
+     * A caller that explicitly names an unsupported protocol version gets
+     * -32022 with data.supported per the 2026-07-28 UnsupportedProtocolVersionError
+     * schema. handle_initialize keeps -32602 for backwards compat with legacy
+     * clients that expect that code.
      */
     private function handle_server_discover($params, $id) {
         $requested_version = null;
         if (is_array($params) && isset($params['protocolVersion']) && is_string($params['protocolVersion'])) {
             $requested_version = $params['protocolVersion'];
+        } elseif (is_array($params)
+            && isset($params['_meta']['io.modelcontextprotocol/protocolVersion'])
+            && is_string($params['_meta']['io.modelcontextprotocol/protocolVersion'])) {
+            $requested_version = $params['_meta']['io.modelcontextprotocol/protocolVersion'];
         } elseif (!empty($_SERVER['HTTP_MCP_PROTOCOL_VERSION'])) {
             $requested_version = sanitize_text_field(wp_unslash($_SERVER['HTTP_MCP_PROTOCOL_VERSION']));
         }
 
-        $effective_version = ($requested_version !== null && in_array($requested_version, self::SUPPORTED_PROTOCOL_VERSIONS, true))
-            ? $requested_version
-            : self::DEFAULT_NEGOTIATED_PROTOCOL_VERSION;
+        // Modern-era spec-conforming error path: an explicit protocolVersion
+        // we don't support returns -32022 with the list of supported versions
+        // so the client can retry. Silent clients (no version declared) fall
+        // through to the default-negotiation path below.
+        if ($requested_version !== null && !in_array($requested_version, self::SUPPORTED_PROTOCOL_VERSIONS, true)) {
+            return [
+                'jsonrpc' => '2.0',
+                'id' => $id,
+                'error' => [
+                    'code' => -32022,
+                    'message' => 'Unsupported protocol version',
+                    'data' => [
+                        'requested' => $requested_version,
+                        'supported' => self::SUPPORTED_PROTOCOL_VERSIONS,
+                    ],
+                ],
+            ];
+        }
 
+        $effective_version = $requested_version ?? self::DEFAULT_NEGOTIATED_PROTOCOL_VERSION;
+
+        // Legacy-era gate: server/discover did not exist before 2026-07-28,
+        // so older clients get method-not-found and fall back to initialize.
         if (strcmp($effective_version, self::SERVER_DISCOVER_MIN_PROTOCOL_VERSION) < 0) {
             return [
                 'jsonrpc' => '2.0',
@@ -1712,22 +1841,28 @@ class Server {
             ];
         }
 
-        $server_info = [
-            'name'    => 'Royal MCP WordPress',
-            'version' => ROYAL_MCP_VERSION,
-        ];
+        // Modern-era DiscoverResult per MCP 2026-07-28 /server/discover schema.
+        // supportedVersions is ordered newest-first — SUPPORTED_PROTOCOL_VERSIONS
+        // is stored ascending, so reverse for the wire.
+        $supported_desc = array_values(array_reverse(self::SUPPORTED_PROTOCOL_VERSIONS));
 
         return [
             'jsonrpc' => '2.0',
             'id' => $id,
             'result' => [
-                'protocolVersion' => $effective_version,
-                'serverInfo'      => $server_info,
-                'capabilities'    => [
+                'resultType'        => 'complete',
+                'supportedVersions' => $supported_desc,
+                'capabilities'      => [
                     'tools'     => new \stdClass(),
                     'resources' => new \stdClass(),
                     'prompts'   => new \stdClass(),
                 ],
+                '_meta' => [
+                    'io.modelcontextprotocol/serverInfo' => $this->build_server_info_with_icons(),
+                ],
+                'instructions' => self::SERVER_DISCOVER_INSTRUCTIONS,
+                'cacheScope'   => 'public',
+                'ttlMs'        => self::SERVER_DISCOVER_TTL_MS,
             ],
         ];
     }
@@ -1795,6 +1930,7 @@ class Server {
                 'jsonrpc' => '2.0',
                 'id' => $id,
                 'result' => self::ensure_structured_content( [
+                    'resultType' => 'complete',
                     'content' => [[
                         'type' => 'text',
                         'text' => is_string($result) ? $result : wp_json_encode($result, JSON_PRETTY_PRINT),
@@ -1964,8 +2100,10 @@ class Server {
         global $wpdb;
 
         $request_meta = [
-            'tool'     => (string) $tool_name,
-            'arg_keys' => is_array($args) ? array_keys($args) : [],
+            'tool'            => (string) $tool_name,
+            'arg_keys'        => is_array($args) ? array_keys($args) : [],
+            'mcp_method_hint' => $this->request_mcp_method_hint,
+            'mcp_name_hint'   => $this->request_mcp_name_hint,
         ];
 
         $response_meta = [ 'status' => $status ];
@@ -8592,6 +8730,16 @@ class Server {
         // path Tomasz reported. Redact the whole subtree regardless of
         // shape when the containing key is credential-shaped.
         if ($key_hint !== '' && $this->is_sensitive_key($key_hint)) {
+            // Preserve falsy sentinels — an empty/null/false/[]/'0' value
+            // under a sensitive-named key is a "not set" signal, not a
+            // secret worth masking. Returning [REDACTED] for these would
+            // be indistinguishable from "set to a secret we won't tell you"
+            // and gives operators no way to see that a slot is unconfigured
+            // (e.g. oauth_client_id === '' means DCR is in play, not that
+            // a static client_id exists but is being hidden).
+            if ($value === '' || $value === null || $value === [] || $value === '0' || $value === false) {
+                return $value;
+            }
             return '[REDACTED]';
         }
 

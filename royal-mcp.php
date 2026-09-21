@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.5.2
+ * Version: 1.5.3
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -42,7 +42,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 // guards each MCP request produces 4 warnings + 4 nginx error-log stack
 // traces, which on shared PHP-FPM pools amplifies into cross-site worker
 // starvation.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.2' );
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.3' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -132,6 +132,7 @@ class Royal_MCP_Plugin {
         // Scheduled token cleanup.
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'cleanup_expired']);
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Undo_Store::class, 'cleanup_expired']);
+        add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Protocol_Counter::class, 'cleanup_expired']);
 
         // sessions cleanup rides on the same daily cron action.
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Session_Store::class, 'cleanup_expired']);
@@ -152,6 +153,17 @@ class Royal_MCP_Plugin {
 
         // Preview_Link redirect handler for rmcp_preview token URLs.
         \Royal_MCP\MCP\Support\Preview_Link::register();
+
+        // Weekly per-protocol / per-client / per-method request rollups.
+        // Passive observer on rest_pre_dispatch; wp_options storage keyed by
+        // ISO year-week, no custom table. Data feeds the Protocol Insights
+        // admin submenu below (and the Pro dashboard when Pro is active).
+        \Royal_MCP\MCP\Protocol_Counter::register();
+
+        // Protocol Insights admin submenu — renders the counter rollups as
+        // per-week cards + version/client distributions + method frequency +
+        // 12-week trend chart. Read-only, no JS, no external network calls.
+        \Royal_MCP\Admin\Protocol_Insights::register();
 
 
         // Royal Plugins Chrome Pack: header/footer/submenu on Royal MCP admin screens only.
@@ -375,6 +387,13 @@ class Royal_MCP_Plugin {
         if ($token_store_ok && $session_store_ok && $this->required_tables_exist()) {
             update_option('royal_mcp_db_version', ROYAL_MCP_VERSION);
             delete_option('royal_mcp_db_upgrade_last_failed_at');
+            // Invalidate the Server_Card transient so any card-shape additions
+            // in this release (new endpoint URLs, new capability flags, etc.)
+            // appear on the very next scanner probe instead of waiting up to
+            // 5 minutes for the transient to expire naturally.
+            if ( class_exists( '\Royal_MCP\Discovery\Server_Card' ) ) {
+                delete_transient( \Royal_MCP\Discovery\Server_Card::CACHE_KEY );
+            }
         } else {
             update_option('royal_mcp_db_upgrade_last_failed_at', time());
         }
@@ -449,6 +468,12 @@ class Royal_MCP_Plugin {
      * Register rewrite rules for OAuth endpoints at domain root.
      */
     public function register_oauth_rewrites() {
+        // RFC 9728 §3.1 path-suffixed PRM for the canonical /mcp endpoint.
+        // MUST come before the general oauth-protected-resource(/.*)?$ rule
+        // — WordPress evaluates rewrite rules in registration order and the
+        // general rule would otherwise match this path first and dispatch
+        // to the bare handler with the wrong `resource` field.
+        add_rewrite_rule( '\.well-known/oauth-protected-resource/wp-json/royal-mcp/v1/mcp/?$', 'index.php?royal_mcp_oauth=protected_resource_endpoint', 'top' );
         add_rewrite_rule( '\.well-known/oauth-protected-resource(/.*)?$', 'index.php?royal_mcp_oauth=protected_resource', 'top' );
         add_rewrite_rule( '\.well-known/oauth-authorization-server/mcp/?$', 'index.php?royal_mcp_oauth=metadata_mcp', 'top' );
         add_rewrite_rule( '\.well-known/oauth-authorization-server/?$', 'index.php?royal_mcp_oauth=metadata', 'top' );
@@ -717,6 +742,25 @@ class Royal_MCP_Plugin {
             'callback'            => function () {
                 return new \WP_REST_Response(
                     \Royal_MCP\OAuth\Server::build_protected_resource_metadata(),
+                    200,
+                    [ 'Cache-Control' => 'public, max-age=3600' ]
+                );
+            },
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
+        ]);
+
+        // RFC 9728 §3.1 path-suffixed PRM served via the wp-json fallback.
+        // Full URL: /wp-json/royal-mcp/v1/.well-known/oauth-protected-resource/wp-json/royal-mcp/v1/mcp
+        // Returns the same PRM as the root path-suffixed handler with
+        // resource=<canonical /wp-json/royal-mcp/v1/mcp URL>. Managed-host
+        // coverage for strict RFC 8707 clients that can't reach the root
+        // well-known prefix.
+        register_rest_route('royal-mcp/v1', '/.well-known/oauth-protected-resource/wp-json/royal-mcp/v1/mcp', [
+            'methods'             => 'GET',
+            'callback'            => function () {
+                $endpoint_url = home_url( '/wp-json/royal-mcp/v1/mcp' );
+                return new \WP_REST_Response(
+                    \Royal_MCP\OAuth\Server::build_protected_resource_metadata_for_endpoint( $endpoint_url ),
                     200,
                     [ 'Cache-Control' => 'public, max-age=3600' ]
                 );

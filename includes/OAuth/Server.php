@@ -52,6 +52,10 @@ class Server {
                 $this->protected_resource_metadata();
                 break;
 
+            case 'protected_resource_endpoint':
+                $this->protected_resource_metadata_endpoint();
+                break;
+
             case 'metadata':
                 $this->metadata();
                 break;
@@ -128,8 +132,53 @@ class Server {
         ];
     }
 
+    /**
+     * Build a Protected Resource Metadata document scoped to a specific
+     * endpoint resource URL, per RFC 9728 §3.1 path-suffixed URL semantics.
+     *
+     * The bare `.well-known/oauth-protected-resource` endpoint returns
+     * `resource: home_url()` for backwards compatibility with agent-readiness
+     * scanners (isitagentready.com, CF Agent Readiness) that fetch the bare
+     * path and verify `resource` matches the URL they accessed (site root).
+     * Strict clients per RFC 8707 pass a specific `resource=<canonical URL>`
+     * on their authorization + token requests and expect the PRM document
+     * for THAT resource to name that same URL — which the bare document
+     * cannot do without breaking scanner compat. This helper produces the
+     * per-endpoint PRM served at RFC 9728 §3.1 path-suffixed URLs.
+     *
+     * The output shares `authorization_servers`, `bearer_methods_supported`,
+     * `scopes_supported` with the bare document — only `resource` differs.
+     *
+     * @param string $endpoint_url The canonical endpoint URL the PRM covers.
+     * @return array PRM document with `resource` set to $endpoint_url.
+     */
+    public static function build_protected_resource_metadata_for_endpoint( $endpoint_url ) {
+        $bare               = self::build_protected_resource_metadata();
+        $bare['resource']   = rtrim( (string) $endpoint_url, '/' );
+        return $bare;
+    }
+
     private function protected_resource_metadata() {
         $this->json_response( self::build_protected_resource_metadata(), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+    }
+
+    /**
+     * RFC 9728 §3.1 path-suffixed PRM handler scoped to the /mcp endpoint.
+     * Serves the same PRM shape as the bare handler but with `resource` set
+     * to the canonical wp-json /mcp URL so strict RFC 8707 clients whose
+     * `resource=` request parameter names the endpoint URL find a matching
+     * PRM document.
+     *
+     * URL: `GET /.well-known/oauth-protected-resource/wp-json/royal-mcp/v1/mcp`
+     * (mirrored under wp-json fallback for managed-host coverage).
+     */
+    private function protected_resource_metadata_endpoint() {
+        $endpoint_url = home_url( '/wp-json/royal-mcp/v1/mcp' );
+        $this->json_response(
+            self::build_protected_resource_metadata_for_endpoint( $endpoint_url ),
+            200,
+            [ 'Cache-Control' => 'public, max-age=3600' ]
+        );
     }
 
     /* ------------------------------------------------------------------
@@ -505,12 +554,12 @@ class Server {
         ] );
 
         // Redirect back to the client with the code.
-        $redirect = add_query_arg(
+        $redirect = self::build_authorize_redirect_url(
+            $redirect_uri,
             [
                 'code'  => $code,
                 'state' => $state,
-            ],
-            $redirect_uri
+            ]
         );
 
         $this->log_event( 'code_issued', 'Authorization code issued; redirecting to client callback.', 302, 'success' );
@@ -771,18 +820,40 @@ class Server {
             wp_die( esc_html( $description ), esc_html__( 'Authorization Error', 'royal-mcp' ), [ 'response' => 400 ] );
         }
 
-        $redirect = add_query_arg(
+        $redirect = self::build_authorize_redirect_url(
+            $redirect_uri,
             [
                 'error'             => $error,
                 'error_description' => $description,
                 'state'             => $state,
-            ],
-            $redirect_uri
+            ]
         );
 
         // phpcs:ignore WordPress.Security.SafeRedirect.wp_redirect_wp_redirect -- OAuth error redirect to client's registered callback URI.
         wp_redirect( $redirect );
         exit;
+    }
+
+    /**
+     * Build an /authorize response redirect URL with the RFC 9207 `iss`
+     * parameter automatically appended. Both the success path (code + state)
+     * and the error path (error + error_description + state) route through
+     * this helper so every /authorize response carries the issuer identifier
+     * RFC 9207 requires.
+     *
+     * The `iss` value is sourced from the AS metadata document so it stays
+     * in lock-step with `.well-known/oauth-authorization-server` — clients
+     * that pinned to the metadata issuer at registration will match the
+     * redirect without a separate discovery round-trip.
+     *
+     * @param string $redirect_uri Client callback URI to append to.
+     * @param array  $params       Response parameters (code/state, or error/state).
+     * @return string The final redirect URL with iss appended.
+     */
+    public static function build_authorize_redirect_url( $redirect_uri, array $params ) {
+        $metadata      = self::build_authorization_server_metadata();
+        $params['iss'] = $metadata['issuer'];
+        return add_query_arg( $params, $redirect_uri );
     }
 
     /**

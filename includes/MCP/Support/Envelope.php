@@ -72,7 +72,7 @@ final class Envelope {
                 [
                     'undo_available'  => true,
                     'undo_token'      => (string) $undo['token'],
-                    'undo_expires_at' => isset( $undo['expires_at'] ) ? (int) $undo['expires_at'] : null,
+                    'undo_expires_at' => isset( $undo['expires_at'] ) ? (string) $undo['expires_at'] : null,
                     'undo_ttl_hours'  => isset( $undo['ttl_hours'] ) ? (int) $undo['ttl_hours'] : null,
                     'undo_summary'    => isset( $undo['summary'] ) ? (string) $undo['summary'] : '',
                 ]
@@ -88,6 +88,7 @@ final class Envelope {
                 . ' (72h, pass to mcp_undo_last_operation to reverse).';
         }
         $out = [
+            'resultType'        => 'complete',
             'isError'           => false,
             'content'           => [ [ 'type' => 'text', 'text' => $summary ] ],
             'structuredContent' => $struct,
