@@ -1783,15 +1783,15 @@ class Server {
      * below the SERVER_DISCOVER_MIN threshold on purpose so a silent client sees
      * the discovery method as absent rather than mismatched.
      *
-     * Response shape is era-gated:
-     *   - 2026-07-28 and newer: modern DiscoverResult (resultType + supportedVersions
+     * Response shape is era-gated by SERVER_DISCOVER_MIN_PROTOCOL_VERSION:
+     *   - Modern era and newer: modern DiscoverResult (resultType + supportedVersions
      *     array + _meta['io.modelcontextprotocol/serverInfo'] + capabilities +
-     *     instructions + cacheScope + ttlMs) per the 2026-07-28 spec.
+     *     instructions + cacheScope + ttlMs) per the modern-era spec.
      *   - Older: JSON-RPC -32601 method-not-found (clients on older eras never
      *     had server/discover and fall back to the initialize handshake).
      *
      * A caller that explicitly names an unsupported protocol version gets
-     * -32022 with data.supported per the 2026-07-28 UnsupportedProtocolVersionError
+     * -32022 with data.supported per the modern-era UnsupportedProtocolVersionError
      * schema. handle_initialize keeps -32602 for backwards compat with legacy
      * clients that expect that code.
      */
@@ -1828,7 +1828,7 @@ class Server {
 
         $effective_version = $requested_version ?? self::DEFAULT_NEGOTIATED_PROTOCOL_VERSION;
 
-        // Legacy-era gate: server/discover did not exist before 2026-07-28,
+        // Legacy-era gate: server/discover only exists in the modern-era spec,
         // so older clients get method-not-found and fall back to initialize.
         if (strcmp($effective_version, self::SERVER_DISCOVER_MIN_PROTOCOL_VERSION) < 0) {
             return [
