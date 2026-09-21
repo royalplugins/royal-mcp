@@ -789,16 +789,13 @@ class Server {
      * Build an /authorize response redirect URL with the RFC 9207 `iss`
      * parameter automatically appended. Both the success path (code + state)
      * and the error path (error + error_description + state) route through
-     * this helper so every /authorize response carries the issuer identifier —
-     * clients that speak RFC 9207 can verify the redirect came from the
-     * authorization server they authorized against, defeating mix-up attacks
-     * where a rogue AS proxies its own responses back through a legitimate
-     * client's callback.
+     * this helper so every /authorize response carries the issuer identifier
+     * RFC 9207 requires.
      *
      * The `iss` value is sourced from the AS metadata document so it stays
-     * consistent with `.well-known/oauth-authorization-server` — clients that
-     * pinned to the metadata issuer on registration will match the redirect
-     * without a separate discovery round-trip.
+     * in lock-step with `.well-known/oauth-authorization-server` — clients
+     * that pinned to the metadata issuer at registration will match the
+     * redirect without a separate discovery round-trip.
      *
      * @param string $redirect_uri Client callback URI to append to.
      * @param array  $params       Response parameters (code/state, or error/state).
