@@ -132,20 +132,22 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                                 </label>
                                 <?php
                                 // Render the bridge-detected pill only when the probe positively
-                                // confirms a Cloudflare WebMCP bridge on this domain. The
-                                // not_detected + unknown states are noise for the ~99% of admins
-                                // who don't run Cloudflare WebMCP — the toggle description below
-                                // already explains what WebMCP is and how to enable it upstream.
+                                // confirms a WebMCP bridge on this domain. The not_detected +
+                                // unknown states are noise for the ~99% of admins who don't run
+                                // one; the toggle description below already explains what WebMCP
+                                // is and where to enable it. Probe path is the W3C WebMCP spec
+                                // location (`/.webmcp/bridge.js`), so any conforming bridge
+                                // implementation is detected here, not just Cloudflare's.
                                 $webmcp_status = \Royal_MCP\Admin\Settings_Page::detect_webmcp_bridge();
                                 if ( 'detected' === $webmcp_status ) : ?>
                                 <p class="description" style="margin-top:6px;">
                                     <span style="display:inline-block;padding:2px 8px;border-radius:10px;background:#008a20;color:#fff;font-size:11px;font-weight:600;">
-                                        <?php esc_html_e('Cloudflare WebMCP bridge detected on this domain.', 'royal-mcp'); ?>
+                                        <?php esc_html_e('WebMCP bridge detected on this domain.', 'royal-mcp'); ?>
                                     </span>
                                 </p>
                                 <?php endif; ?>
                                 <p class="description">
-                                    <?php esc_html_e('When ON, browser-based AI agents (via the Cloudflare WebMCP bridge) can call Royal MCP tools using the visitor\'s existing WordPress login session. Every request must carry a WordPress nonce that Royal MCP mints for logged-in users — the same-origin security gate keeps this from being reachable by third-party pages your admin visits. External clients (Claude Desktop, ChatGPT, Cursor) continue to use OAuth Bearer tokens regardless of this setting.', 'royal-mcp'); ?>
+                                    <?php esc_html_e('When ON, browser-based AI agents (via any WebMCP-compatible bridge) can call Royal MCP tools using the visitor\'s existing WordPress login session. Every request must carry a WordPress nonce that Royal MCP mints for logged-in users — the same-origin security gate keeps this from being reachable by third-party pages your admin visits. External clients (Claude Desktop, ChatGPT, Cursor) continue to use OAuth Bearer tokens regardless of this setting.', 'royal-mcp'); ?>
                                 </p>
                             </td>
                         </tr>
