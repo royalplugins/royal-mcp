@@ -803,7 +803,6 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                     </div>
                 </div>
             </div>
-        </div>
 
         <!-- OAuth Sessions -->
         <div class="postbox royal-mcp-oauth-sessions" style="margin-top: 20px;">
@@ -873,6 +872,8 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                 </table>
             </div>
         </div>
+
+        </div><!-- /.royal-mcp-settings-container -->
 
         <?php submit_button(); ?>
     </form>
