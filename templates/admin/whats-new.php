@@ -18,8 +18,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 $rmcp_wn_img_base   = ROYAL_MCP_PLUGIN_URL . 'assets/img/whats-new/';
 $rmcp_wn_review_url = 'https://wordpress.org/support/plugin/royal-mcp/reviews/?rate=5#new-post';
 $rmcp_wn_help_url   = admin_url( 'admin.php?page=royal-mcp-help&view=troubleshooting' );
-$rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_3&utm_content=footer_cta';
-$rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_3&utm_content=slide_1_cta';
+$rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_4&utm_content=footer_cta';
+$rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_4&utm_content=slide_1_cta';
 ?>
 <div class="rmcp-wn-backdrop" data-royal-mcp-wn-backdrop hidden>
     <div class="rmcp-wn-modal" role="dialog" aria-modal="true" aria-labelledby="rmcp-wn-title">
@@ -27,7 +27,7 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
             <img class="rmcp-wn-header-logo" src="<?php echo esc_url( $rmcp_wn_img_base . 'royal-shield.png' ); ?>" alt="">
             <div class="rmcp-wn-header-titles">
                 <h2 id="rmcp-wn-title"><?php esc_html_e( "What's New in Royal MCP", 'royal-mcp' ); ?></h2>
-                <p><?php esc_html_e( 'Version 1.5.3: Protocol Insights Dashboard & More MCP compliance', 'royal-mcp' ); ?></p>
+                <p><?php esc_html_e( 'Version 1.5.4: Protocol Insights Dashboard & MCP Modern-Era Compliance', 'royal-mcp' ); ?></p>
             </div>
             <button type="button" class="rmcp-wn-close" data-royal-mcp-wn-close aria-label="<?php esc_attr_e( 'Close', 'royal-mcp' ); ?>">&times;</button>
         </div>
@@ -114,12 +114,12 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                     <p>
                         <?php
                         echo wp_kses(
-                            __( "Royal MCP now speaks the full <strong>MCP 2026-07-28</strong> wire shape, the newer spec that ChatGPT's connectors and the latest Anthropic clients expect. The <code>server/discover</code> response, OAuth <code>iss</code> parameter (RFC 9207), and RFC 9728 path-suffixed Protected Resource Metadata all land in this release.", 'royal-mcp' ),
+                            __( "Royal MCP now speaks the full <strong>MCP 2026-07-28</strong> wire shape, the newer spec that ChatGPT's connectors and the latest Anthropic clients expect. The <code>server/discover</code> response, <code>tools/list</code> / <code>prompts/list</code> / <code>resources/list</code> cacheable-result envelope, OAuth <code>iss</code> parameter (RFC 9207), and RFC 9728 path-suffixed Protected Resource Metadata are all conformant.", 'royal-mcp' ),
                             [ 'strong' => [], 'code' => [] ]
                         );
                         ?>
                     </p>
-                    <p><?php esc_html_e( 'Older MCP clients keep working unchanged. The era-gated handler returns the legacy shape for pre-2026-07-28 protocol versions, so nothing on your existing setup breaks.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'Older MCP clients keep working unchanged. The era-gated handlers return the legacy shape for pre-modern protocol versions, so nothing on your existing setup breaks.', 'royal-mcp' ); ?></p>
                     <p>
                         <?php
                         echo wp_kses(

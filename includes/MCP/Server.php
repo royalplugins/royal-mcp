@@ -135,6 +135,19 @@ class Server {
     const DEFAULT_NEGOTIATED_PROTOCOL_VERSION = '2025-11-25';
 
     /**
+     * Spec revision at which the modern-era per-request _meta model and the
+     * cacheable-result envelope (resultType + ttlMs + cacheScope on
+     * server/discover, tools/list, prompts/list, resources/list, and the
+     * other cacheable methods enumerated in the caching-utilities spec page)
+     * became normative. Clients that negotiate this revision or later
+     * strict-validate the envelope shape on cacheable responses; clients on
+     * earlier revisions accept the legacy shape per the absent-means-complete
+     * bridge, so era-gating the envelope emission keeps both eras working
+     * on a single dual-era server.
+     */
+    const MODERN_ERA_MIN_PROTOCOL_VERSION = '2026-07-28';
+
+    /**
      * JSON-RPC method dispatch table. Populated by register_default_handlers()
      * from the constructor; extensible via register_method_handler().
      *
@@ -1749,6 +1762,77 @@ class Server {
     }
 
     /**
+     * Resolve the effective protocol version for the current request. Sources
+     * are consulted in the order declared by the modern-era spec:
+     *   1. params.protocolVersion (initialize-style, JSON-RPC body)
+     *   2. params._meta['io.modelcontextprotocol/protocolVersion']
+     *      (modern-era per-request hint)
+     *   3. MCP-Protocol-Version HTTP header (spec-recommended after the
+     *      first request in a session)
+     * Missing across all three returns DEFAULT_NEGOTIATED_PROTOCOL_VERSION,
+     * which sits BELOW MODERN_ERA_MIN_PROTOCOL_VERSION on purpose: a silent
+     * client sees the legacy envelope shape rather than a modern-era shape
+     * it may not understand.
+     *
+     * Distinct from handle_server_discover's inline extraction, which needs
+     * the nullable form to distinguish "no version declared" from "explicit
+     * unsupported version" for its -32022 error path.
+     */
+    private function negotiated_protocol_version( $params ) {
+        if ( is_array( $params )
+            && isset( $params['protocolVersion'] )
+            && is_string( $params['protocolVersion'] )
+        ) {
+            return $params['protocolVersion'];
+        }
+        if ( is_array( $params )
+            && isset( $params['_meta']['io.modelcontextprotocol/protocolVersion'] )
+            && is_string( $params['_meta']['io.modelcontextprotocol/protocolVersion'] )
+        ) {
+            return $params['_meta']['io.modelcontextprotocol/protocolVersion'];
+        }
+        if ( ! empty( $_SERVER['HTTP_MCP_PROTOCOL_VERSION'] ) ) {
+            return sanitize_text_field( wp_unslash( $_SERVER['HTTP_MCP_PROTOCOL_VERSION'] ) );
+        }
+        return self::DEFAULT_NEGOTIATED_PROTOCOL_VERSION;
+    }
+
+    /**
+     * True when the negotiated protocol version for this request is at or
+     * beyond the revision at which the cacheable-result envelope became
+     * normative. Handlers of cacheable methods branch on this to emit the
+     * modern envelope OR the legacy shape.
+     */
+    private function is_modern_era( $params ) {
+        return strcmp(
+            $this->negotiated_protocol_version( $params ),
+            self::MODERN_ERA_MIN_PROTOCOL_VERSION
+        ) >= 0;
+    }
+
+    /**
+     * Stamp the modern-era cacheable-result envelope on a legacy-shape list
+     * body when the negotiated protocol version meets MODERN_ERA_MIN. Under
+     * legacy-era negotiation the body passes through unchanged so legacy
+     * clients see the pre-existing wire shape and no compat break can occur.
+     *
+     * Field ordering matches the spec examples: resultType first, list body
+     * in the middle (tools / prompts / resources / etc.), caching hints last
+     * (ttlMs then cacheScope). PHP `+` on arrays preserves the LEFT operand's
+     * keys on conflict, so a body that accidentally carries an envelope key
+     * cannot override the stamp; that keeps this helper's output invariant.
+     */
+    private function stamp_modern_list_envelope( array $body, string $cache_scope, int $ttl_ms, $params ) : array {
+        if ( ! $this->is_modern_era( $params ) ) {
+            return $body;
+        }
+        return [ 'resultType' => 'complete' ] + $body + [
+            'ttlMs'      => $ttl_ms,
+            'cacheScope' => $cache_scope,
+        ];
+    }
+
+    /**
      * The MCP protocol revision that first introduced server/discover as a
      * spec-forward alternative to the initialize handshake. Requests that
      * negotiate an older revision receive JSON-RPC method-not-found so clients
@@ -1868,12 +1952,21 @@ class Server {
     }
 
     private function handle_tools_list($params, $id) {
+        // cacheScope: private. The tool set may vary per caller (tier gates,
+        // license-scoped Pro tools, capability-scoped writes) so a shared
+        // cache MUST NOT serve one caller's list to another authorization
+        // context.
+        // ttlMs: 5 minutes. Tools change on plugin activation, integration
+        // registration, and license state transitions — all infrequent.
         return [
             'jsonrpc' => '2.0',
-            'id' => $id,
-            'result' => [
-                'tools' => $this->get_tools(),
-            ],
+            'id'      => $id,
+            'result'  => $this->stamp_modern_list_envelope(
+                [ 'tools' => $this->get_tools() ],
+                'private',
+                300000,
+                $params
+            ),
         ];
     }
 
@@ -1888,16 +1981,26 @@ class Server {
     private function handle_resources_list($params, $id) {
         return [
             'jsonrpc' => '2.0',
-            'id' => $id,
-            'result' => ['resources' => []],
+            'id'      => $id,
+            'result'  => $this->stamp_modern_list_envelope(
+                [ 'resources' => [] ],
+                'public',
+                300000,
+                $params
+            ),
         ];
     }
 
     private function handle_prompts_list($params, $id) {
         return [
             'jsonrpc' => '2.0',
-            'id' => $id,
-            'result' => ['prompts' => []],
+            'id'      => $id,
+            'result'  => $this->stamp_modern_list_envelope(
+                [ 'prompts' => [] ],
+                'public',
+                300000,
+                $params
+            ),
         ];
     }
 
