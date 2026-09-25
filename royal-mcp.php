@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.5.4
+ * Version: 1.5.5
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -19,30 +19,8 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-// Pro vendors this class — bail if it's already declared, refuse activation cleanly.
-if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
-    register_activation_hook( __FILE__, function () {
-        if ( ! function_exists( 'is_plugin_active' ) ) {
-            include_once ABSPATH . 'wp-admin/includes/plugin.php';
-        }
-        if ( is_plugin_active( 'royal-mcp-pro/royal-mcp-pro.php' ) ) {
-            wp_die(
-                esc_html__( 'Royal MCP Pro is already active. It includes every Royal MCP feature — you don\'t need the free plugin alongside it. Deactivate Royal MCP Pro first if you want to use the free plugin instead.', 'royal-mcp' ),
-                esc_html__( 'Royal MCP already active as part of Royal MCP Pro', 'royal-mcp' ),
-                array( 'back_link' => true )
-            );
-        }
-    } );
-    return;
-}
-
-// Define plugin constants. Guards prevent PHP "constant already defined"
-// warnings when this file is loaded as Pro's vendored Free copy — Pro
-// defines the same constants first, then requires this file. Without the
-// guards each MCP request produces 4 warnings + 4 nginx error-log stack
-// traces, which on shared PHP-FPM pools amplifies into cross-site worker
-// starvation.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.4' );
+// Define plugin constants.
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.5' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -268,20 +246,6 @@ class Royal_MCP_Plugin {
     }
 
     public function activate() {
-        // Refuse activation if Pro is active; skip refusal when Pro is bootstrapping Free.
-        if ( ! defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) {
-            if ( ! function_exists( 'is_plugin_active' ) ) {
-                include_once ABSPATH . 'wp-admin/includes/plugin.php';
-            }
-            if ( is_plugin_active( 'royal-mcp-pro/royal-mcp-pro.php' ) ) {
-                wp_die(
-                    esc_html__( 'Royal MCP Pro is already active. It includes every Royal MCP feature — you don\'t need the free plugin alongside it. Deactivate Royal MCP Pro first if you want to use the free plugin instead.', 'royal-mcp' ),
-                    esc_html__( 'Royal MCP already active as part of Royal MCP Pro', 'royal-mcp' ),
-                    array( 'back_link' => true )
-                );
-            }
-        }
-
         // Create necessary database tables and options
         $this->create_tables();
 
