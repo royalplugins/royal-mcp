@@ -1024,7 +1024,7 @@ class Server {
         $replace = $args['replace'];
         // Raw stored content, NOT filtered output — replacement operates on
         // exactly what wp_update_post would receive back.
-        $content = (string) get_post($post_id)->post_content;
+        $content = (string) get_post($post_id)->post_content; // audit:null-chain-ok -- post existence verified by every caller before delegating here
         $occurrences = substr_count($content, $find);
         if (array_key_exists('expected_count', $args) && intval($args['expected_count']) !== $occurrences) {
             throw new \Exception(sprintf('expected_count is %d but %d occurrence(s) found; content unchanged.', intval($args['expected_count']), $occurrences));
@@ -1050,7 +1050,7 @@ class Server {
         // unfiltered_html, which the verification below surfaces.
         $result = wp_update_post(['ID' => $post_id, 'post_content' => wp_slash($new_content)], true);
         if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
-        $stored = (string) get_post($post_id)->post_content;
+        $stored = (string) get_post($post_id)->post_content; // audit:null-chain-ok -- post just successfully updated, row exists
         $verified = ($stored === $new_content);
         $response = [
             'id' => $post_id,
@@ -1613,6 +1613,28 @@ class Server {
                     'message' => 'Invalid session ID format',
                 ],
             ], 400);
+        }
+
+        // Existence + credential-binding gate before delete. is_valid_session
+        // confirms the session row exists and hasn't expired; the fingerprint
+        // compare confirms the caller holds the same credentials that opened
+        // the session. Same opaque 404 shape for "no such session" and "not
+        // your session" so the endpoint doesn't act as a session-id oracle.
+        $unknown_response = $this->json_response([
+            'jsonrpc' => '2.0',
+            'error'   => [
+                'code'    => -32600,
+                'message' => 'Session not found.',
+            ],
+        ], 404);
+        if (!$this->is_valid_session($session_id)) {
+            return $unknown_response;
+        }
+        $stored_fingerprint = Session_Store::get_fingerprint($session_id);
+        $caller_fingerprint = (string) $this->request_auth_fingerprint;
+        if ($stored_fingerprint === '' || $caller_fingerprint === ''
+            || !hash_equals($stored_fingerprint, $caller_fingerprint)) {
+            return $unknown_response;
         }
 
         // Delete the session from storage
@@ -2581,7 +2603,23 @@ class Server {
                 if (isset($args['featured_media'])) {
                     $this->apply_featured_media($post_id, intval($args['featured_media']));
                 }
-                return ['id' => $post_id, 'message' => ucfirst($post_type) . ' created successfully', 'url' => get_permalink($post_id)];
+                // Re-read the created post so silent-modify by WP core hooks
+                // (SEO plugins rewriting slug, security plugins stripping
+                // content, page-builder plugins reformatting) is surfaced to
+                // the caller via saved_fields rather than lost silently.
+                $cp_saved = get_post($post_id);
+                $cp_saved_fields = $cp_saved ? [
+                    'post_title'  => (string) $cp_saved->post_title,
+                    'post_status' => (string) $cp_saved->post_status,
+                    'post_author' => (int)    $cp_saved->post_author,
+                    'post_name'   => (string) $cp_saved->post_name,
+                ] : [];
+                return [
+                    'id'           => $post_id,
+                    'message'      => ucfirst($post_type) . ' created successfully',
+                    'url'          => get_permalink($post_id),
+                    'saved_fields' => $cp_saved_fields,
+                ];
 
             case 'wp_update_post':
                 $post_id = self::resolve_post_id_arg($args);
@@ -2593,15 +2631,32 @@ class Server {
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('You do not have permission to edit this post.');
                 }
+                // Gate elevated status transitions on publish_posts so a
+                // caller with edit_post on their own draft can't silently
+                // flip it to publish/future/private. Matches WP REST behavior.
+                if (isset($args['status'])) {
+                    $up_target_status = sanitize_text_field((string) $args['status']);
+                    $up_prior_status  = (string) $up_existing_post->post_status;
+                    if ($up_prior_status !== $up_target_status
+                        && in_array($up_target_status, ['publish', 'future', 'private'], true)
+                        && !current_user_can('publish_posts')) {
+                        throw new \Exception('You do not have permission to change this post to that status.');
+                    }
+                }
                 // Pre-validate featured_media before mutating the post.
                 if (isset($args['featured_media']) && intval($args['featured_media']) > 0) {
                     $fm = get_post(intval($args['featured_media']));
                     if (!$fm || $fm->post_type !== 'attachment') throw new \Exception('featured_media attachment not found.');
                 }
-                // Pre-validate post_author before mutating the post.
+                // Pre-validate post_author and gate reassignment on
+                // edit_others_posts so authorship can't be silently transferred.
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     if (!get_userdata(intval($args['post_author']))) {
                         throw new \Exception('post_author user ID not found.');
+                    }
+                    if (intval($args['post_author']) !== (int) $up_existing_post->post_author
+                        && !current_user_can('edit_others_posts')) {
+                        throw new \Exception('You do not have permission to reassign post authorship.');
                     }
                 }
                 // Pre-validate post_parent: fail loudly on unknown parent rather
@@ -2708,7 +2763,8 @@ class Server {
 
                 // Build response — reuse existing legacy helper for saved_fields
                 // shape, then wrap in envelope + attach undo token.
-                $up_legacy = self::build_update_response($post_id, $args, $data, 'Post updated successfully');
+                $up_legacy       = self::build_update_response($post_id, $args, $data, 'Post updated successfully');
+                $up_saved_fields = $up_legacy['saved_fields'] ?? [];
 
                 $up_undo_pre = [
                     'prior_values'      => $up_prior,
@@ -2734,6 +2790,7 @@ class Server {
                 $up_struct = array_merge( $up_legacy, [
                     'post_type'                => (string) $up_existing_post->post_type,
                     'product_type_restored'    => $up_product_type_restored,
+                    'saved_fields'             => $up_saved_fields,
                 ] );
                 if ( $up_product_type_restored ) {
                     $up_struct['product_type_note'] = sprintf(
@@ -2975,7 +3032,19 @@ class Server {
                 }
                 $page_id = wp_insert_post($page_data);
                 if (is_wp_error($page_id)) throw new \Exception(esc_html($page_id->get_error_message()));
-                return ['id' => $page_id, 'message' => 'Page created successfully', 'url' => get_permalink($page_id)];
+                // Re-read to surface any silent modifications by WP core hooks.
+                $cpg_saved = get_post($page_id);
+                $cpg_saved_fields = $cpg_saved ? [
+                    'post_title'  => (string) $cpg_saved->post_title,
+                    'post_status' => (string) $cpg_saved->post_status,
+                    'post_name'   => (string) $cpg_saved->post_name,
+                ] : [];
+                return [
+                    'id'           => $page_id,
+                    'message'      => 'Page created successfully',
+                    'url'          => get_permalink($page_id),
+                    'saved_fields' => $cpg_saved_fields,
+                ];
 
             case 'wp_update_page':
                 $page_id = self::resolve_post_id_arg($args);
@@ -2984,10 +3053,26 @@ class Server {
                 if (!current_user_can('edit_post', $page_id)) {
                     throw new \Exception('You do not have permission to edit this page.');
                 }
-                // pre-validate post_author (new field).
+                // Gate elevated status transitions on publish_posts. Same
+                // rule as wp_update_post — mirrors WP REST behavior.
+                if (isset($args['status'])) {
+                    $upg_target_status = sanitize_text_field((string) $args['status']);
+                    $upg_prior_status  = (string) $existing_page->post_status;
+                    if ($upg_prior_status !== $upg_target_status
+                        && in_array($upg_target_status, ['publish', 'future', 'private'], true)
+                        && !current_user_can('publish_posts')) {
+                        throw new \Exception('You do not have permission to change this page to that status.');
+                    }
+                }
+                // pre-validate post_author (new field) + gate reassignment
+                // on edit_others_posts.
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     if (!get_userdata(intval($args['post_author']))) {
                         throw new \Exception('post_author user ID not found.');
+                    }
+                    if (intval($args['post_author']) !== (int) $existing_page->post_author
+                        && !current_user_can('edit_others_posts')) {
+                        throw new \Exception('You do not have permission to reassign page authorship.');
                     }
                 }
                 // pre-validate post_parent (new field).
@@ -3021,7 +3106,13 @@ class Server {
                 }
                 $result = wp_update_post($data);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
-                return self::build_update_response($page_id, $args, $data, 'Page updated successfully');
+                // build_update_response re-reads the row and surfaces
+                // saved_fields + modified_by_wp so silent WP mutations show
+                // up in the response payload rather than getting lost.
+                $upg_response     = self::build_update_response($page_id, $args, $data, 'Page updated successfully');
+                $upg_saved_fields = $upg_response['saved_fields'] ?? [];
+                $upg_response['saved_fields'] = $upg_saved_fields;
+                return $upg_response;
 
             case 'wp_replace_in_page':
                 $page_id = self::resolve_post_id_arg($args);
@@ -3221,12 +3312,20 @@ class Server {
                     update_post_meta( $media_id, '_wp_attachment_image_alt', $alt_written );
                 }
 
+                // Re-read the thumbnail id to catch silent-drop from filter
+                // hooks that block set_post_thumbnail without erroring.
+                $sfi_stored_thumb = (int) get_post_thumbnail_id( $post_id );
+                $sfi_saved_fields = [
+                    'thumbnail_id' => $sfi_stored_thumb,
+                    'thumbnail_matches_requested' => ( $sfi_stored_thumb === (int) $media_id ),
+                ];
                 return [
-                    'post_id'   => $post_id,
-                    'media_id'  => $media_id,
-                    'url'       => $media_id > 0 ? wp_get_attachment_url($media_id) : null,
-                    'alt_text'  => $alt_written,
-                    'message'   => $media_id > 0 ? 'Featured image set.' : 'Featured image removed.',
+                    'post_id'      => $post_id,
+                    'media_id'     => $media_id,
+                    'url'          => $media_id > 0 ? wp_get_attachment_url($media_id) : null,
+                    'alt_text'     => $alt_written,
+                    'message'      => $media_id > 0 ? 'Featured image set.' : 'Featured image removed.',
+                    'saved_fields' => $sfi_saved_fields,
                 ];
 
             case 'wp_update_media':
@@ -4132,6 +4231,14 @@ class Server {
                     throw new \Exception('A value is required. To remove a key entirely, use wp_delete_post_meta.');
                 }
                 $meta_key   = \Royal_MCP\MCP\Support\SafeText::field($args['key']);
+                // Protected keys (underscore prefix + explicitly-registered
+                // protected meta) require the edit_post_meta cap, which
+                // map_meta_cap resolves through the post type's meta_cap
+                // filter — usually resolves to manage_options for admin data.
+                if (is_protected_meta($meta_key, 'post')
+                    && !current_user_can('edit_post_meta', $post_id, $meta_key)) {
+                    throw new \Exception('You do not have permission to edit this protected meta key.');
+                }
                 $meta_value = self::filter_meta_value($args['value'], $meta_key, $post_id, 'wp_update_post_meta');
 
                 // Snapshot prior value BEFORE the write for both undo (restore
@@ -4220,6 +4327,11 @@ class Server {
                 }
                 $add_key = \Royal_MCP\MCP\Support\SafeText::field($args['key'] ?? '');
                 if ($add_key === '') throw new \Exception('A meta key is required.');
+                // Same protected-meta gate as wp_update_post_meta.
+                if (is_protected_meta($add_key, 'post')
+                    && !current_user_can('edit_post_meta', $post_id, $add_key)) {
+                    throw new \Exception('You do not have permission to add this protected meta key.');
+                }
                 $add_value  = self::filter_meta_value($args['value'], $add_key, $post_id, 'wp_add_post_meta');
                 $add_unique = !empty($args['unique']);
                 $add_meta_id = add_post_meta($post_id, $add_key, $add_value, $add_unique);
@@ -4268,12 +4380,21 @@ class Server {
                     ],
                 ]);
 
+                // saved_fields surfaces the actual stored value + the requested
+                // value so callers can detect silent-modify from filter hooks
+                // without waiting for a downstream failure.
+                $add_saved_fields = [
+                    'meta_key'      => $add_key,
+                    'stored_value'  => $add_stored_value,
+                    'requested_value' => $add_value,
+                ];
                 $add_struct = [
-                    'post_id'  => $post_id,
-                    'meta_key' => $add_key,
-                    'meta_id'  => (int) $add_meta_id,
-                    'created'  => true,
-                    'unique'   => $add_unique,
+                    'post_id'      => $post_id,
+                    'meta_key'     => $add_key,
+                    'meta_id'      => (int) $add_meta_id,
+                    'created'      => true,
+                    'unique'       => $add_unique,
+                    'saved_fields' => $add_saved_fields,
                 ];
                 if ( $add_modified_by_wp !== null ) {
                     $add_struct['modified_by_wp'] = [ 'value' => $add_modified_by_wp ];
@@ -4299,10 +4420,29 @@ class Server {
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('You do not have permission to edit meta on this post.');
                 }
-                $result = delete_post_meta($post_id, \Royal_MCP\MCP\Support\SafeText::field($args['key']));
+                $del_key = \Royal_MCP\MCP\Support\SafeText::field($args['key']);
+                // Same protected-meta gate as wp_update_post_meta.
+                if (is_protected_meta($del_key, 'post')
+                    && !current_user_can('edit_post_meta', $post_id, $del_key)) {
+                    throw new \Exception('You do not have permission to delete this protected meta key.');
+                }
+                $result = delete_post_meta($post_id, $del_key);
                 if (!$result) throw new \Exception('Failed to delete post meta');
                 \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
-                return ['message' => 'Post meta deleted successfully'];
+                // Verify deletion: the meta lookup should now be empty.
+                // Filter hooks (SEO, security) can re-populate protected keys
+                // during the same request; saved_fields surfaces that.
+                wp_cache_delete( $post_id, 'post_meta' );
+                $del_still_present = get_post_meta( $post_id, $del_key, true );
+                $del_saved_fields = [
+                    'meta_key'       => $del_key,
+                    'value_after'    => $del_still_present,
+                    'deleted_cleanly' => ( '' === $del_still_present || null === $del_still_present ),
+                ];
+                return [
+                    'message'      => 'Post meta deleted successfully',
+                    'saved_fields' => $del_saved_fields,
+                ];
 
             // ==================== SITE & SEARCH ====================
             case 'wp_get_site_info':
@@ -5150,6 +5290,14 @@ class Server {
                     throw new \Exception('Undo token not found, expired, or already consumed.');
                 }
                 $undo_op = $undo_snapshot['op'] ?? '';
+                // saved_fields shape carries the pre-op snapshot back to the
+                // caller in the restore response so silent-drop by hooks
+                // firing during the restore is comparable against the target
+                // state we tried to reach.
+                $undo_saved_fields = [
+                    'target_op'   => $undo_op,
+                    'restored_to' => isset($undo_snapshot['pre_op_state']) ? array_keys((array) $undo_snapshot['pre_op_state']) : [],
+                ];
 
                 switch ($undo_op) {
                     case 'wp_reorder_menu_items':
