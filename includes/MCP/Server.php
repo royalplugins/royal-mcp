@@ -2022,6 +2022,9 @@ class Server {
             // arrays fall through to the JSON-encoded-text-block path below
             // (no back-compat break).
             if ( \Royal_MCP\MCP\Support\Envelope::is_envelope( $result ) ) {
+                if ( ! isset( $result['resultType'] ) ) {
+                    $result['resultType'] = 'complete';
+                }
                 return [
                     'jsonrpc' => '2.0',
                     'id'      => $id,
@@ -2047,6 +2050,7 @@ class Server {
                 'jsonrpc' => '2.0',
                 'id' => $id,
                 'result' => self::ensure_structured_content( [
+                    'resultType' => 'complete',
                     'content' => [[
                         'type' => 'text',
                         'text' => 'Error: ' . $e->getMessage(),

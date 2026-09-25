@@ -115,6 +115,7 @@ final class Envelope {
      */
     public static function error( string $code, string $message, array $extra = [] ) : array {
         return [
+            'resultType'        => 'complete',
             'isError'           => true,
             'content'           => [ [ 'type' => 'text', 'text' => sprintf( '%s: %s', $code, $message ) ] ],
             'structuredContent' => array_merge( [ 'error' => $code, 'message' => $message ], $extra ),
