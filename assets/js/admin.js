@@ -22,13 +22,6 @@ jQuery(document).ready(function($) {
         showNotice('API key copied to clipboard!');
     });
 
-    $('#copy-rest-url').on('click', function(e) {
-        e.preventDefault();
-        const restUrl = $(this).prev('input').val();
-        copyToClipboard(restUrl);
-        showNotice('REST API URL copied to clipboard!');
-    });
-
     // Generic copy button handler
     $(document).on('click', '.copy-btn', function(e) {
         e.preventDefault();

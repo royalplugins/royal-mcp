@@ -18,7 +18,6 @@ $royal_mcp_configured_platforms = $royal_mcp_settings['platforms'] ?? [];
 $royal_mcp_url = rest_url('royal-mcp/v1/mcp');
 $royal_mcp_url_https = preg_replace('/^http:/', 'https:', $royal_mcp_url);
 $royal_mcp_is_localhost = strpos($royal_mcp_url, 'localhost') !== false || strpos($royal_mcp_url, '127.0.0.1') !== false;
-$royal_mcp_rest_base = rest_url('royal-mcp/v1/');
 ?>
 
 <div class="wrap royal-mcp-settings">
@@ -289,32 +288,13 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                         </div>
                     </div>
 
-                    <!-- Advanced (REST API base + OAuth credentials) -->
+                    <!-- Advanced (manual OAuth credentials) -->
                     <button type="button" class="advanced-toggle" id="general-advanced-toggle" aria-expanded="false">
                         <span class="dashicons dashicons-arrow-down-alt2"></span>
-                        <?php esc_html_e('Advanced (Legacy REST API base URL, manual OAuth credentials)', 'royal-mcp'); ?>
+                        <?php esc_html_e('Advanced (manual OAuth credentials)', 'royal-mcp'); ?>
                     </button>
                     <div class="advanced-content" id="general-advanced-content" hidden>
                         <table class="form-table">
-                            <tr>
-                                <th scope="row">
-                                    <label><?php esc_html_e('Legacy REST API Base URL', 'royal-mcp'); ?></label>
-                                </th>
-                                <td>
-                                    <input type="text"
-                                           value="<?php echo esc_attr($royal_mcp_rest_base); ?>"
-                                           class="regular-text code"
-                                           id="rest-api-url"
-                                           readonly>
-                                    <button type="button" class="button" id="copy-rest-url">
-                                        <span class="dashicons dashicons-clipboard"></span>
-                                        <?php esc_html_e('Copy', 'royal-mcp'); ?>
-                                    </button>
-                                    <p class="description">
-                                        <?php esc_html_e('For per-endpoint REST integrations (older style: GET /posts, POST /media, etc., authenticated with the X-Royal-MCP-API-Key header). Most users should ignore this and connect via the MCP Server URL above.', 'royal-mcp'); ?>
-                                    </p>
-                                </td>
-                            </tr>
                             <tr>
                                 <th scope="row">
                                     <label for="oauth_client_id"><?php esc_html_e('OAuth Client ID', 'royal-mcp'); ?> <span class="optional">(<?php esc_html_e('optional', 'royal-mcp'); ?>)</span></label>
@@ -749,11 +729,6 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                 </div>
                 <div class="inside">
                     <div class="api-endpoints-reference">
-                        <p>
-                            <?php esc_html_e('The plugin exposes two API layers. MCP is the primary path for AI clients; legacy REST remains available for backwards compatibility.', 'royal-mcp'); ?>
-                        </p>
-
-                        <h3><?php esc_html_e('MCP (recommended)', 'royal-mcp'); ?></h3>
                         <p class="description">
                             <?php esc_html_e('JSON-RPC endpoint for Claude Desktop, ChatGPT, Cursor, and any MCP-compatible client. Auth is negotiated via OAuth automatically. Every registered tool is discoverable via the tools/list method.', 'royal-mcp'); ?>
                         </p>
@@ -771,56 +746,6 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                             );
                             ?>
                         </p>
-
-                        <h3><?php esc_html_e('Legacy REST', 'royal-mcp'); ?></h3>
-                        <p class="description">
-                            <?php esc_html_e('Backwards-compatible REST endpoints predating MCP. Auth via the X-Royal-MCP-API-Key header. New integrations should use MCP above.', 'royal-mcp'); ?>
-                        </p>
-
-                        <h4><?php esc_html_e('Posts', 'royal-mcp'); ?></h4>
-                        <ul>
-                            <li><code>GET /royal-mcp/v1/posts</code> - <?php esc_html_e('List posts', 'royal-mcp'); ?></li>
-                            <li><code>GET /royal-mcp/v1/posts/{id}</code> - <?php esc_html_e('Get a specific post', 'royal-mcp'); ?></li>
-                            <li><code>POST /royal-mcp/v1/posts</code> - <?php esc_html_e('Create a new post', 'royal-mcp'); ?></li>
-                            <li><code>PUT /royal-mcp/v1/posts/{id}</code> - <?php esc_html_e('Update a post', 'royal-mcp'); ?></li>
-                            <li><code>DELETE /royal-mcp/v1/posts/{id}</code> - <?php esc_html_e('Delete a post', 'royal-mcp'); ?></li>
-                        </ul>
-
-                        <h4><?php esc_html_e('Pages', 'royal-mcp'); ?></h4>
-                        <ul>
-                            <li><code>GET /royal-mcp/v1/pages</code> - <?php esc_html_e('List pages', 'royal-mcp'); ?></li>
-                            <li><code>GET /royal-mcp/v1/pages/{id}</code> - <?php esc_html_e('Get a specific page', 'royal-mcp'); ?></li>
-                            <li><code>POST /royal-mcp/v1/pages</code> - <?php esc_html_e('Create a new page', 'royal-mcp'); ?></li>
-                            <li><code>PUT /royal-mcp/v1/pages/{id}</code> - <?php esc_html_e('Update a page', 'royal-mcp'); ?></li>
-                            <li><code>DELETE /royal-mcp/v1/pages/{id}</code> - <?php esc_html_e('Delete a page', 'royal-mcp'); ?></li>
-                        </ul>
-
-                        <h4><?php esc_html_e('Media', 'royal-mcp'); ?></h4>
-                        <ul>
-                            <li><code>GET /royal-mcp/v1/media</code> - <?php esc_html_e('List media files', 'royal-mcp'); ?></li>
-                            <li><code>GET /royal-mcp/v1/media/{id}</code> - <?php esc_html_e('Get a specific media file', 'royal-mcp'); ?></li>
-                            <li><code>POST /royal-mcp/v1/media</code> - <?php esc_html_e('Upload media', 'royal-mcp'); ?></li>
-                            <li><code>DELETE /royal-mcp/v1/media/{id}</code> - <?php esc_html_e('Delete media', 'royal-mcp'); ?></li>
-                        </ul>
-
-                        <h4><?php esc_html_e('Site & Search', 'royal-mcp'); ?></h4>
-                        <ul>
-                            <li><code>GET /royal-mcp/v1/site</code> - <?php esc_html_e('Get site information', 'royal-mcp'); ?></li>
-                            <li><code>GET /royal-mcp/v1/search</code> - <?php esc_html_e('Search content', 'royal-mcp'); ?></li>
-                        </ul>
-
-                        <h4><?php esc_html_e('WooCommerce Product Attributes & Variations', 'royal-mcp'); ?></h4>
-                        <ul>
-                            <li><code>GET /royal-mcp/v1/products/attributes</code> - <?php esc_html_e('List product attributes', 'royal-mcp'); ?></li>
-                            <li><code>POST /royal-mcp/v1/products/attributes</code> - <?php esc_html_e('Create a product attribute', 'royal-mcp'); ?></li>
-                            <li><code>GET /royal-mcp/v1/products/attributes/{attribute_id}/terms</code> - <?php esc_html_e('List attribute terms', 'royal-mcp'); ?></li>
-                            <li><code>GET /royal-mcp/v1/products/{id}/variations</code> - <?php esc_html_e('List product variations', 'royal-mcp'); ?></li>
-                            <li><code>POST /royal-mcp/v1/products/{id}/variations</code> - <?php esc_html_e('Create a variation', 'royal-mcp'); ?></li>
-                            <li><code>GET /royal-mcp/v1/products/{id}/variations/{variation_id}</code> - <?php esc_html_e('Get a specific variation', 'royal-mcp'); ?></li>
-                            <li><code>PUT /royal-mcp/v1/products/{id}/variations/{variation_id}</code> - <?php esc_html_e('Update a variation', 'royal-mcp'); ?></li>
-                            <li><code>DELETE /royal-mcp/v1/products/{id}/variations/{variation_id}</code> - <?php esc_html_e('Delete a variation', 'royal-mcp'); ?></li>
-                            <li><code>POST /royal-mcp/v1/products/{id}/attributes</code> - <?php esc_html_e('Set attributes on a product', 'royal-mcp'); ?></li>
-                        </ul>
                     </div>
                 </div>
             </div>

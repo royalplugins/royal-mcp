@@ -70,7 +70,6 @@ class Royal_MCP_Plugin {
 
         add_action('plugins_loaded', [$this, 'maybe_upgrade_db'], 5);
         add_action('plugins_loaded', [$this, 'init']);
-        add_action('rest_api_init', [$this, 'register_rest_routes']);
         add_action('rest_api_init', [$this, 'register_mcp_endpoint']);
 
         // Force Cache-Control: no-store on every response in our namespace.
@@ -630,11 +629,6 @@ class Royal_MCP_Plugin {
             new Royal_MCP\Admin\Authorization_Header_Notice();
             new Royal_MCP\Admin\Help_Page();
         }
-    }
-
-    public function register_rest_routes() {
-        $api = new Royal_MCP\API\REST_Controller();
-        $api->register_routes();
     }
 
     public function register_mcp_endpoint() {
