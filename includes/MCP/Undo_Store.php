@@ -39,10 +39,15 @@ class Undo_Store {
         $created_at_int = time();
         $expires_at_int = $created_at_int + self::DEFAULT_TTL;
 
+        // Bind the snapshot to the user who created it so replay is scoped
+        // to the same caller. read() enforces the match on retrieval; the
+        // 49 store() callsites across the plugin inherit owner-binding by
+        // construction and need no per-callsite change.
         $envelope = array_merge( $snapshot, [
             'token'      => $token,
             'created_at' => $created_at_int,
             'expires_at' => $expires_at_int,
+            'user_id'    => (int) get_current_user_id(),
         ] );
 
         // Compress + base64 so the option value stays plain-text (some hosts
@@ -86,6 +91,16 @@ class Undo_Store {
         }
         if ( isset( $data['expires_at'] ) && (int) $data['expires_at'] < time() ) {
             self::delete( $token );
+            return null;
+        }
+        // Owner gate: return the same opaque null as the other failure modes
+        // when the caller is not the user who created the snapshot. Snapshots
+        // stored before the owner-binding change lack the user_id field and
+        // fall through the strict compare — treated as not-owned and denied,
+        // which closes the pre-binding window within the 72-hour TTL.
+        $owner_id  = isset( $data['user_id'] ) ? (int) $data['user_id'] : 0;
+        $caller_id = (int) get_current_user_id();
+        if ( $owner_id < 1 || $owner_id !== $caller_id ) {
             return null;
         }
         return $data;
