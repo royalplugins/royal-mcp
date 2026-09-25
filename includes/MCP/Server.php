@@ -596,7 +596,20 @@ class Server {
             $settings = get_option('royal_mcp_settings', []);
         }
 
-        if (empty($settings['api_key']) || !hash_equals($settings['api_key'], $api_key)) {
+        // Prefer the hash-at-rest path; the plaintext branch stays for
+        // installs mid-migration whose maybe_upgrade_db hasn't fired yet.
+        $incoming_hash = hash('sha256', (string) $api_key);
+        $stored_hash   = isset($settings['api_key_hash']) ? (string) $settings['api_key_hash'] : '';
+        $stored_plain  = isset($settings['api_key'])      ? (string) $settings['api_key']      : '';
+
+        $ok = false;
+        if ('' !== $stored_hash) {
+            $ok = hash_equals($stored_hash, $incoming_hash);
+        } elseif ('' !== $stored_plain) {
+            $ok = hash_equals($stored_plain, (string) $api_key);
+        }
+
+        if (!$ok) {
             // 401, not 403, per RFC 7235 — wrong credentials means "auth failed",
             // which is 401. 403 is reserved for "auth succeeded but lacks
             // permission". Strict MCP clients (per RFC 9728 OAuth discovery)
@@ -618,18 +631,16 @@ class Server {
             return $response;
         }
 
-        // The API key is stored in admin-only settings, so whoever presents it is admin-level trusted.
-        // Set the current user to a site admin so capability checks (upload_files, edit_post, etc.) succeed.
+        // Attribute the call to the user_id the key was bound to at save time
+        // so audit logs distinguish key holders. maybe_upgrade_db back-fills
+        // this field for legacy installs where the bind was never written; if
+        // it's still empty here the request runs as the anonymous WP visitor
+        // and per-capability checks downstream reject it, which is the safer
+        // failure mode than silently attributing to a fixed administrator.
         if (!is_user_logged_in()) {
-            $admins = get_users([
-                'role'    => 'administrator',
-                'number'  => 1,
-                'orderby' => 'ID',
-                'order'   => 'ASC',
-                'fields'  => 'ID',
-            ]);
-            if (!empty($admins)) {
-                wp_set_current_user((int) $admins[0]);
+            $bound_uid = isset($settings['api_key_user_id']) ? (int) $settings['api_key_user_id'] : 0;
+            if ($bound_uid > 0 && get_userdata($bound_uid)) {
+                wp_set_current_user($bound_uid);
             }
         }
 

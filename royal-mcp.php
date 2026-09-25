@@ -270,13 +270,27 @@ class Royal_MCP_Plugin {
             }
         }
 
-        // Set default options. API key: lowercase hex avoids O/0 I/l/1 transcription ambiguity.
-        add_option('royal_mcp_settings', [
-            'enabled' => false,
-            'platforms' => [],
-            'mcp_servers' => [],
-            'api_key' => bin2hex(random_bytes(16)),
-        ]);
+        // Set default options. API key: lowercase hex avoids O/0 I/l/1
+        // transcription ambiguity. Only the SHA-256 hash goes into the option
+        // — the raw plaintext is handed to the activating admin ONCE via a
+        // short-lived reveal transient they can read on the settings page.
+        $royal_mcp_activation_plaintext = bin2hex( random_bytes( 16 ) );
+        add_option( 'royal_mcp_settings', [
+            'enabled'         => false,
+            'platforms'       => [],
+            'mcp_servers'     => [],
+            'api_key'         => '',
+            'api_key_hash'    => hash( 'sha256', $royal_mcp_activation_plaintext ),
+            'api_key_user_id' => (int) get_current_user_id(),
+        ] );
+        $royal_mcp_activation_uid = (int) get_current_user_id();
+        if ( $royal_mcp_activation_uid > 0 ) {
+            set_transient(
+                'royal_mcp_reveal_api_key_' . $royal_mcp_activation_uid,
+                $royal_mcp_activation_plaintext,
+                15 * MINUTE_IN_SECONDS
+            );
+        }
 
         // Register OAuth + /mcp alias rewrite rules before flushing.
         $this->register_oauth_rewrites();
@@ -311,6 +325,12 @@ class Royal_MCP_Plugin {
      * underlying issue see recovery on their next request.
      */
     public function maybe_upgrade_db() {
+        // Run the API-key migration first, self-gated on the data shape so it
+        // no-ops after the first successful pass. Kept outside the version
+        // guard because the hash-at-rest change applies to any install whose
+        // settings still hold a plaintext key, not just first-load post-upgrade.
+        $this->maybe_migrate_api_key_settings();
+
         if (get_option('royal_mcp_db_version') === ROYAL_MCP_VERSION
             && $this->required_tables_exist()) {
             return;
@@ -363,6 +383,41 @@ class Royal_MCP_Plugin {
             }
         } else {
             update_option('royal_mcp_db_upgrade_last_failed_at', time());
+        }
+    }
+
+    /**
+     * Migrate legacy API-key settings to the hash-at-rest shape. Idempotent —
+     * gated on the data condition so it becomes a cheap no-op once the
+     * settings option already has api_key_hash + api_key_user_id populated.
+     */
+    private function maybe_migrate_api_key_settings() {
+        $settings = get_option( 'royal_mcp_settings', [] );
+        if ( ! is_array( $settings ) ) {
+            return;
+        }
+        $dirty = false;
+        if ( ! empty( $settings['api_key'] ) && empty( $settings['api_key_hash'] ) ) {
+            $settings['api_key_hash'] = hash( 'sha256', (string) $settings['api_key'] );
+            $settings['api_key']      = '';
+            $dirty                    = true;
+        }
+        if ( ! empty( $settings['api_key_hash'] )
+             && empty( $settings['api_key_user_id'] ) ) {
+            $admins = get_users( [
+                'role'    => 'administrator',
+                'number'  => 1,
+                'orderby' => 'ID',
+                'order'   => 'ASC',
+                'fields'  => 'ID',
+            ] );
+            if ( ! empty( $admins ) ) {
+                $settings['api_key_user_id'] = (int) $admins[0];
+                $dirty                       = true;
+            }
+        }
+        if ( $dirty ) {
+            update_option( 'royal_mcp_settings', $settings );
         }
     }
 
