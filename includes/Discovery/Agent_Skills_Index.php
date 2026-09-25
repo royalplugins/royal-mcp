@@ -79,7 +79,10 @@ class Agent_Skills_Index {
 
         $doc = [
             'skills'       => $skills,
-            'version'      => defined( 'ROYAL_MCP_VERSION' ) ? ROYAL_MCP_VERSION : '',
+            // Empty in the unauthenticated index so this endpoint doesn't act
+            // as an install-fingerprint source. Authenticated callers can
+            // read the real plugin version via royal_mcp_connection_health.
+            'version'      => '',
             'generated_at' => gmdate( 'c' ),
         ];
 

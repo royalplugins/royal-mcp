@@ -83,7 +83,11 @@ class Server_Card {
             ];
         }
 
-        $version = defined( 'ROYAL_MCP_VERSION' ) ? ROYAL_MCP_VERSION : '';
+        // Empty in the unauthenticated card so this endpoint doesn't act as
+        // an install-fingerprint source. The serverInfo.version key stays
+        // present to satisfy the schema; authenticated callers can read the
+        // real version from the royal_mcp_connection_health tool.
+        $version = '';
 
         // Shape follows SEP-1649 (modelcontextprotocol/modelcontextprotocol #2127):
         //   - serverInfo.name + serverInfo.version REQUIRED
