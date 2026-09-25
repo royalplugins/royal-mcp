@@ -791,7 +791,7 @@ class Elementor {
 		}
 
 		clean_post_cache( $post_id );
-		$new_length = strlen( (string) get_post( $post_id )->post_content );
+		$new_length = strlen( (string) get_post( $post_id )->post_content ); // audit:null-chain-ok -- post just rebuilt, existence confirmed above
 
 		// Undo envelope — restore prior post_content. Skip token if prior content
 		// exceeds the 1MB compressed cap.
@@ -908,7 +908,7 @@ class Elementor {
 				continue;
 			}
 			clean_post_cache( $pid );
-			$new_length = strlen( (string) get_post( $pid )->post_content );
+			$new_length = strlen( (string) get_post( $pid )->post_content ); // audit:null-chain-ok -- populate_post_content_from_elementor returned true, row exists
 			$repaired[] = [ 'post_id' => $pid, 'new_length' => $new_length ];
 		}
 

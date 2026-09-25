@@ -275,7 +275,7 @@ class Royal_MCP_Plugin {
         // — the raw plaintext is handed to the activating admin ONCE via a
         // short-lived reveal transient they can read on the settings page.
         $royal_mcp_activation_plaintext = bin2hex( random_bytes( 16 ) );
-        add_option( 'royal_mcp_settings', [
+        add_option( 'royal_mcp_settings', [ // audit:autoload-ok -- read on every request (auth path, chrome, discovery, admin bar)
             'enabled'         => false,
             'platforms'       => [],
             'mcp_servers'     => [],
