@@ -18,6 +18,24 @@ $royal_mcp_configured_platforms = $royal_mcp_settings['platforms'] ?? [];
 $royal_mcp_url = rest_url('royal-mcp/v1/mcp');
 $royal_mcp_url_https = preg_replace('/^http:/', 'https:', $royal_mcp_url);
 $royal_mcp_is_localhost = strpos($royal_mcp_url, 'localhost') !== false || strpos($royal_mcp_url, '127.0.0.1') !== false;
+
+// One-shot reveal: after activation or clicking Regenerate, the plaintext key
+// sits in a short-lived per-user transient. Read it and clear it in the same
+// request so the same admin doesn't see it again on the next page load.
+$royal_mcp_reveal_key_uid = (int) get_current_user_id();
+$royal_mcp_reveal_key     = $royal_mcp_reveal_key_uid > 0
+    ? get_transient( 'royal_mcp_reveal_api_key_' . $royal_mcp_reveal_key_uid )
+    : false;
+if ( is_string( $royal_mcp_reveal_key ) && '' !== $royal_mcp_reveal_key ) {
+    delete_transient( 'royal_mcp_reveal_api_key_' . $royal_mcp_reveal_key_uid );
+} else {
+    $royal_mcp_reveal_key = '';
+}
+$royal_mcp_has_stored_key = ! empty( $royal_mcp_settings['api_key_hash'] ) || ! empty( $royal_mcp_settings['api_key'] );
+$royal_mcp_api_key_field  = '' !== $royal_mcp_reveal_key
+    ? $royal_mcp_reveal_key
+    : ( ! empty( $royal_mcp_settings['api_key'] ) ? (string) $royal_mcp_settings['api_key'] : '' );
+$royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_key_field;
 ?>
 
 <div class="wrap royal-mcp-settings">
@@ -194,10 +212,13 @@ $royal_mcp_is_localhost = strpos($royal_mcp_url, 'localhost') !== false || strpo
                                 <input type="text"
                                        name="royal_mcp_settings[api_key]"
                                        id="api_key"
-                                       value="<?php echo esc_attr($royal_mcp_settings['api_key'] ?? ''); ?>"
+                                       value="<?php echo esc_attr( $royal_mcp_api_key_field ); ?>"
+                                       placeholder="<?php echo $royal_mcp_api_key_masked
+                                           ? esc_attr__( 'Key is stored hashed — regenerate to view a new one', 'royal-mcp' )
+                                           : esc_attr__( 'No API key set — regenerate to create one', 'royal-mcp' ); ?>"
                                        class="regular-text code"
                                        readonly>
-                                <button type="button" class="button" id="copy-api-key">
+                                <button type="button" class="button" id="copy-api-key"<?php echo $royal_mcp_api_key_masked ? ' disabled aria-disabled="true"' : ''; ?>>
                                     <span class="dashicons dashicons-clipboard"></span>
                                     <?php esc_html_e('Copy', 'royal-mcp'); ?>
                                 </button>
@@ -209,6 +230,14 @@ $royal_mcp_is_localhost = strpos($royal_mcp_url, 'localhost') !== false || strpo
                                     <span class="dashicons dashicons-update"></span>
                                     <?php esc_html_e('Regenerate', 'royal-mcp'); ?>
                                 </button>
+                                <?php if ( '' !== $royal_mcp_reveal_key ) : ?>
+                                <div class="notice notice-warning inline" style="margin-top:10px;">
+                                    <p style="margin:6px 0;">
+                                        <strong><?php esc_html_e( 'Copy your API key now.', 'royal-mcp' ); ?></strong>
+                                        <?php esc_html_e( 'The full key is shown once. After you leave this page, only a masked value will be visible — you\'ll need to regenerate to see a new one.', 'royal-mcp' ); ?>
+                                    </p>
+                                </div>
+                                <?php endif; ?>
                                 <?php
                                 $royal_mcp_bound_uid = (int) ( $royal_mcp_settings['api_key_user_id'] ?? 0 );
                                 if ( $royal_mcp_bound_uid > 0 ) {
@@ -451,7 +480,7 @@ $royal_mcp_is_localhost = strpos($royal_mcp_url, 'localhost') !== false || strpo
         "-y", "mcp-remote",
         "<?php echo esc_html($royal_mcp_url_https); ?>",
         "--header",
-        "X-Royal-MCP-API-Key:<?php echo esc_html($royal_mcp_settings['api_key'] ?? 'YOUR_API_KEY'); ?>"
+        "X-Royal-MCP-API-Key:<?php echo esc_html( $royal_mcp_api_key_field !== '' ? $royal_mcp_api_key_field : 'YOUR_API_KEY' ); ?>"
       ]
     }
   }
