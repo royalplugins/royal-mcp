@@ -110,7 +110,7 @@ class Settings_Page {
 
     /** Render the wp.org review-request banner (Free tier only, version-stamped dismissal). */
     public static function render_review_banner() {
-        if ( defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) {
+        if ( class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false ) ) {
             return;
         }
         $user_id = get_current_user_id();
@@ -345,12 +345,28 @@ class Settings_Page {
         // current value on every submit, so we must check `regenerate_api_key` FIRST.
         // With the order reversed, the current-value POST silently overrides the
         // regenerate signal and clicking Regenerate becomes a no-op.
+        $regenerated = false;
         if (isset($input['regenerate_api_key'])) {
             $sanitized['api_key'] = bin2hex(random_bytes(16));
+            $regenerated = true;
         } elseif (isset($input['api_key']) && !empty($input['api_key'])) {
             $sanitized['api_key'] = sanitize_text_field($input['api_key']);
         } else {
             $sanitized['api_key'] = $settings['api_key'] ?? bin2hex(random_bytes(16));
+            $regenerated = empty($settings['api_key']);
+        }
+
+        // Bind the api_key to the admin who generated it so downstream auth
+        // paths can attribute tool calls to a real user_id rather than
+        // "first administrator on the site". Rebound on every regeneration.
+        // Back-fill for existing installs where api_key exists but the bind
+        // is missing — attributes to the current admin doing the save.
+        if ( $regenerated ) {
+            $sanitized['api_key_user_id'] = (int) get_current_user_id();
+        } elseif ( ! empty( $sanitized['api_key'] ) && empty( $settings['api_key_user_id'] ) ) {
+            $sanitized['api_key_user_id'] = (int) get_current_user_id();
+        } else {
+            $sanitized['api_key_user_id'] = (int) ( $settings['api_key_user_id'] ?? 0 );
         }
 
         // Sanitize OAuth settings

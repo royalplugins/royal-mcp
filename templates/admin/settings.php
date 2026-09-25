@@ -210,6 +210,27 @@ $royal_mcp_rest_base = rest_url('royal-mcp/v1/');
                                     <span class="dashicons dashicons-update"></span>
                                     <?php esc_html_e('Regenerate', 'royal-mcp'); ?>
                                 </button>
+                                <?php
+                                $royal_mcp_bound_uid = (int) ( $royal_mcp_settings['api_key_user_id'] ?? 0 );
+                                if ( $royal_mcp_bound_uid > 0 ) {
+                                    $royal_mcp_bound_user = get_userdata( $royal_mcp_bound_uid );
+                                    if ( $royal_mcp_bound_user ) {
+                                        printf(
+                                            '<p class="description"><span class="dashicons dashicons-admin-users" aria-hidden="true"></span> %s</p>',
+                                            esc_html( sprintf(
+                                                /* translators: %s: WordPress username */
+                                                __( 'API key attributed to: %s', 'royal-mcp' ),
+                                                $royal_mcp_bound_user->user_login
+                                            ) )
+                                        );
+                                    }
+                                } elseif ( ! empty( $royal_mcp_settings['api_key'] ) ) {
+                                    printf(
+                                        '<p class="description" style="color:#b32d2e;"><span class="dashicons dashicons-warning" aria-hidden="true"></span> %s</p>',
+                                        esc_html__( 'API key is not bound to a user. Regenerate to attribute tool calls to your account.', 'royal-mcp' )
+                                    );
+                                }
+                                ?>
                                 <p class="description">
                                     <?php esc_html_e('Use this key in MCP clients that don\'t support OAuth (e.g., Claude Desktop config, raw REST calls). Most modern MCP clients negotiate auth automatically via OAuth.', 'royal-mcp'); ?>
                                 </p>
