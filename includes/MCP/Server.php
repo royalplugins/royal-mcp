@@ -4523,10 +4523,16 @@ class Server {
                     // uses for tools_summary.
                     $dt_parts    = explode( '_', $dt_name, 2 );
                     $dt_category = strtolower( (string) ( $dt_parts[0] ?? '' ) );
-                    // Plugin bucket collapses core WP prefixes into "core".
-                    $dt_plugin = in_array( $dt_category, [ 'wp', 'wc', 'wcs' ], true ) ? 'core' : $dt_category;
-                    if ( 'wc' === $dt_category || 'wcs' === $dt_category ) {
+                    // Plugin bucket: WP core + Royal MCP's own meta tools all
+                    // collapse to "core"; wc/wcs collapse to "woocommerce";
+                    // everything else keeps its prefix as the plugin identifier.
+                    if ( in_array( $dt_category, [ 'wp', 'mcp', 'royal', 'seo', 'discover', 'execute', 'get' ], true )
+                        || 'royal_mcp_connection_health' === $dt_name ) {
+                        $dt_plugin = 'core';
+                    } elseif ( in_array( $dt_category, [ 'wc', 'wcs' ], true ) ) {
                         $dt_plugin = 'woocommerce';
+                    } else {
+                        $dt_plugin = $dt_category;
                     }
                     // Capability class inferred from the verb.
                     if ( preg_match( '/^(?:wp_|)?(?:get|list|search|count|read|find|scan|audit|health)_/', $dt_name )
@@ -4686,7 +4692,10 @@ class Server {
                 // Selector presence check — simple #id or .class match against
                 // the served HTML. Full querySelector semantics are out of
                 // scope for a regex-based scan; documented in the description.
+                // Unsupported selector shapes return null (not evaluable) so
+                // callers can distinguish "not found" from "can't check".
                 $vrp_selector_present = null;
+                $vrp_selector_note    = null;
                 if ( isset( $args['selector'] ) && '' !== (string) $args['selector'] ) {
                     $vrp_sel_raw = trim( (string) $args['selector'] );
                     if ( strpos( $vrp_sel_raw, '#' ) === 0 ) {
@@ -4702,7 +4711,7 @@ class Server {
                             $vrp_body
                         );
                     } else {
-                        $vrp_selector_present = false;
+                        $vrp_selector_note = 'selector must start with # (id) or . (class); other shapes are not evaluated.';
                     }
                 }
 
@@ -4718,6 +4727,9 @@ class Server {
                     'selector_present'       => $vrp_selector_present,
                     'body_bytes'             => strlen( $vrp_body ),
                 ];
+                if ( null !== $vrp_selector_note ) {
+                    $vrp_out['selector_note'] = $vrp_selector_note;
+                }
                 if ( ! empty( $args['include_body_excerpt'] ) ) {
                     if ( preg_match( '#<body[^>]*>(.*?)</body>#is', $vrp_body, $vrp_m ) ) {
                         $vrp_out['body_excerpt'] = mb_substr( trim( wp_strip_all_tags( $vrp_m[1] ) ), 0, 500 );
