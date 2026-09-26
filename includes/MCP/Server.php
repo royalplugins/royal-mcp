@@ -4568,20 +4568,68 @@ class Server {
                     } else {
                         $dt_plugin = $dt_category;
                     }
-                    // Capability class inferred from the verb.
-                    if ( preg_match( '/^(?:wp_|)?(?:get|list|search|count|read|find|scan|audit|health)_/', $dt_name )
-                        || preg_match( '/(?:royal_mcp_connection_health|get_tool_info|discover_tools)/', $dt_name ) ) {
+                    // Capability class inferred from the verb. The verb token
+                    // can appear at the start of the tool name (get_tool_info)
+                    // or after any prefix underscore (wc_get_products,
+                    // gp_get_dashboard_stats, elementor_get_page_outline, etc.).
+                    // Matching (?:^|_)VERB(?:_|$) lets both patterns resolve.
+                    static $rmcp_read_only_verbs = 'get|list|search|count|read|find|scan|audit|health|dashboard|export|status|stats|preview|show|monitor|browse';
+                    static $rmcp_destr_verbs    = 'delete|remove|trash|reset|purge|revoke|clear|drop';
+                    if ( in_array( $dt_name, [ 'royal_mcp_connection_health', 'get_tool_info', 'discover_tools' ], true )
+                        || preg_match( '/(?:^|_)(?:' . $rmcp_read_only_verbs . ')(?:_|$)/', $dt_name ) ) {
                         $dt_capability = 'read_only';
-                    } elseif ( preg_match( '/^(?:wp_|)?(?:delete|remove|trash|reset|bulk_delete|purge)_/', $dt_name ) ) {
+                    } elseif ( preg_match( '/(?:^|_)(?:' . $rmcp_destr_verbs . ')(?:_|$)/', $dt_name ) ) {
                         $dt_capability = 'destructive';
                     } else {
                         $dt_capability = 'write';
                     }
-                    // Undo support: opt-in by tool name against the mcp_undo_last_operation description.
-                    $dt_undo_supported = (bool) preg_match(
-                        '/^(?:wp_(?:update|delete|add)_(?:post|page|post_meta|term|term_meta|menu_item|media|comment|widget|option|theme_mod|custom_css|permalink_structure|seo_meta)|wp_reorder_menu_items|yoast_update_meta|elementor_|divi_)/',
-                        $dt_name
-                    );
+                    // Undo support: opt-in per tool at the handler side (each
+                    // write case that reversibly stores a snapshot via
+                    // Undo_Store). Not inferrable from the name alone — a
+                    // read-only elementor_get_page_outline shares the plugin
+                    // prefix with elementor_replace_text but has nothing to
+                    // reverse. Explicit list mirrors the mcp_undo_last_operation
+                    // description; keep the two in sync when adding a new
+                    // reversible write.
+                    static $rmcp_undo_tools = [
+                        // WP core reversible writes
+                        'wp_update_post', 'wp_update_page',
+                        'wp_delete_post', 'wp_delete_page',
+                        'wp_update_post_meta', 'wp_add_post_meta', 'wp_delete_post_meta',
+                        'wp_update_term', 'wp_delete_term',
+                        'wp_update_term_meta', 'wp_delete_term_meta',
+                        'wp_update_media', 'wp_delete_media',
+                        'wp_update_menu_item', 'wp_delete_menu_item',
+                        'wp_reorder_menu_items',
+                        'wp_update_option',
+                        'wp_update_theme_mod',
+                        'wp_update_custom_css',
+                        'wp_update_permalink_structure',
+                        'wp_update_seo_meta', 'yoast_update_meta',
+                        'wp_update_widget',
+                        'wp_delete_comment',
+                        // Elementor reversible writes
+                        'elementor_replace_text', 'elementor_replace_image',
+                        'elementor_add_widget', 'elementor_delete_widget',
+                        'elementor_update_widget', 'elementor_update_widget_setting',
+                        'elementor_bulk_replace_widget_setting',
+                        'elementor_clone_page', 'elementor_clone_template',
+                        'elementor_import_template', 'elementor_apply_template_to_page',
+                        'elementor_apply_template_advanced',
+                        'elementor_rebuild_post_content', 'elementor_rebuild_post_content_bulk',
+                        'elementor_manage_elements', 'elementor_manage_global_classes',
+                        'elementor_manage_global_variable',
+                        'elementor_save_template_with_conditions',
+                        'elementor_apply_theme_builder_conditions',
+                        'elementor_build_composition',
+                        // Divi reversible writes
+                        'divi_replace_text', 'divi_replace_image',
+                        'divi_clone_page', 'divi_import_template',
+                        'divi_apply_global_preset',
+                        'divi_library_create', 'divi_library_update', 'divi_library_delete',
+                        'divi_convert_shortcodes_to_blocks',
+                    ];
+                    $dt_undo_supported = in_array( $dt_name, $rmcp_undo_tools, true );
 
                     if ( '' !== $dt_by_cat  && $dt_category !== $dt_by_cat ) { continue; }
                     if ( '' !== $dt_by_plug && $dt_plugin !== $dt_by_plug ) { continue; }
