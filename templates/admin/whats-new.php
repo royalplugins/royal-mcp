@@ -44,7 +44,7 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                 <div class="rmcp-wn-slide-body">
                     <span class="rmcp-wn-tag"><?php esc_html_e( 'Royal MCP Pro', 'royal-mcp' ); ?></span>
                     <p class="rmcp-wn-big-number"><?php esc_html_e( 'Supercharge your workflow', 'royal-mcp' ); ?></p>
-                    <h3><?php esc_html_e( '300+ MCP tools, bulk operations, undo tokens — agency ready', 'royal-mcp' ); ?></h3>
+                    <h3><?php esc_html_e( '300+ MCP tools, bulk operations, undo tokens. Agency ready.', 'royal-mcp' ); ?></h3>
                     <p><?php esc_html_e( "Bulk-edit thousands of WooCommerce products or Elementor pages in a single tool call. Manage ACF field groups programmatically. Scope MCP endpoints per project so your AI's write access can't cross client boundaries.", 'royal-mcp' ); ?></p>
                     <p><?php esc_html_e( "Every destructive Pro tool returns an undo token good for 3\xE2\x80\x937 days. A 90-day activity log lets clients audit what your AI actually touched. Priority support, no data sharing, no token pricing.", 'royal-mcp' ); ?></p>
                     <a href="<?php echo esc_url( $rmcp_wn_pro_slide_url ); ?>" target="_blank" rel="noopener noreferrer" class="rmcp-wn-btn">
@@ -57,7 +57,7 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
             <div class="rmcp-wn-slide is-reversed">
                 <div class="rmcp-wn-slide-body">
                     <span class="rmcp-wn-tag"><?php esc_html_e( 'Preview First', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'See the effect before you commit', 'royal-mcp' ); ?></h3>
+                    <h3><?php esc_html_e( 'Preview the exact change before you write anything', 'royal-mcp' ); ?></h3>
                     <p>
                         <?php
                         echo wp_kses(
@@ -66,7 +66,7 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                         );
                         ?>
                     </p>
-                    <p><?php esc_html_e( 'The preview response never writes and never flushes rewrite rules — the caller gets the full picture and can decide whether to run the real call in a second step.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'The preview response never writes and never flushes rewrite rules, so the caller gets the full picture and can decide whether to run the real call in a second step.', 'royal-mcp' ); ?></p>
                     <p><?php esc_html_e( 'Great for AI agents that want to explain the change to the site owner before executing it, and for scripted deployments that want a plan-then-apply flow.', 'royal-mcp' ); ?></p>
                 </div>
                 <div class="rmcp-wn-slide-visual">
@@ -134,7 +134,7 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
             <div class="rmcp-wn-slide is-reversed">
                 <div class="rmcp-wn-slide-body">
                     <span class="rmcp-wn-tag"><?php esc_html_e( 'Smaller context, faster start', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'Discover 300+ tools without loading 300+ schemas', 'royal-mcp' ); ?></h3>
+                    <h3><?php esc_html_e( 'Discover 200+ tools without loading 200+ schemas', 'royal-mcp' ); ?></h3>
                     <p>
                         <?php
                         echo wp_kses(
@@ -144,11 +144,41 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                         ?>
                     </p>
                     <p><?php esc_html_e( 'Context-limited clients no longer pay for hundreds of full schemas at connection time. Callers pull just the schema they need at the moment they need it, then dispatch through the same connection.', 'royal-mcp' ); ?></p>
-                    <p><?php esc_html_e( 'Clients that keep the header off see the existing flat tool list unchanged — no breaking change for anything that\'s already connected.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'Clients that keep the header off see the existing flat tool list unchanged, no breaking change for anything that\'s already connected.', 'royal-mcp' ); ?></p>
                 </div>
                 <div class="rmcp-wn-slide-visual">
-                    <div class="rmcp-wn-mark" role="img" aria-label="Royal Plugins">
-                        <span>R</span>
+                    <div class="rmcp-wn-circle" role="img" aria-label="<?php esc_attr_e( 'Compact tool discovery: three routing tools expand to the full toolset', 'royal-mcp' ); ?>">
+                        <svg viewBox="0 0 200 200" width="170" height="170" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="30" y="16" width="140" height="72" rx="8" fill="#FEFCF7" stroke="#C9A227" stroke-width="2.5"/>
+                            <rect x="30" y="16" width="140" height="18" rx="8" fill="#C9A227"/>
+                            <text x="100" y="29" text-anchor="middle" font-family="monospace" font-size="7.5" font-weight="700" fill="#FEFCF7">X-MCP-Profile: compact</text>
+                            <circle cx="42" cy="47" r="2" fill="#2271B1"/>
+                            <text x="49" y="50" font-family="monospace" font-size="7.5" fill="#2C2C2C">discover_tools</text>
+                            <circle cx="42" cy="63" r="2" fill="#2271B1"/>
+                            <text x="49" y="66" font-family="monospace" font-size="7.5" fill="#2C2C2C">get_tool_info</text>
+                            <circle cx="42" cy="79" r="2" fill="#2271B1"/>
+                            <text x="49" y="82" font-family="monospace" font-size="7.5" fill="#2C2C2C">execute_tool</text>
+                            <line x1="70"  y1="88" x2="55"  y2="112" stroke="#C9A227" stroke-width="1.4" opacity="0.75"/>
+                            <line x1="100" y1="88" x2="100" y2="112" stroke="#C9A227" stroke-width="1.4" opacity="0.75"/>
+                            <line x1="130" y1="88" x2="145" y2="112" stroke="#C9A227" stroke-width="1.4" opacity="0.75"/>
+                            <rect x="30" y="112" width="140" height="72" rx="6" fill="#f6f7f7" stroke="#dcdcde" stroke-width="0.8"/>
+                            <text x="36" y="123" font-family="Inter, sans-serif" font-size="6" font-weight="700" fill="#787c82">FULL TOOLSET (200+)</text>
+                            <rect x="36" y="128" width="52" height="3" rx="0.8" fill="#2271B1" opacity="0.6"/>
+                            <rect x="92" y="128" width="72" height="3" rx="0.8" fill="#2271B1" opacity="0.6"/>
+                            <rect x="36" y="135" width="66" height="3" rx="0.8" fill="#2271B1" opacity="0.5"/>
+                            <rect x="106" y="135" width="58" height="3" rx="0.8" fill="#2271B1" opacity="0.5"/>
+                            <rect x="36" y="142" width="80" height="3" rx="0.8" fill="#2271B1" opacity="0.55"/>
+                            <rect x="120" y="142" width="44" height="3" rx="0.8" fill="#2271B1" opacity="0.55"/>
+                            <rect x="36" y="149" width="48" height="3" rx="0.8" fill="#2271B1" opacity="0.5"/>
+                            <rect x="88" y="149" width="76" height="3" rx="0.8" fill="#2271B1" opacity="0.5"/>
+                            <rect x="36" y="156" width="64" height="3" rx="0.8" fill="#2271B1" opacity="0.55"/>
+                            <rect x="104" y="156" width="60" height="3" rx="0.8" fill="#2271B1" opacity="0.55"/>
+                            <rect x="36" y="163" width="88" height="3" rx="0.8" fill="#2271B1" opacity="0.45"/>
+                            <rect x="128" y="163" width="36" height="3" rx="0.8" fill="#2271B1" opacity="0.45"/>
+                            <rect x="36" y="170" width="56" height="3" rx="0.8" fill="#2271B1" opacity="0.5"/>
+                            <rect x="96" y="170" width="68" height="3" rx="0.8" fill="#2271B1" opacity="0.5"/>
+                            <text x="164" y="180" text-anchor="end" font-family="monospace" font-size="5.5" fill="#787c82">... and more</text>
+                        </svg>
                     </div>
                 </div>
             </div>
@@ -166,7 +196,7 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                     <p>
                         <?php
                         echo wp_kses(
-                            __( '<strong>API key hashed at rest.</strong> Only the SHA-256 digest of your key sits in the settings option. The full key is shown once at generation via a short-lived reveal transient — save it in your client config the same way you would a GitHub PAT.', 'royal-mcp' ),
+                            __( '<strong>API key hashed at rest.</strong> Only the SHA-256 digest of your key sits in the settings option. The full key is shown once at generation via a short-lived reveal transient. Save it in your client config the same way you would a GitHub PAT.', 'royal-mcp' ),
                             [ 'strong' => [] ]
                         );
                         ?>
