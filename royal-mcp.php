@@ -19,6 +19,27 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+// Pro ships every free feature and deactivates this plugin on activation.
+// If Pro's class is already declared (Pro is loading first or Pro's
+// vendored copy of this file has already run), bail cleanly and register
+// an activation-time refusal so the user sees a clear error instead of a
+// silently-inert plugin when they try to activate Free alongside Pro.
+if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
+    register_activation_hook( __FILE__, function () {
+        if ( ! function_exists( 'is_plugin_active' ) ) {
+            include_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+        if ( is_plugin_active( 'royal-mcp-pro/royal-mcp-pro.php' ) ) {
+            wp_die(
+                esc_html__( 'Royal MCP Pro is already active. It includes every Royal MCP feature — you don\'t need the free plugin alongside it. Deactivate Royal MCP Pro first if you want to use the free plugin instead.', 'royal-mcp' ),
+                esc_html__( 'Royal MCP already active as part of Royal MCP Pro', 'royal-mcp' ),
+                array( 'back_link' => true )
+            );
+        }
+    } );
+    return;
+}
+
 // Define plugin constants.
 defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.5' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
@@ -245,6 +266,25 @@ class Royal_MCP_Plugin {
     }
 
     public function activate() {
+        // Refuse activation if Pro is separately active; skip the refusal
+        // when Pro is bootstrapping Free via its vendored copy (that path
+        // sets ROYAL_MCP_LOADED_BY_PRO before requiring this file). Backs
+        // up the top-level bail block above with a check that fires even
+        // when a race lets Free's file finish loading before Pro's bootstrap
+        // declared the class.
+        if ( ! defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) {
+            if ( ! function_exists( 'is_plugin_active' ) ) {
+                include_once ABSPATH . 'wp-admin/includes/plugin.php';
+            }
+            if ( is_plugin_active( 'royal-mcp-pro/royal-mcp-pro.php' ) ) {
+                wp_die(
+                    esc_html__( 'Royal MCP Pro is already active. It includes every Royal MCP feature — you don\'t need the free plugin alongside it. Deactivate Royal MCP Pro first if you want to use the free plugin instead.', 'royal-mcp' ),
+                    esc_html__( 'Royal MCP already active as part of Royal MCP Pro', 'royal-mcp' ),
+                    array( 'back_link' => true )
+                );
+            }
+        }
+
         // Create necessary database tables and options
         $this->create_tables();
 
