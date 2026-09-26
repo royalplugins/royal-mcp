@@ -1030,12 +1030,45 @@ class Server {
             throw new \Exception(sprintf('expected_count is %d but %d occurrence(s) found; content unchanged.', intval($args['expected_count']), $occurrences));
         }
         if (!empty($args['dry_run'])) {
+            // Preview shape matches wp_update_option and wp_update_permalink_structure
+            // so any agent that learned the {state, preview, would_execute} envelope
+            // on one dry-run tool reads this one the same way. would_execute is
+            // false when zero occurrences would match (the real call throws) and
+            // when find === replace (the real call also throws).
+            $would_execute   = ( $occurrences > 0 && $find !== $replace );
+            $projected_after = $would_execute ? str_replace( $find, $replace, $content ) : $content;
+            $find_len        = strlen( $find );
+            $replace_len     = strlen( $replace );
+            $size_delta      = $would_execute ? ( strlen( $projected_after ) - strlen( $content ) ) : 0;
+            $preview = [
+                'id'                     => $post_id,
+                'occurrences'            => $occurrences,
+                'find_length'            => $find_len,
+                'replace_length'         => $replace_len,
+                'content_length_before'  => strlen( $content ),
+                'content_length_after'   => strlen( $projected_after ),
+                'size_delta_bytes'       => $size_delta,
+                'find_equals_replace'    => ( $find === $replace ),
+            ];
+            if ( $would_execute ) {
+                $msg = sprintf(
+                    'Dry run: %d occurrence(s) would be replaced (size delta %+d bytes); no write performed.',
+                    $occurrences,
+                    $size_delta
+                );
+            } elseif ( $occurrences === 0 ) {
+                $msg = sprintf(
+                    'Dry run: find string not present in %s content; a real call would throw. Refine `find` before executing.',
+                    $noun
+                );
+            } else {
+                $msg = 'Dry run: find and replace are identical; a real call would throw. Change `replace` before executing.';
+            }
             return [
-                'id' => $post_id,
-                'dry_run' => true,
-                'occurrences' => $occurrences,
-                'content_length' => strlen($content),
-                'message' => sprintf('Dry run: %d occurrence(s) found; nothing written.', $occurrences),
+                'state'         => 'dry_run',
+                'preview'       => $preview,
+                'would_execute' => $would_execute,
+                'message'       => $msg,
             ];
         }
         if ($occurrences === 0) {
