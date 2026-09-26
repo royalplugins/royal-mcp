@@ -1215,13 +1215,17 @@ class Server {
             ['name' => 'wp_get_error_log_tail', 'description' => 'Read the tail of wp-content/debug.log. Returns the last N lines (default 100, max 1000), optionally filtered by a case-insensitive substring. Automatically caps file read at last 1MB to prevent memory blowup on huge logs (truncated=true when this happens). Returns status="disabled" with instructions when WP_DEBUG_LOG is not enabled in wp-config.php. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => ['lines' => ['type' => 'integer', 'description' => 'Number of lines to return from the tail (default 100, max 1000).'], 'filter' => ['type' => 'string', 'description' => 'Optional case-insensitive substring filter applied before the last-N slice (e.g. "Fatal error", "Deprecated", a plugin slug).']]]],
             ['name' => 'wp_get_cron_schedule', 'description' => 'Enumerate scheduled wp_cron events. Returns each event with hook name, next run (unix + ISO 8601), seconds until next run, is_overdue flag, recurrence (hourly / twicedaily / daily / custom + interval in seconds), and args. Sorted by next-run ascending so overdue events come first. Useful for diagnosing missed schedules, plugin cron conflicts, or unfired hooks. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'royal_mcp_connection_health', 'description' => 'Diagnostic probe for the current MCP connection. Returns MCP endpoint route, authentication method used by this request (api-key or oauth-bearer), OAuth access token time-to-live in seconds (null for api-key), current MCP session ID, active MCP capabilities negotiated at initialize, plus Royal MCP + WordPress + PHP version strings. No arguments. Call at connection start to confirm setup, or when diagnosing 401/403/404 issues. Any authenticated caller.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'discover_tools', 'description' => 'List Royal MCP tools filtered by category, plugin, capability class, or undo support. Returns a compact index — name, description, and metadata only — WITHOUT the full inputSchema. Use with the compact tool discovery profile (X-MCP-Profile: compact on initialize) to keep the tools/list payload small on context-limited clients: caller discovers, calls get_tool_info for the specific tool it wants to invoke, then dispatches via execute_tool.', 'inputSchema' => ['type' => 'object', 'properties' => ['by_category' => ['type' => 'string', 'description' => 'Filter by category prefix, e.g. "posts", "pages", "media", "terms", "menus", "options", "elementor", "divi", "wc".'], 'by_plugin' => ['type' => 'string', 'description' => 'Filter by third-party integration slug, e.g. "core", "woocommerce", "elementor", "divi", "acf", "yoast".'], 'by_capability' => ['type' => 'string', 'enum' => ['read_only', 'write', 'destructive'], 'description' => 'Filter by capability class inferred from the tool name (get_/list_ = read_only, update_/create_/add_ = write, delete_/reset_/bulk_delete_ = destructive).'], 'by_undo_support' => ['type' => 'string', 'enum' => ['has_undo_token', 'no_undo'], 'description' => 'Filter by whether the tool emits an undo token.']]]],
+            ['name' => 'get_tool_info', 'description' => 'Return the full inputSchema (and, when available, an example invocation) for a single tool named in tool_name. Pairs with discover_tools + execute_tool for the compact discovery flow.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name (e.g. "wp_update_post").']], 'required' => ['tool_name']]],
+            ['name' => 'execute_tool', 'description' => 'Pass-through dispatcher for the compact discovery flow. Invokes the tool named in tool_name with the arguments in arguments — semantically identical to a direct tools/call for that tool. Useful when the client only advertised the routing tools via X-MCP-Profile: compact but still wants to invoke a specific underlying tool without renegotiating the profile.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name to invoke.'], 'arguments' => ['type' => 'object', 'description' => 'Arguments object forwarded to the underlying tool. Same shape you\'d pass in tools/call.']], 'required' => ['tool_name']]],
+            ['name' => 'wp_verify_rendered_page', 'description' => 'Post-write verification tool. Fetches the actual rendered HTML that WordPress serves at a URL via a loopback request and returns the response status, a subset of response headers (content-type, cache-control, x-cache), the page title, meta description, first h1, counts of script and stylesheet link tags, and (when include_body_excerpt is true) a 500-char excerpt of the page body. Optional selector arg reports whether an id/class selector is present in the served HTML. Use after any write that changes content, theme, or options to catch page-builder caches, object caches, or edge caches serving stale HTML even when the DB write returned success. Rate-limited to 10 fetches per minute per (site, URL). Requires read on the target post/page or manage_options. URL must belong to the current WordPress site.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Absolute URL on this site to fetch (must match home_url() origin).'], 'selector' => ['type' => 'string', 'description' => 'Optional #id or .class selector to check for presence in the rendered HTML.'], 'include_body_excerpt' => ['type' => 'boolean', 'description' => 'When true, include a 500-char excerpt of the <body> in the response. Default false.']], 'required' => ['url']]],
             ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, wp_update_post, wp_update_page, wp_update_post_meta, wp_add_post_meta, wp_delete_post_meta, wp_delete_post, wp_delete_page, wp_delete_media, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_term_meta, wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, yoast_update_meta (aliases wp_update_seo_meta), wp_update_widget, wp_delete_comment, plus every Elementor write tool (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_rebuild_post_content), Divi write tools (divi_replace_text, divi_replace_image, divi_clone_page, divi_import_template) and comment edit/reply ops. Tokens live 72 hours and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Restore may be refused with a drift error if the target was modified between the tracked write and this undo call (protects downstream writes from silent clobber). Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).']], 'required' => ['token']]],
             ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page). Each result includes content_length (bytes of stored content) for size triage.', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.']], 'required' => ['query']]],
 
             // Options
             ['name' => 'wp_get_option', 'description' => 'Get a single WordPress option value. Requires manage_options capability. The option name must be in the readable allowlist — 12 defaults (blogname, blogdescription, siteurl, home, admin_email, posts_per_page, date_format, time_format, timezone_string, googlesitekit_analytics-4_settings, show_on_front, page_on_front) plus any keys plugin authors opt in via the royal_mcp_readable_options filter. Sensitive keys inside the returned value are redacted regardless of what the option contains.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string']], 'required' => ['name']]],
             ['name' => 'wp_get_plugin_settings', 'description' => 'Get all options stored by a plugin, looked up by slug. Sensitive keys (api keys, secrets, tokens, passwords) are redacted before return.', 'inputSchema' => ['type' => 'object', 'properties' => ['plugin_slug' => ['type' => 'string', 'description' => 'Plugin slug, e.g. royalcomply or royal-affiliate-pro']], 'required' => ['plugin_slug']]],
-            ['name' => 'wp_update_option', 'description' => 'Update a WordPress option. Four gates in order: (1) manage_options capability on the caller; (2) master "Allow AI to write WordPress options" admin toggle enabled; (3) hard denylist (siteurl, home, admin_email, mailserver_*, upload_path, users_can_register, wp_user_roles, wp_capabilities, api_key/secret/*_pass/*_key patterns, royal_mcp_* namespace — permanent, cannot be filter-overridden); (4) write⊆readable invariant + writable allowlist (option must appear in both royal_mcp_readable_options AND royal_mcp_writable_options — plugin authors must opt into READS before opting into WRITES). Error text names which gate blocked. "Not in allowlist" is fixable via filter opt-in; "permanently denylisted" is not.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'New value (any JSON type). Full overwrite — read first, merge in your client, then write back.']], 'required' => ['name', 'value']]],
+            ['name' => 'wp_update_option', 'description' => 'Update a WordPress option. Four gates in order: (1) manage_options capability on the caller; (2) master "Allow AI to write WordPress options" admin toggle enabled; (3) hard denylist (siteurl, home, admin_email, mailserver_*, upload_path, users_can_register, wp_user_roles, wp_capabilities, api_key/secret/*_pass/*_key patterns, royal_mcp_* namespace — permanent, cannot be filter-overridden); (4) write⊆readable invariant + writable allowlist (option must appear in both royal_mcp_readable_options AND royal_mcp_writable_options — plugin authors must opt into READS before opting into WRITES). Error text names which gate blocked. "Not in allowlist" is fixable via filter opt-in; "permanently denylisted" is not. Set dry_run=true to preview the change (current + proposed value, autoload state, size delta) without writing.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'New value (any JSON type). Full overwrite — read first, merge in your client, then write back.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Preview the write without persisting. Returns current/proposed value, autoload state, and size delta.']], 'required' => ['name', 'value']]],
 
             // Menus
             ['name' => 'wp_get_menus', 'description' => 'List all registered navigation menus (nav_menu taxonomy). Returns id, name, slug, and item count for each. Use wp_get_menu_items to enumerate items within a specific menu.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -1253,7 +1257,7 @@ class Server {
 
             // Permalink Structure
             ['name' => 'wp_get_permalink_structure', 'description' => 'Get the WordPress permalink structure (e.g. /%postname%/, /%year%/%monthnum%/%postname%/). Read-only.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
-            ['name' => 'wp_update_permalink_structure', 'description' => 'Update the WordPress permalink structure. Requires the "Allow AI to write WordPress options" admin toggle. Common values: /%postname%/, /%year%/%monthnum%/%postname%/, /%category%/%postname%/. Changing this rewrites every URL on the site — flushes rewrite rules automatically.', 'inputSchema' => ['type' => 'object', 'properties' => ['structure' => ['type' => 'string', 'description' => 'New permalink structure (e.g. /%postname%/)']], 'required' => ['structure']]],
+            ['name' => 'wp_update_permalink_structure', 'description' => 'Update the WordPress permalink structure. Requires the "Allow AI to write WordPress options" admin toggle. Common values: /%postname%/, /%year%/%monthnum%/%postname%/, /%category%/%postname%/. Changing this rewrites every URL on the site — flushes rewrite rules automatically. Set dry_run=true to preview the change (current + proposed structure, affected post types, sample current URLs) without writing or flushing rewrite rules.', 'inputSchema' => ['type' => 'object', 'properties' => ['structure' => ['type' => 'string', 'description' => 'New permalink structure (e.g. /%postname%/)'], 'dry_run' => ['type' => 'boolean', 'description' => 'Preview the change without writing or flushing rewrite rules.']], 'required' => ['structure']]],
 
             // Post Revisions
             ['name' => 'wp_get_post_revisions', 'description' => 'Get the revision history for a post — list of all saved revisions with author, date, revision ID, word_count, and content_length (raw byte size). content_length is the reliable "is this revision empty?" signal: word_count uses strip_tags and misses text stored inside attributes (Divi 5 block attrs, data-* attrs, alt text), so a full page-builder revision can show word_count=0 while content_length>0. Useful for "what changed?" or "revert to yesterday\'s version" workflows.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'limit' => ['type' => 'integer', 'description' => 'Max revisions to return (default 20)']], 'required' => ['post_id']]],
@@ -1991,11 +1995,29 @@ class Server {
         // context.
         // ttlMs: 5 minutes. Tools change on plugin activation, integration
         // registration, and license state transitions — all infrequent.
+        $tools = $this->get_tools();
+
+        // Compact discovery profile: when the caller advertised X-MCP-Profile:
+        // compact on initialize (or is passing it on this request), trim the
+        // tools/list response to only the three routing tools so context-
+        // limited clients aren't loading 210+ full schemas up front. Callers
+        // then use discover_tools + get_tool_info + execute_tool to work with
+        // the rest of the tool surface on demand.
+        $profile_header = isset( $_SERVER['HTTP_X_MCP_PROFILE'] )
+            ? strtolower( trim( (string) $_SERVER['HTTP_X_MCP_PROFILE'] ) )
+            : '';
+        if ( 'compact' === $profile_header ) {
+            $routing_names = [ 'discover_tools', 'get_tool_info', 'execute_tool' ];
+            $tools         = array_values( array_filter( $tools, function ( $t ) use ( $routing_names ) {
+                return in_array( (string) ( $t['name'] ?? '' ), $routing_names, true );
+            } ) );
+        }
+
         return [
             'jsonrpc' => '2.0',
             'id'      => $id,
             'result'  => $this->stamp_modern_list_envelope(
-                [ 'tools' => $this->get_tools() ],
+                [ 'tools' => $tools ],
                 'private',
                 300000,
                 $params
@@ -4484,6 +4506,227 @@ class Server {
                     'builders'       => $builders,
                 ];
 
+            case 'discover_tools':
+                $dt_tools = $this->get_tools();
+                $dt_by_cat  = isset( $args['by_category'] ) ? strtolower( (string) $args['by_category'] ) : '';
+                $dt_by_plug = isset( $args['by_plugin'] ) ? strtolower( (string) $args['by_plugin'] ) : '';
+                $dt_by_cap  = isset( $args['by_capability'] ) ? (string) $args['by_capability'] : '';
+                $dt_by_undo = isset( $args['by_undo_support'] ) ? (string) $args['by_undo_support'] : '';
+                $dt_out = [];
+                foreach ( $dt_tools as $dt_tool ) {
+                    $dt_name = (string) ( $dt_tool['name'] ?? '' );
+                    if ( '' === $dt_name ) {
+                        continue;
+                    }
+                    // Category = first token before underscore (wp, elementor,
+                    // divi, wc, aioseo, yoast, etc.). Same slug logic Server_Card
+                    // uses for tools_summary.
+                    $dt_parts    = explode( '_', $dt_name, 2 );
+                    $dt_category = strtolower( (string) ( $dt_parts[0] ?? '' ) );
+                    // Plugin bucket collapses core WP prefixes into "core".
+                    $dt_plugin = in_array( $dt_category, [ 'wp', 'wc', 'wcs' ], true ) ? 'core' : $dt_category;
+                    if ( 'wc' === $dt_category || 'wcs' === $dt_category ) {
+                        $dt_plugin = 'woocommerce';
+                    }
+                    // Capability class inferred from the verb.
+                    if ( preg_match( '/^(?:wp_|)?(?:get|list|search|count|read|find|scan|audit|health)_/', $dt_name )
+                        || preg_match( '/(?:royal_mcp_connection_health|get_tool_info|discover_tools)/', $dt_name ) ) {
+                        $dt_capability = 'read_only';
+                    } elseif ( preg_match( '/^(?:wp_|)?(?:delete|remove|trash|reset|bulk_delete|purge)_/', $dt_name ) ) {
+                        $dt_capability = 'destructive';
+                    } else {
+                        $dt_capability = 'write';
+                    }
+                    // Undo support: opt-in by tool name against the mcp_undo_last_operation description.
+                    $dt_undo_supported = (bool) preg_match(
+                        '/^(?:wp_(?:update|delete|add)_(?:post|page|post_meta|term|term_meta|menu_item|media|comment|widget|option|theme_mod|custom_css|permalink_structure|seo_meta)|wp_reorder_menu_items|yoast_update_meta|elementor_|divi_)/',
+                        $dt_name
+                    );
+
+                    if ( '' !== $dt_by_cat  && $dt_category !== $dt_by_cat ) { continue; }
+                    if ( '' !== $dt_by_plug && $dt_plugin !== $dt_by_plug ) { continue; }
+                    if ( '' !== $dt_by_cap  && $dt_capability !== $dt_by_cap ) { continue; }
+                    if ( 'has_undo_token' === $dt_by_undo && ! $dt_undo_supported ) { continue; }
+                    if ( 'no_undo'        === $dt_by_undo &&   $dt_undo_supported ) { continue; }
+
+                    $dt_out[] = [
+                        'name'          => $dt_name,
+                        'description'   => (string) ( $dt_tool['description'] ?? '' ),
+                        'category'      => $dt_category,
+                        'plugin'        => $dt_plugin,
+                        'capability'    => $dt_capability,
+                        'undo_support'  => $dt_undo_supported ? 'has_undo_token' : 'no_undo',
+                    ];
+                }
+                return [
+                    'tools'         => $dt_out,
+                    'total_matched' => count( $dt_out ),
+                    'total_available' => count( $dt_tools ),
+                    'filters_applied' => [
+                        'by_category'     => $dt_by_cat  !== '' ? $dt_by_cat  : null,
+                        'by_plugin'       => $dt_by_plug !== '' ? $dt_by_plug : null,
+                        'by_capability'   => $dt_by_cap  !== '' ? $dt_by_cap  : null,
+                        'by_undo_support' => $dt_by_undo !== '' ? $dt_by_undo : null,
+                    ],
+                ];
+
+            case 'get_tool_info':
+                $gti_name = isset( $args['tool_name'] ) ? (string) $args['tool_name'] : '';
+                if ( '' === $gti_name ) {
+                    throw new \Exception( 'tool_name is required.' );
+                }
+                $gti_tools = $this->get_tools();
+                foreach ( $gti_tools as $gti_tool ) {
+                    if ( ( (string) ( $gti_tool['name'] ?? '' ) ) === $gti_name ) {
+                        return [
+                            'name'        => $gti_name,
+                            'description' => (string) ( $gti_tool['description'] ?? '' ),
+                            'inputSchema' => $gti_tool['inputSchema'] ?? new \stdClass(),
+                            'outputSchema' => $gti_tool['outputSchema'] ?? null,
+                        ];
+                    }
+                }
+                throw new \Exception( sprintf( 'Unknown tool: %s', $gti_name ) );
+
+            case 'execute_tool':
+                $et_name = isset( $args['tool_name'] ) ? (string) $args['tool_name'] : '';
+                if ( '' === $et_name ) {
+                    throw new \Exception( 'tool_name is required.' );
+                }
+                if ( in_array( $et_name, [ 'discover_tools', 'get_tool_info', 'execute_tool' ], true ) ) {
+                    throw new \Exception( 'execute_tool cannot invoke the discovery tools recursively.' );
+                }
+                $et_args = isset( $args['arguments'] ) && is_array( $args['arguments'] ) ? $args['arguments'] : [];
+                // Re-enter the dispatcher with the underlying tool + args.
+                return $this->execute_tool( $et_name, $et_args );
+
+            case 'wp_verify_rendered_page':
+                if ( ! current_user_can( 'read' ) ) {
+                    throw new \Exception( 'You do not have permission to fetch site pages.' );
+                }
+                $vrp_url_raw = isset( $args['url'] ) ? (string) $args['url'] : '';
+                $vrp_url     = esc_url_raw( trim( $vrp_url_raw ) );
+                if ( '' === $vrp_url ) {
+                    throw new \Exception( 'url is required.' );
+                }
+                // Same-origin check — the tool is for verifying THIS site's
+                // output, not a general HTTP fetcher.
+                $vrp_home_host = wp_parse_url( home_url(), PHP_URL_HOST );
+                $vrp_url_host  = wp_parse_url( $vrp_url, PHP_URL_HOST );
+                if ( ! $vrp_home_host || ! $vrp_url_host
+                    || strtolower( (string) $vrp_home_host ) !== strtolower( (string) $vrp_url_host ) ) {
+                    throw new \Exception( 'url must belong to this WordPress site.' );
+                }
+                // Per-(site,url) rate limit: 10 fetches / 60 sec window. Keeps
+                // an agent from turning the site into its own load-tester and
+                // caps damage if a script gets into a retry loop.
+                $vrp_limit   = 10;
+                $vrp_window  = 60;
+                $vrp_bucket  = 'royal_mcp_vrp_' . md5( home_url() . '|' . $vrp_url );
+                $vrp_state   = get_transient( $vrp_bucket );
+                $vrp_now     = time();
+                if ( is_array( $vrp_state ) && isset( $vrp_state['start'], $vrp_state['count'] )
+                    && ( $vrp_now - (int) $vrp_state['start'] ) < $vrp_window
+                    && (int) $vrp_state['count'] >= $vrp_limit ) {
+                    throw new \Exception( sprintf(
+                        'Rate limit exceeded — up to %d fetches per %d seconds per URL. Retry after %d seconds.',
+                        $vrp_limit,
+                        $vrp_window,
+                        $vrp_window - ( $vrp_now - (int) $vrp_state['start'] )
+                    ) );
+                }
+                if ( is_array( $vrp_state ) && ( $vrp_now - (int) ( $vrp_state['start'] ?? 0 ) ) < $vrp_window ) {
+                    $vrp_state['count'] = (int) $vrp_state['count'] + 1;
+                } else {
+                    $vrp_state = [ 'start' => $vrp_now, 'count' => 1 ];
+                }
+                set_transient( $vrp_bucket, $vrp_state, $vrp_window );
+
+                $vrp_response = wp_remote_get( $vrp_url, [
+                    'timeout'     => 10,
+                    'redirection' => 3,
+                    'sslverify'   => false,
+                    'headers'     => [
+                        'User-Agent' => 'Royal MCP wp_verify_rendered_page/' . ( defined( 'ROYAL_MCP_VERSION' ) ? ROYAL_MCP_VERSION : '1.0' ),
+                    ],
+                ] );
+                if ( is_wp_error( $vrp_response ) ) {
+                    return [
+                        'url'             => $vrp_url,
+                        'response_status' => 0,
+                        'error'           => $vrp_response->get_error_message(),
+                    ];
+                }
+
+                $vrp_status  = (int) wp_remote_retrieve_response_code( $vrp_response );
+                $vrp_headers = wp_remote_retrieve_headers( $vrp_response );
+                $vrp_headers_arr = [];
+                if ( $vrp_headers ) {
+                    foreach ( [ 'content-type', 'cache-control', 'x-cache', 'x-cache-hits', 'age' ] as $vrp_h ) {
+                        $vrp_headers_arr[ $vrp_h ] = (string) ( $vrp_headers[ $vrp_h ] ?? '' );
+                    }
+                }
+                $vrp_body = (string) wp_remote_retrieve_body( $vrp_response );
+
+                $vrp_title = '';
+                if ( preg_match( '#<title[^>]*>(.*?)</title>#is', $vrp_body, $vrp_m ) ) {
+                    $vrp_title = trim( html_entity_decode( wp_strip_all_tags( $vrp_m[1] ), ENT_QUOTES | ENT_HTML5 ) );
+                }
+                $vrp_meta_desc = '';
+                if ( preg_match( '#<meta\s+[^>]*name=["\']description["\'][^>]*content=["\']([^"\']*)["\']#i', $vrp_body, $vrp_m ) ) {
+                    $vrp_meta_desc = trim( html_entity_decode( $vrp_m[1], ENT_QUOTES | ENT_HTML5 ) );
+                }
+                $vrp_h1 = '';
+                if ( preg_match( '#<h1[^>]*>(.*?)</h1>#is', $vrp_body, $vrp_m ) ) {
+                    $vrp_h1 = trim( html_entity_decode( wp_strip_all_tags( $vrp_m[1] ), ENT_QUOTES | ENT_HTML5 ) );
+                }
+                $vrp_script_count     = preg_match_all( '#<script\b#i', $vrp_body );
+                $vrp_stylesheet_count = preg_match_all( '#<link\s+[^>]*rel=["\']stylesheet["\']#i', $vrp_body );
+
+                // Selector presence check — simple #id or .class match against
+                // the served HTML. Full querySelector semantics are out of
+                // scope for a regex-based scan; documented in the description.
+                $vrp_selector_present = null;
+                if ( isset( $args['selector'] ) && '' !== (string) $args['selector'] ) {
+                    $vrp_sel_raw = trim( (string) $args['selector'] );
+                    if ( strpos( $vrp_sel_raw, '#' ) === 0 ) {
+                        $vrp_sel_id           = substr( $vrp_sel_raw, 1 );
+                        $vrp_selector_present = (bool) preg_match(
+                            '#\bid=["\']' . preg_quote( $vrp_sel_id, '#' ) . '["\']#i',
+                            $vrp_body
+                        );
+                    } elseif ( strpos( $vrp_sel_raw, '.' ) === 0 ) {
+                        $vrp_sel_cls          = substr( $vrp_sel_raw, 1 );
+                        $vrp_selector_present = (bool) preg_match(
+                            '#\bclass=["\'][^"\']*\b' . preg_quote( $vrp_sel_cls, '#' ) . '\b#i',
+                            $vrp_body
+                        );
+                    } else {
+                        $vrp_selector_present = false;
+                    }
+                }
+
+                $vrp_out = [
+                    'url'                    => $vrp_url,
+                    'response_status'        => $vrp_status,
+                    'response_headers_subset' => $vrp_headers_arr,
+                    'title'                  => $vrp_title,
+                    'meta_description'       => $vrp_meta_desc,
+                    'h1_primary'             => $vrp_h1,
+                    'script_count'           => (int) $vrp_script_count,
+                    'stylesheet_count'       => (int) $vrp_stylesheet_count,
+                    'selector_present'       => $vrp_selector_present,
+                    'body_bytes'             => strlen( $vrp_body ),
+                ];
+                if ( ! empty( $args['include_body_excerpt'] ) ) {
+                    if ( preg_match( '#<body[^>]*>(.*?)</body>#is', $vrp_body, $vrp_m ) ) {
+                        $vrp_out['body_excerpt'] = mb_substr( trim( wp_strip_all_tags( $vrp_m[1] ) ), 0, 500 );
+                    } else {
+                        $vrp_out['body_excerpt'] = mb_substr( trim( wp_strip_all_tags( $vrp_body ) ), 0, 500 );
+                    }
+                }
+                return $vrp_out;
+
             case 'wp_get_site_status':
                 if (!current_user_can('manage_options')) {
                     throw new \Exception('You do not have permission to read site status.');
@@ -4781,6 +5024,35 @@ class Server {
                 // existence explicitly so undo can either restore the prior
                 // value or delete_option to remove a row we created.
                 $opt_existed_before = ( $opt_previous !== false );
+
+                // Preview-only branch: compute proposed diff + autoload state +
+                // size delta without writing. Same gate outcomes as a real
+                // call so a caller can trust dry_run failures the same way
+                // they'd trust the write failures.
+                if ( ! empty( $args['dry_run'] ) ) {
+                    $opt_autoloaded_row  = wp_load_alloptions();
+                    $opt_is_autoloaded   = is_array( $opt_autoloaded_row ) && array_key_exists( $name, $opt_autoloaded_row );
+                    $opt_current_bytes   = strlen( (string) maybe_serialize( $opt_previous === false ? '' : $opt_previous ) );
+                    $opt_proposed_bytes  = strlen( (string) maybe_serialize( $opt_value ) );
+                    return [
+                        'state'   => 'dry_run',
+                        'preview' => [
+                            'option_name'      => $name,
+                            'current_value'    => $opt_previous,
+                            'proposed_value'   => $opt_value,
+                            'is_autoloaded'    => $opt_is_autoloaded,
+                            'existed_before'   => $opt_existed_before,
+                            'size_delta_bytes' => $opt_proposed_bytes - $opt_current_bytes,
+                        ],
+                        'would_execute' => true,
+                        'message'       => sprintf(
+                            'Dry run: option %s would be %s (size delta %+d bytes).',
+                            $name,
+                            $opt_existed_before ? 'updated' : 'created',
+                            $opt_proposed_bytes - $opt_current_bytes
+                        ),
+                    ];
+                }
 
                 $opt_result   = update_option($name, $opt_value);
                 wp_cache_delete( $name, 'options' );  // core also does this but be defensive
@@ -8368,6 +8640,47 @@ class Server {
                     throw new \Exception('structure is required (e.g. /%postname%/)');
                 }
                 $pl_previous = (string) get_option('permalink_structure', '');
+
+                // Preview-only branch: report the current + proposed structures
+                // and the post types that would resolve through them without
+                // touching the option or flushing rewrite rules.
+                if ( ! empty( $args['dry_run'] ) ) {
+                    $pl_pt_slugs   = get_post_types( [ 'public' => true ], 'names' );
+                    $pl_sample_ids = get_posts( [
+                        'post_type'      => array_values( $pl_pt_slugs ),
+                        'posts_per_page' => 3,
+                        'post_status'    => 'publish',
+                        'orderby'        => 'ID',
+                        'order'          => 'DESC',
+                        'fields'         => 'ids',
+                    ] );
+                    $pl_samples = [];
+                    if ( ! empty( $pl_sample_ids ) ) {
+                        foreach ( $pl_sample_ids as $pl_sid ) {
+                            $pl_samples[] = [
+                                'post_id'      => (int) $pl_sid,
+                                'current_url'  => (string) get_permalink( (int) $pl_sid ),
+                            ];
+                        }
+                    }
+                    return [
+                        'state'   => 'dry_run',
+                        'preview' => [
+                            'current_structure'   => $pl_previous,
+                            'proposed_structure'  => $pl_structure,
+                            'affected_post_types' => array_values( $pl_pt_slugs ),
+                            'sample_current_urls' => $pl_samples,
+                            'flushes_rewrite'     => true,
+                        ],
+                        'would_execute' => true,
+                        'message'       => sprintf(
+                            'Dry run: permalink structure would change from %s to %s and flush rewrite rules.',
+                            $pl_previous !== '' ? $pl_previous : '(plain)',
+                            $pl_structure
+                        ),
+                    ];
+                }
+
                 global $wp_rewrite;
                 if ($wp_rewrite) {
                     $wp_rewrite->set_permalink_structure($pl_structure);
