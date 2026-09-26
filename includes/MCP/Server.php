@@ -720,22 +720,28 @@ class Server {
      * @return string Real client IP, or 127.0.0.1 if nothing usable.
      */
     public static function resolve_client_ip() {
-        // CF-Connecting-IP is only meaningful when Cloudflare is actually
-        // fronting the request; validate with CF-Ray (present on every CF
-        // response), or fall back to an explicit opt-in filter for setups
-        // where CF-Ray isn't emitted. Any request path that reaches origin
-        // directly can carry an arbitrary CF-Connecting-IP header value.
-        $cf_ip  = isset($_SERVER['HTTP_CF_CONNECTING_IP']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_IP'])) : '';
-        $cf_ray = isset($_SERVER['HTTP_CF_RAY']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_RAY'])) : '';
-        $trust_cf = '' !== $cf_ray || apply_filters('royal_mcp_trust_cloudflare_ip', false);
+        // CF-Connecting-IP is only meaningful when Cloudflare's edge is the
+        // last hop before origin. Any request path that reaches origin
+        // directly can spoof both CF-Connecting-IP and CF-Ray, so header
+        // presence alone is not proof that CF is actually fronting the
+        // request. Gate this on an explicit opt-in filter — either
+        // royal_mcp_trust_cloudflare_ip (boolean) or the trusted-proxies
+        // list also used by X-Forwarded-For below. Sites behind CF and
+        // without a hardened firewall in front of origin should return true
+        // from the filter; sites reachable both directly and through CF
+        // should list CF's origin-facing IP in trusted_proxies instead.
+        $cf_ip           = isset($_SERVER['HTTP_CF_CONNECTING_IP']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_IP'])) : '';
+        $trusted_proxies = (array) apply_filters('royal_mcp_trusted_proxies', []);
+        $remote_addr     = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+        $trust_cf        = apply_filters('royal_mcp_trust_cloudflare_ip', false)
+                           || ( ! empty( $trusted_proxies ) && in_array( $remote_addr, $trusted_proxies, true ) );
         if ('' !== $cf_ip && $trust_cf && filter_var($cf_ip, FILTER_VALIDATE_IP)) {
             return $cf_ip;
         }
 
         // X-Forwarded-For: only trust when caller opts in via the trusted-proxies
         // filter (list of upstream proxy IPs whose XFF header we accept).
-        $trusted_proxies = (array) apply_filters('royal_mcp_trusted_proxies', []);
-        $remote_addr     = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+        // Variables declared above so no redeclaration.
         if (!empty($trusted_proxies) && in_array($remote_addr, $trusted_proxies, true)) {
             $xff = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR'])) : '';
             if ('' !== $xff) {
@@ -9538,6 +9544,48 @@ class Server {
      */
     private function redact_log_line($line) {
         if (!is_string($line) || $line === '') return $line;
+
+        // define('KEY_NAME', 'value') — WP config + generic define shape
+        $line = preg_replace(
+            '/(define\s*\(\s*[\'"](?:AUTH_KEY|SECURE_AUTH_KEY|LOGGED_IN_KEY|NONCE_KEY|AUTH_SALT|SECURE_AUTH_SALT|LOGGED_IN_SALT|NONCE_SALT|DB_PASSWORD|DB_USER|[A-Z_]*(?:PASSWORD|SECRET|TOKEN|KEY|SALT)[A-Z_]*)[\'"]\s*,\s*)[\'"][^\'"]+[\'"]/i',
+            "$1'[REDACTED]'",
+            $line
+        );
+
+        // [key_name] => value — print_r / var_dump array-line shape
+        $line = preg_replace(
+            '/(\[(?:[A-Za-z_]*(?:password|passwd|pwd|secret|token|key|salt|bearer|api_key|db_pass|user_pass|auth_key)[A-Za-z_]*)\]\s*=>\s*)[\'"]?[^\'"\r\n]+[\'"]?/i',
+            '$1[REDACTED]',
+            $line
+        );
+
+        // JSON dump: "password":"value"
+        $line = preg_replace(
+            '/(["\'](?:password|passwd|pwd|secret|token|api_key|access_token|refresh_token|client_secret|bearer|auth_key)["\']\s*:\s*)"[^"]+"/i',
+            '$1"[REDACTED]"',
+            $line
+        );
+
+        // $_ENV['KEY'] = 'value'
+        $line = preg_replace(
+            '/(\$_ENV\s*\[\s*[\'"][A-Z_]*(?:PASSWORD|SECRET|TOKEN|KEY|AUTH)[A-Z_]*[\'"]\s*\]\s*=\s*)[\'"][^\'"]+[\'"]/',
+            "$1'[REDACTED]'",
+            $line
+        );
+
+        // putenv('KEY=value')
+        $line = preg_replace(
+            '/(putenv\s*\(\s*[\'"][A-Z_]*(?:PASSWORD|SECRET|TOKEN|KEY|AUTH)[A-Z_]*)=[^\'")]+([\'"])/',
+            '$1=[REDACTED]$2',
+            $line
+        );
+
+        // PHP associative array literal ['KEY' => 'value'] shape
+        $line = preg_replace(
+            '/([\'"](?:DB_PASSWORD|DB_USER|[A-Z_]*(?:PASSWORD|SECRET|TOKEN|KEY|SALT|AUTH)[A-Z_]*)[\'"]\s*=>\s*)[\'"][^\'"]+[\'"]/i',
+            "$1'[REDACTED]'",
+            $line
+        );
 
         // password / passwd / pass / pwd / db_password / user_pass — key=value form
         $line = preg_replace(
