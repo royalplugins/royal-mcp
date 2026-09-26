@@ -8687,13 +8687,20 @@ class Server {
                 }
                 $pl_previous = (string) get_option('permalink_structure', '');
 
-                // Preview-only branch: report the current + proposed structures
-                // and the post types that would resolve through them without
-                // touching the option or flushing rewrite rules.
+                // Preview-only branch: report the current + proposed structures,
+                // scope the impact to the post types actually affected, and
+                // return without touching the option or flushing rewrite rules.
                 if ( ! empty( $args['dry_run'] ) ) {
-                    $pl_pt_slugs   = get_post_types( [ 'public' => true ], 'names' );
+                    // Only the `post` post type uses `permalink_structure` for
+                    // its URLs. Pages own the hierarchical page-slug rewrite;
+                    // WooCommerce products own `/product/`; every other public
+                    // CPT declares its own rewrite base at post_type registration
+                    // and stays put. Attachment URLs follow the parent post, so
+                    // they inherit any post-URL change but only when attached to
+                    // a `post`. Sample only from posts so the URL previews
+                    // reflect what would actually shift.
                     $pl_sample_ids = get_posts( [
-                        'post_type'      => array_values( $pl_pt_slugs ),
+                        'post_type'      => 'post',
                         'posts_per_page' => 3,
                         'post_status'    => 'publish',
                         'orderby'        => 'ID',
@@ -8701,26 +8708,31 @@ class Server {
                         'fields'         => 'ids',
                     ] );
                     $pl_samples = [];
-                    if ( ! empty( $pl_sample_ids ) ) {
-                        foreach ( $pl_sample_ids as $pl_sid ) {
-                            $pl_samples[] = [
-                                'post_id'      => (int) $pl_sid,
-                                'current_url'  => (string) get_permalink( (int) $pl_sid ),
-                            ];
-                        }
+                    foreach ( (array) $pl_sample_ids as $pl_sid ) {
+                        $pl_samples[] = [
+                            'post_id'     => (int) $pl_sid,
+                            'current_url' => (string) get_permalink( (int) $pl_sid ),
+                        ];
                     }
+                    // Give the caller a concrete "this doesn't touch" signal so
+                    // an agent can reason about what stays without enumerating
+                    // the plugin ecosystem in prose.
+                    $pl_all_public   = array_values( get_post_types( [ 'public' => true ], 'names' ) );
+                    $pl_unaffected   = array_values( array_diff( $pl_all_public, [ 'post', 'attachment' ] ) );
                     return [
                         'state'   => 'dry_run',
                         'preview' => [
-                            'current_structure'   => $pl_previous,
-                            'proposed_structure'  => $pl_structure,
-                            'affected_post_types' => array_values( $pl_pt_slugs ),
-                            'sample_current_urls' => $pl_samples,
-                            'flushes_rewrite'     => true,
+                            'current_structure'                => $pl_previous,
+                            'proposed_structure'               => $pl_structure,
+                            'affected_post_types'              => [ 'post' ],
+                            'attachment_inherits_parent_url'   => true,
+                            'post_types_with_own_rewrite_base' => $pl_unaffected,
+                            'sample_current_urls'              => $pl_samples,
+                            'flushes_rewrite'                  => true,
                         ],
                         'would_execute' => true,
                         'message'       => sprintf(
-                            'Dry run: permalink structure would change from %s to %s and flush rewrite rules.',
+                            'Dry run: permalink structure would change from %s to %s and flush rewrite rules. Only the `post` post type uses this structure; pages, custom post types, and plugin-registered types keep their own rewrite bases and are unaffected.',
                             $pl_previous !== '' ? $pl_previous : '(plain)',
                             $pl_structure
                         ),
