@@ -8707,11 +8707,47 @@ class Server {
                         'order'          => 'DESC',
                         'fields'         => 'ids',
                     ] );
+                    // Home URL without trailing slash for URL concatenation. The
+                    // rewrite tokens are the standard ones WP core documents at
+                    // https://wordpress.org/documentation/article/customize-permalinks/.
+                    // Category token resolves to the primary category's slug
+                    // (lowest term_id when the post has multiple) to mirror WP's
+                    // own choice. Missing category falls back to `uncategorized`
+                    // so the projected URL is stable for posts on a fresh site.
+                    $pl_home_no_slash = rtrim( (string) home_url(), '/' );
                     $pl_samples = [];
                     foreach ( (array) $pl_sample_ids as $pl_sid ) {
+                        $pl_pid  = (int) $pl_sid;
+                        $pl_post = get_post( $pl_pid );
+                        if ( ! $pl_post ) {
+                            continue;
+                        }
+                        $pl_cats     = get_the_category( $pl_pid );
+                        $pl_cat_slug = 'uncategorized';
+                        if ( ! empty( $pl_cats ) ) {
+                            usort( $pl_cats, function ( $a, $b ) {
+                                return $a->term_id <=> $b->term_id;
+                            } );
+                            $pl_cat_slug = (string) ( $pl_cats[0]->slug ?? 'uncategorized' );
+                        }
+                        $pl_ts       = (int) strtotime( $pl_post->post_date );
+                        $pl_nicename = (string) get_the_author_meta( 'user_nicename', (int) $pl_post->post_author );
+                        $pl_url_path = strtr( $pl_structure, [
+                            '%year%'     => date( 'Y', $pl_ts ),
+                            '%monthnum%' => date( 'm', $pl_ts ),
+                            '%day%'      => date( 'd', $pl_ts ),
+                            '%hour%'     => date( 'H', $pl_ts ),
+                            '%minute%'   => date( 'i', $pl_ts ),
+                            '%second%'   => date( 's', $pl_ts ),
+                            '%postname%' => (string) $pl_post->post_name,
+                            '%post_id%'  => (string) $pl_pid,
+                            '%category%' => $pl_cat_slug,
+                            '%author%'   => $pl_nicename,
+                        ] );
                         $pl_samples[] = [
-                            'post_id'     => (int) $pl_sid,
-                            'current_url' => (string) get_permalink( (int) $pl_sid ),
+                            'post_id'      => $pl_pid,
+                            'current_url'  => (string) get_permalink( $pl_pid ),
+                            'proposed_url' => $pl_home_no_slash . $pl_url_path,
                         ];
                     }
                     // Give the caller a concrete "this doesn't touch" signal so
