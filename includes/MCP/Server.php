@@ -4573,7 +4573,24 @@ class Server {
                     // or after any prefix underscore (wc_get_products,
                     // gp_get_dashboard_stats, elementor_get_page_outline, etc.).
                     // Matching (?:^|_)VERB(?:_|$) lets both patterns resolve.
-                    static $rmcp_read_only_verbs = 'get|list|search|count|read|find|scan|audit|health|dashboard|export|status|stats|preview|show|monitor|browse';
+                    //
+                    // Verb list is deliberately conservative — only tokens that
+                    // are unambiguously VERBS (not also common nouns) are
+                    // included. `status`, `stats`, `dashboard`, `preview`,
+                    // `show`, `monitor`, `browse`, `health` are all nouns in
+                    // WP tool names (wc_update_order_status is a WRITE,
+                    // wp_create_preview_link is a WRITE), so their inclusion
+                    // would false-positive writes as reads. `health` is
+                    // handled by the singleton special-case above for
+                    // royal_mcp_connection_health.
+                    //
+                    // Direction of preference: false-negative (writes labeled
+                    // correctly, some reads mislabeled as writes) beats
+                    // false-positive (writes mislabeled as reads). An agent
+                    // building a browse-only mode via by_capability=read_only
+                    // can trust that a read_only-tagged tool won't write; the
+                    // reverse trust doesn't hold for writes-tagged tools.
+                    static $rmcp_read_only_verbs = 'get|list|search|count|read|find|scan|audit|export';
                     static $rmcp_destr_verbs    = 'delete|remove|trash|reset|purge|revoke|clear|drop';
                     if ( in_array( $dt_name, [ 'royal_mcp_connection_health', 'get_tool_info', 'discover_tools' ], true )
                         || preg_match( '/(?:^|_)(?:' . $rmcp_read_only_verbs . ')(?:_|$)/', $dt_name ) ) {
