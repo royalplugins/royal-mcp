@@ -16,7 +16,7 @@ Preview-On-WordPress-Playground: yes
 
 **The most complete WordPress MCP server — 200+ tools, OAuth 2.0, WebMCP-ready, and nothing leaves your site.**
 
-Royal MCP gives Claude, ChatGPT, Google Gemini, Perplexity, DeepSeek, Mistral, and every other MCP-compatible AI structured access to your WordPress site: 85 WordPress core tools plus 124 integration tools that auto-load for WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Contact Form 7, MonsterInsights, W3 Total Cache, Duplicator, BuddyPress, and more.
+Royal MCP gives Claude, ChatGPT, Google Gemini, Perplexity, DeepSeek, Mistral, and every other MCP-compatible AI structured access to your WordPress site: 85 WordPress core tools, 124 integration tools that auto-load for WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Contact Form 7, MonsterInsights, W3 Total Cache, Duplicator, BuddyPress, and more, plus 4 tool-discovery and page-verification helpers.
 
 = Connect Claude to WordPress =
 
@@ -290,6 +290,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 6. OAuth consent screen for Claude Desktop connector
 
 == Changelog ==
+
+= 1.5.5 =
+* Add dry-run mode to `wp_update_option` and `wp_update_permalink_structure`, new `wp_verify_rendered_page` tool for post-write verification, compact tool-discovery profile via `X-MCP-Profile: compact`, hardened OAuth registration and refresh flow, tightened capability checks on post and meta writes, and improved response-envelope compliance for newer MCP clients.
 
 = 1.5.4 =
 * Fix: `tools/list`, `prompts/list`, and `resources/list` responses now conform to the modern-era MCP schema for connectors that require the newer wire shape.
