@@ -269,8 +269,14 @@ class Server {
             $this->json_error( 'invalid_request', 'Invalid JSON body.', 400 );
         }
 
-        // Validate redirect_uris.
+        // Validate redirect_uris. At least one URI is required — a client
+        // with no registered destinations can't be authorized to anywhere,
+        // and downstream matching in Token_Store::validate_redirect_uri
+        // treats an empty list as a deny.
         $redirect_uris = isset( $body['redirect_uris'] ) && is_array( $body['redirect_uris'] ) ? $body['redirect_uris'] : [];
+        if ( empty( $redirect_uris ) ) {
+            $this->json_error( 'invalid_redirect_uri', 'redirect_uris is required and must include at least one URI.', 400 );
+        }
         foreach ( $redirect_uris as $uri ) {
             if ( ! $this->is_valid_redirect_uri( $uri ) ) {
                 $this->json_error( 'invalid_redirect_uri', 'Redirect URIs must be localhost or HTTPS.', 400 );
@@ -461,11 +467,20 @@ class Server {
         $current_user = wp_get_current_user();
         $site_name    = get_bloginfo( 'name' );
 
+        // Extract the redirect URI host so the consent screen can show the
+        // admin exactly where the authorization code will be delivered.
+        $redirect_parts = wp_parse_url( $redirect_uri );
+        $redirect_host  = isset( $redirect_parts['host'] ) ? $redirect_parts['host'] : $redirect_uri;
+        if ( ! empty( $redirect_parts['port'] ) ) {
+            $redirect_host .= ':' . (int) $redirect_parts['port'];
+        }
+
         // Pass variables to the template.
         $rmcp_oauth = [
             'client_name'           => $client['client_name'] ?? $client_id,
             'client_id'             => $client_id,
             'redirect_uri'          => $redirect_uri,
+            'redirect_host'         => $redirect_host,
             'code_challenge'        => $code_challenge,
             'code_challenge_method' => $code_challenge_method,
             'state'                 => $state,
@@ -669,6 +684,19 @@ class Server {
             $this->json_error( 'invalid_request', 'Missing required parameters: refresh_token, client_id.', 400 );
         }
 
+        // Authenticate confidential clients before consuming the refresh
+        // token so the rotation step only runs on requests that pass client
+        // auth. Mirrors the block in token_authorization_code(). Unknown
+        // client_ids fall through to the invalid_grant path below so this
+        // doesn't act as a client-id enumeration oracle.
+        $client = Token_Store::get_client( $client_id );
+        if ( $client && 'client_secret_post' === ( $client['token_endpoint_auth_method'] ?? 'none' ) ) {
+            $client_secret = isset( $_POST['client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['client_secret'] ) ) : '';
+            if ( empty( $client_secret ) || ! hash_equals( $client['client_secret_hash'], hash( 'sha256', $client_secret ) ) ) {
+                $this->json_error( 'invalid_client', 'Client authentication failed.', 401 );
+            }
+        }
+
         // Consume the refresh token (rotation — old one is revoked).
         $token_data = Token_Store::consume_refresh_token( $refresh_token );
         if ( ! $token_data ) {
@@ -870,13 +898,12 @@ class Server {
     }
 
     /**
-     * Get the client IP address.
+     * Get the client IP address. Delegates to the MCP-side resolver so both
+     * OAuth-side and /mcp-side rate limits key off the same IP-resolution
+     * policy — trusted-proxy allowlist for X-Forwarded-For, CF-Ray gate for
+     * CF-Connecting-IP, REMOTE_ADDR fallback.
      */
     private function get_client_ip() {
-        if ( ! empty( $_SERVER['HTTP_X_FORWARDED_FOR'] ) ) {
-            $ips = explode( ',', sanitize_text_field( wp_unslash( $_SERVER['HTTP_X_FORWARDED_FOR'] ) ) );
-            return trim( $ips[0] );
-        }
-        return isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '0.0.0.0';
+        return \Royal_MCP\MCP\Server::resolve_client_ip();
     }
 }

@@ -42,6 +42,12 @@ class Protocol_Insights {
     }
 
     public static function add_submenu() {
+        // Skip when Royal MCP Pro provides its own Protocol Insights page —
+        // avoids a duplicate "Protocol Insights" entry in the absorbed Pro
+        // menu. Pro's version supersedes ours under parallel activation.
+        if ( class_exists( '\\Royal_MCP_Pro\\Admin\\Protocol_Insights', false ) ) {
+            return;
+        }
         add_submenu_page(
             self::PARENT_SLUG,
             __( 'Protocol Insights', 'royal-mcp' ),

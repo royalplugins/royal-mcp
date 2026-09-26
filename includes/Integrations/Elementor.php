@@ -244,7 +244,7 @@ class Elementor {
 			],
 			[
 				'name'        => 'elementor_rebuild_post_content_bulk',
-				'description' => 'Scan all posts with _elementor_data + empty post_content and rebuild them in batch. Fixes bulk SEO / search damage from prior clone operations that shipped without post_content. Pass dry_run=true to preview the count + first 20 candidate post IDs without writing. Batches up to limit posts per call (default 50, max 200). NO undo tokens emitted (bulk rebuild of empty content is generally not something users want to reverse — take a SiteVault snapshot beforehand if reversal capability matters). Cap: edit_posts.',
+				'description' => 'Scan all posts with _elementor_data + empty post_content and rebuild them in batch. Fixes bulk SEO / search damage from prior clone operations that shipped without post_content. Pass dry_run=true to preview the count + first 20 candidate post IDs without writing. Batches up to limit posts per call (default 50, max 200). NO undo tokens emitted (bulk rebuild of empty content is generally not something users want to reverse — take a SiteVault snapshot beforehand if reversal capability matters). Cap: edit_posts to enter the tool, then each individual post is re-checked with edit_post before its own rebuild — posts the caller cannot edit are skipped with reason=edit_post capability missing rather than failing the whole call.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -791,7 +791,7 @@ class Elementor {
 		}
 
 		clean_post_cache( $post_id );
-		$new_length = strlen( (string) get_post( $post_id )->post_content );
+		$new_length = strlen( (string) get_post( $post_id )->post_content ); // audit:null-chain-ok -- post just rebuilt, existence confirmed above
 
 		// Undo envelope — restore prior post_content. Skip token if prior content
 		// exceeds the 1MB compressed cap.
@@ -908,7 +908,7 @@ class Elementor {
 				continue;
 			}
 			clean_post_cache( $pid );
-			$new_length = strlen( (string) get_post( $pid )->post_content );
+			$new_length = strlen( (string) get_post( $pid )->post_content ); // audit:null-chain-ok -- populate_post_content_from_elementor returned true, row exists
 			$repaired[] = [ 'post_id' => $pid, 'new_length' => $new_length ];
 		}
 

@@ -1035,10 +1035,12 @@ class Token_Store {
             return true;
         }
 
-        // Dynamic clients: exact match required.
+        // Dynamic clients: exact match against the registered list. An empty
+        // registered list denies — nothing to match against, and treating
+        // that state as accept-anything defeats the point of the check.
         $registered = $client['redirect_uris'] ?? [];
         if ( empty( $registered ) ) {
-            return true; // No URIs registered = accept any valid one (matches Claude Desktop behavior).
+            return false;
         }
 
         return in_array( $redirect_uri, $registered, true );

@@ -39,6 +39,26 @@ class Whats_New {
     }
 
     private function __construct() {
+        // Defer hook registration to plugins_loaded:20 so Pro's autoloader
+        // has fully run before we probe for its Whats_New class. Constructor
+        // fires at plugin-file-load time — before Pro's classes exist — so
+        // an inline class_exists check races and always returns false.
+        if ( did_action( 'plugins_loaded' ) ) {
+            $this->register_hooks();
+        } else {
+            add_action( 'plugins_loaded', [ $this, 'register_hooks' ], 20 );
+        }
+    }
+
+    /**
+     * Register admin-footer + enqueue + dismiss hooks. Skipped when Royal
+     * MCP Pro provides its own Whats_New surface (Pro's replaces ours
+     * entirely under parallel activation to avoid duplicate modals).
+     */
+    public function register_hooks(): void {
+        if ( class_exists( '\Royal_MCP_Pro\Admin\Whats_New', false ) ) {
+            return;
+        }
         add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
         add_action( 'admin_footer',          [ $this, 'render_modal' ] );
         add_action( 'wp_ajax_' . self::DISMISS_AJAX_ACTION, [ $this, 'handle_dismiss' ] );

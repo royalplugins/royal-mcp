@@ -596,7 +596,20 @@ class Server {
             $settings = get_option('royal_mcp_settings', []);
         }
 
-        if (empty($settings['api_key']) || !hash_equals($settings['api_key'], $api_key)) {
+        // Prefer the hash-at-rest path; the plaintext branch stays for
+        // installs mid-migration whose maybe_upgrade_db hasn't fired yet.
+        $incoming_hash = hash('sha256', (string) $api_key);
+        $stored_hash   = isset($settings['api_key_hash']) ? (string) $settings['api_key_hash'] : '';
+        $stored_plain  = isset($settings['api_key'])      ? (string) $settings['api_key']      : '';
+
+        $ok = false;
+        if ('' !== $stored_hash) {
+            $ok = hash_equals($stored_hash, $incoming_hash);
+        } elseif ('' !== $stored_plain) {
+            $ok = hash_equals($stored_plain, (string) $api_key);
+        }
+
+        if (!$ok) {
             // 401, not 403, per RFC 7235 — wrong credentials means "auth failed",
             // which is 401. 403 is reserved for "auth succeeded but lacks
             // permission". Strict MCP clients (per RFC 9728 OAuth discovery)
@@ -618,18 +631,16 @@ class Server {
             return $response;
         }
 
-        // The API key is stored in admin-only settings, so whoever presents it is admin-level trusted.
-        // Set the current user to a site admin so capability checks (upload_files, edit_post, etc.) succeed.
+        // Attribute the call to the user_id the key was bound to at save time
+        // so audit logs distinguish key holders. maybe_upgrade_db back-fills
+        // this field for legacy installs where the bind was never written; if
+        // it's still empty here the request runs as the anonymous WP visitor
+        // and per-capability checks downstream reject it, which is the safer
+        // failure mode than silently attributing to a fixed administrator.
         if (!is_user_logged_in()) {
-            $admins = get_users([
-                'role'    => 'administrator',
-                'number'  => 1,
-                'orderby' => 'ID',
-                'order'   => 'ASC',
-                'fields'  => 'ID',
-            ]);
-            if (!empty($admins)) {
-                wp_set_current_user((int) $admins[0]);
+            $bound_uid = isset($settings['api_key_user_id']) ? (int) $settings['api_key_user_id'] : 0;
+            if ($bound_uid > 0 && get_userdata($bound_uid)) {
+                wp_set_current_user($bound_uid);
             }
         }
 
@@ -1013,18 +1024,51 @@ class Server {
         $replace = $args['replace'];
         // Raw stored content, NOT filtered output — replacement operates on
         // exactly what wp_update_post would receive back.
-        $content = (string) get_post($post_id)->post_content;
+        $content = (string) get_post($post_id)->post_content; // audit:null-chain-ok -- post existence verified by every caller before delegating here
         $occurrences = substr_count($content, $find);
         if (array_key_exists('expected_count', $args) && intval($args['expected_count']) !== $occurrences) {
             throw new \Exception(sprintf('expected_count is %d but %d occurrence(s) found; content unchanged.', intval($args['expected_count']), $occurrences));
         }
         if (!empty($args['dry_run'])) {
+            // Preview shape matches wp_update_option and wp_update_permalink_structure
+            // so any agent that learned the {state, preview, would_execute} envelope
+            // on one dry-run tool reads this one the same way. would_execute is
+            // false when zero occurrences would match (the real call throws) and
+            // when find === replace (the real call also throws).
+            $would_execute   = ( $occurrences > 0 && $find !== $replace );
+            $projected_after = $would_execute ? str_replace( $find, $replace, $content ) : $content;
+            $find_len        = strlen( $find );
+            $replace_len     = strlen( $replace );
+            $size_delta      = $would_execute ? ( strlen( $projected_after ) - strlen( $content ) ) : 0;
+            $preview = [
+                'id'                     => $post_id,
+                'occurrences'            => $occurrences,
+                'find_length'            => $find_len,
+                'replace_length'         => $replace_len,
+                'content_length_before'  => strlen( $content ),
+                'content_length_after'   => strlen( $projected_after ),
+                'size_delta_bytes'       => $size_delta,
+                'find_equals_replace'    => ( $find === $replace ),
+            ];
+            if ( $would_execute ) {
+                $msg = sprintf(
+                    'Dry run: %d occurrence(s) would be replaced (size delta %+d bytes); no write performed.',
+                    $occurrences,
+                    $size_delta
+                );
+            } elseif ( $occurrences === 0 ) {
+                $msg = sprintf(
+                    'Dry run: find string not present in %s content; a real call would throw. Refine `find` before executing.',
+                    $noun
+                );
+            } else {
+                $msg = 'Dry run: find and replace are identical; a real call would throw. Change `replace` before executing.';
+            }
             return [
-                'id' => $post_id,
-                'dry_run' => true,
-                'occurrences' => $occurrences,
-                'content_length' => strlen($content),
-                'message' => sprintf('Dry run: %d occurrence(s) found; nothing written.', $occurrences),
+                'state'         => 'dry_run',
+                'preview'       => $preview,
+                'would_execute' => $would_execute,
+                'message'       => $msg,
             ];
         }
         if ($occurrences === 0) {
@@ -1039,7 +1083,7 @@ class Server {
         // unfiltered_html, which the verification below surfaces.
         $result = wp_update_post(['ID' => $post_id, 'post_content' => wp_slash($new_content)], true);
         if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
-        $stored = (string) get_post($post_id)->post_content;
+        $stored = (string) get_post($post_id)->post_content; // audit:null-chain-ok -- post just successfully updated, row exists
         $verified = ($stored === $new_content);
         $response = [
             'id' => $post_id,
@@ -1203,14 +1247,18 @@ class Server {
             ['name' => 'wp_get_site_status', 'description' => 'One-shot site diagnostic. Returns WordPress version, PHP version, MySQL/MariaDB version, active plugin count, active theme details, memory limit, max upload size, timezone, WP_DEBUG_LOG state, disk free space, install age, and site/home URLs. Use this at the start of a debugging or environment-inspection conversation instead of piecing it together from wp_get_site_info + wp_get_plugins + wp_get_active_theme. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_get_error_log_tail', 'description' => 'Read the tail of wp-content/debug.log. Returns the last N lines (default 100, max 1000), optionally filtered by a case-insensitive substring. Automatically caps file read at last 1MB to prevent memory blowup on huge logs (truncated=true when this happens). Returns status="disabled" with instructions when WP_DEBUG_LOG is not enabled in wp-config.php. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => ['lines' => ['type' => 'integer', 'description' => 'Number of lines to return from the tail (default 100, max 1000).'], 'filter' => ['type' => 'string', 'description' => 'Optional case-insensitive substring filter applied before the last-N slice (e.g. "Fatal error", "Deprecated", a plugin slug).']]]],
             ['name' => 'wp_get_cron_schedule', 'description' => 'Enumerate scheduled wp_cron events. Returns each event with hook name, next run (unix + ISO 8601), seconds until next run, is_overdue flag, recurrence (hourly / twicedaily / daily / custom + interval in seconds), and args. Sorted by next-run ascending so overdue events come first. Useful for diagnosing missed schedules, plugin cron conflicts, or unfired hooks. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
-            ['name' => 'royal_mcp_connection_health', 'description' => 'Diagnostic probe for the current MCP connection. Returns MCP endpoint route, authentication method used by this request (api-key or oauth-bearer), OAuth access token time-to-live in seconds (null for api-key), current MCP session ID, active MCP capabilities negotiated at initialize, plus Royal MCP + WordPress + PHP version strings. No arguments. Call at connection start to confirm setup, or when diagnosing 401/403/404 issues. Any authenticated caller.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'royal_mcp_connection_health', 'description' => 'Diagnostic probe for the current MCP connection. Returns MCP endpoint route, authentication method used by this request (api-key or oauth-bearer), OAuth access token time-to-live in seconds (null for api-key), current MCP session ID, active MCP capabilities negotiated at initialize, plus a builders block with active-flag booleans for Divi / Elementor / Gutenberg so agents can branch on which page-builder is installed without probing for it. No arguments. Call at connection start to confirm setup, or when diagnosing 401/403/404 issues. Any authenticated caller.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'discover_tools', 'description' => 'List Royal MCP tools filtered by category, plugin, capability class, or undo support. Returns a compact index — name, description, and metadata only — WITHOUT the full inputSchema. Use with the compact tool discovery profile (X-MCP-Profile: compact on initialize) to keep the tools/list payload small on context-limited clients: caller discovers, calls get_tool_info for the specific tool it wants to invoke, then dispatches via execute_tool.', 'inputSchema' => ['type' => 'object', 'properties' => ['by_category' => ['type' => 'string', 'description' => 'Filter by category prefix, e.g. "posts", "pages", "media", "terms", "menus", "options", "elementor", "divi", "wc".'], 'by_plugin' => ['type' => 'string', 'description' => 'Filter by third-party integration slug, e.g. "core", "woocommerce", "elementor", "divi", "acf", "yoast".'], 'by_capability' => ['type' => 'string', 'enum' => ['read_only', 'write', 'destructive'], 'description' => 'Filter by capability class inferred from the tool name (get_/list_ = read_only, update_/create_/add_ = write, delete_/reset_/bulk_delete_ = destructive).'], 'by_undo_support' => ['type' => 'string', 'enum' => ['has_undo_token', 'no_undo'], 'description' => 'Filter by whether the tool emits an undo token.']]]],
+            ['name' => 'get_tool_info', 'description' => 'Return the full inputSchema (and, when available, an example invocation) for a single tool named in tool_name. Pairs with discover_tools + execute_tool for the compact discovery flow.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name (e.g. "wp_update_post").']], 'required' => ['tool_name']]],
+            ['name' => 'execute_tool', 'description' => 'Pass-through dispatcher for the compact discovery flow. Invokes the tool named in tool_name with the arguments in arguments — semantically identical to a direct tools/call for that tool. Useful when the client only advertised the routing tools via X-MCP-Profile: compact but still wants to invoke a specific underlying tool without renegotiating the profile.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name to invoke.'], 'arguments' => ['type' => 'object', 'description' => 'Arguments object forwarded to the underlying tool. Same shape you\'d pass in tools/call.']], 'required' => ['tool_name']]],
+            ['name' => 'wp_verify_rendered_page', 'description' => 'Post-write verification tool. Fetches the actual rendered HTML that WordPress serves at a URL via a loopback request and returns the response status, a subset of response headers (content-type, cache-control, x-cache), the page title, meta description, first h1, counts of script and stylesheet link tags, and (when include_body_excerpt is true) a 500-char excerpt of the page body. Optional selector arg reports whether an id/class selector is present in the served HTML. Use after any write that changes content, theme, or options to catch page-builder caches, object caches, or edge caches serving stale HTML even when the DB write returned success. Rate-limited to 10 fetches per minute per (site, URL). Requires read on the target post/page or manage_options. URL must belong to the current WordPress site.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Absolute URL on this site to fetch (must match home_url() origin).'], 'selector' => ['type' => 'string', 'description' => 'Optional #id or .class selector to check for presence in the rendered HTML.'], 'include_body_excerpt' => ['type' => 'boolean', 'description' => 'When true, include a 500-char excerpt of the <body> in the response. Default false.']], 'required' => ['url']]],
             ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, wp_update_post, wp_update_page, wp_update_post_meta, wp_add_post_meta, wp_delete_post_meta, wp_delete_post, wp_delete_page, wp_delete_media, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_term_meta, wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, yoast_update_meta (aliases wp_update_seo_meta), wp_update_widget, wp_delete_comment, plus every Elementor write tool (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_rebuild_post_content), Divi write tools (divi_replace_text, divi_replace_image, divi_clone_page, divi_import_template) and comment edit/reply ops. Tokens live 72 hours and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Restore may be refused with a drift error if the target was modified between the tracked write and this undo call (protects downstream writes from silent clobber). Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).']], 'required' => ['token']]],
             ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page). Each result includes content_length (bytes of stored content) for size triage.', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.']], 'required' => ['query']]],
 
             // Options
             ['name' => 'wp_get_option', 'description' => 'Get a single WordPress option value. Requires manage_options capability. The option name must be in the readable allowlist — 12 defaults (blogname, blogdescription, siteurl, home, admin_email, posts_per_page, date_format, time_format, timezone_string, googlesitekit_analytics-4_settings, show_on_front, page_on_front) plus any keys plugin authors opt in via the royal_mcp_readable_options filter. Sensitive keys inside the returned value are redacted regardless of what the option contains.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string']], 'required' => ['name']]],
             ['name' => 'wp_get_plugin_settings', 'description' => 'Get all options stored by a plugin, looked up by slug. Sensitive keys (api keys, secrets, tokens, passwords) are redacted before return.', 'inputSchema' => ['type' => 'object', 'properties' => ['plugin_slug' => ['type' => 'string', 'description' => 'Plugin slug, e.g. royalcomply or royal-affiliate-pro']], 'required' => ['plugin_slug']]],
-            ['name' => 'wp_update_option', 'description' => 'Update a WordPress option. Four gates in order: (1) manage_options capability on the caller; (2) master "Allow AI to write WordPress options" admin toggle enabled; (3) hard denylist (siteurl, home, admin_email, mailserver_*, upload_path, users_can_register, wp_user_roles, wp_capabilities, api_key/secret/*_pass/*_key patterns, royal_mcp_* namespace — permanent, cannot be filter-overridden); (4) write⊆readable invariant + writable allowlist (option must appear in both royal_mcp_readable_options AND royal_mcp_writable_options — plugin authors must opt into READS before opting into WRITES). Error text names which gate blocked. "Not in allowlist" is fixable via filter opt-in; "permanently denylisted" is not.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'New value (any JSON type). Full overwrite — read first, merge in your client, then write back.']], 'required' => ['name', 'value']]],
+            ['name' => 'wp_update_option', 'description' => 'Update a WordPress option. Four gates in order: (1) manage_options capability on the caller; (2) master "Allow AI to write WordPress options" admin toggle enabled; (3) hard denylist (siteurl, home, admin_email, mailserver_*, upload_path, users_can_register, wp_user_roles, wp_capabilities, api_key/secret/*_pass/*_key patterns, royal_mcp_* namespace — permanent, cannot be filter-overridden); (4) write⊆readable invariant + writable allowlist (option must appear in both royal_mcp_readable_options AND royal_mcp_writable_options — plugin authors must opt into READS before opting into WRITES). Error text names which gate blocked. "Not in allowlist" is fixable via filter opt-in; "permanently denylisted" is not. Set dry_run=true to preview the change (current + proposed value, autoload state, size delta) without writing.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'New value (any JSON type). Full overwrite — read first, merge in your client, then write back.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Preview the write without persisting. Returns current/proposed value, autoload state, and size delta.']], 'required' => ['name', 'value']]],
 
             // Menus
             ['name' => 'wp_get_menus', 'description' => 'List all registered navigation menus (nav_menu taxonomy). Returns id, name, slug, and item count for each. Use wp_get_menu_items to enumerate items within a specific menu.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -1242,7 +1290,7 @@ class Server {
 
             // Permalink Structure
             ['name' => 'wp_get_permalink_structure', 'description' => 'Get the WordPress permalink structure (e.g. /%postname%/, /%year%/%monthnum%/%postname%/). Read-only.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
-            ['name' => 'wp_update_permalink_structure', 'description' => 'Update the WordPress permalink structure. Requires the "Allow AI to write WordPress options" admin toggle. Common values: /%postname%/, /%year%/%monthnum%/%postname%/, /%category%/%postname%/. Changing this rewrites every URL on the site — flushes rewrite rules automatically.', 'inputSchema' => ['type' => 'object', 'properties' => ['structure' => ['type' => 'string', 'description' => 'New permalink structure (e.g. /%postname%/)']], 'required' => ['structure']]],
+            ['name' => 'wp_update_permalink_structure', 'description' => 'Update the WordPress permalink structure. Requires the "Allow AI to write WordPress options" admin toggle. Common values: /%postname%/, /%year%/%monthnum%/%postname%/, /%category%/%postname%/. Changing this rewrites every URL on the site — flushes rewrite rules automatically. Set dry_run=true to preview the change (current + proposed structure, affected post types, sample current URLs) without writing or flushing rewrite rules.', 'inputSchema' => ['type' => 'object', 'properties' => ['structure' => ['type' => 'string', 'description' => 'New permalink structure (e.g. /%postname%/)'], 'dry_run' => ['type' => 'boolean', 'description' => 'Preview the change without writing or flushing rewrite rules.']], 'required' => ['structure']]],
 
             // Post Revisions
             ['name' => 'wp_get_post_revisions', 'description' => 'Get the revision history for a post — list of all saved revisions with author, date, revision ID, word_count, and content_length (raw byte size). content_length is the reliable "is this revision empty?" signal: word_count uses strip_tags and misses text stored inside attributes (Divi 5 block attrs, data-* attrs, alt text), so a full page-builder revision can show word_count=0 while content_length>0. Useful for "what changed?" or "revert to yesterday\'s version" workflows.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'limit' => ['type' => 'integer', 'description' => 'Max revisions to return (default 20)']], 'required' => ['post_id']]],
@@ -1604,6 +1652,28 @@ class Server {
             ], 400);
         }
 
+        // Existence + credential-binding gate before delete. is_valid_session
+        // confirms the session row exists and hasn't expired; the fingerprint
+        // compare confirms the caller holds the same credentials that opened
+        // the session. Same opaque 404 shape for "no such session" and "not
+        // your session" so the endpoint doesn't act as a session-id oracle.
+        $unknown_response = $this->json_response([
+            'jsonrpc' => '2.0',
+            'error'   => [
+                'code'    => -32600,
+                'message' => 'Session not found.',
+            ],
+        ], 404);
+        if (!$this->is_valid_session($session_id)) {
+            return $unknown_response;
+        }
+        $stored_fingerprint = Session_Store::get_fingerprint($session_id);
+        $caller_fingerprint = (string) $this->request_auth_fingerprint;
+        if ($stored_fingerprint === '' || $caller_fingerprint === ''
+            || !hash_equals($stored_fingerprint, $caller_fingerprint)) {
+            return $unknown_response;
+        }
+
         // Delete the session from storage
         $this->delete_session($session_id);
 
@@ -1958,11 +2028,29 @@ class Server {
         // context.
         // ttlMs: 5 minutes. Tools change on plugin activation, integration
         // registration, and license state transitions — all infrequent.
+        $tools = $this->get_tools();
+
+        // Compact discovery profile: when the caller advertised X-MCP-Profile:
+        // compact on initialize (or is passing it on this request), trim the
+        // tools/list response to only the three routing tools so context-
+        // limited clients aren't loading 210+ full schemas up front. Callers
+        // then use discover_tools + get_tool_info + execute_tool to work with
+        // the rest of the tool surface on demand.
+        $profile_header = isset( $_SERVER['HTTP_X_MCP_PROFILE'] )
+            ? strtolower( trim( (string) $_SERVER['HTTP_X_MCP_PROFILE'] ) )
+            : '';
+        if ( 'compact' === $profile_header ) {
+            $routing_names = [ 'discover_tools', 'get_tool_info', 'execute_tool' ];
+            $tools         = array_values( array_filter( $tools, function ( $t ) use ( $routing_names ) {
+                return in_array( (string) ( $t['name'] ?? '' ), $routing_names, true );
+            } ) );
+        }
+
         return [
             'jsonrpc' => '2.0',
             'id'      => $id,
             'result'  => $this->stamp_modern_list_envelope(
-                [ 'tools' => $this->get_tools() ],
+                [ 'tools' => $tools ],
                 'private',
                 300000,
                 $params
@@ -2022,6 +2110,9 @@ class Server {
             // arrays fall through to the JSON-encoded-text-block path below
             // (no back-compat break).
             if ( \Royal_MCP\MCP\Support\Envelope::is_envelope( $result ) ) {
+                if ( ! isset( $result['resultType'] ) ) {
+                    $result['resultType'] = 'complete';
+                }
                 return [
                     'jsonrpc' => '2.0',
                     'id'      => $id,
@@ -2047,6 +2138,7 @@ class Server {
                 'jsonrpc' => '2.0',
                 'id' => $id,
                 'result' => self::ensure_structured_content( [
+                    'resultType' => 'complete',
                     'content' => [[
                         'type' => 'text',
                         'text' => 'Error: ' . $e->getMessage(),
@@ -2566,7 +2658,23 @@ class Server {
                 if (isset($args['featured_media'])) {
                     $this->apply_featured_media($post_id, intval($args['featured_media']));
                 }
-                return ['id' => $post_id, 'message' => ucfirst($post_type) . ' created successfully', 'url' => get_permalink($post_id)];
+                // Re-read the created post so silent-modify by WP core hooks
+                // (SEO plugins rewriting slug, security plugins stripping
+                // content, page-builder plugins reformatting) is surfaced to
+                // the caller via saved_fields rather than lost silently.
+                $cp_saved = get_post($post_id);
+                $cp_saved_fields = $cp_saved ? [
+                    'post_title'  => (string) $cp_saved->post_title,
+                    'post_status' => (string) $cp_saved->post_status,
+                    'post_author' => (int)    $cp_saved->post_author,
+                    'post_name'   => (string) $cp_saved->post_name,
+                ] : [];
+                return [
+                    'id'           => $post_id,
+                    'message'      => ucfirst($post_type) . ' created successfully',
+                    'url'          => get_permalink($post_id),
+                    'saved_fields' => $cp_saved_fields,
+                ];
 
             case 'wp_update_post':
                 $post_id = self::resolve_post_id_arg($args);
@@ -2578,15 +2686,32 @@ class Server {
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('You do not have permission to edit this post.');
                 }
+                // Gate elevated status transitions on publish_posts so a
+                // caller with edit_post on their own draft can't silently
+                // flip it to publish/future/private. Matches WP REST behavior.
+                if (isset($args['status'])) {
+                    $up_target_status = sanitize_text_field((string) $args['status']);
+                    $up_prior_status  = (string) $up_existing_post->post_status;
+                    if ($up_prior_status !== $up_target_status
+                        && in_array($up_target_status, ['publish', 'future', 'private'], true)
+                        && !current_user_can('publish_posts')) {
+                        throw new \Exception('You do not have permission to change this post to that status.');
+                    }
+                }
                 // Pre-validate featured_media before mutating the post.
                 if (isset($args['featured_media']) && intval($args['featured_media']) > 0) {
                     $fm = get_post(intval($args['featured_media']));
                     if (!$fm || $fm->post_type !== 'attachment') throw new \Exception('featured_media attachment not found.');
                 }
-                // Pre-validate post_author before mutating the post.
+                // Pre-validate post_author and gate reassignment on
+                // edit_others_posts so authorship can't be silently transferred.
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     if (!get_userdata(intval($args['post_author']))) {
                         throw new \Exception('post_author user ID not found.');
+                    }
+                    if (intval($args['post_author']) !== (int) $up_existing_post->post_author
+                        && !current_user_can('edit_others_posts')) {
+                        throw new \Exception('You do not have permission to reassign post authorship.');
                     }
                 }
                 // Pre-validate post_parent: fail loudly on unknown parent rather
@@ -2693,7 +2818,8 @@ class Server {
 
                 // Build response — reuse existing legacy helper for saved_fields
                 // shape, then wrap in envelope + attach undo token.
-                $up_legacy = self::build_update_response($post_id, $args, $data, 'Post updated successfully');
+                $up_legacy       = self::build_update_response($post_id, $args, $data, 'Post updated successfully');
+                $up_saved_fields = $up_legacy['saved_fields'] ?? [];
 
                 $up_undo_pre = [
                     'prior_values'      => $up_prior,
@@ -2719,6 +2845,7 @@ class Server {
                 $up_struct = array_merge( $up_legacy, [
                     'post_type'                => (string) $up_existing_post->post_type,
                     'product_type_restored'    => $up_product_type_restored,
+                    'saved_fields'             => $up_saved_fields,
                 ] );
                 if ( $up_product_type_restored ) {
                     $up_struct['product_type_note'] = sprintf(
@@ -2960,7 +3087,19 @@ class Server {
                 }
                 $page_id = wp_insert_post($page_data);
                 if (is_wp_error($page_id)) throw new \Exception(esc_html($page_id->get_error_message()));
-                return ['id' => $page_id, 'message' => 'Page created successfully', 'url' => get_permalink($page_id)];
+                // Re-read to surface any silent modifications by WP core hooks.
+                $cpg_saved = get_post($page_id);
+                $cpg_saved_fields = $cpg_saved ? [
+                    'post_title'  => (string) $cpg_saved->post_title,
+                    'post_status' => (string) $cpg_saved->post_status,
+                    'post_name'   => (string) $cpg_saved->post_name,
+                ] : [];
+                return [
+                    'id'           => $page_id,
+                    'message'      => 'Page created successfully',
+                    'url'          => get_permalink($page_id),
+                    'saved_fields' => $cpg_saved_fields,
+                ];
 
             case 'wp_update_page':
                 $page_id = self::resolve_post_id_arg($args);
@@ -2969,10 +3108,26 @@ class Server {
                 if (!current_user_can('edit_post', $page_id)) {
                     throw new \Exception('You do not have permission to edit this page.');
                 }
-                // pre-validate post_author (new field).
+                // Gate elevated status transitions on publish_posts. Same
+                // rule as wp_update_post — mirrors WP REST behavior.
+                if (isset($args['status'])) {
+                    $upg_target_status = sanitize_text_field((string) $args['status']);
+                    $upg_prior_status  = (string) $existing_page->post_status;
+                    if ($upg_prior_status !== $upg_target_status
+                        && in_array($upg_target_status, ['publish', 'future', 'private'], true)
+                        && !current_user_can('publish_posts')) {
+                        throw new \Exception('You do not have permission to change this page to that status.');
+                    }
+                }
+                // pre-validate post_author (new field) + gate reassignment
+                // on edit_others_posts.
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     if (!get_userdata(intval($args['post_author']))) {
                         throw new \Exception('post_author user ID not found.');
+                    }
+                    if (intval($args['post_author']) !== (int) $existing_page->post_author
+                        && !current_user_can('edit_others_posts')) {
+                        throw new \Exception('You do not have permission to reassign page authorship.');
                     }
                 }
                 // pre-validate post_parent (new field).
@@ -3006,7 +3161,13 @@ class Server {
                 }
                 $result = wp_update_post($data);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
-                return self::build_update_response($page_id, $args, $data, 'Page updated successfully');
+                // build_update_response re-reads the row and surfaces
+                // saved_fields + modified_by_wp so silent WP mutations show
+                // up in the response payload rather than getting lost.
+                $upg_response     = self::build_update_response($page_id, $args, $data, 'Page updated successfully');
+                $upg_saved_fields = $upg_response['saved_fields'] ?? [];
+                $upg_response['saved_fields'] = $upg_saved_fields;
+                return $upg_response;
 
             case 'wp_replace_in_page':
                 $page_id = self::resolve_post_id_arg($args);
@@ -3206,12 +3367,20 @@ class Server {
                     update_post_meta( $media_id, '_wp_attachment_image_alt', $alt_written );
                 }
 
+                // Re-read the thumbnail id to catch silent-drop from filter
+                // hooks that block set_post_thumbnail without erroring.
+                $sfi_stored_thumb = (int) get_post_thumbnail_id( $post_id );
+                $sfi_saved_fields = [
+                    'thumbnail_id' => $sfi_stored_thumb,
+                    'thumbnail_matches_requested' => ( $sfi_stored_thumb === (int) $media_id ),
+                ];
                 return [
-                    'post_id'   => $post_id,
-                    'media_id'  => $media_id,
-                    'url'       => $media_id > 0 ? wp_get_attachment_url($media_id) : null,
-                    'alt_text'  => $alt_written,
-                    'message'   => $media_id > 0 ? 'Featured image set.' : 'Featured image removed.',
+                    'post_id'      => $post_id,
+                    'media_id'     => $media_id,
+                    'url'          => $media_id > 0 ? wp_get_attachment_url($media_id) : null,
+                    'alt_text'     => $alt_written,
+                    'message'      => $media_id > 0 ? 'Featured image set.' : 'Featured image removed.',
+                    'saved_fields' => $sfi_saved_fields,
                 ];
 
             case 'wp_update_media':
@@ -4117,6 +4286,14 @@ class Server {
                     throw new \Exception('A value is required. To remove a key entirely, use wp_delete_post_meta.');
                 }
                 $meta_key   = \Royal_MCP\MCP\Support\SafeText::field($args['key']);
+                // Protected keys (underscore prefix + explicitly-registered
+                // protected meta) require the edit_post_meta cap, which
+                // map_meta_cap resolves through the post type's meta_cap
+                // filter — usually resolves to manage_options for admin data.
+                if (is_protected_meta($meta_key, 'post')
+                    && !current_user_can('edit_post_meta', $post_id, $meta_key)) {
+                    throw new \Exception('You do not have permission to edit this protected meta key.');
+                }
                 $meta_value = self::filter_meta_value($args['value'], $meta_key, $post_id, 'wp_update_post_meta');
 
                 // Snapshot prior value BEFORE the write for both undo (restore
@@ -4205,6 +4382,11 @@ class Server {
                 }
                 $add_key = \Royal_MCP\MCP\Support\SafeText::field($args['key'] ?? '');
                 if ($add_key === '') throw new \Exception('A meta key is required.');
+                // Same protected-meta gate as wp_update_post_meta.
+                if (is_protected_meta($add_key, 'post')
+                    && !current_user_can('edit_post_meta', $post_id, $add_key)) {
+                    throw new \Exception('You do not have permission to add this protected meta key.');
+                }
                 $add_value  = self::filter_meta_value($args['value'], $add_key, $post_id, 'wp_add_post_meta');
                 $add_unique = !empty($args['unique']);
                 $add_meta_id = add_post_meta($post_id, $add_key, $add_value, $add_unique);
@@ -4253,12 +4435,21 @@ class Server {
                     ],
                 ]);
 
+                // saved_fields surfaces the actual stored value + the requested
+                // value so callers can detect silent-modify from filter hooks
+                // without waiting for a downstream failure.
+                $add_saved_fields = [
+                    'meta_key'      => $add_key,
+                    'stored_value'  => $add_stored_value,
+                    'requested_value' => $add_value,
+                ];
                 $add_struct = [
-                    'post_id'  => $post_id,
-                    'meta_key' => $add_key,
-                    'meta_id'  => (int) $add_meta_id,
-                    'created'  => true,
-                    'unique'   => $add_unique,
+                    'post_id'      => $post_id,
+                    'meta_key'     => $add_key,
+                    'meta_id'      => (int) $add_meta_id,
+                    'created'      => true,
+                    'unique'       => $add_unique,
+                    'saved_fields' => $add_saved_fields,
                 ];
                 if ( $add_modified_by_wp !== null ) {
                     $add_struct['modified_by_wp'] = [ 'value' => $add_modified_by_wp ];
@@ -4284,10 +4475,29 @@ class Server {
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('You do not have permission to edit meta on this post.');
                 }
-                $result = delete_post_meta($post_id, \Royal_MCP\MCP\Support\SafeText::field($args['key']));
+                $del_key = \Royal_MCP\MCP\Support\SafeText::field($args['key']);
+                // Same protected-meta gate as wp_update_post_meta.
+                if (is_protected_meta($del_key, 'post')
+                    && !current_user_can('edit_post_meta', $post_id, $del_key)) {
+                    throw new \Exception('You do not have permission to delete this protected meta key.');
+                }
+                $result = delete_post_meta($post_id, $del_key);
                 if (!$result) throw new \Exception('Failed to delete post meta');
                 \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
-                return ['message' => 'Post meta deleted successfully'];
+                // Verify deletion: the meta lookup should now be empty.
+                // Filter hooks (SEO, security) can re-populate protected keys
+                // during the same request; saved_fields surfaces that.
+                wp_cache_delete( $post_id, 'post_meta' );
+                $del_still_present = get_post_meta( $post_id, $del_key, true );
+                $del_saved_fields = [
+                    'meta_key'       => $del_key,
+                    'value_after'    => $del_still_present,
+                    'deleted_cleanly' => ( '' === $del_still_present || null === $del_still_present ),
+                ];
+                return [
+                    'message'      => 'Post meta deleted successfully',
+                    'saved_fields' => $del_saved_fields,
+                ];
 
             // ==================== SITE & SEARCH ====================
             case 'wp_get_site_info':
@@ -4307,15 +4517,19 @@ class Server {
             // Connection-health block below is self-attributable — no cap check required.
             case 'royal_mcp_connection_health':
                 global $wp_version;
-                // builders block lets an agent plan multi-step edits without probing.
-                // Knowing "site is on Divi 5" or "Elementor 4.0.8" at connection time
-                // means the agent can pick the right JSON block / widget schema path
-                // up front instead of running a discovery call before every write.
+                // builders block lets an agent plan multi-step edits without
+                // probing — presence booleans (rather than version strings)
+                // are enough for "is this a Divi site?" branching, and keep
+                // the response from acting as a CVE-target datasource for
+                // any authenticated caller. Royal MCP + WordPress + PHP
+                // versions are not emitted here at all; admins can read them
+                // via wp-admin > Tools > Site Health.
                 $builders = [
-                    'divi_version'      => defined('ET_BUILDER_VERSION') ? (string) constant('ET_BUILDER_VERSION') : null,
-                    'elementor_version' => defined('ELEMENTOR_VERSION') ? (string) constant('ELEMENTOR_VERSION') : null,
-                    'gutenberg_version' => defined('GUTENBERG_VERSION') ? (string) constant('GUTENBERG_VERSION') : (string) get_bloginfo('version'),
+                    'divi_active'      => defined('ET_BUILDER_VERSION'),
+                    'elementor_active' => defined('ELEMENTOR_VERSION'),
+                    'gutenberg_active' => defined('GUTENBERG_VERSION'),
                 ];
+                unset( $wp_version );
                 return [
                     'route'          => rest_url('royal-mcp/v1/mcp'),
                     'auth_method'    => $this->request_auth_method ?? 'unauthenticated',
@@ -4323,11 +4537,306 @@ class Server {
                     'token_ttl'      => $this->request_token_ttl,
                     'session_id'     => $this->request_session_id,
                     'active_scopes'  => ['tools'],
-                    'server_version' => defined('ROYAL_MCP_VERSION') ? ROYAL_MCP_VERSION : 'unknown',
-                    'wp_version'     => isset($wp_version) ? (string) $wp_version : (string) get_bloginfo('version'),
-                    'php_version'    => PHP_VERSION,
                     'builders'       => $builders,
                 ];
+
+            case 'discover_tools':
+                $dt_tools = $this->get_tools();
+                $dt_by_cat  = isset( $args['by_category'] ) ? strtolower( (string) $args['by_category'] ) : '';
+                $dt_by_plug = isset( $args['by_plugin'] ) ? strtolower( (string) $args['by_plugin'] ) : '';
+                $dt_by_cap  = isset( $args['by_capability'] ) ? (string) $args['by_capability'] : '';
+                $dt_by_undo = isset( $args['by_undo_support'] ) ? (string) $args['by_undo_support'] : '';
+                $dt_out = [];
+                foreach ( $dt_tools as $dt_tool ) {
+                    $dt_name = (string) ( $dt_tool['name'] ?? '' );
+                    if ( '' === $dt_name ) {
+                        continue;
+                    }
+                    // Category = first token before underscore (wp, elementor,
+                    // divi, wc, aioseo, yoast, etc.). Same slug logic Server_Card
+                    // uses for tools_summary.
+                    $dt_parts    = explode( '_', $dt_name, 2 );
+                    $dt_category = strtolower( (string) ( $dt_parts[0] ?? '' ) );
+                    // Plugin bucket: WP core + Royal MCP's own meta tools all
+                    // collapse to "core"; wc/wcs collapse to "woocommerce";
+                    // everything else keeps its prefix as the plugin identifier.
+                    if ( in_array( $dt_category, [ 'wp', 'mcp', 'royal', 'seo', 'discover', 'execute', 'get' ], true )
+                        || 'royal_mcp_connection_health' === $dt_name ) {
+                        $dt_plugin = 'core';
+                    } elseif ( in_array( $dt_category, [ 'wc', 'wcs' ], true ) ) {
+                        $dt_plugin = 'woocommerce';
+                    } else {
+                        $dt_plugin = $dt_category;
+                    }
+                    // Capability class inferred from the verb. The verb token
+                    // can appear at the start of the tool name (get_tool_info)
+                    // or after any prefix underscore (wc_get_products,
+                    // gp_get_dashboard_stats, elementor_get_page_outline, etc.).
+                    // Matching (?:^|_)VERB(?:_|$) lets both patterns resolve.
+                    //
+                    // Verb list is deliberately conservative — only tokens that
+                    // are unambiguously VERBS (not also common nouns) are
+                    // included. `status`, `stats`, `dashboard`, `preview`,
+                    // `show`, `monitor`, `browse`, `health` are all nouns in
+                    // WP tool names (wc_update_order_status is a WRITE,
+                    // wp_create_preview_link is a WRITE), so their inclusion
+                    // would false-positive writes as reads. `health` is
+                    // handled by the singleton special-case above for
+                    // royal_mcp_connection_health.
+                    //
+                    // Direction of preference: false-negative (writes labeled
+                    // correctly, some reads mislabeled as writes) beats
+                    // false-positive (writes mislabeled as reads). An agent
+                    // building a browse-only mode via by_capability=read_only
+                    // can trust that a read_only-tagged tool won't write; the
+                    // reverse trust doesn't hold for writes-tagged tools.
+                    static $rmcp_read_only_verbs = 'get|list|search|count|read|find|scan|audit|export';
+                    static $rmcp_destr_verbs    = 'delete|remove|trash|reset|purge|revoke|clear|drop';
+                    if ( in_array( $dt_name, [ 'royal_mcp_connection_health', 'get_tool_info', 'discover_tools' ], true )
+                        || preg_match( '/(?:^|_)(?:' . $rmcp_read_only_verbs . ')(?:_|$)/', $dt_name ) ) {
+                        $dt_capability = 'read_only';
+                    } elseif ( preg_match( '/(?:^|_)(?:' . $rmcp_destr_verbs . ')(?:_|$)/', $dt_name ) ) {
+                        $dt_capability = 'destructive';
+                    } else {
+                        $dt_capability = 'write';
+                    }
+                    // Undo support: opt-in per tool at the handler side (each
+                    // write case that reversibly stores a snapshot via
+                    // Undo_Store). Not inferrable from the name alone — a
+                    // read-only elementor_get_page_outline shares the plugin
+                    // prefix with elementor_replace_text but has nothing to
+                    // reverse. Explicit list mirrors the mcp_undo_last_operation
+                    // description; keep the two in sync when adding a new
+                    // reversible write.
+                    static $rmcp_undo_tools = [
+                        // WP core reversible writes
+                        'wp_update_post', 'wp_update_page',
+                        'wp_delete_post', 'wp_delete_page',
+                        'wp_update_post_meta', 'wp_add_post_meta', 'wp_delete_post_meta',
+                        'wp_update_term', 'wp_delete_term',
+                        'wp_update_term_meta', 'wp_delete_term_meta',
+                        'wp_update_media', 'wp_delete_media',
+                        'wp_update_menu_item', 'wp_delete_menu_item',
+                        'wp_reorder_menu_items',
+                        'wp_update_option',
+                        'wp_update_theme_mod',
+                        'wp_update_custom_css',
+                        'wp_update_permalink_structure',
+                        'wp_update_seo_meta', 'yoast_update_meta',
+                        'wp_update_widget',
+                        'wp_delete_comment',
+                        // Elementor reversible writes
+                        'elementor_replace_text', 'elementor_replace_image',
+                        'elementor_add_widget', 'elementor_delete_widget',
+                        'elementor_update_widget', 'elementor_update_widget_setting',
+                        'elementor_bulk_replace_widget_setting',
+                        'elementor_clone_page', 'elementor_clone_template',
+                        'elementor_import_template', 'elementor_apply_template_to_page',
+                        'elementor_apply_template_advanced',
+                        'elementor_rebuild_post_content', 'elementor_rebuild_post_content_bulk',
+                        'elementor_manage_elements', 'elementor_manage_global_classes',
+                        'elementor_manage_global_variable',
+                        'elementor_save_template_with_conditions',
+                        'elementor_apply_theme_builder_conditions',
+                        'elementor_build_composition',
+                        // Divi reversible writes
+                        'divi_replace_text', 'divi_replace_image',
+                        'divi_clone_page', 'divi_import_template',
+                        'divi_apply_global_preset',
+                        'divi_library_create', 'divi_library_update', 'divi_library_delete',
+                        'divi_convert_shortcodes_to_blocks',
+                    ];
+                    $dt_undo_supported = in_array( $dt_name, $rmcp_undo_tools, true );
+
+                    if ( '' !== $dt_by_cat  && $dt_category !== $dt_by_cat ) { continue; }
+                    if ( '' !== $dt_by_plug && $dt_plugin !== $dt_by_plug ) { continue; }
+                    if ( '' !== $dt_by_cap  && $dt_capability !== $dt_by_cap ) { continue; }
+                    if ( 'has_undo_token' === $dt_by_undo && ! $dt_undo_supported ) { continue; }
+                    if ( 'no_undo'        === $dt_by_undo &&   $dt_undo_supported ) { continue; }
+
+                    $dt_out[] = [
+                        'name'          => $dt_name,
+                        'description'   => (string) ( $dt_tool['description'] ?? '' ),
+                        'category'      => $dt_category,
+                        'plugin'        => $dt_plugin,
+                        'capability'    => $dt_capability,
+                        'undo_support'  => $dt_undo_supported ? 'has_undo_token' : 'no_undo',
+                    ];
+                }
+                return [
+                    'tools'         => $dt_out,
+                    'total_matched' => count( $dt_out ),
+                    'total_available' => count( $dt_tools ),
+                    'filters_applied' => [
+                        'by_category'     => $dt_by_cat  !== '' ? $dt_by_cat  : null,
+                        'by_plugin'       => $dt_by_plug !== '' ? $dt_by_plug : null,
+                        'by_capability'   => $dt_by_cap  !== '' ? $dt_by_cap  : null,
+                        'by_undo_support' => $dt_by_undo !== '' ? $dt_by_undo : null,
+                    ],
+                ];
+
+            case 'get_tool_info':
+                $gti_name = isset( $args['tool_name'] ) ? (string) $args['tool_name'] : '';
+                if ( '' === $gti_name ) {
+                    throw new \Exception( 'tool_name is required.' );
+                }
+                $gti_tools = $this->get_tools();
+                foreach ( $gti_tools as $gti_tool ) {
+                    if ( ( (string) ( $gti_tool['name'] ?? '' ) ) === $gti_name ) {
+                        return [
+                            'name'        => $gti_name,
+                            'description' => (string) ( $gti_tool['description'] ?? '' ),
+                            'inputSchema' => $gti_tool['inputSchema'] ?? new \stdClass(),
+                            'outputSchema' => $gti_tool['outputSchema'] ?? null,
+                        ];
+                    }
+                }
+                throw new \Exception( sprintf( 'Unknown tool: %s', $gti_name ) );
+
+            case 'execute_tool':
+                $et_name = isset( $args['tool_name'] ) ? (string) $args['tool_name'] : '';
+                if ( '' === $et_name ) {
+                    throw new \Exception( 'tool_name is required.' );
+                }
+                if ( in_array( $et_name, [ 'discover_tools', 'get_tool_info', 'execute_tool' ], true ) ) {
+                    throw new \Exception( 'execute_tool cannot invoke the discovery tools recursively.' );
+                }
+                $et_args = isset( $args['arguments'] ) && is_array( $args['arguments'] ) ? $args['arguments'] : [];
+                // Re-enter the dispatcher with the underlying tool + args.
+                return $this->execute_tool( $et_name, $et_args );
+
+            case 'wp_verify_rendered_page':
+                if ( ! current_user_can( 'read' ) ) {
+                    throw new \Exception( 'You do not have permission to fetch site pages.' );
+                }
+                $vrp_url_raw = isset( $args['url'] ) ? (string) $args['url'] : '';
+                $vrp_url     = esc_url_raw( trim( $vrp_url_raw ) );
+                if ( '' === $vrp_url ) {
+                    throw new \Exception( 'url is required.' );
+                }
+                // Same-origin check — the tool is for verifying THIS site's
+                // output, not a general HTTP fetcher.
+                $vrp_home_host = wp_parse_url( home_url(), PHP_URL_HOST );
+                $vrp_url_host  = wp_parse_url( $vrp_url, PHP_URL_HOST );
+                if ( ! $vrp_home_host || ! $vrp_url_host
+                    || strtolower( (string) $vrp_home_host ) !== strtolower( (string) $vrp_url_host ) ) {
+                    throw new \Exception( 'url must belong to this WordPress site.' );
+                }
+                // Per-(site,url) rate limit: 10 fetches / 60 sec window. Keeps
+                // an agent from turning the site into its own load-tester and
+                // caps damage if a script gets into a retry loop.
+                $vrp_limit   = 10;
+                $vrp_window  = 60;
+                $vrp_bucket  = 'royal_mcp_vrp_' . md5( home_url() . '|' . $vrp_url );
+                $vrp_state   = get_transient( $vrp_bucket );
+                $vrp_now     = time();
+                if ( is_array( $vrp_state ) && isset( $vrp_state['start'], $vrp_state['count'] )
+                    && ( $vrp_now - (int) $vrp_state['start'] ) < $vrp_window
+                    && (int) $vrp_state['count'] >= $vrp_limit ) {
+                    throw new \Exception( sprintf(
+                        'Rate limit exceeded — up to %d fetches per %d seconds per URL. Retry after %d seconds.',
+                        $vrp_limit,
+                        $vrp_window,
+                        $vrp_window - ( $vrp_now - (int) $vrp_state['start'] )
+                    ) );
+                }
+                if ( is_array( $vrp_state ) && ( $vrp_now - (int) ( $vrp_state['start'] ?? 0 ) ) < $vrp_window ) {
+                    $vrp_state['count'] = (int) $vrp_state['count'] + 1;
+                } else {
+                    $vrp_state = [ 'start' => $vrp_now, 'count' => 1 ];
+                }
+                set_transient( $vrp_bucket, $vrp_state, $vrp_window );
+
+                $vrp_response = wp_remote_get( $vrp_url, [
+                    'timeout'     => 10,
+                    'redirection' => 3,
+                    'sslverify'   => false,
+                    'headers'     => [
+                        'User-Agent' => 'Royal MCP wp_verify_rendered_page/' . ( defined( 'ROYAL_MCP_VERSION' ) ? ROYAL_MCP_VERSION : '1.0' ),
+                    ],
+                ] );
+                if ( is_wp_error( $vrp_response ) ) {
+                    return [
+                        'url'             => $vrp_url,
+                        'response_status' => 0,
+                        'error'           => $vrp_response->get_error_message(),
+                    ];
+                }
+
+                $vrp_status  = (int) wp_remote_retrieve_response_code( $vrp_response );
+                $vrp_headers = wp_remote_retrieve_headers( $vrp_response );
+                $vrp_headers_arr = [];
+                if ( $vrp_headers ) {
+                    foreach ( [ 'content-type', 'cache-control', 'x-cache', 'x-cache-hits', 'age' ] as $vrp_h ) {
+                        $vrp_headers_arr[ $vrp_h ] = (string) ( $vrp_headers[ $vrp_h ] ?? '' );
+                    }
+                }
+                $vrp_body = (string) wp_remote_retrieve_body( $vrp_response );
+
+                $vrp_title = '';
+                if ( preg_match( '#<title[^>]*>(.*?)</title>#is', $vrp_body, $vrp_m ) ) {
+                    $vrp_title = trim( html_entity_decode( wp_strip_all_tags( $vrp_m[1] ), ENT_QUOTES | ENT_HTML5 ) );
+                }
+                $vrp_meta_desc = '';
+                if ( preg_match( '#<meta\s+[^>]*name=["\']description["\'][^>]*content=["\']([^"\']*)["\']#i', $vrp_body, $vrp_m ) ) {
+                    $vrp_meta_desc = trim( html_entity_decode( $vrp_m[1], ENT_QUOTES | ENT_HTML5 ) );
+                }
+                $vrp_h1 = '';
+                if ( preg_match( '#<h1[^>]*>(.*?)</h1>#is', $vrp_body, $vrp_m ) ) {
+                    $vrp_h1 = trim( html_entity_decode( wp_strip_all_tags( $vrp_m[1] ), ENT_QUOTES | ENT_HTML5 ) );
+                }
+                $vrp_script_count     = preg_match_all( '#<script\b#i', $vrp_body );
+                $vrp_stylesheet_count = preg_match_all( '#<link\s+[^>]*rel=["\']stylesheet["\']#i', $vrp_body );
+
+                // Selector presence check — simple #id or .class match against
+                // the served HTML. Full querySelector semantics are out of
+                // scope for a regex-based scan; documented in the description.
+                // Unsupported selector shapes return null (not evaluable) so
+                // callers can distinguish "not found" from "can't check".
+                $vrp_selector_present = null;
+                $vrp_selector_note    = null;
+                if ( isset( $args['selector'] ) && '' !== (string) $args['selector'] ) {
+                    $vrp_sel_raw = trim( (string) $args['selector'] );
+                    if ( strpos( $vrp_sel_raw, '#' ) === 0 ) {
+                        $vrp_sel_id           = substr( $vrp_sel_raw, 1 );
+                        $vrp_selector_present = (bool) preg_match(
+                            '#\bid=["\']' . preg_quote( $vrp_sel_id, '#' ) . '["\']#i',
+                            $vrp_body
+                        );
+                    } elseif ( strpos( $vrp_sel_raw, '.' ) === 0 ) {
+                        $vrp_sel_cls          = substr( $vrp_sel_raw, 1 );
+                        $vrp_selector_present = (bool) preg_match(
+                            '#\bclass=["\'][^"\']*\b' . preg_quote( $vrp_sel_cls, '#' ) . '\b#i',
+                            $vrp_body
+                        );
+                    } else {
+                        $vrp_selector_note = 'selector must start with # (id) or . (class); other shapes are not evaluated.';
+                    }
+                }
+
+                $vrp_out = [
+                    'url'                    => $vrp_url,
+                    'response_status'        => $vrp_status,
+                    'response_headers_subset' => $vrp_headers_arr,
+                    'title'                  => $vrp_title,
+                    'meta_description'       => $vrp_meta_desc,
+                    'h1_primary'             => $vrp_h1,
+                    'script_count'           => (int) $vrp_script_count,
+                    'stylesheet_count'       => (int) $vrp_stylesheet_count,
+                    'selector_present'       => $vrp_selector_present,
+                    'body_bytes'             => strlen( $vrp_body ),
+                ];
+                if ( null !== $vrp_selector_note ) {
+                    $vrp_out['selector_note'] = $vrp_selector_note;
+                }
+                if ( ! empty( $args['include_body_excerpt'] ) ) {
+                    if ( preg_match( '#<body[^>]*>(.*?)</body>#is', $vrp_body, $vrp_m ) ) {
+                        $vrp_out['body_excerpt'] = mb_substr( trim( wp_strip_all_tags( $vrp_m[1] ) ), 0, 500 );
+                    } else {
+                        $vrp_out['body_excerpt'] = mb_substr( trim( wp_strip_all_tags( $vrp_body ) ), 0, 500 );
+                    }
+                }
+                return $vrp_out;
 
             case 'wp_get_site_status':
                 if (!current_user_can('manage_options')) {
@@ -4626,6 +5135,35 @@ class Server {
                 // existence explicitly so undo can either restore the prior
                 // value or delete_option to remove a row we created.
                 $opt_existed_before = ( $opt_previous !== false );
+
+                // Preview-only branch: compute proposed diff + autoload state +
+                // size delta without writing. Same gate outcomes as a real
+                // call so a caller can trust dry_run failures the same way
+                // they'd trust the write failures.
+                if ( ! empty( $args['dry_run'] ) ) {
+                    $opt_autoloaded_row  = wp_load_alloptions();
+                    $opt_is_autoloaded   = is_array( $opt_autoloaded_row ) && array_key_exists( $name, $opt_autoloaded_row );
+                    $opt_current_bytes   = strlen( (string) maybe_serialize( $opt_previous === false ? '' : $opt_previous ) );
+                    $opt_proposed_bytes  = strlen( (string) maybe_serialize( $opt_value ) );
+                    return [
+                        'state'   => 'dry_run',
+                        'preview' => [
+                            'option_name'      => $name,
+                            'current_value'    => $opt_previous,
+                            'proposed_value'   => $opt_value,
+                            'is_autoloaded'    => $opt_is_autoloaded,
+                            'existed_before'   => $opt_existed_before,
+                            'size_delta_bytes' => $opt_proposed_bytes - $opt_current_bytes,
+                        ],
+                        'would_execute' => true,
+                        'message'       => sprintf(
+                            'Dry run: option %s would be %s (size delta %+d bytes).',
+                            $name,
+                            $opt_existed_before ? 'updated' : 'created',
+                            $opt_proposed_bytes - $opt_current_bytes
+                        ),
+                    ];
+                }
 
                 $opt_result   = update_option($name, $opt_value);
                 wp_cache_delete( $name, 'options' );  // core also does this but be defensive
@@ -5135,6 +5673,14 @@ class Server {
                     throw new \Exception('Undo token not found, expired, or already consumed.');
                 }
                 $undo_op = $undo_snapshot['op'] ?? '';
+                // saved_fields shape carries the pre-op snapshot back to the
+                // caller in the restore response so silent-drop by hooks
+                // firing during the restore is comparable against the target
+                // state we tried to reach.
+                $undo_saved_fields = [
+                    'target_op'   => $undo_op,
+                    'restored_to' => isset($undo_snapshot['pre_op_state']) ? array_keys((array) $undo_snapshot['pre_op_state']) : [],
+                ];
 
                 switch ($undo_op) {
                     case 'wp_reorder_menu_items':
@@ -8205,6 +8751,95 @@ class Server {
                     throw new \Exception('structure is required (e.g. /%postname%/)');
                 }
                 $pl_previous = (string) get_option('permalink_structure', '');
+
+                // Preview-only branch: report the current + proposed structures,
+                // scope the impact to the post types actually affected, and
+                // return without touching the option or flushing rewrite rules.
+                if ( ! empty( $args['dry_run'] ) ) {
+                    // Only the `post` post type uses `permalink_structure` for
+                    // its URLs. Pages own the hierarchical page-slug rewrite;
+                    // WooCommerce products own `/product/`; every other public
+                    // CPT declares its own rewrite base at post_type registration
+                    // and stays put. Attachment URLs follow the parent post, so
+                    // they inherit any post-URL change but only when attached to
+                    // a `post`. Sample only from posts so the URL previews
+                    // reflect what would actually shift.
+                    $pl_sample_ids = get_posts( [
+                        'post_type'      => 'post',
+                        'posts_per_page' => 3,
+                        'post_status'    => 'publish',
+                        'orderby'        => 'ID',
+                        'order'          => 'DESC',
+                        'fields'         => 'ids',
+                    ] );
+                    // Home URL without trailing slash for URL concatenation. The
+                    // rewrite tokens are the standard ones WP core documents at
+                    // https://wordpress.org/documentation/article/customize-permalinks/.
+                    // Category token resolves to the primary category's slug
+                    // (lowest term_id when the post has multiple) to mirror WP's
+                    // own choice. Missing category falls back to `uncategorized`
+                    // so the projected URL is stable for posts on a fresh site.
+                    $pl_home_no_slash = rtrim( (string) home_url(), '/' );
+                    $pl_samples = [];
+                    foreach ( (array) $pl_sample_ids as $pl_sid ) {
+                        $pl_pid  = (int) $pl_sid;
+                        $pl_post = get_post( $pl_pid );
+                        if ( ! $pl_post ) {
+                            continue;
+                        }
+                        $pl_cats     = get_the_category( $pl_pid );
+                        $pl_cat_slug = 'uncategorized';
+                        if ( ! empty( $pl_cats ) ) {
+                            usort( $pl_cats, function ( $a, $b ) {
+                                return $a->term_id <=> $b->term_id;
+                            } );
+                            $pl_cat_slug = (string) ( $pl_cats[0]->slug ?? 'uncategorized' );
+                        }
+                        $pl_ts       = (int) strtotime( $pl_post->post_date );
+                        $pl_nicename = (string) get_the_author_meta( 'user_nicename', (int) $pl_post->post_author );
+                        $pl_url_path = strtr( $pl_structure, [
+                            '%year%'     => date( 'Y', $pl_ts ),
+                            '%monthnum%' => date( 'm', $pl_ts ),
+                            '%day%'      => date( 'd', $pl_ts ),
+                            '%hour%'     => date( 'H', $pl_ts ),
+                            '%minute%'   => date( 'i', $pl_ts ),
+                            '%second%'   => date( 's', $pl_ts ),
+                            '%postname%' => (string) $pl_post->post_name,
+                            '%post_id%'  => (string) $pl_pid,
+                            '%category%' => $pl_cat_slug,
+                            '%author%'   => $pl_nicename,
+                        ] );
+                        $pl_samples[] = [
+                            'post_id'      => $pl_pid,
+                            'current_url'  => (string) get_permalink( $pl_pid ),
+                            'proposed_url' => $pl_home_no_slash . $pl_url_path,
+                        ];
+                    }
+                    // Give the caller a concrete "this doesn't touch" signal so
+                    // an agent can reason about what stays without enumerating
+                    // the plugin ecosystem in prose.
+                    $pl_all_public   = array_values( get_post_types( [ 'public' => true ], 'names' ) );
+                    $pl_unaffected   = array_values( array_diff( $pl_all_public, [ 'post', 'attachment' ] ) );
+                    return [
+                        'state'   => 'dry_run',
+                        'preview' => [
+                            'current_structure'                => $pl_previous,
+                            'proposed_structure'               => $pl_structure,
+                            'affected_post_types'              => [ 'post' ],
+                            'attachment_inherits_parent_url'   => true,
+                            'post_types_with_own_rewrite_base' => $pl_unaffected,
+                            'sample_current_urls'              => $pl_samples,
+                            'flushes_rewrite'                  => true,
+                        ],
+                        'would_execute' => true,
+                        'message'       => sprintf(
+                            'Dry run: permalink structure would change from %s to %s and flush rewrite rules. Only the `post` post type uses this structure; pages, custom post types, and plugin-registered types keep their own rewrite bases and are unaffected.',
+                            $pl_previous !== '' ? $pl_previous : '(plain)',
+                            $pl_structure
+                        ),
+                    ];
+                }
+
                 global $wp_rewrite;
                 if ($wp_rewrite) {
                     $wp_rewrite->set_permalink_structure($pl_structure);

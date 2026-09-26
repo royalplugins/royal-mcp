@@ -110,7 +110,7 @@ class Settings_Page {
 
     /** Render the wp.org review-request banner (Free tier only, version-stamped dismissal). */
     public static function render_review_banner() {
-        if ( defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) {
+        if ( class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false ) ) {
             return;
         }
         $user_id = get_current_user_id();
@@ -341,16 +341,47 @@ class Settings_Page {
         $sanitized['writable_options_admin'] = array_values(array_unique($keys));
 
         // Sanitize API key.
-        // Order matters: the readonly `api_key` field in the settings form posts the
-        // current value on every submit, so we must check `regenerate_api_key` FIRST.
-        // With the order reversed, the current-value POST silently overrides the
-        // regenerate signal and clicking Regenerate becomes a no-op.
-        if (isset($input['regenerate_api_key'])) {
-            $sanitized['api_key'] = bin2hex(random_bytes(16));
-        } elseif (isset($input['api_key']) && !empty($input['api_key'])) {
-            $sanitized['api_key'] = sanitize_text_field($input['api_key']);
+        // Order matters: the readonly `api_key` field in the settings form posts
+        // whatever value is currently rendered on every submit, so the
+        // `regenerate_api_key` signal has to be checked FIRST. With the order
+        // reversed, the field POST silently overrides the regenerate signal and
+        // clicking Regenerate becomes a no-op.
+        //
+        // Storage model: only the SHA-256 hash of the key sits at rest. The raw
+        // plaintext is handed to the admin ONCE via a short-lived reveal
+        // transient after regeneration — after that the field renders masked
+        // and the admin must regenerate again if they lose the copy.
+        $regenerated = false;
+        if ( isset( $input['regenerate_api_key'] ) ) {
+            $plaintext                   = bin2hex( random_bytes( 16 ) );
+            $sanitized['api_key_hash']   = hash( 'sha256', $plaintext );
+            $sanitized['api_key']        = '';
+            set_transient(
+                'royal_mcp_reveal_api_key_' . (int) get_current_user_id(),
+                $plaintext,
+                15 * MINUTE_IN_SECONDS
+            );
+            $regenerated = true;
         } else {
-            $sanitized['api_key'] = $settings['api_key'] ?? bin2hex(random_bytes(16));
+            // Preserve whatever's already at rest. If a legacy install still has
+            // a plaintext key, keep it in place so existing MCP clients keep
+            // working; maybe_upgrade_db handles the one-time migration to the
+            // hashed form on the next plugin load.
+            $sanitized['api_key_hash'] = $settings['api_key_hash'] ?? '';
+            $sanitized['api_key']      = $settings['api_key']      ?? '';
+        }
+
+        // Bind the api_key to a specific user_id so the auth path attributes
+        // tool calls to a real human rather than "first administrator on the
+        // site". Rebound on every regeneration; back-filled for existing
+        // installs where a key exists but the bind is missing.
+        if ( $regenerated ) {
+            $sanitized['api_key_user_id'] = (int) get_current_user_id();
+        } elseif ( ( ! empty( $sanitized['api_key_hash'] ) || ! empty( $sanitized['api_key'] ) )
+                   && empty( $settings['api_key_user_id'] ) ) {
+            $sanitized['api_key_user_id'] = (int) get_current_user_id();
+        } else {
+            $sanitized['api_key_user_id'] = (int) ( $settings['api_key_user_id'] ?? 0 );
         }
 
         // Sanitize OAuth settings
@@ -488,10 +519,12 @@ class Settings_Page {
         }
 
         $settings = get_option('royal_mcp_settings', [
-            'enabled' => false,
-            'platforms' => [],
-            'mcp_servers' => [],
-            'api_key' => bin2hex(random_bytes(16)),
+            'enabled'         => false,
+            'platforms'       => [],
+            'mcp_servers'     => [],
+            'api_key'         => '',
+            'api_key_hash'    => '',
+            'api_key_user_id' => 0,
         ]);
 
         $platforms = Registry::get_platforms();
