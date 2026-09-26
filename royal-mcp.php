@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.5.4
+ * Version: 1.5.5
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -19,7 +19,11 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-// Pro vendors this class — bail if it's already declared, refuse activation cleanly.
+// Pro ships every free feature and deactivates this plugin on activation.
+// If Pro's class is already declared (Pro is loading first or Pro's
+// vendored copy of this file has already run), bail cleanly and register
+// an activation-time refusal so the user sees a clear error instead of a
+// silently-inert plugin when they try to activate Free alongside Pro.
 if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
     register_activation_hook( __FILE__, function () {
         if ( ! function_exists( 'is_plugin_active' ) ) {
@@ -36,13 +40,8 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
     return;
 }
 
-// Define plugin constants. Guards prevent PHP "constant already defined"
-// warnings when this file is loaded as Pro's vendored Free copy — Pro
-// defines the same constants first, then requires this file. Without the
-// guards each MCP request produces 4 warnings + 4 nginx error-log stack
-// traces, which on shared PHP-FPM pools amplifies into cross-site worker
-// starvation.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.4' );
+// Define plugin constants.
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.5' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -92,7 +91,6 @@ class Royal_MCP_Plugin {
 
         add_action('plugins_loaded', [$this, 'maybe_upgrade_db'], 5);
         add_action('plugins_loaded', [$this, 'init']);
-        add_action('rest_api_init', [$this, 'register_rest_routes']);
         add_action('rest_api_init', [$this, 'register_mcp_endpoint']);
 
         // Force Cache-Control: no-store on every response in our namespace.
@@ -268,7 +266,12 @@ class Royal_MCP_Plugin {
     }
 
     public function activate() {
-        // Refuse activation if Pro is active; skip refusal when Pro is bootstrapping Free.
+        // Refuse activation if Pro is separately active; skip the refusal
+        // when Pro is bootstrapping Free via its vendored copy (that path
+        // sets ROYAL_MCP_LOADED_BY_PRO before requiring this file). Backs
+        // up the top-level bail block above with a check that fires even
+        // when a race lets Free's file finish loading before Pro's bootstrap
+        // declared the class.
         if ( ! defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) {
             if ( ! function_exists( 'is_plugin_active' ) ) {
                 include_once ABSPATH . 'wp-admin/includes/plugin.php';
@@ -307,13 +310,27 @@ class Royal_MCP_Plugin {
             }
         }
 
-        // Set default options. API key: lowercase hex avoids O/0 I/l/1 transcription ambiguity.
-        add_option('royal_mcp_settings', [
-            'enabled' => false,
-            'platforms' => [],
-            'mcp_servers' => [],
-            'api_key' => bin2hex(random_bytes(16)),
-        ]);
+        // Set default options. API key: lowercase hex avoids O/0 I/l/1
+        // transcription ambiguity. Only the SHA-256 hash goes into the option
+        // — the raw plaintext is handed to the activating admin ONCE via a
+        // short-lived reveal transient they can read on the settings page.
+        $royal_mcp_activation_plaintext = bin2hex( random_bytes( 16 ) );
+        add_option( 'royal_mcp_settings', [ // audit:autoload-ok -- read on every request (auth path, chrome, discovery, admin bar)
+            'enabled'         => false,
+            'platforms'       => [],
+            'mcp_servers'     => [],
+            'api_key'         => '',
+            'api_key_hash'    => hash( 'sha256', $royal_mcp_activation_plaintext ),
+            'api_key_user_id' => (int) get_current_user_id(),
+        ] );
+        $royal_mcp_activation_uid = (int) get_current_user_id();
+        if ( $royal_mcp_activation_uid > 0 ) {
+            set_transient(
+                'royal_mcp_reveal_api_key_' . $royal_mcp_activation_uid,
+                $royal_mcp_activation_plaintext,
+                15 * MINUTE_IN_SECONDS
+            );
+        }
 
         // Register OAuth + /mcp alias rewrite rules before flushing.
         $this->register_oauth_rewrites();
@@ -348,6 +365,12 @@ class Royal_MCP_Plugin {
      * underlying issue see recovery on their next request.
      */
     public function maybe_upgrade_db() {
+        // Run the API-key migration first, self-gated on the data shape so it
+        // no-ops after the first successful pass. Kept outside the version
+        // guard because the hash-at-rest change applies to any install whose
+        // settings still hold a plaintext key, not just first-load post-upgrade.
+        $this->maybe_migrate_api_key_settings();
+
         if (get_option('royal_mcp_db_version') === ROYAL_MCP_VERSION
             && $this->required_tables_exist()) {
             return;
@@ -387,15 +410,54 @@ class Royal_MCP_Plugin {
         if ($token_store_ok && $session_store_ok && $this->required_tables_exist()) {
             update_option('royal_mcp_db_version', ROYAL_MCP_VERSION);
             delete_option('royal_mcp_db_upgrade_last_failed_at');
-            // Invalidate the Server_Card transient so any card-shape additions
-            // in this release (new endpoint URLs, new capability flags, etc.)
-            // appear on the very next scanner probe instead of waiting up to
-            // 5 minutes for the transient to expire naturally.
+            // Invalidate the discovery-document transients so any card-shape
+            // additions in this release (new endpoint URLs, new capability
+            // flags, changes to which fields are populated) appear on the
+            // very next scanner probe instead of waiting up to 5 minutes for
+            // the transient to expire naturally.
             if ( class_exists( '\Royal_MCP\Discovery\Server_Card' ) ) {
                 delete_transient( \Royal_MCP\Discovery\Server_Card::CACHE_KEY );
             }
+            if ( class_exists( '\Royal_MCP\Discovery\Agent_Skills_Index' ) ) {
+                delete_transient( \Royal_MCP\Discovery\Agent_Skills_Index::CACHE_KEY );
+            }
         } else {
             update_option('royal_mcp_db_upgrade_last_failed_at', time());
+        }
+    }
+
+    /**
+     * Migrate legacy API-key settings to the hash-at-rest shape. Idempotent —
+     * gated on the data condition so it becomes a cheap no-op once the
+     * settings option already has api_key_hash + api_key_user_id populated.
+     */
+    private function maybe_migrate_api_key_settings() {
+        $settings = get_option( 'royal_mcp_settings', [] );
+        if ( ! is_array( $settings ) ) {
+            return;
+        }
+        $dirty = false;
+        if ( ! empty( $settings['api_key'] ) && empty( $settings['api_key_hash'] ) ) {
+            $settings['api_key_hash'] = hash( 'sha256', (string) $settings['api_key'] );
+            $settings['api_key']      = '';
+            $dirty                    = true;
+        }
+        if ( ! empty( $settings['api_key_hash'] )
+             && empty( $settings['api_key_user_id'] ) ) {
+            $admins = get_users( [
+                'role'    => 'administrator',
+                'number'  => 1,
+                'orderby' => 'ID',
+                'order'   => 'ASC',
+                'fields'  => 'ID',
+            ] );
+            if ( ! empty( $admins ) ) {
+                $settings['api_key_user_id'] = (int) $admins[0];
+                $dirty                       = true;
+            }
+        }
+        if ( $dirty ) {
+            update_option( 'royal_mcp_settings', $settings );
         }
     }
 
@@ -662,11 +724,6 @@ class Royal_MCP_Plugin {
             new Royal_MCP\Admin\Authorization_Header_Notice();
             new Royal_MCP\Admin\Help_Page();
         }
-    }
-
-    public function register_rest_routes() {
-        $api = new Royal_MCP\API\REST_Controller();
-        $api->register_routes();
     }
 
     public function register_mcp_endpoint() {

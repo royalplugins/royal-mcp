@@ -5,7 +5,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 $royal_mcp_help_endpoint     = isset( $royal_mcp_help_endpoint ) ? $royal_mcp_help_endpoint : rest_url( 'royal-mcp/v1/mcp' );
 $royal_mcp_help_endpoint     = preg_replace( '/^http:/', 'https:', $royal_mcp_help_endpoint );
-$royal_mcp_help_logs_url     = defined( 'ROYAL_MCP_LOADED_BY_PRO' )
+$royal_mcp_help_logs_url     = class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false )
 	? admin_url( 'admin.php?page=royal-mcp-pro' )
 	: admin_url( 'admin.php?page=royal-mcp-logs' );
 ?>

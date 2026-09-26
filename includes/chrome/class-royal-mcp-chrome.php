@@ -56,9 +56,9 @@ class Royal_MCP_Chrome {
 
         // Founders-waitlist promo surfaces (submenu item, admin notice, dismiss
         // handler, target=_blank injector) only make sense on standalone Free.
-        // When running vendored inside Royal MCP Pro, Pro customers are already
+        // When Royal MCP Pro is active alongside, Pro customers are already
         // past the funnel — skip the entire promo path.
-        if ( ! defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) {
+        if ( ! class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false ) ) {
             add_action( 'admin_menu',            [ $this, 'register_founding_members_menu' ], 21 );
             add_action( 'admin_enqueue_scripts', [ $this, 'inject_founding_members_menu_target_blank' ], 100 );
         }
@@ -140,7 +140,16 @@ class Royal_MCP_Chrome {
             </div>
             <div class="royal-mcp-chrome-header-actions">
                 <?php
-                if ( class_exists( '\Royal_MCP\Chrome\Whats_New' ) ) {
+                // Extension point for companion plugins (Royal MCP Pro's
+                // Whats_New injects its trigger button here). Fired before
+                // Free's own button so Pro's replaces ours visually.
+                do_action( 'royal_mcp_chrome_header_actions_pre' );
+
+                // Free's own Whats New trigger button — skip when Pro is
+                // active (Pro provides its own via the hook above, and
+                // Free's modal is suppressed to avoid duplicate render).
+                if ( ! class_exists( '\Royal_MCP_Pro\Admin\Whats_New', false )
+                    && class_exists( '\Royal_MCP\Chrome\Whats_New' ) ) {
                     \Royal_MCP\Chrome\Whats_New::instance()->render_trigger_button();
                 }
                 ?>
@@ -172,7 +181,7 @@ class Royal_MCP_Chrome {
      * user to a not-yet-live product page).
      */
     public function render_upgrade_bar(): void {
-        if ( defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) {
+        if ( class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false ) ) {
             return;
         }
         if ( ! $this->is_pro_launched() ) {
@@ -280,7 +289,7 @@ class Royal_MCP_Chrome {
                 </div>
             </div>
 
-            <?php if ( defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) : ?>
+            <?php if ( class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false ) ) : ?>
                 <?php \Royal_MCP\Admin\Settings_Page::render_founders_banner( true ); ?>
             <?php endif; ?>
 
@@ -295,7 +304,7 @@ class Royal_MCP_Chrome {
                 <?php endforeach; ?>
             </div>
 
-            <?php if ( ! defined( 'ROYAL_MCP_LOADED_BY_PRO' ) ) : ?>
+            <?php if ( ! class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false ) ) : ?>
                 <?php \Royal_MCP\Admin\Settings_Page::render_founders_banner( false ); ?>
             <?php endif; ?>
         </div>

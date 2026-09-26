@@ -8,6 +8,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 $royal_mcp_client_name   = $rmcp_oauth['client_name'];
 $royal_mcp_site_name     = $rmcp_oauth['site_name'];
 $royal_mcp_user_display  = $rmcp_oauth['user_display_name'];
+$royal_mcp_redirect_host = isset( $rmcp_oauth['redirect_host'] ) ? $rmcp_oauth['redirect_host'] : '';
 ?>
 <!DOCTYPE html>
 <html <?php language_attributes(); ?>>
@@ -100,6 +101,26 @@ $royal_mcp_user_display  = $rmcp_oauth['user_display_name'];
             margin-bottom: 20px;
         }
         .auth-user strong { color: #1d2327; }
+        .auth-destination {
+            background: #fdf6ec;
+            border: 1px solid #f0c36d;
+            border-radius: 4px;
+            padding: 10px 12px;
+            margin-bottom: 20px;
+            font-size: 13px;
+            color: #5b4200;
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+        }
+        .auth-destination code {
+            background: rgba(0,0,0,.04);
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-family: SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 12px;
+            word-break: break-all;
+        }
         .auth-buttons {
             display: flex;
             gap: 12px;
@@ -162,6 +183,21 @@ $royal_mcp_user_display  = $rmcp_oauth['user_display_name'];
             );
             ?>
         </p>
+
+        <?php if ( '' !== $royal_mcp_redirect_host ) : ?>
+        <div class="auth-destination">
+            <span aria-hidden="true">&#9888;</span>
+            <span>
+                <?php
+                printf(
+                    /* translators: %s: destination host, e.g. claude.ai */
+                    esc_html__( 'The authorization code will be sent to %s. Only approve if you recognize this destination.', 'royal-mcp' ),
+                    '<code>' . esc_html( $royal_mcp_redirect_host ) . '</code>'
+                );
+                ?>
+            </span>
+        </div>
+        <?php endif; ?>
 
         <form method="post" action="<?php echo esc_url( home_url( '/authorize' ) ); ?>">
             <input type="hidden" name="_wpnonce" value="<?php echo esc_attr( $rmcp_oauth['nonce'] ); ?>">
