@@ -25,6 +25,11 @@ delete_option('royal_mcp_abilities_registration_enabled');
 // MUST clear db_version so a reinstall re-runs maybe_upgrade_db().
 delete_option('royal_mcp_db_version');
 
+// Rewrite-version marker + last-failed-upgrade timestamp — misc singleton
+// state options written by royal-mcp.php that would otherwise linger.
+delete_option('royal_mcp_rewrite_version');
+delete_option('royal_mcp_db_upgrade_last_failed_at');
+
 // Delete the logs table
 global $wpdb;
 // Table name constructed safely from prefix + hardcoded string, then escaped
@@ -64,6 +69,48 @@ $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_ro
 // Clean up undo-snapshot options (populated by Undo_Store for reversible tools like wp_reorder_menu_items).
 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal_mcp_undo_%'");
+
+// Weekly protocol-version counter rows — one option row per ISO week, so a
+// blanket LIKE sweep catches every historical bucket without listing them.
+// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+$wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal_mcp_protocol_counter_%'");
+
+// Per-IP rate-limit transients (both the MCP endpoint and /register).
+// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+$wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_rate_%' OR option_name LIKE '_transient_timeout_royal_mcp_rate_%'");
+// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+$wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_reg_rate_%' OR option_name LIKE '_transient_timeout_royal_mcp_reg_rate_%'");
+
+// wp_verify_rendered_page per-(site, URL) fetch bucket.
+// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+$wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_vrp_%' OR option_name LIKE '_transient_timeout_royal_mcp_vrp_%'");
+
+// Preview_Link short-lived preview tokens (rmcp_preview_ prefix).
+// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+$wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_rmcp_preview_%' OR option_name LIKE '_transient_timeout_rmcp_preview_%'");
+
+// Auth-header probe cache (persists whether the origin passes Authorization
+// through when the request hit /mcp behind mod_rewrite).
+// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+$wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_auth_header_probe_%' OR option_name LIKE '_transient_timeout_royal_mcp_auth_header_probe_%'");
+
+// One-shot api_key reveal transients (per-user, 15 min TTL — safe to nuke).
+// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+$wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_reveal_api_key_%' OR option_name LIKE '_transient_timeout_royal_mcp_reveal_api_key_%'");
+
+// Discovery-document transients — Server_Card + Agent_Skills_Index.
+delete_transient('royal_mcp_server_card_json');
+delete_transient('royal_mcp_agent_skills_index_json');
+
+// Miscellaneous singleton admin-notice + endpoint-probe status transients
+// set by Well_Known_Notice, Authorization_Header_Notice, and related
+// diagnostics — literal keys, listed rather than swept so we don't
+// accidentally match unrelated future keys.
+delete_transient('royal_mcp_webmcp_bridge_status');
+delete_transient('royal_mcp_auth_header_status');
+delete_transient('royal_mcp_well_known_status');
+delete_transient('royal_mcp_missing_endpoints_list');
+delete_transient('royal_mcp_register_301_status');
 
 // Clear scheduled events.
 wp_clear_scheduled_hook('royal_mcp_token_cleanup');
