@@ -1690,13 +1690,38 @@ class Elementor {
 			'icon-box'       => [ 'title_text' ],
 			'call-to-action' => [ 'title' ],
 		];
-		if ( ! isset( $snippet_candidates[ $widget_type ] ) ) {
+		// Repeater widgets: [ repeater_key => item_text_key ].
+		$repeater_candidates = [
+			'icon-list' => [ 'repeater' => 'icon_list', 'field' => 'text' ],
+			'tabs'      => [ 'repeater' => 'tabs',      'field' => 'tab_title' ],
+			'accordion' => [ 'repeater' => 'tabs',      'field' => 'tab_title' ],
+			'toggle'    => [ 'repeater' => 'tabs',      'field' => 'tab_title' ],
+		];
+		if ( isset( $snippet_candidates[ $widget_type ] ) ) {
+			foreach ( $snippet_candidates[ $widget_type ] as $key ) {
+				if ( isset( $s[ $key ] ) && is_string( $s[ $key ] ) && $s[ $key ] !== '' ) {
+					$plain = wp_strip_all_tags( $s[ $key ] );
+					return mb_strimwidth( $plain, 0, 80, '...' );
+				}
+			}
 			return '';
 		}
-		foreach ( $snippet_candidates[ $widget_type ] as $key ) {
-			if ( isset( $s[ $key ] ) && is_string( $s[ $key ] ) && $s[ $key ] !== '' ) {
-				$plain = wp_strip_all_tags( $s[ $key ] );
-				return mb_strimwidth( $plain, 0, 80, '...' );
+		if ( isset( $repeater_candidates[ $widget_type ] ) ) {
+			$rep = $repeater_candidates[ $widget_type ]['repeater'];
+			$fld = $repeater_candidates[ $widget_type ]['field'];
+			if ( isset( $s[ $rep ] ) && is_array( $s[ $rep ] ) ) {
+				$parts = [];
+				foreach ( $s[ $rep ] as $item ) {
+					if ( is_array( $item ) && isset( $item[ $fld ] ) && is_string( $item[ $fld ] ) && $item[ $fld ] !== '' ) {
+						$parts[] = wp_strip_all_tags( $item[ $fld ] );
+					}
+					if ( count( $parts ) >= 6 ) {
+						break;
+					}
+				}
+				if ( ! empty( $parts ) ) {
+					return mb_strimwidth( implode( ' · ', $parts ), 0, 80, '...' );
+				}
 			}
 		}
 		return '';
@@ -1721,11 +1746,13 @@ class Elementor {
 			'no_found_rows'  => true,
 		];
 		if ( $type_filter !== '' ) {
-			$query_args['tax_query'] = [
+			// _elementor_template_type is the authoritative source across
+			// every Elementor template type (kit / header / footer / single /
+			// archive / popup have no taxonomy term).
+			$query_args['meta_query'] = [
 				[
-					'taxonomy' => 'elementor_library_type',
-					'field'    => 'slug',
-					'terms'    => $type_filter,
+					'key'   => '_elementor_template_type',
+					'value' => $type_filter,
 				],
 			];
 		}
@@ -1733,11 +1760,19 @@ class Elementor {
 
 		$templates = [];
 		foreach ( $posts as $tpl ) {
-			$terms = wp_get_post_terms( $tpl->ID, 'elementor_library_type', [ 'fields' => 'slugs' ] );
+			$meta_type = get_post_meta( $tpl->ID, '_elementor_template_type', true );
+			if ( is_string( $meta_type ) && $meta_type !== '' ) {
+				$type = $meta_type;
+			} else {
+				$terms = wp_get_post_terms( $tpl->ID, 'elementor_library_type', [ 'fields' => 'slugs' ] );
+				$type  = ( is_array( $terms ) && ! is_wp_error( $terms ) && ! empty( $terms ) )
+					? (string) $terms[0]
+					: 'unknown';
+			}
 			$templates[] = [
 				'id'            => (int) $tpl->ID,
 				'name'          => $tpl->post_title,
-				'type'          => is_array( $terms ) && ! is_wp_error( $terms ) && ! empty( $terms ) ? (string) $terms[0] : 'page',
+				'type'          => $type,
 				'date_modified' => $tpl->post_modified_gmt,
 			];
 		}

@@ -2982,8 +2982,10 @@ class Server {
                     throw new \Exception('You do not have permission to view post counts.');
                 }
                 $type = sanitize_text_field($args['post_type'] ?? 'post');
-                $counts = wp_count_posts($type);
-                return (array) $counts;
+                $counts = (array) wp_count_posts($type);
+                // wp_count_posts hydrates filled statuses as ints but leaves
+                // empty statuses as string "0" — normalize every value.
+                return array_map('intval', $counts);
 
             case 'wp_get_post_types':
                 if (!current_user_can('read')) {
@@ -3827,7 +3829,10 @@ class Server {
                 }
                 $taxonomy = sanitize_text_field($args['taxonomy'] ?? 'category');
                 $count = wp_count_terms(['taxonomy' => $taxonomy, 'hide_empty' => false]);
-                return ['taxonomy' => $taxonomy, 'count' => $count];
+                if (is_wp_error($count)) {
+                    throw new \Exception(esc_html($count->get_error_message()));
+                }
+                return ['taxonomy' => $taxonomy, 'count' => (int) $count];
 
             case 'wp_get_term_meta':
                 $term_id = intval($args['term_id']);
@@ -4970,12 +4975,26 @@ class Server {
                 }
                 if ($offset > 0) {
                     fseek($fh, $offset);
-                    // Drop first (partial) line after the seek so we don't return
-                    // half a stack-trace line.
-                    fgets($fh);
                 }
                 $raw = stream_get_contents($fh);
                 fclose($fh);
+
+                // When the byte window lands mid-line, the response must not
+                // start on a partial timestamp. Drop everything up to and
+                // including the first newline. String-based so \r\n / \n / \r
+                // and stream quirks all resolve the same way.
+                if ($offset > 0 && is_string($raw) && $raw !== '') {
+                    $first_nl = strcspn($raw, "\r\n");
+                    if ($first_nl < strlen($raw)) {
+                        $rest = substr($raw, $first_nl);
+                        $rest = ltrim($rest, "\r\n");
+                        $raw  = $rest;
+                    } else {
+                        // No newline in the window — whole thing is a single
+                        // partial line. Nothing safe to return.
+                        $raw = '';
+                    }
+                }
 
                 $all_lines = $raw === false ? [] : preg_split("/\r\n|\n|\r/", (string) $raw);
                 // Drop trailing empty line from final \n.
@@ -8042,10 +8061,12 @@ class Server {
                 $result = [];
                 foreach ($plugins as $path => $data) {
                     $result[] = [
-                        'name' => $data['Name'],
-                        'version' => $data['Version'],
-                        'active' => in_array($path, $active),
-                        'author' => $data['Author'],
+                        'file'        => (string) $path,
+                        'name'        => (string) ( $data['Name'] ?? '' ),
+                        'version'     => (string) ( $data['Version'] ?? '' ),
+                        'description' => (string) ( $data['Description'] ?? '' ),
+                        'active'      => in_array($path, $active, true),
+                        'author'      => wp_strip_all_tags( (string) ( $data['Author'] ?? '' ) ),
                     ];
                 }
                 return $result;
