@@ -10,7 +10,7 @@ License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Preview-On-WordPress-Playground: yes
 
-200+ MCP tools. OAuth 2.0 + WebMCP. Connect Claude, ChatGPT, Gemini, Cursor & any MCP agent to your WordPress site. 100% self-hosted.
+200+ MCP tools. OAuth 2.0 + WebMCP. Connect Claude, ChatGPT, Perplexity, Gemini or any MCP agent to your WordPress site. 100% self-hosted.
 
 == Description ==
 
@@ -30,17 +30,17 @@ https://youtu.be/HsEIoDz9WmY
 
 **First-time setup walkthrough:** [royalplugins.com/support/royal-mcp/connecting-to-claude/](https://royalplugins.com/support/royal-mcp/connecting-to-claude/)
 
-= Plugins with dedicated MCP tools =
-
-WooCommerce, Elementor, Divi, Advanced Custom Fields, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Contact Form 7, MonsterInsights, W3 Total Cache, Duplicator, BuddyPress, Redirection — plus every Royal Plugin (Royal AI Firewall, GuardPress, SiteVault, ForgeCache, Royal Ledger, Royal Links).
-
-**Not seeing yours?** MCP still works. WordPress core operations (posts, pages, media, users, taxonomies, custom fields, menus, options) cover most day-to-day AI workflows for any plugin — read/write ACF via `wp_get_post_meta` even without ACF-specific tools, edit posts on any custom post type, moderate any plugin's comments. Shared SEO meta tools automatically work with Rank Math, AIOSEO, SEOPress, and SEObolt. A dedicated integration layers specialized tools on top when that plugin exposes its own data model, request features/plugins support [here on the wp.org support forum](https://wordpress.org/support/plugin/royal-mcp/).
-
 = Connect ChatGPT to WordPress =
 
 ChatGPT on the web, desktop, and iOS supports MCP servers natively. Add Royal MCP in ChatGPT's Plugins panel, authorize once, and ChatGPT can read your posts, publish drafts, update product prices, moderate comments, and audit SEO across your site — all through ordinary conversation.
 
 **First-time setup walkthrough:** [royalplugins.com/support/royal-mcp/connecting-to-chatgpt/](https://royalplugins.com/support/royal-mcp/connecting-to-chatgpt/)
+
+= Plugins with dedicated MCP tools =
+
+WooCommerce, Elementor, Divi, Advanced Custom Fields, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Contact Form 7, MonsterInsights, W3 Total Cache, Duplicator, BuddyPress, Redirection — plus every Royal Plugin (Royal AI Firewall, GuardPress, SiteVault, ForgeCache, Royal Ledger, Royal Links).
+
+**Not seeing yours?** MCP still works. WordPress core operations (posts, pages, media, users, taxonomies, custom fields, menus, options) cover most day-to-day AI workflows for any plugin — read/write ACF via `wp_get_post_meta` even without ACF-specific tools, edit posts on any custom post type, moderate any plugin's comments. Shared SEO meta tools automatically work with Rank Math, AIOSEO, SEOPress, and SEObolt. A dedicated integration layers specialized tools on top when that plugin exposes its own data model, request features/plugins support [here on the wp.org support forum](https://wordpress.org/support/plugin/royal-mcp/).
 
 = Works with every MCP-compatible AI client =
 
@@ -52,15 +52,15 @@ Royal MCP supports the W3C WebMCP browser-agent standard on the server side. Whe
 
 = How Royal MCP handles authorization =
 
-Royal MCP speaks full OAuth 2.0 with PKCE and Dynamic Client Registration (RFC 7591) for Claude Desktop, Claude Code, ChatGPT web, and every modern MCP client. Sessions expire, refresh automatically, and can be revoked globally with one button in wp-admin. Clients that don't speak OAuth get timing-safe API-key auth, per-IP rate limits (60 requests per minute), and the same activity log for every tool call.
+Royal MCP speaks full OAuth 2.0 with PKCE and Dynamic Client Registration (RFC 7591) for Claude Desktop, Claude Code, ChatGPT web, and every modern MCP client. Sessions expire, refresh automatically, and can be revoked globally with one button in wp-admin. Clients that don't speak OAuth get timing-safe API-key auth, per-IP rate limits (60 requests per minute), and the same activity log for every tool call. Every credential (API key, OAuth token, session, audit-log entry) stays inside your own WordPress database with no hosted middleman, no license check, and no telemetry; Ollama and LM Studio work first-class alongside Claude, ChatGPT, and Gemini if you want fully-local AI inference too.
 
-= Where do my credentials go? =
+= Is there a preview/dry-run before writes? =
 
-Nowhere. Your AI client authenticates straight to your WordPress site, and every API key, OAuth token, session, and audit-log entry stays inside your own database. There's no hosted server sitting between your chat and your site, and no license check or telemetry reaching out on activation. Ollama and LM Studio are first-class platforms alongside Claude, ChatGPT, and Gemini if you want to keep AI inference local too.
+Yes. High-blast writes like site options and your permalink structure accept a dry-run flag, so the AI can preview the exact change before committing. The response reports the current value, the proposed value, the size delta in bytes, and whether the option is autoloaded; for permalink changes, it also lists which public post types are affected and shows current-URL vs proposed-URL samples so you can spot the blast radius before rewrite rules flush. Pair that with the 72-hour undo token on every destructive write and you get preview, approve, commit, undo: a full safety loop that lets fully-autonomous agents work on a live production site without wiping it out.
 
 = Can I undo what the AI does? =
 
-Yes. Every MCP client (Claude Desktop, ChatGPT, and the rest) asks you to approve or deny each destructive tool call by default, until you flip that setting in your connector. On top of that, Royal MCP captures a reverse-state snapshot before every destructive write and hands back a 72-hour undo token. One mcp_undo_last_operation call reverses the change — whether Claude deleted a post, replaced text on an Elementor page, updated a WooCommerce product, or reordered menu items. New posts and pages start as drafts, so nothing the AI writes appears on your live site until you approve publishing. Every tool call also lands in an activity log you can review from wp-admin.
+Yes. Every MCP client (Claude Desktop, ChatGPT, and the rest) asks you to approve or deny each destructive tool call by default, until you flip that setting in your connector. Royal MCP also captures a reverse-state snapshot before every destructive write and hands back a 72-hour undo token. One mcp_undo_last_operation call reverses the change, whether Claude deleted a post, replaced text on an Elementor page, updated a WooCommerce product, or reordered menu items. New posts and pages start as drafts, so nothing the AI writes appears on your live site until you approve publishing. Every tool call also lands in an activity log you can review from wp-admin.
 
 = Does Royal MCP work with the WordPress Abilities API? =
 
@@ -286,13 +286,17 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 2. AI platform configuration with connection testing
 3. Activity log showing authenticated MCP requests
 4. Claude Desktop MCP connector setup
-5. WooCommerce product management via Claude
-6. OAuth consent screen for Claude Desktop connector
+5. Adding a custom Royal MCP connector in Claude Desktop
+6. Claude authorization screen
+7. Royal MCP tool list in Claude after connection
+8. Dry-run preview of a WordPress option write before commit
+9. Adding Royal MCP in ChatGPT's connector settings
+10. Royal MCP tool list in ChatGPT after connection
 
 == Changelog ==
 
 = 1.5.5 =
-* Add dry-run mode to `wp_update_option` and `wp_update_permalink_structure`, new `wp_verify_rendered_page` tool for post-write verification, compact tool-discovery profile via `X-MCP-Profile: compact`, hardened OAuth registration and refresh flow, tightened capability checks on post and meta writes, and improved response-envelope compliance for newer MCP clients.
+* New: dry-run preview mode on high-blast option-write tools, a `wp_verify_rendered_page` tool for post-write confirmation, and a compact tool-discovery profile for context-limited AI clients.
 
 = 1.5.4 =
 * Fix: `tools/list`, `prompts/list`, and `resources/list` responses now conform to the modern-era MCP schema for connectors that require the newer wire shape.

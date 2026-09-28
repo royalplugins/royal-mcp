@@ -276,7 +276,7 @@ class Royal_MCP_Chrome {
     }
 
     public function render_royal_tools_page(): void {
-        if ( ! current_user_can( 'manage_options' ) ) {
+        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- read-only Royal Tools index page (family-plugin state summary, no state mutation)
             wp_die( esc_html__( 'You do not have permission to view Royal Tools.', 'royal-mcp' ) );
         }
         $family = $this->get_family_plugins_with_state();

@@ -80,7 +80,7 @@ class Whats_New {
      * current plugin version. Used to decide auto-open on page load.
      */
     public function should_auto_open(): bool {
-        if ( ! current_user_can( 'manage_options' ) ) {
+        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- read-only per-user meta check (no state mutation)
             return false;
         }
         $seen = get_user_meta( get_current_user_id(), self::SEEN_VERSION_META, true );
@@ -169,7 +169,7 @@ class Whats_New {
         if ( ! $this->is_royal_mcp_admin_page() ) {
             return;
         }
-        if ( ! current_user_can( 'manage_options' ) ) {
+        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- read-only modal render (template include, no state mutation)
             return;
         }
         $template = ROYAL_MCP_PLUGIN_DIR . 'templates/admin/whats-new.php';
@@ -185,7 +185,7 @@ class Whats_New {
      * plugin version ships.
      */
     public function handle_dismiss(): void {
-        if ( ! current_user_can( 'manage_options' ) ) {
+        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- writes per-user meta only (no per-site or network-scope state)
             wp_send_json_error( [ 'message' => 'Insufficient permissions.' ], 403 );
         }
         check_ajax_referer( self::DISMISS_NONCE, 'nonce' );
