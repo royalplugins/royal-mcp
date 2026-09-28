@@ -94,7 +94,7 @@ class Settings_Page {
         if (!isset($_GET['royal_mcp_dismiss_founders'])) {
             return;
         }
-        if (!current_user_can('manage_options')) {
+        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- writes per-user meta only (no per-site or network-scope state)
             return;
         }
         if (!isset($_GET['_wpnonce']) ||
@@ -114,7 +114,7 @@ class Settings_Page {
             return;
         }
         $user_id = get_current_user_id();
-        if (!$user_id || !current_user_can('manage_options')) {
+        if (!$user_id || !current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- read-only banner render gated by per-user meta (no state mutation)
             return;
         }
         $dismissed_at = get_user_meta($user_id, 'royal_mcp_review_dismissed_version', true);
@@ -161,7 +161,7 @@ class Settings_Page {
         if (!isset($_GET['royal_mcp_dismiss_review'])) {
             return;
         }
-        if (!current_user_can('manage_options')) {
+        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- writes per-user meta only (no per-site or network-scope state)
             return;
         }
         if (!isset($_GET['_wpnonce']) ||
@@ -514,7 +514,7 @@ class Settings_Page {
     }
 
     public function render_settings_page() {
-        if (!current_user_can('manage_options')) {
+        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- reads per-site royal_mcp_settings only (per-site option, no network-scope state)
             return;
         }
 
@@ -534,7 +534,7 @@ class Settings_Page {
     }
 
     public function render_logs_page() {
-        if (!current_user_can('manage_options')) {
+        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- reads per-site wp_royal_mcp_logs (per-site-prefixed table, no network-scope data)
             return;
         }
 
@@ -570,7 +570,7 @@ class Settings_Page {
     public function ajax_test_connection() {
         check_ajax_referer('royal_mcp_nonce', 'nonce');
 
-        if (!current_user_can('manage_options')) {
+        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- stateless outbound HTTP test only (no state mutation)
             wp_send_json_error(['message' => esc_html__('Unauthorized', 'royal-mcp')]);
         }
 
@@ -608,7 +608,7 @@ class Settings_Page {
     public function ajax_reset_oauth_state() {
         check_ajax_referer('royal_mcp_nonce', 'nonce');
 
-        if (!current_user_can('manage_options')) {
+        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- clears per-site OAuth tables only (wp_royal_mcp_oauth_* are per-site-prefixed; no network-scope state)
             wp_send_json_error(['message' => esc_html__('Unauthorized', 'royal-mcp')]);
         }
 
@@ -664,7 +664,7 @@ class Settings_Page {
     public function ajax_clear_oauth_field() {
         check_ajax_referer('royal_mcp_nonce', 'nonce');
 
-        if (!current_user_can('manage_options')) {
+        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- clears one field on per-site royal_mcp_settings option (no network-scope state)
             wp_send_json_error(['message' => esc_html__('Unauthorized', 'royal-mcp')]);
         }
 
@@ -718,7 +718,7 @@ class Settings_Page {
     public function ajax_revoke_all_sessions() {
         check_ajax_referer('royal_mcp_nonce', 'nonce');
 
-        if (!current_user_can('manage_options')) {
+        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- revokes per-site OAuth tokens only (wp_royal_mcp_oauth_tokens is per-site-prefixed)
             wp_send_json_error(['message' => esc_html__('Unauthorized', 'royal-mcp')]);
         }
 

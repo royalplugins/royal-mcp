@@ -94,7 +94,7 @@ class GuardPress {
 			throw new \Exception( 'GuardPress is not active' );
 		}
 
-		$guardpress = \GuardPress::get_instance();
+		$guardpress = \GuardPress::get_instance(); // audit:static-call-undefined-safe -- \GuardPress lives in a separate plugin; is_available() gate above confirms it's loaded before this call
 
 		switch ( $name ) {
 			case 'gp_get_security_status':
