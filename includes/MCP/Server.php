@@ -289,7 +289,10 @@ class Server {
      * @return string
      */
     public static function get_resource_metadata_url() {
-        $default = home_url( '/.well-known/oauth-protected-resource' );
+        // RFC 9728 §3.1 path-suffixed PRM for the endpoint URL this request
+        // actually hit. Strict clients reject a `resource` value that
+        // doesn't byte-match the URL they used to reach the server.
+        $default = home_url( '/.well-known/oauth-protected-resource' . \Royal_MCP\OAuth\Server::current_request_resource_path() );
         $filtered = apply_filters( 'royal_mcp_protected_resource_metadata_url', $default );
         return is_string( $filtered ) && $filtered !== '' ? $filtered : $default;
     }
@@ -306,7 +309,7 @@ class Server {
      * @return string
      */
     public static function get_resource_metadata_fallback_url() {
-        return home_url( '/wp-json/royal-mcp/v1/.well-known/oauth-protected-resource' );
+        return home_url( '/wp-json/royal-mcp/v1/.well-known/oauth-protected-resource' . \Royal_MCP\OAuth\Server::current_request_resource_path() );
     }
 
     /**

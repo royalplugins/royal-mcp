@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.5.5
+ * Version: 1.5.6
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -41,7 +41,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 }
 
 // Define plugin constants.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.5' );
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.6' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -530,15 +530,21 @@ class Royal_MCP_Plugin {
      * Register rewrite rules for OAuth endpoints at domain root.
      */
     public function register_oauth_rewrites() {
-        // RFC 9728 §3.1 path-suffixed PRM for the canonical /mcp endpoint.
-        // MUST come before the general oauth-protected-resource(/.*)?$ rule
-        // — WordPress evaluates rewrite rules in registration order and the
-        // general rule would otherwise match this path first and dispatch
-        // to the bare handler with the wrong `resource` field.
-        add_rewrite_rule( '\.well-known/oauth-protected-resource/wp-json/royal-mcp/v1/mcp/?$', 'index.php?royal_mcp_oauth=protected_resource_endpoint', 'top' );
-        add_rewrite_rule( '\.well-known/oauth-protected-resource(/.*)?$', 'index.php?royal_mcp_oauth=protected_resource', 'top' );
+        // RFC 9728 §3.1 path-suffixed PRM. Registered before the bare rule —
+        // WordPress evaluates rewrite rules in registration order.
+        // Any suffix is captured and validated against OAuth\Server::mcp_resource_paths()
+        // so every MCP alias (/mcp, /wp-json/royal-mcp/v1, /wp-json/royal-mcp/v1/mcp)
+        // gets a PRM whose `resource` equals that exact URL. Unknown suffixes 404
+        // instead of silently serving the site-root document.
+        add_rewrite_rule( '\.well-known/oauth-protected-resource/(.+?)/?$', 'index.php?royal_mcp_oauth=protected_resource_endpoint&royal_mcp_resource_path=$matches[1]', 'top' );
+        add_rewrite_rule( '\.well-known/oauth-protected-resource/?$', 'index.php?royal_mcp_oauth=protected_resource', 'top' );
         add_rewrite_rule( '\.well-known/oauth-authorization-server/mcp/?$', 'index.php?royal_mcp_oauth=metadata_mcp', 'top' );
         add_rewrite_rule( '\.well-known/oauth-authorization-server/?$', 'index.php?royal_mcp_oauth=metadata', 'top' );
+        // OIDC Discovery alias of the AS document — the SDK's fallback when the
+        // RFC 8414 path is intercepted by the host, and the only discoverable
+        // location on subdirectory installs. See OAuth\Server::build_openid_configuration().
+        add_rewrite_rule( '\.well-known/openid-configuration/?$', 'index.php?royal_mcp_oauth=metadata_oidc', 'top' );
+        add_rewrite_rule( '\.well-known/jwks\.json$', 'index.php?royal_mcp_oauth=jwks', 'top' );
         foreach ( self::get_oauth_rewrite_paths() as $action => $slug ) {
             $slug = ltrim( trim( (string) $slug ), '/' );
             if ( $slug === '' ) continue;
@@ -670,6 +676,7 @@ class Royal_MCP_Plugin {
     public function register_oauth_query_vars( $vars ) {
         $vars[] = 'royal_mcp_oauth';
         $vars[] = 'royal_mcp_endpoint';
+        $vars[] = 'royal_mcp_resource_path';
         return $vars;
     }
 
@@ -683,7 +690,7 @@ class Royal_MCP_Plugin {
 
         // Only handle OAuth if plugin is enabled (allow metadata always for discovery).
         $action = sanitize_text_field( $wp->query_vars['royal_mcp_oauth'] );
-        if ( 'metadata' !== $action ) {
+        if ( ! in_array( $action, [ 'metadata', 'metadata_mcp', 'metadata_oidc', 'jwks' ], true ) ) {
             $settings = get_option( 'royal_mcp_settings', [] );
             if ( empty( $settings['enabled'] ) ) {
                 status_header( 503 );
@@ -702,7 +709,7 @@ class Royal_MCP_Plugin {
         }
 
         $oauth_server = new Royal_MCP\OAuth\Server();
-        $oauth_server->dispatch( $action );
+        $oauth_server->dispatch( $action, (array) $wp->query_vars );
         // dispatch() calls exit, but just in case:
         exit;
     }
@@ -794,6 +801,17 @@ class Royal_MCP_Plugin {
             },
             'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
         ]);
+        register_rest_route('royal-mcp/v1', '/.well-known/openid-configuration', [
+            'methods'             => 'GET',
+            'callback'            => function () {
+                return new \WP_REST_Response(
+                    \Royal_MCP\OAuth\Server::build_openid_configuration(),
+                    200,
+                    [ 'Cache-Control' => 'public, max-age=3600' ]
+                );
+            },
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
+        ]);
         register_rest_route('royal-mcp/v1', '/.well-known/oauth-protected-resource', [
             'methods'             => 'GET',
             'callback'            => function () {
@@ -812,12 +830,20 @@ class Royal_MCP_Plugin {
         // resource=<canonical /wp-json/royal-mcp/v1/mcp URL>. Managed-host
         // coverage for strict RFC 8707 clients that can't reach the root
         // well-known prefix.
-        register_rest_route('royal-mcp/v1', '/.well-known/oauth-protected-resource/wp-json/royal-mcp/v1/mcp', [
+        register_rest_route('royal-mcp/v1', '/.well-known/oauth-protected-resource/(?P<resource_path>.+)', [
             'methods'             => 'GET',
-            'callback'            => function () {
-                $endpoint_url = home_url( '/wp-json/royal-mcp/v1/mcp' );
+            'callback'            => function ( $request ) {
+                $rel = \Royal_MCP\OAuth\Server::resolve_resource_path( (string) $request['resource_path'] );
+                if ( null === $rel ) {
+                    return new \WP_REST_Response(
+                        [ 'error' => 'not_found', 'error_description' => 'No protected resource metadata for that resource.' ],
+                        404
+                    );
+                }
                 return new \WP_REST_Response(
-                    \Royal_MCP\OAuth\Server::build_protected_resource_metadata_for_endpoint( $endpoint_url ),
+                    \Royal_MCP\OAuth\Server::build_protected_resource_metadata_for_endpoint(
+                        \Royal_MCP\OAuth\Server::canonical_resource_url( $rel )
+                    ),
                     200,
                     [ 'Cache-Control' => 'public, max-age=3600' ]
                 );

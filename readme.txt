@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.5.5
+Stable tag: 1.5.6
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -294,6 +294,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 10. Royal MCP tool list in ChatGPT after connection
 
 == Changelog ==
+
+= 1.5.6 =
+* Fix: OAuth connector compatibility across MCP clients.
 
 = 1.5.5 =
 * New: dry-run preview mode on high-blast option-write tools, a `wp_verify_rendered_page` tool for post-write confirmation, and a compact tool-discovery profile for context-limited AI clients.

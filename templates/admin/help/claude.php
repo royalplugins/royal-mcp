@@ -64,7 +64,7 @@ $royal_mcp_help_logs_url     = class_exists( '\\Royal_MCP_Pro\\Tool_Registry', f
 			<div class="royal-mcp-help-option-row">
 				<div class="royal-mcp-help-option-label"><?php esc_html_e( 'OAuth client', 'royal-mcp' ); ?></div>
 				<div class="royal-mcp-help-option-value"><?php esc_html_e( 'No client ID — register one automatically', 'royal-mcp' ); ?></div>
-				<div class="royal-mcp-help-option-note"><?php esc_html_e( 'Standard Dynamic Client Registration (DCR, RFC 7591) — the OAuth pattern Royal MCP has always supported. The other option, "Use Anthropic\'s hosted client metadata (Recommended)," is a newer pattern Claude silently falls back to DCR against Royal MCP anyway, so DCR is the clean choice today.', 'royal-mcp' ); ?></div>
+				<div class="royal-mcp-help-option-note"><?php esc_html_e( 'Either option works. "No client ID" uses Dynamic Client Registration (RFC 7591). "Use Anthropic\'s hosted client metadata (Recommended)" uses the Client ID Metadata Document pattern — recent Claude builds always take this path when the server advertises support, which Royal MCP does. Both complete the same OAuth handshake against Royal MCP.', 'royal-mcp' ); ?></div>
 			</div>
 
 			<div class="royal-mcp-help-option-row">
