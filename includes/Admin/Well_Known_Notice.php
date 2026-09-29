@@ -443,7 +443,14 @@ class Well_Known_Notice {
                 return 'mismatch';
             }
 
-            $issuer_ok = rtrim( $data['issuer'], '/' ) === $expected_issuer;
+            // The AS document now advertises an https:// issuer whenever the request
+            // arrived over TLS (see OAuth\Server::canonical_resource_url), so a site
+            // whose home_url() is still http:// must not be flagged as a mismatch.
+            $issuer_ok = in_array(
+                rtrim( $data['issuer'], '/' ),
+                [ $expected_issuer, set_url_scheme( $expected_issuer, 'https' ) ],
+                true
+            );
 
             // Stale-static detection: earlier layouts advertised REST-namespace
             // OAuth endpoints (/wp-json/royal-mcp/v1/authorize). Current code serves

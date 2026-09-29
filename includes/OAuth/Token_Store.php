@@ -18,6 +18,14 @@ class Token_Store {
     const REFRESH_TOKEN_TTL = 2592000;    // 30 days
     const AUTH_CODE_TTL     = 600;        // 10 minutes
 
+    /**
+     * How long a refresh token stays usable AFTER it has been rotated.
+     * Grace window covers concurrent refresh presentations from a single
+     * client so a rotation race doesn't force a re-consent. OAuth 2.1 §6.1
+     * permits a short reuse-interval for this purpose.
+     */
+    const REFRESH_GRACE_SECONDS = 60;
+
     /** Whitelist of access token TTL values selectable in Settings → OAuth. */
     const ACCESS_TOKEN_TTL_CHOICES = [ 3600, 28800, 86400, 604800 ];
 
@@ -132,6 +140,7 @@ class Token_Store {
             status varchar(20) DEFAULT 'active' NOT NULL,
             ip_address varchar(45) DEFAULT '' NOT NULL,
             user_agent varchar(255) DEFAULT '' NOT NULL,
+            last_authorized_at datetime DEFAULT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY  (id),
             UNIQUE KEY client_id (client_id(191)),
@@ -275,6 +284,19 @@ class Token_Store {
         self::store_token( $access_token, 'access', $client_id, $user_id, $scope, $access_ttl );
         self::store_token( $refresh_token, 'refresh', $client_id, $user_id, $scope, self::REFRESH_TOKEN_TTL );
 
+        // Mark the client as "has completed an authorization at least once" so
+        // gc_stale_clients() never removes a client whose tokens merely expired
+        // (an idle connector) — only clients that never finished a handshake.
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->update(
+            self::clients_table(),
+            [ 'last_authorized_at' => gmdate( 'Y-m-d H:i:s' ) ],
+            [ 'client_id' => $client_id ],
+            [ '%s' ],
+            [ '%s' ]
+        );
+
         return [
             'access_token'  => $access_token,
             'token_type'    => 'Bearer',
@@ -353,15 +375,22 @@ class Token_Store {
             return false;
         }
 
-        // Revoke the old refresh token (rotation).
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-        $wpdb->update(
-            $table,
-            [ 'revoked' => 1 ],
-            [ 'id' => $row['id'] ],
-            [ '%d' ],
-            [ '%d' ]
-        );
+        // Rotate: the presented refresh token stops being valid REFRESH_GRACE_SECONDS
+        // from now instead of immediately. A concurrent second presentation inside
+        // that window still succeeds (and mints its own fresh pair) rather than
+        // failing with invalid_grant and forcing a full re-consent. Never extend a
+        // token that is already closer to expiry than the grace window.
+        $grace_until = gmdate( 'Y-m-d H:i:s', time() + self::REFRESH_GRACE_SECONDS );
+        if ( (string) $row['expires_at'] > $grace_until ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $wpdb->update(
+                $table,
+                [ 'expires_at' => $grace_until ],
+                [ 'id' => $row['id'] ],
+                [ '%s' ],
+                [ '%d' ]
+            );
+        }
 
         return $row;
     }
@@ -483,6 +512,7 @@ class Token_Store {
                  FROM `{$clients_table}` c
                  LEFT JOIN `{$tokens_table}` t ON t.client_id = c.client_id
                  WHERE c.created_at < DATE_SUB(NOW(), INTERVAL %d DAY)
+                   AND c.last_authorized_at IS NULL
                    AND t.id IS NULL
                  GROUP BY c.client_id",
                 $ttl_days
@@ -568,7 +598,7 @@ class Token_Store {
         }
 
         $redirect_uris = isset( $data['redirect_uris'] ) && is_array( $data['redirect_uris'] )
-            ? array_map( 'sanitize_url', $data['redirect_uris'] )
+            ? array_map( [ self::class, 'sanitize_redirect_uri' ], $data['redirect_uris'] )
             : [];
 
         $client_name = isset( $data['client_name'] ) ? sanitize_text_field( $data['client_name'] ) : 'MCP Client';
@@ -844,7 +874,7 @@ class Token_Store {
             );
         }
 
-        $redirect_uris = array_map( 'sanitize_url', $metadata['redirect_uris'] );
+        $redirect_uris = array_map( [ self::class, 'sanitize_redirect_uri' ], $metadata['redirect_uris'] );
         $client_name   = isset( $metadata['client_name'] )
             ? sanitize_text_field( $metadata['client_name'] )
             : 'CIMD Client';
@@ -1019,23 +1049,16 @@ class Token_Store {
      * @return bool True if allowed.
      */
     public static function validate_redirect_uri( $redirect_uri, $client ) {
-        // Must be localhost (any port) or HTTPS.
-        $parsed = wp_parse_url( $redirect_uri );
-        if ( ! $parsed || empty( $parsed['scheme'] ) || empty( $parsed['host'] ) ) {
+        if ( ! self::is_acceptable_redirect_uri( $redirect_uri ) ) {
             return false;
         }
 
-        $is_localhost = in_array( $parsed['host'], [ 'localhost', '127.0.0.1', '::1' ], true );
-        if ( ! $is_localhost && 'https' !== $parsed['scheme'] ) {
-            return false;
-        }
-
-        // Static clients (from settings) accept any valid localhost/HTTPS URI.
+        // Static clients (from settings) accept any acceptable URI.
         if ( ! empty( $client['is_static'] ) ) {
             return true;
         }
 
-        // Dynamic clients: exact match against the registered list. An empty
+        // Dynamic / CIMD clients: match against the registered list. An empty
         // registered list denies — nothing to match against, and treating
         // that state as accept-anything defeats the point of the check.
         $registered = $client['redirect_uris'] ?? [];
@@ -1043,6 +1066,91 @@ class Token_Store {
             return false;
         }
 
-        return in_array( $redirect_uri, $registered, true );
+        foreach ( $registered as $candidate ) {
+            if ( self::redirect_uris_match( (string) $candidate, (string) $redirect_uri ) ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Loopback hosts per RFC 8252 §7.3 (plus `localhost`, common in native
+     * OAuth clients even though §8.3 discourages the hostname form).
+     */
+    public static function is_loopback_host( $host ) {
+        return in_array( strtolower( (string) $host ), [ 'localhost', '127.0.0.1', '[::1]', '::1' ], true );
+    }
+
+    /**
+     * Which redirect URIs this server is willing to deliver codes to:
+     *   - https://… with a host (hosted clients)
+     *   - http://  ONLY to a loopback host (RFC 8252 §7.3 native clients)
+     *   - a private-use app scheme (RFC 8252 §7.1) that isn't on the
+     *     dangerous-scheme blocklist
+     * Plain http:// to a real host is refused.
+     */
+    public static function is_acceptable_redirect_uri( $uri ) {
+        $parsed = wp_parse_url( (string) $uri );
+        if ( ! $parsed || empty( $parsed['scheme'] ) || ! empty( $parsed['user'] ) || ! empty( $parsed['pass'] ) ) {
+            return false;
+        }
+        $scheme = strtolower( $parsed['scheme'] );
+        $host   = isset( $parsed['host'] ) ? $parsed['host'] : '';
+
+        if ( 'https' === $scheme ) {
+            return '' !== $host;
+        }
+        if ( 'http' === $scheme ) {
+            return self::is_loopback_host( $host );
+        }
+        return ! in_array( $scheme, [ 'javascript', 'data', 'file', 'ftp', 'mailto', 'tel' ], true );
+    }
+
+    /**
+     * Compare a registered redirect URI with the one presented on /authorize.
+     *
+     * Exact string match (OAuth 2.1 §4.1.3) — except for loopback URIs, where
+     * RFC 8252 §7.3 REQUIRES the port to be ignored because native clients
+     * bind an ephemeral port per session and register a port-less entry.
+     * Scheme, host, path and query must still match.
+     */
+    public static function redirect_uris_match( $registered, $requested ) {
+        if ( $registered === $requested ) {
+            return true;
+        }
+        $r = wp_parse_url( $registered );
+        $q = wp_parse_url( $requested );
+        if ( ! $r || ! $q || empty( $r['host'] ) || empty( $q['host'] ) ) {
+            return false;
+        }
+        if ( ! self::is_loopback_host( $r['host'] ) || ! self::is_loopback_host( $q['host'] ) ) {
+            return false;
+        }
+        $norm = static function ( array $p ) {
+            $path = isset( $p['path'] ) ? rtrim( $p['path'], '/' ) : '';
+            return strtolower( $p['scheme'] ?? '' ) . '://' . strtolower( $p['host'] ) . $path
+                . ( isset( $p['query'] ) ? '?' . $p['query'] : '' );
+        };
+        return $norm( $r ) === $norm( $q );
+    }
+
+    /**
+     * Sanitize a redirect URI for storage. `sanitize_url()` blanks any URL
+     * whose scheme is not in wp_allowed_protocols(), which drops RFC 8252
+     * §7.1 private-use app schemes. Allow the URI's own scheme when it is
+     * otherwise acceptable.
+     */
+    public static function sanitize_redirect_uri( $uri ) {
+        $uri = trim( (string) $uri );
+        if ( '' === $uri || ! self::is_acceptable_redirect_uri( $uri ) ) {
+            return '';
+        }
+        $scheme    = strtolower( (string) wp_parse_url( $uri, PHP_URL_SCHEME ) );
+        $protocols = wp_allowed_protocols();
+        if ( '' !== $scheme && ! in_array( $scheme, $protocols, true ) ) {
+            $protocols[] = $scheme;
+        }
+        return esc_url_raw( $uri, $protocols );
     }
 }

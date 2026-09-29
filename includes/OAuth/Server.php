@@ -27,16 +27,24 @@ class Server {
     private $current_action = 'unknown';
 
     /**
+     * Query vars captured from the rewrite match, handed in by dispatch().
+     * get_query_var() is NOT usable here: handle_oauth_request() runs on
+     * parse_request, before WP_Query populates the global query vars.
+     */
+    private $query_vars = [];
+
+    /**
      * Dispatch an OAuth request based on the query var value.
      *
      * @param string $action The royal_mcp_oauth query var (metadata|authorize|token|register).
      */
-    public function dispatch( $action ) {
+    public function dispatch( $action, array $query_vars = [] ) {
         $this->current_action = $action;
+        $this->query_vars     = $query_vars;
         $request_method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'GET';
 
         // Set CORS headers for token and register endpoints (may be called cross-origin).
-        if ( in_array( $action, [ 'token', 'register', 'metadata', 'metadata_mcp', 'protected_resource', 'method_not_allowed' ], true ) ) {
+        if ( in_array( $action, [ 'token', 'register', 'metadata', 'metadata_mcp', 'metadata_oidc', 'jwks', 'protected_resource', 'protected_resource_endpoint', 'method_not_allowed' ], true ) ) {
             header( 'Access-Control-Allow-Origin: *' );
             header( 'Access-Control-Allow-Methods: GET, POST, OPTIONS' );
             header( 'Access-Control-Allow-Headers: Content-Type, Authorization' );
@@ -62,6 +70,14 @@ class Server {
 
             case 'metadata_mcp':
                 $this->metadata_mcp();
+                break;
+
+            case 'metadata_oidc':
+                $this->metadata_oidc();
+                break;
+
+            case 'jwks':
+                $this->jwks();
                 break;
 
             case 'register':
@@ -123,7 +139,7 @@ class Server {
      * @return array Protected Resource metadata document.
      */
     public static function build_protected_resource_metadata() {
-        $base = home_url();
+        $base = self::canonical_resource_url( '/' );
         return [
             'resource'                 => rtrim( $base, '/' ),
             'authorization_servers'    => [ $base ],
@@ -158,6 +174,89 @@ class Server {
         return $bare;
     }
 
+    /**
+     * Site-relative paths at which the MCP endpoint is reachable. Each one
+     * is a distinct RFC 8707 resource identifier once prefixed with the
+     * canonical scheme + host (see canonical_resource_url()). A client that
+     * connects to any of these must be handed a PRM whose `resource` names
+     * exactly that URL — strict RFC 8707 clients reject mismatches per
+     * RFC 9728 §3.3 (host, scheme, path, and trailing-slash all matter).
+     *
+     * @return string[]
+     */
+    public static function mcp_resource_paths() {
+        $paths = apply_filters( 'royal_mcp_resource_paths', [
+            '/wp-json/royal-mcp/v1/mcp',      // canonical — what the Help page tells users to paste
+            '/wp-json/royal-mcp/v1',          // namespace-root alias
+            '/wp-json/royal-mcp/v1/messages', // legacy alias
+            '/mcp',                           // root alias (Cloudflare WebMCP bridge default)
+        ] );
+        return array_values( array_filter( array_map( static function ( $p ) {
+            $p = '/' . trim( (string) $p, '/' );
+            return '/' === $p ? '' : $p;
+        }, (array) $paths ) ) );
+    }
+
+    /**
+     * Canonical RFC 8707 resource URL for a site-relative MCP endpoint path.
+     *
+     * Scheme is forced to https when the request arrived over TLS, so the
+     * discovery documents advertise the same origin the client actually
+     * reached. No trailing slash, per MCP spec guidance.
+     *
+     * @param string $rel_path e.g. '/wp-json/royal-mcp/v1/mcp'
+     * @return string
+     */
+    public static function canonical_resource_url( $rel_path ) {
+        $rel = '/' . trim( (string) $rel_path, '/' );
+        $url = home_url( $rel );
+        $forwarded = isset( $_SERVER['HTTP_X_FORWARDED_PROTO'] )
+            ? strtolower( sanitize_text_field( wp_unslash( $_SERVER['HTTP_X_FORWARDED_PROTO'] ) ) )
+            : '';
+        if ( is_ssl() || 'https' === $forwarded ) {
+            $url = set_url_scheme( $url, 'https' );
+        }
+        return rtrim( $url, '/' );
+    }
+
+    /**
+     * Map a path-suffix (the part after `/.well-known/oauth-protected-resource`)
+     * onto a known MCP endpoint path. Returns null for anything that is not
+     * an MCP endpoint so we never mint a PRM for an arbitrary URL.
+     *
+     * @param string $suffix
+     * @return string|null
+     */
+    public static function resolve_resource_path( $suffix ) {
+        $path = (string) wp_parse_url( '/' . ltrim( (string) $suffix, '/' ), PHP_URL_PATH );
+        $rel  = '/' . trim( $path, '/' );
+        return in_array( $rel, self::mcp_resource_paths(), true ) ? $rel : null;
+    }
+
+    /**
+     * Which MCP endpoint path the *current* request is hitting. Used by the
+     * 401 challenge so `resource_metadata` points at the PRM for the exact
+     * URL the client connected to. Falls back to the canonical wp-json path
+     * when the request URI cannot be classified (e.g. plain permalinks).
+     *
+     * @return string site-relative path, always one of mcp_resource_paths().
+     */
+    public static function current_request_resource_path() {
+        $path = isset( $_SERVER['REQUEST_URI'] )
+            ? (string) wp_parse_url( wp_unslash( $_SERVER['REQUEST_URI'] ), PHP_URL_PATH ) // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- compared against an allowlist only
+            : '';
+        $path = '/' . trim( $path, '/' );
+
+        // Subdirectory installs: strip the home path so aliases resolve.
+        $home_path = rtrim( (string) wp_parse_url( home_url(), PHP_URL_PATH ), '/' );
+        if ( '' !== $home_path && 0 === strpos( $path . '/', $home_path . '/' ) ) {
+            $path = '/' . trim( substr( $path, strlen( $home_path ) ), '/' );
+        }
+
+        $resolved = self::resolve_resource_path( $path );
+        return null !== $resolved ? $resolved : '/wp-json/royal-mcp/v1/mcp';
+    }
+
     private function protected_resource_metadata() {
         $this->json_response( self::build_protected_resource_metadata(), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
     }
@@ -173,9 +272,16 @@ class Server {
      * (mirrored under wp-json fallback for managed-host coverage).
      */
     private function protected_resource_metadata_endpoint() {
-        $endpoint_url = home_url( '/wp-json/royal-mcp/v1/mcp' );
+        $suffix = isset( $this->query_vars['royal_mcp_resource_path'] ) ? (string) $this->query_vars['royal_mcp_resource_path'] : '';
+        $rel    = self::resolve_resource_path( $suffix );
+        if ( null === $rel ) {
+            // RFC 9728: no metadata document exists for this resource. A 404
+            // (rather than the bare site-root document) keeps strict clients
+            // from reading a `resource` that does not match what they asked for.
+            $this->json_error( 'not_found', 'No protected resource metadata for that resource.', 404 );
+        }
         $this->json_response(
-            self::build_protected_resource_metadata_for_endpoint( $endpoint_url ),
+            self::build_protected_resource_metadata_for_endpoint( self::canonical_resource_url( $rel ) ),
             200,
             [ 'Cache-Control' => 'public, max-age=3600' ]
         );
@@ -198,7 +304,9 @@ class Server {
      * @return array The AS metadata document.
      */
     public static function build_authorization_server_metadata() {
-        $base     = home_url();
+        // Same https-aware canonical base as the PRM `resource` — discovery
+        // must match the origin the client used to reach the endpoint.
+        $base     = self::canonical_resource_url( '/' );
         $paths    = \Royal_MCP_Plugin::get_oauth_rewrite_paths();
         $slug_for = static function ( array $paths, $action ) {
             $slug = isset( $paths[ $action ] ) ? ltrim( trim( (string) $paths[ $action ] ), '/' ) : $action;
@@ -241,8 +349,40 @@ class Server {
         $metadata = self::build_authorization_server_metadata();
         // Same resource identifier as protected_resource_metadata — canonical
         // /mcp alias URL so both discovery paths agree on the resource URL.
-        $metadata['resource'] = home_url() . '/mcp';
+        $metadata['resource'] = self::canonical_resource_url( '/mcp' );
         $this->json_response( $metadata, 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+    }
+
+    /**
+     * OpenID Connect Discovery 1.0 shape of the same document.
+     *
+     * MCP SDK-based clients probe, in order:
+     * /.well-known/oauth-authorization-server[/path],
+     * /.well-known/openid-configuration[/path], then
+     * [/path]/.well-known/openid-configuration. On a subdirectory WordPress
+     * install only the last is under WordPress at all, and on hosts that
+     * intercept oauth-authorization-server the second is the only fallback.
+     * Clients validate this variant against the OIDC schema, so the extra
+     * required OIDC fields are present (with an empty JWKS — no ID tokens
+     * are issued).
+     */
+    public static function build_openid_configuration() {
+        $metadata = self::build_authorization_server_metadata();
+        $base     = $metadata['issuer'];
+        return $metadata + [
+            'jwks_uri'                              => $base . '/.well-known/jwks.json',
+            'subject_types_supported'               => [ 'public' ],
+            'id_token_signing_alg_values_supported' => [ 'RS256' ],
+            'response_modes_supported'              => [ 'query' ],
+        ];
+    }
+
+    private function metadata_oidc() {
+        $this->json_response( self::build_openid_configuration(), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+    }
+
+    private function jwks() {
+        $this->json_response( [ 'keys' => [] ], 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
     }
 
     /* ------------------------------------------------------------------
@@ -279,7 +419,7 @@ class Server {
         }
         foreach ( $redirect_uris as $uri ) {
             if ( ! $this->is_valid_redirect_uri( $uri ) ) {
-                $this->json_error( 'invalid_redirect_uri', 'Redirect URIs must be localhost or HTTPS.', 400 );
+                $this->json_error( 'invalid_redirect_uri', 'Redirect URIs must be HTTPS, an http:// loopback address, or a private-use app scheme.', 400 );
             }
         }
 
@@ -885,16 +1025,12 @@ class Server {
     }
 
     /**
-     * Validate a redirect URI (must be localhost or HTTPS).
+     * Validate a redirect URI: HTTPS, http:// loopback, or a private-use app
+     * scheme (RFC 8252). Shared with Token_Store so /register and /authorize
+     * agree on what is acceptable.
      */
     private function is_valid_redirect_uri( $uri ) {
-        $parsed = wp_parse_url( $uri );
-        if ( ! $parsed || empty( $parsed['scheme'] ) || empty( $parsed['host'] ) ) {
-            return false;
-        }
-
-        $is_localhost = in_array( $parsed['host'], [ 'localhost', '127.0.0.1', '::1' ], true );
-        return $is_localhost || 'https' === $parsed['scheme'];
+        return Token_Store::is_acceptable_redirect_uri( $uri );
     }
 
     /**
