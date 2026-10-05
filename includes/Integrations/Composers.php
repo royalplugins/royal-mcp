@@ -280,26 +280,12 @@ class Composers {
 	}
 
 	/**
-	 * Auto-detect the active SEO plugin. Mirrors the detection order in
-	 * Server::detect_seo_plugin so both surfaces agree on which plugin
-	 * "owns" the SEO meta writes.
+	 * The SEO plugin that owns SEO meta writes (same answer as every other tool).
 	 *
-	 * @return string 'yoast' | 'rankmath' | 'aioseo' | 'seobolt' | 'none'
+	 * @return string 'seobolt' | 'yoast' | 'rankmath' | 'seopress' | 'aioseo' | 'none'
 	 */
 	private static function detect_seo_plugin() {
-		if ( defined( 'WPSEO_VERSION' ) || class_exists( 'WPSEO_Options' ) ) {
-			return 'yoast';
-		}
-		if ( defined( 'RANK_MATH_VERSION' ) || class_exists( 'RankMath' ) ) {
-			return 'rankmath';
-		}
-		if ( defined( 'AIOSEO_VERSION' ) || function_exists( 'aioseo' ) ) {
-			return 'aioseo';
-		}
-		if ( defined( 'SEOBOLT_VERSION' ) ) {
-			return 'seobolt';
-		}
-		return 'none';
+		return \Royal_MCP\MCP\Support\Seo_Plugin::detect();
 	}
 
 	/**
@@ -337,9 +323,16 @@ class Composers {
 				break;
 			case 'seobolt':
 				$map = [
-					'title'         => '_seobolt_title',
-					'description'   => '_seobolt_description',
+					'title'         => '_seobolt_meta_title',
+					'description'   => '_seobolt_meta_description',
 					'focus_keyword' => '_seobolt_focus_keyword',
+				];
+				break;
+			case 'seopress':
+				$map = [
+					'title'         => '_seopress_titles_title',
+					'description'   => '_seopress_titles_desc',
+					'focus_keyword' => '_seopress_analysis_target_kw',
 				];
 				break;
 			case 'aioseo':

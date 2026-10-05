@@ -221,30 +221,16 @@
     color: #fff;
 }
 
-/* Slide 1 confetti circle + Slide 4 R mark */
-.rmcp-wn-circle.is-confetti {
-    background: #2C2C2C;
+/* Dark-backed circle for the royal-shield.png. Hex #2B2D42 matches the PNG's
+   authored background exactly per portfolio brand token. */
+.rmcp-wn-circle.is-dark {
+    background: #2B2D42;
+    border-color: #2B2D42;
 }
-.rmcp-wn-circle.is-confetti img {
+.rmcp-wn-circle.is-dark img {
     max-width: 65%;
     max-height: 65%;
     border-radius: 12px;
-}
-.rmcp-wn-confetti-piece {
-    position: absolute;
-    width: 8px;
-    height: 12px;
-    top: -20px;
-    opacity: 0;
-    animation: rmcp-wn-fall 3s linear infinite;
-    pointer-events: none;
-    z-index: 2;
-}
-@keyframes rmcp-wn-fall {
-    0%   { opacity: 0; transform: translate(0, -20px) rotate(0deg); }
-    10%  { opacity: 1; }
-    90%  { opacity: 1; }
-    100% { opacity: 0; transform: translate(var(--drift, 0px), 260px) rotate(var(--spin, 720deg)); }
 }
 
 .rmcp-wn-mark {

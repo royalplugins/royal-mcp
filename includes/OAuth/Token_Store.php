@@ -463,7 +463,11 @@ class Token_Store {
         if ( is_array( $settings ) && ( ! empty( $settings['oauth_client_id'] ) || ! empty( $settings['oauth_client_secret'] ) ) ) {
             $settings['oauth_client_id']     = '';
             $settings['oauth_client_secret'] = '';
-            update_option( 'royal_mcp_settings', $settings );
+            if ( class_exists( '\\Royal_MCP\\Admin\\Settings_Page' ) ) {
+                \Royal_MCP\Admin\Settings_Page::save_programmatically( $settings );
+            } else {
+                update_option( 'royal_mcp_settings', $settings );
+            }
             $static_creds_cleared = 1;
         }
 

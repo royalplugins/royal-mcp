@@ -140,8 +140,25 @@ class Server {
      */
     public static function build_protected_resource_metadata() {
         $base = self::canonical_resource_url( '/' );
+        /**
+         * Which resource identifier the ROOT protected-resource document names.
+         *
+         *   'endpoint'  (default) — the canonical MCP endpoint URL. This is what
+         *                OAuth clients compare against the server URL the user
+         *                pasted; a mismatch is fatal ("invalid_target").
+         *   'site-root' — the bare site origin. Only useful for agent-readiness
+         *                scanners that fetch the root document and expect the
+         *                origin; OAuth clients that read the root document then
+         *                fail discovery. Opt in via this filter if you need it.
+         *
+         * @param string $mode 'endpoint' or 'site-root'.
+         */
+        $mode     = apply_filters( 'royal_mcp_prm_root_resource', 'endpoint' );
+        $resource = 'site-root' === $mode
+            ? rtrim( $base, '/' )
+            : self::canonical_resource_url( self::default_resource_path() );
         return [
-            'resource'                 => rtrim( $base, '/' ),
+            'resource'                 => $resource,
             'authorization_servers'    => [ $base ],
             'bearer_methods_supported' => [ 'header' ],
             'scopes_supported'         => [ 'mcp:full' ],
@@ -220,6 +237,35 @@ class Server {
     }
 
     /**
+     * The canonical MCP endpoint path — the one the Help page tells users to
+     * paste and the one every discovery document falls back to.
+     */
+    public static function default_resource_path() {
+        $paths = self::mcp_resource_paths();
+        return isset( $paths[0] ) ? $paths[0] : '/wp-json/royal-mcp/v1/mcp';
+    }
+
+    /**
+     * Extract the path-suffix that follows `/.well-known/oauth-protected-resource`
+     * in the CURRENT request URI. Rewrite-cache independent: works whether the
+     * request was routed by the current generic rule (which sets the
+     * royal_mcp_resource_path query var), by an older cached rule that does
+     * not, or by the bare rule swallowing a suffixed URL. Returns '' when the
+     * request has no suffix.
+     */
+    public static function request_uri_resource_suffix() {
+        $path = isset( $_SERVER['REQUEST_URI'] )
+            ? (string) wp_parse_url( wp_unslash( $_SERVER['REQUEST_URI'] ), PHP_URL_PATH ) // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- compared against an allowlist only
+            : '';
+        $marker = '/.well-known/oauth-protected-resource';
+        $pos    = strpos( $path, $marker );
+        if ( false === $pos ) {
+            return '';
+        }
+        return trim( substr( $path, $pos + strlen( $marker ) ), '/' );
+    }
+
+    /**
      * Map a path-suffix (the part after `/.well-known/oauth-protected-resource`)
      * onto a known MCP endpoint path. Returns null for anything that is not
      * an MCP endpoint so we never mint a PRM for an arbitrary URL.
@@ -258,7 +304,16 @@ class Server {
     }
 
     private function protected_resource_metadata() {
-        $this->json_response( self::build_protected_resource_metadata(), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+        // A stale rewrite cache can route a path-suffixed URL here. Honour the
+        // suffix if it names a known endpoint instead of serving the root doc.
+        $rel = self::resolve_resource_path( self::request_uri_resource_suffix() );
+        if ( null !== $rel ) {
+            $doc = self::build_protected_resource_metadata_for_endpoint( self::canonical_resource_url( $rel ) );
+        } else {
+            $doc = self::build_protected_resource_metadata();
+        }
+        $this->log_event( 'prm_served', 'resource=' . $doc['resource'], 200, 'success' );
+        $this->json_response( $doc, 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
     }
 
     /**
@@ -272,19 +327,22 @@ class Server {
      * (mirrored under wp-json fallback for managed-host coverage).
      */
     private function protected_resource_metadata_endpoint() {
-        $suffix = isset( $this->query_vars['royal_mcp_resource_path'] ) ? (string) $this->query_vars['royal_mcp_resource_path'] : '';
-        $rel    = self::resolve_resource_path( $suffix );
+        // Prefer the suffix visible in the request URI (rewrite-cache
+        // independent); fall back to the query var the generic rule sets.
+        $rel = self::resolve_resource_path( self::request_uri_resource_suffix() );
+        if ( null === $rel ) {
+            $suffix = isset( $this->query_vars['royal_mcp_resource_path'] ) ? (string) $this->query_vars['royal_mcp_resource_path'] : '';
+            $rel    = self::resolve_resource_path( $suffix );
+        }
         if ( null === $rel ) {
             // RFC 9728: no metadata document exists for this resource. A 404
             // (rather than the bare site-root document) keeps strict clients
             // from reading a `resource` that does not match what they asked for.
             $this->json_error( 'not_found', 'No protected resource metadata for that resource.', 404 );
         }
-        $this->json_response(
-            self::build_protected_resource_metadata_for_endpoint( self::canonical_resource_url( $rel ) ),
-            200,
-            [ 'Cache-Control' => 'public, max-age=3600' ]
-        );
+        $doc = self::build_protected_resource_metadata_for_endpoint( self::canonical_resource_url( $rel ) );
+        $this->log_event( 'prm_served', 'resource=' . $doc['resource'], 200, 'success' );
+        $this->json_response( $doc, 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
     }
 
     /* ------------------------------------------------------------------
@@ -535,6 +593,10 @@ class Server {
         $code_challenge_method = isset( $_GET['code_challenge_method'] ) ? sanitize_text_field( wp_unslash( $_GET['code_challenge_method'] ) ) : '';
         $state                 = isset( $_GET['state'] ) ? sanitize_text_field( wp_unslash( $_GET['state'] ) ) : '';
         $scope                 = isset( $_GET['scope'] ) ? sanitize_text_field( wp_unslash( $_GET['scope'] ) ) : 'mcp:full';
+        $resource_indicator    = isset( $_GET['resource'] ) ? esc_url_raw( wp_unslash( $_GET['resource'] ) ) : '';
+        if ( '' !== $resource_indicator ) {
+            $this->log_event( 'resource_indicator', 'authorize resource=' . $resource_indicator, 200, 'success' );
+        }
 
         // Resolve URL-shaped client_ids against their metadata document before
         // the standard lookup. Non-URL client_ids short-circuit to null so this
@@ -803,9 +865,10 @@ class Server {
         $tokens = Token_Store::create_token_pair( $client_id, $code_data['user_id'], $code_data['scope'] ?? '' );
 
         // Include resource indicator if client sent one (RFC 8707).
-        $resource = isset( $_POST['resource'] ) ? sanitize_text_field( wp_unslash( $_POST['resource'] ) ) : '';
+        $resource = isset( $_POST['resource'] ) ? esc_url_raw( wp_unslash( $_POST['resource'] ) ) : '';
         if ( ! empty( $resource ) ) {
             $tokens['resource'] = $resource;
+            $this->log_event( 'resource_indicator', 'token resource=' . $resource, 200, 'success' );
         }
 
         $this->log_event( 'token_issued', 'Access + refresh tokens issued via authorization_code grant.', 200, 'success' );

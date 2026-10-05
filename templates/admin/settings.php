@@ -112,7 +112,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                           class="large-text code"
                                           placeholder="my_plugin_settings&#10;another_option_key&#10;rank-math-options-general"><?php echo esc_textarea($wo_admin_str); ?></textarea>
                                 <p class="description">
-                                    <?php esc_html_e('One option name per line. Requires the master toggle above to be on. Each line is normalized via sanitize_key() and merged with the defaults + the royal_mcp_writable_options filter. Sensitive keys (siteurl, credentials, license keys, etc.) remain permanently denylisted regardless of what appears here.', 'royal-mcp'); ?>
+                                    <?php esc_html_e('One option name per line. Options listed here become readable by wp_get_option AND writable by wp_update_option. Requires the master toggle above to be on. Each line is normalized via sanitize_key() and merged with the defaults + the royal_mcp_readable_options / royal_mcp_writable_options filters. Sensitive keys (siteurl, credentials, license keys, etc.) remain permanently denylisted regardless of what appears here.', 'royal-mcp'); ?>
                                 </p>
                             </td>
                         </tr>

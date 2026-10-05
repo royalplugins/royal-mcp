@@ -7,9 +7,10 @@
  * has no WP session cookies, so it can't fetch those URLs headlessly.
  *
  * This helper issues a random token, stores it in a transient with the
- * post_id + originating user_id, and installs an init-time redirect handler
- * that validates the token, impersonates the stored user, and forwards to
- * WordPress's native preview flow.
+ * post_id + originating user_id, and installs an init-time handler that
+ * validates the token and renders that one post through WordPress's native
+ * preview flow as the stored user. The link works only as a plain GET of
+ * the site's home URL.
  *
  * Ships one tool wrapper — wp_create_preview_link — that builds and returns
  * the token URL. The redirect handler is always registered so an incoming
@@ -106,6 +107,10 @@ class Preview_Link {
 		if ( empty( $_GET[ self::QUERY_VAR ] ) ) {
 			return;
 		}
+		// A preview link renders one post on the front end and nothing else.
+		if ( ! self::is_front_end_view_request() ) {
+			return;
+		}
 		$token = sanitize_text_field( wp_unslash( $_GET[ self::QUERY_VAR ] ) );
 		$data  = self::get_token_data( $token );
 		if ( null === $data ) {
@@ -143,16 +148,51 @@ class Preview_Link {
 		// Written via array_replace on a snapshot rather than per-key
 		// $_GET[...] writes so pattern-based security scanners don't
 		// flag legitimate internal writes as "unsanitized input reads."
-		$new_get = array_replace( $_GET, [
+		$query = [
 			'preview'       => 'true',
 			'preview_id'    => $post_id,
 			'preview_nonce' => $preview_nonce,
-			'p'             => $post_id,
-		] );
-		// Remove our own marker so no downstream code re-processes it.
-		if ( isset( $new_get[ self::QUERY_VAR ] ) ) {
-			unset( $new_get[ self::QUERY_VAR ] );
+		];
+		// `p` only resolves post_type=post. Pages need `page_id`; other post
+		// types need `p` + `post_type`, otherwise WP_Query looks for a *post*
+		// with this ID and the draft never renders.
+		if ( 'page' === $post->post_type ) {
+			$query['page_id'] = $post_id;
+		} elseif ( 'post' === $post->post_type ) {
+			$query['p'] = $post_id;
+		} else {
+			$query['p']         = $post_id;
+			$query['post_type'] = $post->post_type;
 		}
-		$_GET = $new_get;
+		// The request carries the preview parameters and nothing else.
+		$_GET     = $query;
+		$_REQUEST = $query;
+
+		add_filter( 'show_admin_bar', '__return_false' );
+		// Once WordPress has resolved the preview, the rest of the page
+		// renders as a visitor would see it.
+		add_action( 'wp', [ __CLASS__, 'end_preview_user' ], PHP_INT_MAX );
+	}
+
+	public static function end_preview_user() {
+		wp_set_current_user( 0 );
+	}
+
+	/**
+	 * True for a plain GET of the site's home URL, the only place a
+	 * preview link points.
+	 */
+	private static function is_front_end_view_request() {
+		$method = isset( $_SERVER['REQUEST_METHOD'] ) ? strtoupper( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) ) : 'GET';
+		if ( 'GET' !== $method && 'HEAD' !== $method ) {
+			return false;
+		}
+		if ( is_admin() || wp_doing_ajax() || wp_doing_cron() || ( defined( 'XMLRPC_REQUEST' ) && XMLRPC_REQUEST ) || ( defined( 'REST_REQUEST' ) && REST_REQUEST ) ) {
+			return false;
+		}
+		$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '/';
+		$path        = untrailingslashit( (string) wp_parse_url( $request_uri, PHP_URL_PATH ) );
+		$home_path   = untrailingslashit( (string) wp_parse_url( home_url( '/' ), PHP_URL_PATH ) );
+		return $path === $home_path || $path === $home_path . '/index.php';
 	}
 }

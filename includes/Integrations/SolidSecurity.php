@@ -39,7 +39,7 @@ class SolidSecurity {
 			],
 			[
 				'name'        => 'solid_list_events',
-				'description' => 'Read the Solid Security event log. Returns event id, module, code, type, severity, IP address, timestamp (legacy + ISO 8601), and stored event data. Supports pagination and filtering by event type or severity.',
+				'description' => 'Read the Solid Security event log. Returns event id, module, code, type, severity, IP address, timestamp (legacy + ISO 8601), and stored event data. Supports pagination and filtering by event type.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [

@@ -9,6 +9,22 @@ if (!defined('ABSPATH')) {
 
 class Settings_Page {
 
+    /** True only while save_programmatically() is saving. */
+    private static $programmatic_save = false;
+
+    /**
+     * Save settings from our own code, keeping the stored values as they are.
+     * The settings form keeps going through sanitize_settings().
+     */
+    public static function save_programmatically( array $settings ) {
+        self::$programmatic_save = true;
+        try {
+            return update_option( 'royal_mcp_settings', $settings );
+        } finally {
+            self::$programmatic_save = false;
+        }
+    }
+
     public function __construct() {
         add_action('admin_menu', [$this, 'add_menu_page']);
         add_action('admin_init', [$this, 'register_settings']);
@@ -16,7 +32,6 @@ class Settings_Page {
         add_action('admin_init', [$this, 'maybe_dismiss_review_banner']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_scripts']);
         add_filter('admin_footer_text', [$this, 'admin_footer_text']);
-        add_filter('royal_mcp_writable_options', [__CLASS__, 'admin_writable_options']);
 
         // AJAX handlers
         add_action('wp_ajax_royal_mcp_test_connection', [$this, 'ajax_test_connection']);
@@ -283,6 +298,15 @@ class Settings_Page {
     public function sanitize_settings($input) {
         $sanitized = [];
         $settings = get_option('royal_mcp_settings', []);
+
+        // Our own code (Reset OAuth state, Clear field) saves the stored
+        // settings array through save_programmatically(); this form sanitizer
+        // would read that as an empty form — wiping the admin option
+        // allowlist, turning Abilities off and keeping the credentials it
+        // meant to clear. Every other save is treated as a form post.
+        if ( self::$programmatic_save ) {
+            return is_array( $input ) ? $input : $settings;
+        }
 
         $sanitized['enabled'] = isset($input['enabled']) ? (bool) $input['enabled'] : false;
         $sanitized['allow_option_writes'] = isset($input['allow_option_writes']) ? (bool) $input['allow_option_writes'] : false;
@@ -679,31 +703,12 @@ class Settings_Page {
             $settings = [];
         }
         $settings[$field] = '';
-        update_option('royal_mcp_settings', $settings);
+        self::save_programmatically($settings);
 
         wp_send_json_success([
             'field'   => $field,
             'message' => esc_html__('Field cleared. Save your settings to confirm.', 'royal-mcp'),
         ]);
-    }
-
-    /**
-     * Merge admin-picked writable option keys into the royal_mcp_writable_options
-     * filter chain. Runs at default priority; developer-registered callbacks at
-     * higher priority still get final say. The Server::is_denylisted_option check
-     * runs AFTER this filter, so entries here can never escape the denylist.
-     *
-     * @param array $opts Options passed through from earlier filter callbacks.
-     * @return array Merged option-name list.
-     */
-    public static function admin_writable_options($opts) {
-        if (!is_array($opts)) { $opts = []; }
-        $settings = get_option('royal_mcp_settings', []);
-        if (!is_array($settings) || empty($settings['writable_options_admin'])
-            || !is_array($settings['writable_options_admin'])) {
-            return $opts;
-        }
-        return array_values(array_unique(array_merge($opts, $settings['writable_options_admin'])));
     }
 
     /**
