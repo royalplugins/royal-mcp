@@ -44,7 +44,7 @@ class Server {
         $request_method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'GET';
 
         // Set CORS headers for token and register endpoints (may be called cross-origin).
-        if ( in_array( $action, [ 'token', 'register', 'metadata', 'metadata_mcp', 'metadata_oidc', 'jwks', 'protected_resource', 'protected_resource_endpoint', 'method_not_allowed' ], true ) ) {
+        if ( in_array( $action, [ 'token', 'revoke', 'register', 'metadata', 'metadata_mcp', 'metadata_oidc', 'jwks', 'protected_resource', 'protected_resource_endpoint', 'method_not_allowed' ], true ) ) {
             header( 'Access-Control-Allow-Origin: *' );
             header( 'Access-Control-Allow-Methods: GET, POST, OPTIONS' );
             header( 'Access-Control-Allow-Headers: Content-Type, Authorization' );
@@ -96,6 +96,10 @@ class Server {
                 $this->token( $request_method );
                 break;
 
+            case 'revoke':
+                $this->revoke( $request_method );
+                break;
+
             case 'method_not_allowed':
                 $this->method_not_allowed();
                 break;
@@ -140,8 +144,25 @@ class Server {
      */
     public static function build_protected_resource_metadata() {
         $base = self::canonical_resource_url( '/' );
+        /**
+         * Which resource identifier the ROOT protected-resource document names.
+         *
+         *   'endpoint'  (default) — the canonical MCP endpoint URL. This is what
+         *                OAuth clients compare against the server URL the user
+         *                pasted; a mismatch is fatal ("invalid_target").
+         *   'site-root' — the bare site origin. Only useful for agent-readiness
+         *                scanners that fetch the root document and expect the
+         *                origin; OAuth clients that read the root document then
+         *                fail discovery. Opt in via this filter if you need it.
+         *
+         * @param string $mode 'endpoint' or 'site-root'.
+         */
+        $mode     = apply_filters( 'royal_mcp_prm_root_resource', 'endpoint' );
+        $resource = 'site-root' === $mode
+            ? rtrim( $base, '/' )
+            : self::canonical_resource_url( self::default_resource_path() );
         return [
-            'resource'                 => rtrim( $base, '/' ),
+            'resource'                 => $resource,
             'authorization_servers'    => [ $base ],
             'bearer_methods_supported' => [ 'header' ],
             'scopes_supported'         => [ 'mcp:full' ],
@@ -220,6 +241,35 @@ class Server {
     }
 
     /**
+     * The canonical MCP endpoint path — the one the Help page tells users to
+     * paste and the one every discovery document falls back to.
+     */
+    public static function default_resource_path() {
+        $paths = self::mcp_resource_paths();
+        return isset( $paths[0] ) ? $paths[0] : '/wp-json/royal-mcp/v1/mcp';
+    }
+
+    /**
+     * Extract the path-suffix that follows `/.well-known/oauth-protected-resource`
+     * in the CURRENT request URI. Rewrite-cache independent: works whether the
+     * request was routed by the current generic rule (which sets the
+     * royal_mcp_resource_path query var), by an older cached rule that does
+     * not, or by the bare rule swallowing a suffixed URL. Returns '' when the
+     * request has no suffix.
+     */
+    public static function request_uri_resource_suffix() {
+        $path = isset( $_SERVER['REQUEST_URI'] )
+            ? (string) wp_parse_url( wp_unslash( $_SERVER['REQUEST_URI'] ), PHP_URL_PATH ) // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- compared against an allowlist only
+            : '';
+        $marker = '/.well-known/oauth-protected-resource';
+        $pos    = strpos( $path, $marker );
+        if ( false === $pos ) {
+            return '';
+        }
+        return trim( substr( $path, $pos + strlen( $marker ) ), '/' );
+    }
+
+    /**
      * Map a path-suffix (the part after `/.well-known/oauth-protected-resource`)
      * onto a known MCP endpoint path. Returns null for anything that is not
      * an MCP endpoint so we never mint a PRM for an arbitrary URL.
@@ -258,7 +308,16 @@ class Server {
     }
 
     private function protected_resource_metadata() {
-        $this->json_response( self::build_protected_resource_metadata(), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+        // A stale rewrite cache can route a path-suffixed URL here. Honour the
+        // suffix if it names a known endpoint instead of serving the root doc.
+        $rel = self::resolve_resource_path( self::request_uri_resource_suffix() );
+        if ( null !== $rel ) {
+            $doc = self::build_protected_resource_metadata_for_endpoint( self::canonical_resource_url( $rel ) );
+        } else {
+            $doc = self::build_protected_resource_metadata();
+        }
+        $this->log_event( 'prm_served', 'resource=' . $doc['resource'], 200, 'success' );
+        $this->json_response( $doc, 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
     }
 
     /**
@@ -272,19 +331,22 @@ class Server {
      * (mirrored under wp-json fallback for managed-host coverage).
      */
     private function protected_resource_metadata_endpoint() {
-        $suffix = isset( $this->query_vars['royal_mcp_resource_path'] ) ? (string) $this->query_vars['royal_mcp_resource_path'] : '';
-        $rel    = self::resolve_resource_path( $suffix );
+        // Prefer the suffix visible in the request URI (rewrite-cache
+        // independent); fall back to the query var the generic rule sets.
+        $rel = self::resolve_resource_path( self::request_uri_resource_suffix() );
+        if ( null === $rel ) {
+            $suffix = isset( $this->query_vars['royal_mcp_resource_path'] ) ? (string) $this->query_vars['royal_mcp_resource_path'] : '';
+            $rel    = self::resolve_resource_path( $suffix );
+        }
         if ( null === $rel ) {
             // RFC 9728: no metadata document exists for this resource. A 404
             // (rather than the bare site-root document) keeps strict clients
             // from reading a `resource` that does not match what they asked for.
             $this->json_error( 'not_found', 'No protected resource metadata for that resource.', 404 );
         }
-        $this->json_response(
-            self::build_protected_resource_metadata_for_endpoint( self::canonical_resource_url( $rel ) ),
-            200,
-            [ 'Cache-Control' => 'public, max-age=3600' ]
-        );
+        $doc = self::build_protected_resource_metadata_for_endpoint( self::canonical_resource_url( $rel ) );
+        $this->log_event( 'prm_served', 'resource=' . $doc['resource'], 200, 'success' );
+        $this->json_response( $doc, 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
     }
 
     /* ------------------------------------------------------------------
@@ -313,7 +375,7 @@ class Server {
             return $slug === '' ? $action : $slug;
         };
 
-        return [
+        $metadata = [
             'issuer'                                => $base,
             'authorization_endpoint'                => $base . '/' . $slug_for( $paths, 'authorize' ),
             'token_endpoint'                        => $base . '/' . $slug_for( $paths, 'token' ),
@@ -330,6 +392,17 @@ class Server {
             // dynamic-registration only.
             'client_id_metadata_document_supported' => (bool) apply_filters( 'royal_mcp_cimd_enabled', true ),
         ];
+
+        // Advertised only when the site can route it: the path has to be in
+        // the path list and in the rewrite rules WordPress has stored, which
+        // are rebuilt on the first admin page load after an update.
+        $revoke_slug = isset( $paths['revoke'] ) ? ltrim( trim( (string) $paths['revoke'] ), '/' ) : '';
+        if ( '' !== $revoke_slug && \Royal_MCP_Plugin::has_oauth_rewrite_rule( 'revoke' ) ) {
+            $metadata['revocation_endpoint']                       = $base . '/' . $revoke_slug;
+            $metadata['revocation_endpoint_auth_methods_supported'] = [ 'none', 'client_secret_post' ];
+        }
+
+        return $metadata;
     }
 
     private function metadata() {
@@ -535,6 +608,10 @@ class Server {
         $code_challenge_method = isset( $_GET['code_challenge_method'] ) ? sanitize_text_field( wp_unslash( $_GET['code_challenge_method'] ) ) : '';
         $state                 = isset( $_GET['state'] ) ? sanitize_text_field( wp_unslash( $_GET['state'] ) ) : '';
         $scope                 = isset( $_GET['scope'] ) ? sanitize_text_field( wp_unslash( $_GET['scope'] ) ) : 'mcp:full';
+        $resource_indicator    = isset( $_GET['resource'] ) ? esc_url_raw( wp_unslash( $_GET['resource'] ) ) : '';
+        if ( '' !== $resource_indicator ) {
+            $this->log_event( 'resource_indicator', 'authorize resource=' . $resource_indicator, 200, 'success' );
+        }
 
         // Resolve URL-shaped client_ids against their metadata document before
         // the standard lookup. Non-URL client_ids short-circuit to null so this
@@ -803,9 +880,10 @@ class Server {
         $tokens = Token_Store::create_token_pair( $client_id, $code_data['user_id'], $code_data['scope'] ?? '' );
 
         // Include resource indicator if client sent one (RFC 8707).
-        $resource = isset( $_POST['resource'] ) ? sanitize_text_field( wp_unslash( $_POST['resource'] ) ) : '';
+        $resource = isset( $_POST['resource'] ) ? esc_url_raw( wp_unslash( $_POST['resource'] ) ) : '';
         if ( ! empty( $resource ) ) {
             $tokens['resource'] = $resource;
+            $this->log_event( 'resource_indicator', 'token resource=' . $resource, 200, 'success' );
         }
 
         $this->log_event( 'token_issued', 'Access + refresh tokens issued via authorization_code grant.', 200, 'success' );
@@ -854,6 +932,58 @@ class Server {
         $this->log_event( 'token_refreshed', 'Access + refresh tokens rotated via refresh_token grant.', 200, 'success' );
 
         $this->json_response( $tokens, 200, [ 'Cache-Control' => 'no-store', 'Pragma' => 'no-cache' ] );
+        // phpcs:enable WordPress.Security.NonceVerification.Missing
+    }
+
+    /* ------------------------------------------------------------------
+     *  POST /revoke  — Token revocation (RFC 7009)
+     * ----------------------------------------------------------------*/
+
+    /**
+     * Revoke the grant behind an access or refresh token.
+     *
+     * Answers 200 whether or not anything was revoked, so the endpoint cannot
+     * be used to test whether a token exists. token_type_hint is accepted and
+     * not needed: one lookup covers both kinds of token.
+     */
+    private function revoke( $request_method = 'GET' ) {
+        // OAuth revocation endpoint — external MCP clients cannot provide WP nonces.
+        // phpcs:disable WordPress.Security.NonceVerification.Missing
+        if ( 'POST' !== $request_method ) {
+            header( 'Allow: POST, OPTIONS' );
+            $this->json_error( 'invalid_request', 'POST method required.', 405 );
+        }
+
+        $token     = isset( $_POST['token'] ) ? sanitize_text_field( wp_unslash( $_POST['token'] ) ) : '';
+        $client_id = isset( $_POST['client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['client_id'] ) ) : '';
+
+        if ( '' === $token ) {
+            $this->json_error( 'invalid_request', 'Missing required parameter: token.', 400 );
+        }
+
+        // A client that authenticates with a secret at the token endpoint
+        // must do the same here.
+        $authenticated = false;
+        if ( '' !== $client_id ) {
+            $client = Token_Store::get_client( $client_id );
+            if ( $client && 'client_secret_post' === ( $client['token_endpoint_auth_method'] ?? 'none' ) ) {
+                $client_secret = isset( $_POST['client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['client_secret'] ) ) : '';
+                if ( empty( $client_secret ) || ! hash_equals( (string) $client['client_secret_hash'], hash( 'sha256', $client_secret ) ) ) {
+                    $this->json_error( 'invalid_client', 'Client authentication failed.', 401 );
+                }
+                $authenticated = true;
+            }
+        }
+
+        $revoked = Token_Store::revoke_by_token( $token, $client_id, $authenticated );
+
+        if ( $revoked > 0 ) {
+            $this->log_event( 'token_revoked', 'Access and refresh tokens revoked at the client\'s request.', 200, 'success' );
+        } else {
+            $this->log_event( 'revoke_no_match', 'Revocation request did not match a live token for this client.', 200, 'success' );
+        }
+
+        $this->json_response( new \stdClass(), 200 );
         // phpcs:enable WordPress.Security.NonceVerification.Missing
     }
 
@@ -929,9 +1059,17 @@ class Server {
         $grant_type    = $this->log_pick_param( 'grant_type' );
         $response_type = $this->log_pick_param( 'response_type' );
 
+        $uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
+        // These endpoints take their parameters in the request body, so a
+        // query string is not part of a valid request and is not logged
+        // (nor for a GET to one of them, which is answered as not allowed).
+        if ( in_array( $this->current_action, [ 'token', 'revoke', 'register', 'method_not_allowed' ], true ) ) {
+            $uri = (string) strtok( $uri, '?' );
+        }
+
         $request_meta = [
             'method'        => isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '',
-            'uri'           => isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '',
+            'uri'           => $uri,
             'ip'            => $this->get_client_ip(),
             'user_agent'    => isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '',
             'client_id'     => $client_id,

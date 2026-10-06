@@ -79,6 +79,24 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                         </tr>
                         <tr>
                             <th scope="row">
+                                <label for="read_only_mode"><?php esc_html_e('Read-only mode', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[read_only_mode]"
+                                           id="read_only_mode"
+                                           value="1"
+                                           <?php checked(!empty($royal_mcp_settings['read_only_mode'])); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When ON, AI clients can read your site but not change it: every tool that creates, updates or deletes anything is refused, for every client and every user, including administrators. The tools stay in clients\' tool lists, marked as switched off. Turn ON to let AI work with your content safely while you decide what it may change.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
                                 <label for="allow_option_writes"><?php esc_html_e('Allow AI to write WordPress options', 'royal-mcp'); ?></label>
                             </th>
                             <td>
@@ -112,7 +130,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                           class="large-text code"
                                           placeholder="my_plugin_settings&#10;another_option_key&#10;rank-math-options-general"><?php echo esc_textarea($wo_admin_str); ?></textarea>
                                 <p class="description">
-                                    <?php esc_html_e('One option name per line. Requires the master toggle above to be on. Each line is normalized via sanitize_key() and merged with the defaults + the royal_mcp_writable_options filter. Sensitive keys (siteurl, credentials, license keys, etc.) remain permanently denylisted regardless of what appears here.', 'royal-mcp'); ?>
+                                    <?php esc_html_e('One option name per line. Options listed here become readable by wp_get_option AND writable by wp_update_option. Requires the master toggle above to be on. Each line is normalized via sanitize_key() and merged with the defaults + the royal_mcp_readable_options / royal_mcp_writable_options filters. Sensitive keys (siteurl, credentials, license keys, etc.) remain permanently denylisted regardless of what appears here.', 'royal-mcp'); ?>
                                 </p>
                             </td>
                         </tr>
@@ -279,7 +297,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                    class="large-text code"
                                    readonly>
                             <?php
-                            // Inline SVG with currentColor + inline flex, per CLAUDE.md rule 8.
+                            // Inline SVG with currentColor + inline flex.
                             $btn_style_copy = 'display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;';
                             $svg_style_copy = 'width:14px;height:14px;flex-shrink:0;';
                             ?>
@@ -730,7 +748,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                 <?php endforeach; ?>
                             </select>
                             <?php
-                            // Inline SVG with currentColor + inline flex, per CLAUDE.md rule 8.
+                            // Inline SVG with currentColor + inline flex.
                             $btn_style_add = 'display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;';
                             $svg_style_add = 'width:14px;height:14px;flex-shrink:0;';
                             ?>
@@ -811,36 +829,10 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                 <?php endforeach; ?>
                             </select>
                             <p class="description">
-                                <?php esc_html_e('How long an AI client stays connected before it must re-authorize. Applies to new sessions. Existing sessions expire at their original time — use Revoke all active sessions below to force new-length sessions immediately.', 'royal-mcp'); ?>
+                                <?php esc_html_e('How long an AI client stays connected before it must sign in again. Applies to new sessions; existing sessions keep their original length.', 'royal-mcp'); ?>
                             </p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row">
-                            <label><?php esc_html_e('Revoke all sessions', 'royal-mcp'); ?></label>
-                        </th>
-                        <td>
-                            <?php
-                            // Inline SVG with currentColor + inline flex, per CLAUDE.md rule 8.
-                            // Dashicons inside .button rot across WP admin CSS releases; inline SVG
-                            // inherits button text color and survives cascade churn.
-                            $btn_style = 'display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;';
-                            $svg_style = 'width:14px;height:14px;flex-shrink:0;';
-                            ?>
-                            <button type="button"
-                                    class="button button-secondary"
-                                    id="royal-mcp-revoke-all-sessions"
-                                    style="<?php echo esc_attr( $btn_style ); ?>">
-                                <svg style="<?php echo esc_attr( $svg_style ); ?>" viewBox="0 0 24 24" fill="none"
-                                     stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                     stroke-linejoin="round" aria-hidden="true">
-                                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                                </svg>
-                                <?php esc_html_e('Revoke all active sessions', 'royal-mcp'); ?>
-                            </button>
-                            <span id="royal-mcp-revoke-all-sessions-status" style="margin-left: 10px;"></span>
                             <p class="description">
-                                <?php esc_html_e('Disconnects every AI client currently connected via OAuth. Registered clients and settings are preserved — only issued tokens are revoked. Useful after changing session length or during security incident response.', 'royal-mcp'); ?>
+                                <a href="<?php echo esc_url( admin_url( 'admin.php?page=royal-mcp-connected-clients' ) ); ?>"><?php esc_html_e('See who is connected, and revoke one client or all of them, on the Connected Clients screen', 'royal-mcp'); ?></a>
                             </p>
                         </td>
                     </tr>
@@ -869,7 +861,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
             </p>
             <p>
                 <?php
-                // Inline SVG with currentColor + inline flex, per CLAUDE.md rule 8.
+                // Inline SVG with currentColor + inline flex.
                 $btn_style_reset = 'display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;';
                 $svg_style_reset = 'width:14px;height:14px;flex-shrink:0;';
                 ?>

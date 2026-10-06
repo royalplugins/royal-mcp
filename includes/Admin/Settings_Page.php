@@ -9,6 +9,22 @@ if (!defined('ABSPATH')) {
 
 class Settings_Page {
 
+    /** True only while save_programmatically() is saving. */
+    private static $programmatic_save = false;
+
+    /**
+     * Save settings from our own code, keeping the stored values as they are.
+     * The settings form keeps going through sanitize_settings().
+     */
+    public static function save_programmatically( array $settings ) {
+        self::$programmatic_save = true;
+        try {
+            return update_option( 'royal_mcp_settings', $settings );
+        } finally {
+            self::$programmatic_save = false;
+        }
+    }
+
     public function __construct() {
         add_action('admin_menu', [$this, 'add_menu_page']);
         add_action('admin_init', [$this, 'register_settings']);
@@ -16,13 +32,11 @@ class Settings_Page {
         add_action('admin_init', [$this, 'maybe_dismiss_review_banner']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_scripts']);
         add_filter('admin_footer_text', [$this, 'admin_footer_text']);
-        add_filter('royal_mcp_writable_options', [__CLASS__, 'admin_writable_options']);
 
         // AJAX handlers
         add_action('wp_ajax_royal_mcp_test_connection', [$this, 'ajax_test_connection']);
         add_action('wp_ajax_royal_mcp_reset_oauth_state', [$this, 'ajax_reset_oauth_state']);
         add_action('wp_ajax_royal_mcp_clear_oauth_field', [$this, 'ajax_clear_oauth_field']);
-        add_action('wp_ajax_royal_mcp_revoke_all_sessions', [$this, 'ajax_revoke_all_sessions']);
     }
 
     /**
@@ -220,12 +234,20 @@ class Settings_Page {
      * for browser agents).
      */
     private function log_webmcp_toggle_change( $prior, $next ) {
+        $this->log_toggle_change( 'settings:webmcp_toggle', $prior, $next );
+    }
+
+    /**
+     * Activity Log row for a setting that changes what AI clients may do.
+     */
+    private function log_toggle_change( $action, $prior, $next ) {
         global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Intentional direct insert to the logs table.
         $wpdb->insert(
             $wpdb->prefix . 'royal_mcp_logs',
             [
                 'mcp_server'    => 'MCP Server',
-                'action'        => 'settings:webmcp_toggle',
+                'action'        => (string) $action,
                 'request_data'  => wp_json_encode( [ 'user_id' => get_current_user_id() ] ),
                 'response_data' => wp_json_encode( [
                     'prior' => (bool) $prior,
@@ -284,10 +306,28 @@ class Settings_Page {
         $sanitized = [];
         $settings = get_option('royal_mcp_settings', []);
 
+        // Our own code (Reset OAuth state, Clear field) saves the stored
+        // settings array through save_programmatically(); this form sanitizer
+        // would read that as an empty form — wiping the admin option
+        // allowlist, turning Abilities off and keeping the credentials it
+        // meant to clear. Every other save is treated as a form post.
+        if ( self::$programmatic_save ) {
+            return is_array( $input ) ? $input : $settings;
+        }
+
         $sanitized['enabled'] = isset($input['enabled']) ? (bool) $input['enabled'] : false;
         $sanitized['allow_option_writes'] = isset($input['allow_option_writes']) ? (bool) $input['allow_option_writes'] : false;
         $sanitized['allow_theme_writes'] = isset($input['allow_theme_writes']) ? (bool) $input['allow_theme_writes'] : false;
         $sanitized['require_client_approval'] = isset($input['require_client_approval']) ? (bool) $input['require_client_approval'] : false;
+
+        // Read-only mode — every tool that can change the site is refused,
+        // for every client and every user. A change is logged for the audit
+        // trail, as the WebMCP toggle is.
+        $prior_read_only = ! empty( $settings['read_only_mode'] );
+        $sanitized['read_only_mode'] = isset( $input['read_only_mode'] ) ? (bool) $input['read_only_mode'] : false;
+        if ( $prior_read_only !== $sanitized['read_only_mode'] ) {
+            $this->log_toggle_change( 'settings:read_only_mode', $prior_read_only, $sanitized['read_only_mode'] );
+        }
 
         // WebMCP browser-agent bridge — opt-in cookie-auth path for the Cloudflare
         // WebMCP bridge. Off by default so the cookie-auth surface is never a
@@ -679,83 +719,11 @@ class Settings_Page {
             $settings = [];
         }
         $settings[$field] = '';
-        update_option('royal_mcp_settings', $settings);
+        self::save_programmatically($settings);
 
         wp_send_json_success([
             'field'   => $field,
             'message' => esc_html__('Field cleared. Save your settings to confirm.', 'royal-mcp'),
-        ]);
-    }
-
-    /**
-     * Merge admin-picked writable option keys into the royal_mcp_writable_options
-     * filter chain. Runs at default priority; developer-registered callbacks at
-     * higher priority still get final say. The Server::is_denylisted_option check
-     * runs AFTER this filter, so entries here can never escape the denylist.
-     *
-     * @param array $opts Options passed through from earlier filter callbacks.
-     * @return array Merged option-name list.
-     */
-    public static function admin_writable_options($opts) {
-        if (!is_array($opts)) { $opts = []; }
-        $settings = get_option('royal_mcp_settings', []);
-        if (!is_array($settings) || empty($settings['writable_options_admin'])
-            || !is_array($settings['writable_options_admin'])) {
-            return $opts;
-        }
-        return array_values(array_unique(array_merge($opts, $settings['writable_options_admin'])));
-    }
-
-    /**
-     * AJAX handler — soft-revoke every active OAuth session in one call.
-     *
-     * Kicks all connected MCP clients so they must re-authorize on their next
-     * request. Complements the Session length setting: an admin who lengthens
-     * the TTL to 7 days but still holds a token minted at 1h can use this to
-     * force an immediate re-mint on the new TTL. Also useful outside that flow
-     * for incident response.
-     */
-    public function ajax_revoke_all_sessions() {
-        check_ajax_referer('royal_mcp_nonce', 'nonce');
-
-        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- revokes per-site OAuth tokens only (wp_royal_mcp_oauth_tokens is per-site-prefixed)
-            wp_send_json_error(['message' => esc_html__('Unauthorized', 'royal-mcp')]);
-        }
-
-        // Filter escape hatch — security plugins can veto revocation per acting user.
-        $allowed = (bool) apply_filters('royal_mcp_revoke_all_sessions_allowed', true, get_current_user_id());
-        if (!$allowed) {
-            wp_send_json_error(['message' => esc_html__('Session revocation is disabled by a filter on this site.', 'royal-mcp')]);
-        }
-
-        $revoked = \Royal_MCP\OAuth\Token_Store::revoke_all_tokens();
-
-        // Audit trail — mirrors the reset_oauth_state pattern so both actions land in Activity Log.
-        global $wpdb;
-        $current_user = wp_get_current_user();
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $wpdb->insert(
-            $wpdb->prefix . 'royal_mcp_logs',
-            [
-                'mcp_server'    => 'OAuth Server',
-                'action'        => 'oauth:revoke_all_sessions',
-                'request_data'  => wp_json_encode([
-                    'user_id'    => (int) $current_user->ID,
-                    'user_login' => $current_user->user_login,
-                ]),
-                'response_data' => wp_json_encode(['revoked_count' => $revoked]),
-                'status'        => 'success',
-            ],
-            ['%s', '%s', '%s', '%s', '%s']
-        );
-
-        wp_send_json_success([
-            'revoked_count' => $revoked,
-            'message'       => sprintf(
-                /* translators: %d: number of sessions revoked */
-                esc_html__('Revoked %d active session(s). All connected AI clients must re-authorize.', 'royal-mcp'),
-                $revoked
-            ),
         ]);
     }
 

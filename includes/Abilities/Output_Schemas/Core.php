@@ -189,6 +189,14 @@ class Core {
 				'type'                 => 'object',
 				'additionalProperties' => true,
 			),
+			'wp_get_post_terms'   => array(
+				'type'       => 'object',
+				'properties' => array(
+					'post_id'    => array( 'type' => 'integer' ),
+					'post_type'  => array( 'type' => 'string' ),
+					'taxonomies' => array( 'type' => 'object', 'additionalProperties' => true ),
+				),
+			),
 			'wp_update_post_meta' => self::message_with_result_schema(),
 			'wp_add_post_meta'    => array(
 				'type'       => 'object',
@@ -220,15 +228,12 @@ class Core {
 					'token_ttl'      => array( 'type' => array( 'integer', 'null' ) ),
 					'session_id'     => array( 'type' => array( 'string', 'null' ) ),
 					'active_scopes'  => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
-					'server_version' => array( 'type' => 'string' ),
-					'wp_version'     => array( 'type' => 'string' ),
-					'php_version'    => array( 'type' => 'string' ),
 					'builders'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'divi_version'      => array( 'type' => array( 'string', 'null' ) ),
-							'elementor_version' => array( 'type' => array( 'string', 'null' ) ),
-							'gutenberg_version' => array( 'type' => 'string' ),
+							'divi_active'      => array( 'type' => 'boolean' ),
+							'elementor_active' => array( 'type' => 'boolean' ),
+							'gutenberg_active' => array( 'type' => 'boolean' ),
 						),
 					),
 				),
@@ -390,10 +395,14 @@ class Core {
 				'items' => array(
 					'type'       => 'object',
 					'properties' => array(
-						'name'    => array( 'type' => 'string' ),
-						'version' => array( 'type' => 'string' ),
-						'active'  => array( 'type' => 'boolean' ),
-						'author'  => array( 'type' => 'string' ),
+						'name'           => array( 'type' => 'string' ),
+						'version'        => array( 'type' => 'string' ),
+						'active'         => array( 'type' => 'boolean' ),
+						'network_active' => array( 'type' => 'boolean' ),
+						'author'         => array( 'type' => 'string' ),
+						'requires_wp'    => array( 'type' => array( 'string', 'null' ) ),
+						'requires_php'   => array( 'type' => array( 'string', 'null' ) ),
+						'tested_up_to'   => array( 'type' => array( 'string', 'null' ) ),
 					),
 				),
 			),
@@ -402,6 +411,7 @@ class Core {
 				'items' => array(
 					'type'       => 'object',
 					'properties' => array(
+						'slug'    => array( 'type' => 'string' ),
 						'name'    => array( 'type' => 'string' ),
 						'version' => array( 'type' => 'string' ),
 						'active'  => array( 'type' => 'boolean' ),

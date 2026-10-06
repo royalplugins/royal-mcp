@@ -45,13 +45,23 @@ class Authorization_Header_Notice {
         if ( is_multisite() && ! is_main_site() ) {
             return;
         }
+        $this->status();
+    }
+
+    /**
+     * The cached probe result, probing and caching it when nothing is cached.
+     *
+     * @return string One of 'ok', 'stripped', 'unreachable'.
+     */
+    public function status() {
         $cached = get_transient( self::TRANSIENT_KEY );
         if ( false !== $cached ) {
-            return; // Within TTL, use cached result.
+            return $cached; // Within TTL, use cached result.
         }
 
         $result = $this->probe_authorization_header();
         set_transient( self::TRANSIENT_KEY, $result, self::TRANSIENT_TTL );
+        return $result;
     }
 
     /**

@@ -17,6 +17,8 @@ use Royal_MCP\Integrations\YoastSEO as YoastIntegration;
 use Royal_MCP\Integrations\UpdraftPlus as UpdraftIntegration;
 use Royal_MCP\Integrations\WPForms as WPFormsIntegration;
 use Royal_MCP\Integrations\SolidSecurity as SolidIntegration;
+use Royal_MCP\Integrations\Wordfence as WordfenceIntegration;
+use Royal_MCP\Integrations\LiteSpeed as LiteSpeedIntegration;
 use Royal_MCP\Integrations\ContactForm7 as CF7Integration;
 use Royal_MCP\Integrations\MonsterInsights as MonsterInsightsIntegration;
 use Royal_MCP\Integrations\W3TotalCache as W3TCIntegration;
@@ -172,6 +174,104 @@ class Server {
         if ( ! has_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_site_host_suffix' ] ) ) {
             add_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_site_host_suffix' ], PHP_INT_MAX );
         }
+        if ( ! has_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_annotations' ] ) ) {
+            add_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_annotations' ], PHP_INT_MAX );
+        }
+    }
+
+    /** Leading verbs that only read. Matched against the verb word only, never anywhere in the name. */
+    const READ_VERBS = [ 'get', 'list', 'count', 'search', 'audit', 'verify', 'validate', 'diff', 'discover' ];
+
+    /** Reads whose names don't start with a read verb. */
+    const READ_ONLY_TOOLS = [
+        'royal_mcp_connection_health',
+        'royal_mcp_pro_diagnostics',
+        'divi_library_get',
+        'redirection_bulk_export',
+        'formforge_bulk_export_entries',
+        'acf_export_field_group_json',
+        'elementor_export_theme_builder_template',
+        'wp_monthly_maintenance_report',
+        '_active_profile_notice',
+    ];
+
+    /** Exact hints for tools whose annotations other systems rely on. */
+    const ANNOTATION_OVERRIDES = [
+        'yoast_bulk_update_meta'        => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
+        'rankmath_bulk_update_meta'     => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
+        'seopress_bulk_update_meta'     => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
+        'aioseo_bulk_update_meta'       => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
+        'seobolt_bulk_update_meta'      => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
+        'royal_mcp_undo_last_operation' => [ 'readOnlyHint' => false, 'destructiveHint' => true ],
+        'mcp_undo_last_operation'       => [ 'readOnlyHint' => false, 'destructiveHint' => true ],
+    ];
+
+    /** MCP tool annotations for one tool name. Anything not known to be a read is treated as destructive. */
+    public static function annotations_for( $name ) {
+        $name = (string) $name;
+        if ( isset( self::ANNOTATION_OVERRIDES[ $name ] ) ) {
+            return self::ANNOTATION_OVERRIDES[ $name ];
+        }
+        $words = explode( '_', $name );
+        // The verb is the first word for unprefixed names (get_tool_info),
+        // otherwise the word after the integration prefix (wp_get_post).
+        $verb = in_array( $words[0], self::READ_VERBS, true ) ? $words[0] : ( $words[1] ?? '' );
+        if ( in_array( $verb, self::READ_VERBS, true ) || in_array( $name, self::READ_ONLY_TOOLS, true ) ) {
+            return [ 'readOnlyHint' => true, 'destructiveHint' => false, 'idempotentHint' => true ];
+        }
+        return [ 'readOnlyHint' => false, 'destructiveHint' => true ];
+    }
+
+    /**
+     * Whether the site is in read-only mode: every tool that can change the
+     * site is refused, for every client and every user.
+     */
+    public static function read_only_mode() {
+        $settings = get_option( 'royal_mcp_settings', [] );
+        return is_array( $settings ) && ! empty( $settings['read_only_mode'] );
+    }
+
+    /**
+     * The tools read-only mode lets through: those the tool list marks as
+     * read-only, plus execute_tool, which runs the tool it is given through
+     * this same check.
+     *
+     * @var array<string,bool>|null name => allowed, built on first use.
+     */
+    private $read_only_allowed = null;
+
+    private function allowed_in_read_only_mode( $name ) {
+        $name = (string) $name;
+        if ( 'execute_tool' === $name ) {
+            return true;
+        }
+        if ( null === $this->read_only_allowed ) {
+            $this->read_only_allowed = [];
+            foreach ( $this->get_tools() as $tool ) {
+                if ( is_array( $tool ) && ! empty( $tool['name'] ) ) {
+                    $this->read_only_allowed[ (string) $tool['name'] ] = ! empty( $tool['annotations']['readOnlyHint'] );
+                }
+            }
+        }
+        if ( isset( $this->read_only_allowed[ $name ] ) ) {
+            return $this->read_only_allowed[ $name ];
+        }
+        return ! empty( self::annotations_for( $name )['readOnlyHint'] );
+    }
+
+    /** Stamp annotations on every tool in the list; hints a tool declares itself win. */
+    public static function stamp_annotations( $tools ) {
+        if ( ! is_array( $tools ) ) {
+            return $tools;
+        }
+        foreach ( $tools as $i => $tool ) {
+            if ( ! is_array( $tool ) || empty( $tool['name'] ) ) {
+                continue;
+            }
+            $declared = isset( $tool['annotations'] ) && is_array( $tool['annotations'] ) ? $tool['annotations'] : [];
+            $tools[ $i ]['annotations'] = array_merge( self::annotations_for( $tool['name'] ), $declared );
+        }
+        return $tools;
     }
 
     /**
@@ -186,7 +286,9 @@ class Server {
         $this->register_method_handler('tools/call',                [ $this, 'handle_tools_call' ]);
         $this->register_method_handler('ping',                      [ $this, 'handle_ping' ]);
         $this->register_method_handler('resources/list',            [ $this, 'handle_resources_list' ]);
-        $this->register_method_handler('prompts/list',              [ $this, 'handle_prompts_list' ]);
+        $this->register_method_handler('resources/read',            [ $this, 'handle_resources_read' ]);
+        $this->register_method_handler('resources/templates/list',  [ $this, 'handle_resource_templates_list' ]);
+        $this->register_method_handler('prompts/list',             [ $this, 'handle_prompts_list' ]);
         $this->register_method_handler('server/discover',           [ $this, 'handle_server_discover' ]);
     }
 
@@ -539,7 +641,6 @@ class Server {
      */
     private function auth_error_unauthenticated() {
         $resource_metadata_url = self::get_resource_metadata_url();
-        $fallback_url          = self::get_resource_metadata_fallback_url();
         $response = new \WP_REST_Response([
             'jsonrpc' => '2.0',
             'error' => [
@@ -547,14 +648,14 @@ class Server {
                 'message' => 'Authentication required. Use Authorization: Bearer <token> or X-Royal-MCP-API-Key header.',
             ],
         ], 401);
+        // Exactly ONE challenge. WP_HTTP_Response::header( ..., false ) does not
+        // emit a second header line — it joins values with ", " into a single
+        // WWW-Authenticate line. Two challenges on one line break naive
+        // resource_metadata parsers (a greedy quote match swallows both URLs),
+        // after which the client falls back to root discovery. The wp-json
+        // mirror of the PRM still exists for hosts that intercept /.well-known/;
+        // point strict clients at it with the royal_mcp_protected_resource_metadata_url filter.
         $response->header('WWW-Authenticate', 'Bearer resource_metadata="' . $resource_metadata_url . '"');
-        // Second WWW-Authenticate challenge advertising the wp-json fallback
-        // PRM URL. Emitted as a separate header (RFC 7235 §4.1 permits
-        // multiple challenges per response). Clients that can't reach the
-        // root well-known path — managed hosts reserve the /.well-known/*
-        // prefix at the edge — pick up the fallback here and complete
-        // discovery without host cooperation.
-        $response->header('WWW-Authenticate', 'Bearer resource_metadata="' . $fallback_url . '"', false);
         $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
         $response->header('Pragma', 'no-cache');
         return $response;
@@ -619,7 +720,6 @@ class Server {
             // start the OAuth flow on 401 but not 403, so returning 403 here
             // would suppress legitimate retries.
             $resource_metadata_url = self::get_resource_metadata_url();
-            $fallback_url          = self::get_resource_metadata_fallback_url();
             $response = new \WP_REST_Response([
                 'jsonrpc' => '2.0',
                 'error' => [
@@ -628,7 +728,6 @@ class Server {
                 ],
             ], 401);
             $response->header('WWW-Authenticate', 'Bearer error="invalid_token", resource_metadata="' . $resource_metadata_url . '"');
-            $response->header('WWW-Authenticate', 'Bearer error="invalid_token", resource_metadata="' . $fallback_url . '"', false);
             $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
             $response->header('Pragma', 'no-cache');
             return $response;
@@ -675,9 +774,7 @@ class Server {
                 ],
             ], 401);
             $resource_metadata_url = self::get_resource_metadata_url();
-            $fallback_url          = self::get_resource_metadata_fallback_url();
             $response->header('WWW-Authenticate', 'Bearer error="invalid_token", resource_metadata="' . $resource_metadata_url . '"');
-            $response->header('WWW-Authenticate', 'Bearer error="invalid_token", resource_metadata="' . $fallback_url . '"', false);
             $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
             $response->header('Pragma', 'no-cache');
             return $response;
@@ -1186,10 +1283,10 @@ class Server {
         );
     }
 
-    private function get_tools() {
+    private function get_builtin_tools() {
         $tools = [
             // Posts (supports custom post types)
-            ['name' => 'wp_get_posts', 'description' => 'Get WordPress posts (supports custom post types). Each item includes content_length (bytes of stored post_content) so you can size-check before fetching — on page-builder sites a short page can still carry a very large body.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of posts (max 100)'], 'search' => ['type' => 'string', 'description' => 'Search term'], 'status' => ['type' => 'string', 'description' => 'Post status (publish, draft, etc)'], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post). Use wp_get_post_types to discover available types']]]],
+            ['name' => 'wp_get_posts', 'description' => 'Get WordPress posts (supports custom post types). Each item includes content_length (bytes of stored post_content) so you can size-check before fetching — on page-builder sites a short page can still carry a very large body.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of posts (max 100)'], 'search' => ['type' => 'string', 'description' => 'Search term'], 'status' => ['type' => 'string', 'description' => 'Post status (publish, draft, etc)'], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post). Use wp_get_post_types to discover available types'], 'include' => ['type' => 'array', 'items' => ['type' => 'integer'], 'maxItems' => 100, 'description' => 'Up to 100 post IDs. Returns exactly those posts (any status you can read) in this order; per_page and search are ignored.'], 'with_content' => ['type' => 'boolean', 'description' => 'When true, each item adds content_text (content with shortcodes and tags removed, whitespace collapsed, at most 3000 characters) and content_truncated.']]]],
             ['name' => 'wp_get_post', 'description' => 'Get single post by ID (any post type)', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID']], 'required' => ['id']]],
             ['name' => 'wp_create_post', 'description' => 'Create new post (supports custom post types). Combine status="future" with date to schedule. Excerpt may contain safe HTML (same allow-list as post content). Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule. Past dates auto-publish with that timestamp.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'categories' => ['type' => 'array', 'items' => ['type' => 'integer']], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post)'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to assign as the post author. Defaults to the authenticated MCP user (admin). Use wp_get_users to discover available author IDs.']], 'required' => ['title', 'content']]],
             ['name' => 'wp_update_post', 'description' => 'Update existing post (any post type). Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image (pass 0 to remove)'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as the post author. Use wp_get_users to discover available author IDs.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling posts/pages. Lower = earlier.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent post ID (0 = no parent). Useful for hierarchical CPTs. Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Post password. Empty string removes protection.'], 'comment_status' => ['type' => 'string', 'enum' => ['open', 'closed'], 'description' => 'Allow (open) or disallow (closed) new comments.'], 'ping_status' => ['type' => 'string', 'enum' => ['open', 'closed'], 'description' => 'Allow (open) or disallow (closed) trackbacks / pingbacks.']], 'required' => ['id']]],
@@ -1247,6 +1344,7 @@ class Server {
 
             // Post Meta
             ['name' => 'wp_get_post_meta', 'description' => 'Get post meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['post_id']]],
+            ['name' => 'wp_get_post_terms', 'description' => 'Read the taxonomy terms assigned to a post, page, or custom post type item — every taxonomy registered for its post type, or one taxonomy when specified. Returns term IDs, slugs and names. Works for drafts (category counts only include published posts, so this is the reliable read-after-write check for wp_create_post / wp_add_post_terms).', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Optional taxonomy slug (category, post_tag, product_cat, ...). Omit for all taxonomies of the post type.']], 'required' => ['post_id']]],
             ['name' => 'wp_update_post_meta', 'description' => 'Update post meta. Value can be any JSON type (string, number, boolean, array, object). String values may contain safe HTML (same allow-list as post content — hook the royal_mcp_meta_value_sanitizer filter to customize per meta key). Arrays and objects are serialized by WordPress on write and returned as PHP arrays by wp_get_post_meta on read. Overwrites the existing row for this key (use wp_add_post_meta for multi-row keys). Response includes read-after-write verify (silent-drop error if the write did not persist; modified_by_wp diff if WP transformed the value) and a 72-hour undo token that restores the prior value via mcp_undo_last_operation. Undo token omitted with a warnings entry if the prior value exceeds 1MB compressed (rare — SiteVault snapshot recommended for reversal in that case). Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'Any JSON value. Do not pass PHP-serialized strings (a:1:{...}) — pass the structured value directly.']], 'required' => ['post_id', 'key', 'value']]],
             ['name' => 'wp_add_post_meta', 'description' => 'Add a meta row without overwriting existing values under the same key. Use for keys that store multiple rows (e.g. tag one post with several IDs under the same key). Value can be any JSON type; string values may contain safe HTML (customize per key with royal_mcp_meta_value_sanitizer). Arrays and objects are serialized by WordPress. If unique=true and a row with this key already exists, the call returns created=false. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'Any JSON value. Do not pass PHP-serialized strings.'], 'unique' => ['type' => 'boolean', 'description' => 'If true, fail (return created=false) when a row with this key already exists. Default false.']], 'required' => ['post_id', 'key', 'value']]],
             ['name' => 'wp_delete_post_meta', 'description' => 'Delete post meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['post_id', 'key']]],
@@ -1260,13 +1358,13 @@ class Server {
             ['name' => 'discover_tools', 'description' => 'List Royal MCP tools filtered by category, plugin, capability class, or undo support. Returns a compact index — name, description, and metadata only — WITHOUT the full inputSchema. Use with the compact tool discovery profile (X-MCP-Profile: compact on initialize) to keep the tools/list payload small on context-limited clients: caller discovers, calls get_tool_info for the specific tool it wants to invoke, then dispatches via execute_tool.', 'inputSchema' => ['type' => 'object', 'properties' => ['by_category' => ['type' => 'string', 'description' => 'Filter by category prefix, e.g. "posts", "pages", "media", "terms", "menus", "options", "elementor", "divi", "wc".'], 'by_plugin' => ['type' => 'string', 'description' => 'Filter by third-party integration slug, e.g. "core", "woocommerce", "elementor", "divi", "acf", "yoast".'], 'by_capability' => ['type' => 'string', 'enum' => ['read_only', 'write', 'destructive'], 'description' => 'Filter by capability class inferred from the tool name (get_/list_ = read_only, update_/create_/add_ = write, delete_/reset_/bulk_delete_ = destructive).'], 'by_undo_support' => ['type' => 'string', 'enum' => ['has_undo_token', 'no_undo'], 'description' => 'Filter by whether the tool emits an undo token.']]]],
             ['name' => 'get_tool_info', 'description' => 'Return the full inputSchema (and, when available, an example invocation) for a single tool named in tool_name. Pairs with discover_tools + execute_tool for the compact discovery flow.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name (e.g. "wp_update_post").']], 'required' => ['tool_name']]],
             ['name' => 'execute_tool', 'description' => 'Pass-through dispatcher for the compact discovery flow. Invokes the tool named in tool_name with the arguments in arguments — semantically identical to a direct tools/call for that tool. Useful when the client only advertised the routing tools via X-MCP-Profile: compact but still wants to invoke a specific underlying tool without renegotiating the profile.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name to invoke.'], 'arguments' => ['type' => 'object', 'description' => 'Arguments object forwarded to the underlying tool. Same shape you\'d pass in tools/call.']], 'required' => ['tool_name']]],
-            ['name' => 'wp_verify_rendered_page', 'description' => 'Post-write verification tool. Fetches the actual rendered HTML that WordPress serves at a URL via a loopback request and returns the response status, a subset of response headers (content-type, cache-control, x-cache), the page title, meta description, first h1, counts of script and stylesheet link tags, and (when include_body_excerpt is true) a 500-char excerpt of the page body. Optional selector arg reports whether an id/class selector is present in the served HTML. Use after any write that changes content, theme, or options to catch page-builder caches, object caches, or edge caches serving stale HTML even when the DB write returned success. Rate-limited to 10 fetches per minute per (site, URL). Requires read on the target post/page or manage_options. URL must belong to the current WordPress site.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Absolute URL on this site to fetch (must match home_url() origin).'], 'selector' => ['type' => 'string', 'description' => 'Optional #id or .class selector to check for presence in the rendered HTML.'], 'include_body_excerpt' => ['type' => 'boolean', 'description' => 'When true, include a 500-char excerpt of the <body> in the response. Default false.']], 'required' => ['url']]],
+            ['name' => 'wp_verify_rendered_page', 'description' => 'Post-write verification tool. Fetches the actual rendered HTML that WordPress serves at a URL via a loopback request and returns the response status, a subset of response headers (content-type, cache-control, x-cache), the page title, meta description, first h1, counts of script and stylesheet link tags, robots_meta (content of <meta name="robots">, null when absent), x_robots_tag (the X-Robots-Tag header, null when absent), redirect_chain ([{url, status}] for each redirect followed, up to 5; [] when none — response_status is the final status), tls_valid (whether the https certificate verifies; null for http), and (when include_body_excerpt is true) a 500-char excerpt of the page body. Optional selector arg reports whether an id/class selector is present in the served HTML. Use after any write that changes content, theme, or options to catch page-builder caches, object caches, or edge caches serving stale HTML even when the DB write returned success. Rate-limited to 10 fetches per minute per (site, URL). Requires read on the target post/page or manage_options. URL must belong to the current WordPress site.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Absolute URL on this site to fetch (must match home_url() origin).'], 'selector' => ['type' => 'string', 'description' => 'Optional #id or .class selector to check for presence in the rendered HTML.'], 'include_body_excerpt' => ['type' => 'boolean', 'description' => 'When true, include a 500-char excerpt of the <body> in the response. Default false.']], 'required' => ['url']]],
             ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, wp_update_post, wp_update_page, wp_update_post_meta, wp_add_post_meta, wp_delete_post_meta, wp_delete_post, wp_delete_page, wp_delete_media, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_term_meta, wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, yoast_update_meta (aliases wp_update_seo_meta), wp_update_widget, wp_delete_comment, plus every Elementor write tool (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_rebuild_post_content), Divi write tools (divi_replace_text, divi_replace_image, divi_clone_page, divi_import_template) and comment edit/reply ops. Tokens live 72 hours and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Restore may be refused with a drift error if the target was modified between the tracked write and this undo call (protects downstream writes from silent clobber). Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).']], 'required' => ['token']]],
             ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page). Each result includes content_length (bytes of stored content) for size triage.', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.']], 'required' => ['query']]],
 
             // Options
-            ['name' => 'wp_get_option', 'description' => 'Get a single WordPress option value. Requires manage_options capability. The option name must be in the readable allowlist — 12 defaults (blogname, blogdescription, siteurl, home, admin_email, posts_per_page, date_format, time_format, timezone_string, googlesitekit_analytics-4_settings, show_on_front, page_on_front) plus any keys plugin authors opt in via the royal_mcp_readable_options filter. Sensitive keys inside the returned value are redacted regardless of what the option contains.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string']], 'required' => ['name']]],
-            ['name' => 'wp_get_plugin_settings', 'description' => 'Get all options stored by a plugin, looked up by slug. Sensitive keys (api keys, secrets, tokens, passwords) are redacted before return.', 'inputSchema' => ['type' => 'object', 'properties' => ['plugin_slug' => ['type' => 'string', 'description' => 'Plugin slug, e.g. royalcomply or royal-affiliate-pro']], 'required' => ['plugin_slug']]],
+            ['name' => 'wp_get_option', 'description' => 'Get a single WordPress option value. Requires manage_options capability. The option name must be in the readable allowlist — 13 defaults (blogname, blogdescription, siteurl, home, admin_email, posts_per_page, date_format, time_format, timezone_string, googlesitekit_analytics-4_settings, show_on_front, page_on_front, blog_public) plus any keys plugin authors opt in via the royal_mcp_readable_options filter, plus options an admin allowlists under Royal MCP settings while option writes are enabled. Sensitive keys inside the returned value are redacted regardless of what the option contains.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string']], 'required' => ['name']]],
+            ['name' => 'wp_get_plugin_settings', 'description' => 'Get all options stored by a plugin, looked up by its slug or option prefix — options named <slug> or <slug>_* (e.g. "royal-affiliate-pro", or "rafp" for that plugin\'s rafp_* options). WordPress core option prefixes are refused (use wp_get_option). Sensitive keys (api keys, secrets, tokens, passwords) are redacted and protected options are left out.', 'inputSchema' => ['type' => 'object', 'properties' => ['plugin_slug' => ['type' => 'string', 'description' => 'Plugin slug, e.g. royalcomply or royal-affiliate-pro']], 'required' => ['plugin_slug']]],
             ['name' => 'wp_update_option', 'description' => 'Update a WordPress option. Four gates in order: (1) manage_options capability on the caller; (2) master "Allow AI to write WordPress options" admin toggle enabled; (3) hard denylist (siteurl, home, admin_email, mailserver_*, upload_path, users_can_register, wp_user_roles, wp_capabilities, api_key/secret/*_pass/*_key patterns, royal_mcp_* namespace — permanent, cannot be filter-overridden); (4) write⊆readable invariant + writable allowlist (option must appear in both royal_mcp_readable_options AND royal_mcp_writable_options — plugin authors must opt into READS before opting into WRITES). Error text names which gate blocked. "Not in allowlist" is fixable via filter opt-in; "permanently denylisted" is not. Set dry_run=true to preview the change (current + proposed value, autoload state, size delta) without writing.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'New value (any JSON type). Full overwrite — read first, merge in your client, then write back.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Preview the write without persisting. Returns current/proposed value, autoload state, and size delta.']], 'required' => ['name', 'value']]],
 
             // Menus
@@ -1279,7 +1377,7 @@ class Server {
             ['name' => 'wp_reorder_menu_items', 'description' => 'Reorder menu items by passing an array of menu_item_ids in the desired order. Existing titles, URLs, parents, and other fields are preserved on every item touched. Every response includes an "undo" envelope with a token that mcp_undo_last_operation can consume for 72 hours to restore the pre-op menu order. If the response includes a "skipped" array, those items could not be safely reordered (e.g. missing or recently deleted) — the rest were reordered correctly. Requires edit_theme_options capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_id' => ['type' => 'integer'], 'item_order' => ['type' => 'array', 'items' => ['type' => 'integer'], 'description' => 'Array of menu_item_ids in the desired order']], 'required' => ['menu_id', 'item_order']]],
 
             // Plugins & Themes
-            ['name' => 'wp_get_plugins', 'description' => 'List all installed plugins. Returns plugin file path, name, version, description, author, and active status for each. Useful for diagnosing plugin conflicts and building a compatibility picture at the start of a debugging conversation.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'wp_get_plugins', 'description' => 'List all installed plugins. Returns plugin file path, name, version, description, author, active status (network_active on multisite), requires_wp, requires_php and tested_up_to (from the WordPress update check; null when unknown) for each. Useful for diagnosing plugin conflicts and building a compatibility picture at the start of a debugging conversation.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_get_themes', 'description' => 'List all installed themes. Returns theme slug, name, version, author, and active flag for each. Use wp_get_active_theme for details on the currently-active theme only.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
 
             // Theme & Appearance
@@ -1295,7 +1393,7 @@ class Server {
             // SEO Meta (auto-detects Yoast SEO / Rank Math / AIOSEO / SEObolt)
             ['name' => 'wp_get_seo_meta', 'description' => 'Get the SEO meta fields for a post (title, description, focus keyword, noindex, OG overrides where supported, URL slug). Auto-detects the active SEO plugin — Yoast SEO, Rank Math, AIOSEO, SEOPress, or SEObolt — and returns that plugin\'s fields plus the post slug (which is a WordPress-native field, returned regardless of SEO plugin). AIOSEO + SEObolt return the four core fields (title/description/focus_keyword/noindex); og_title/og_description are populated for Yoast + Rank Math only. Returns RAW stored templates (e.g. Yoast\'s default "%%page%% %%sep%% %%sitename%%") — do NOT measure length from these values, they contain template markup that never appears in the rendered <title> tag and will produce false-positive title_too_short / title_too_long flags. For measured/rendered SEO values, use Royal MCP Pro\'s wp_audit_seo_bulk which resolves per-engine template variables before measuring.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer']], 'required' => ['post_id']]],
             ['name' => 'wp_update_seo_meta', 'description' => 'Update SEO meta fields on a post. Auto-routes title/description/focus_keyword/noindex to whichever SEO plugin is active (Yoast, Rank Math, AIOSEO, SEOPress, or SEObolt). og_title / og_description route to Yoast, Rank Math, and SEOPress; AIOSEO + SEObolt store OG data in different shapes so those fields fall through to unsupported_fields. twitter_title / twitter_description / twitter_image route to Yoast, Rank Math, SEOPress, and SEObolt; AIOSEO stores twitter data in its own database table so all three twitter fields fall through to unsupported_fields until a dedicated AIOSEO adapter lands. The slug field is a WordPress-native field and works regardless of SEO plugin. Requires edit_post capability on the target post.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'title' => ['type' => 'string', 'description' => 'SEO title (replaces the meta title used in browser tabs and SERPs)'], 'description' => ['type' => 'string', 'description' => 'SEO meta description (used in SERPs)'], 'focus_keyword' => ['type' => 'string', 'description' => 'Primary focus keyword for SEO scoring (AIOSEO stores this as focus_keyphrase internally)'], 'noindex' => ['type' => 'boolean', 'description' => 'Tell search engines not to index this URL'], 'og_title' => ['type' => 'string', 'description' => 'Open Graph title (Facebook / Slack / LinkedIn previews). Yoast + Rank Math only.'], 'og_description' => ['type' => 'string', 'description' => 'Open Graph description. Yoast + Rank Math only.'], 'twitter_title' => ['type' => 'string', 'description' => 'Twitter card title. Routed to the active SEO plugin\'s Twitter-title meta key (Yoast, Rank Math, AIOSEO, SEObolt).'], 'twitter_description' => ['type' => 'string', 'description' => 'Twitter card description. Same per-plugin routing as twitter_title.'], 'twitter_image' => ['type' => 'string', 'description' => 'Twitter card image URL. Routed to Yoast, Rank Math, and SEObolt; AIOSEO stores this in a custom table and returns as unsupported_field.'], 'slug' => ['type' => 'string', 'description' => 'URL slug (post_name). WordPress will sanitize and ensure uniqueness; the actually-saved value is returned in the response so the caller can confirm.']], 'required' => ['post_id']]],
-            ['name' => 'seo_audit_meta_tags', 'description' => 'Fetch a post\'s actual rendered HTML and parse the head for title, meta description, canonical, viewport, Open Graph and Twitter Card tags. Catches theme/plugin/cache conflicts that only appear in the served output — duplicate title tags, mismatched canonicals, missing OG images, viewport misconfiguration. Complements wp_get_seo_meta (which reads DB fields) by validating what actually reaches crawlers. Pass a post_id (URL is resolved via get_permalink) or a same-site url. Read-only.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer', 'description' => 'Post ID whose permalink to audit. Either post_id or url is required.'], 'url' => ['type' => 'string', 'description' => 'Absolute URL to audit. Must be on this site (same host as home_url). Either post_id or url is required.']]]],
+            ['name' => 'seo_audit_meta_tags', 'description' => 'Fetch a post\'s actual rendered HTML and parse the head for title, meta description, canonical, viewport, Open Graph and Twitter Card tags, robots ({meta, x_robots_tag, noindex}), hreflang ([{lang, href}]) and JSON-LD ({present, types} — @type values incl. @graph). Catches theme/plugin/cache conflicts that only appear in the served output — duplicate title tags, mismatched canonicals, missing OG images, viewport misconfiguration. Complements wp_get_seo_meta (which reads DB fields) by validating what actually reaches crawlers. Pass a post_id (URL is resolved via get_permalink) or a same-site url. Read-only.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer', 'description' => 'Post ID whose permalink to audit. Either post_id or url is required.'], 'url' => ['type' => 'string', 'description' => 'Absolute URL to audit. Must be on this site (same host as home_url). Either post_id or url is required.']]]],
 
             // Permalink Structure
             ['name' => 'wp_get_permalink_structure', 'description' => 'Get the WordPress permalink structure (e.g. /%postname%/, /%year%/%monthnum%/%postname%/). Read-only.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -1326,6 +1424,8 @@ class Server {
         $tools = array_merge( $tools, UpdraftIntegration::get_tools() );
         $tools = array_merge( $tools, WPFormsIntegration::get_tools() );
         $tools = array_merge( $tools, SolidIntegration::get_tools() );
+        $tools = array_merge( $tools, WordfenceIntegration::get_tools() );
+        $tools = array_merge( $tools, LiteSpeedIntegration::get_tools() );
         $tools = array_merge( $tools, CF7Integration::get_tools() );
         $tools = array_merge( $tools, MonsterInsightsIntegration::get_tools() );
         $tools = array_merge( $tools, W3TCIntegration::get_tools() );
@@ -1335,13 +1435,28 @@ class Server {
         // If Elementor's own MCP module is present, prefix our elementor_* descriptions with a routing hint.
         $tools = Elementor_Coexistence::filter_elementor_tool_descriptions( $tools );
 
+        return $tools;
+    }
+
+    private function get_tools() {
         /**
          * Filter the full tool list returned to tools/list. Applied last so
          * profile trims + custom filters see every registered tool.
          *
          * @param array $tools Tool definitions with name, description, inputSchema.
          */
-        return apply_filters( 'royal_mcp_tools', $tools );
+        return apply_filters( 'royal_mcp_tools', $this->get_builtin_tools() );
+    }
+
+    /**
+     * Whether Royal MCP itself defines a tool with this name on this site.
+     */
+    private function is_builtin_tool_name( $name ) {
+        static $names = null;
+        if ( null === $names ) {
+            $names = array_fill_keys( array_column( $this->get_builtin_tools(), 'name' ), true );
+        }
+        return isset( $names[ (string) $name ] );
     }
 
     /**
@@ -1540,7 +1655,7 @@ class Server {
         // has its own per-tool log rows via log_tool_call() already. Logging
         // it a second time at method level would create duplicate noise.
         if ($method !== 'tools/call') {
-            $this->log_method_call($method, $result);
+            $this->log_method_call($method, $result, $params);
         }
 
         // initialize still emits Mcp-Session-Id for clients that consume it.
@@ -1596,7 +1711,7 @@ class Server {
      * body is a bare method-name marker, response records status +
      * error_code + error_message when the dispatch returned an error object.
      */
-    private function log_method_call($method, $result) {
+    private function log_method_call($method, $result, $params = null) {
         global $wpdb;
 
         $is_error = is_array($result) && isset($result['error']);
@@ -1607,6 +1722,10 @@ class Server {
             'mcp_method_hint' => $this->request_mcp_method_hint,
             'mcp_name_hint'   => $this->request_mcp_name_hint,
         ];
+        // Which resource was asked for, so the activity log shows what was read.
+        if ( 'resources/read' === $method && is_array( $params ) && isset( $params['uri'] ) && is_string( $params['uri'] ) ) {
+            $request_meta['resource_uri'] = substr( sanitize_text_field( $params['uri'] ), 0, 200 );
+        }
         $response_meta = [ 'status' => $status ];
         if ($is_error) {
             $response_meta['error_code']    = (int) ($result['error']['code'] ?? 0);
@@ -2055,16 +2174,218 @@ class Server {
             } ) );
         }
 
+        $page = self::page_of_tools( $tools, $params );
+        if ( null === $page ) {
+            return [
+                'jsonrpc' => '2.0',
+                'id'      => $id,
+                'error'   => [
+                    'code'    => -32602,
+                    'message' => 'Invalid or expired cursor. Request tools/list again without a cursor.',
+                ],
+            ];
+        }
+        $tools = $page['tools'];
+
+        // Plugin presence is only disclosed to callers who could see the
+        // plugin list anyway.
+        if ( current_user_can( 'manage_options' ) ) {
+            $tools = self::stamp_tool_availability( $tools );
+        }
+
+        // Tools read-only mode refuses stay listed, marked so clients can tell.
+        if ( self::read_only_mode() ) {
+            foreach ( $tools as $i => $tool ) {
+                if ( ! $this->allowed_in_read_only_mode( (string) ( $tool['name'] ?? '' ) ) ) {
+                    $tools[ $i ]['_meta']['royal-mcp/read_only_mode'] = true;
+                }
+            }
+        }
+
+        $body = [ 'tools' => $tools ];
+        if ( null !== $page['next'] ) {
+            $body['nextCursor'] = $page['next'];
+        }
+
         return [
             'jsonrpc' => '2.0',
             'id'      => $id,
             'result'  => $this->stamp_modern_list_envelope(
-                [ 'tools' => $tools ],
+                $body,
                 'private',
                 300000,
                 $params
             ),
         ];
+    }
+
+    /**
+     * Tools per tools/list page. 0 sends the whole list in one response,
+     * which is the default: a client that reads only the first page of a
+     * paged list would never see the tools after it.
+     *
+     * @return int
+     */
+    private static function tools_list_page_size() {
+        $size = (int) apply_filters( 'royal_mcp_tools_list_page_size', 0 );
+        return $size <= 0 ? 0 : max( 10, min( 500, $size ) );
+    }
+
+    /**
+     * One page of a tool list. The cursor is an opaque token; a result with
+     * no 'next' is the last page.
+     *
+     * A cursor holds a position and a fingerprint of the list it was issued
+     * for, so a cursor for a list that has since changed is refused instead
+     * of skipping or repeating tools.
+     *
+     * @param array $tools  The caller's full tool list, in its final order.
+     * @param mixed $params Request params.
+     * @return array|null [ 'tools' => array, 'next' => string|null ], or null for a cursor that cannot be used.
+     */
+    private static function page_of_tools( array $tools, $params ) {
+        $tools  = array_values( $tools );
+        $cursor = is_array( $params ) && isset( $params['cursor'] ) ? $params['cursor'] : null;
+        $size   = self::tools_list_page_size();
+        $total  = count( $tools );
+        $offset = 0;
+
+        if ( null !== $cursor && '' !== $cursor ) {
+            $offset = ( $size > 0 && is_string( $cursor ) ) ? self::read_list_cursor( $cursor, $tools ) : null;
+            if ( null === $offset || $offset < 1 || $offset >= $total ) {
+                return null;
+            }
+        }
+        if ( $size <= 0 ) {
+            return [ 'tools' => $tools, 'next' => null ];
+        }
+
+        $end = $offset + $size;
+        return [
+            'tools' => array_slice( $tools, $offset, $size ),
+            'next'  => $end < $total ? self::make_list_cursor( $end, $tools ) : null,
+        ];
+    }
+
+    private static function list_fingerprint( array $tools ) {
+        return substr( hash( 'sha256', implode( "\n", array_map( 'strval', array_column( $tools, 'name' ) ) ) ), 0, 16 );
+    }
+
+    private static function make_list_cursor( $offset, array $tools ) {
+        $json = wp_json_encode( [ 'o' => (int) $offset, 'h' => self::list_fingerprint( $tools ) ] );
+        return rtrim( strtr( base64_encode( (string) $json ), '+/', '-_' ), '=' );
+    }
+
+    /**
+     * @return int|null The position a cursor points at, or null when it was not issued for this list.
+     */
+    private static function read_list_cursor( $cursor, array $tools ) {
+        if ( strlen( $cursor ) > 200 || ! preg_match( '/^[A-Za-z0-9_-]+$/', $cursor ) ) {
+            return null;
+        }
+        $data = json_decode( (string) base64_decode( strtr( $cursor, '-_', '+/' ), true ), true );
+        if ( ! is_array( $data ) || ! isset( $data['o'], $data['h'] ) || ! is_int( $data['o'] ) || ! is_string( $data['h'] ) ) {
+            return null;
+        }
+        return hash_equals( self::list_fingerprint( $tools ), $data['h'] ) ? $data['o'] : null;
+    }
+
+    /**
+     * Integration tools stay listed whether or not their plugin is active;
+     * each one carries _meta["royal-mcp/requires"] (plugin name) and
+     * _meta["royal-mcp/available"] (whether that plugin is active now).
+     *
+     * @param array $tools Tool definitions.
+     * @return array
+     */
+    public static function stamp_tool_availability( array $tools ) {
+        $requirements = self::tool_requirements();
+        $exact        = [];
+        $prefixes     = [];
+        foreach ( $requirements as $key => $req ) {
+            if ( '_' === substr( $key, -1 ) ) {
+                $prefixes[ $key ] = $req;
+            } else {
+                $exact[ $key ] = $req;
+            }
+        }
+        uksort( $prefixes, function ( $a, $b ) {
+            return strlen( $b ) - strlen( $a );
+        } );
+
+        $cache = [];
+        foreach ( $tools as $i => $tool ) {
+            $name = (string) ( $tool['name'] ?? '' );
+            $req  = null;
+            if ( array_key_exists( $name, $exact ) ) {
+                $req = $exact[ $name ];
+            } else {
+                foreach ( $prefixes as $prefix => $candidate ) {
+                    if ( 0 === strpos( $name, $prefix ) ) {
+                        $req = $candidate;
+                        break;
+                    }
+                }
+            }
+            if ( ! is_array( $req ) || empty( $req[0] ) || ! is_callable( $req[1] ?? null ) ) {
+                continue;
+            }
+            $label = (string) $req[0];
+            if ( ! array_key_exists( $label, $cache ) ) {
+                try {
+                    $cache[ $label ] = (bool) call_user_func( $req[1] );
+                } catch ( \Throwable $e ) {
+                    $cache[ $label ] = false;
+                }
+            }
+            $meta = isset( $tool['_meta'] ) && is_array( $tool['_meta'] ) ? $tool['_meta'] : [];
+            $meta['royal-mcp/requires']  = $label;
+            $meta['royal-mcp/available'] = $cache[ $label ];
+            $tools[ $i ]['_meta']        = $meta;
+        }
+        return $tools;
+    }
+
+    /**
+     * Tool name (exact) or name prefix (ending in "_") => [ plugin name, availability callback ].
+     * A null value exempts a tool that works without its plugin.
+     *
+     * @return array
+     */
+    private static function tool_requirements() {
+        $map = [
+            'wc_'                  => [ 'WooCommerce', [ WooIntegration::class, 'is_available' ] ],
+            'gp_'                  => [ 'GuardPress', [ GPIntegration::class, 'is_available' ] ],
+            'sv_'                  => [ 'SiteVault', [ SVIntegration::class, 'is_available' ] ],
+            'rl_'                  => [ 'Royal Ledger', [ RLIntegration::class, 'is_available' ] ],
+            'fc_'                  => [ 'ForgeCache', [ FCIntegration::class, 'is_available' ] ],
+            'rlinks_'              => [ 'Royal Links', [ RLinksIntegration::class, 'is_available' ] ],
+            'elementor_'           => [ 'Elementor', [ ElementorIntegration::class, 'is_available' ] ],
+            'acf_'                 => [ 'Advanced Custom Fields', [ ACFIntegration::class, 'is_available' ] ],
+            'raif_'                => [ 'Royal AI Firewall', [ RAIFIntegration::class, 'is_available' ] ],
+            'redirection_'         => [ 'Redirection', [ RedirectionIntegration::class, 'is_available' ] ],
+            'divi_'                => [ 'Divi', [ DiviIntegration::class, 'is_available' ] ],
+            'divi_validate_layout' => null,
+            'yoast_'               => [ 'Yoast SEO', [ YoastIntegration::class, 'is_available' ] ],
+            'updraftplus_'         => [ 'UpdraftPlus', [ UpdraftIntegration::class, 'is_available' ] ],
+            'wpforms_'             => [ 'WPForms', [ WPFormsIntegration::class, 'is_available' ] ],
+            'solid_'               => [ 'Solid Security', [ SolidIntegration::class, 'is_available' ] ],
+            'wordfence_'           => [ 'Wordfence', [ WordfenceIntegration::class, 'is_available' ] ],
+            'litespeed_'           => [ 'LiteSpeed Cache', [ LiteSpeedIntegration::class, 'is_available' ] ],
+            'cf7_'                 => [ 'Contact Form 7', [ CF7Integration::class, 'is_available' ] ],
+            'monsterinsights_'     => [ 'MonsterInsights', [ MonsterInsightsIntegration::class, 'is_available' ] ],
+            'w3tc_'                => [ 'W3 Total Cache', [ W3TCIntegration::class, 'is_available' ] ],
+            'duplicator_'          => [ 'Duplicator', [ DuplicatorIntegration::class, 'is_available' ] ],
+            'bp_'                  => [ 'BuddyPress', [ BuddyPressIntegration::class, 'is_available' ] ],
+        ];
+
+        /**
+         * Filters the tool => required plugin map used for the availability flag in tools/list.
+         *
+         * @param array $map Tool name or prefix => [ plugin name, callable ] or null.
+         */
+        $filtered = apply_filters( 'royal_mcp_tool_requirements', $map );
+        return is_array( $filtered ) ? $filtered : $map;
     }
 
     private function handle_ping($params, $id) {
@@ -2075,16 +2396,245 @@ class Server {
         ];
     }
 
+    /**
+     * Resources this server offers, keyed by URI. Each is a small JSON
+     * document made of things a caller with the 'read' capability can already
+     * get from a tool, so a client can load it as context without a tool call.
+     * None of them carries a software version. A resource's name is the part
+     * of its URI after the scheme.
+     *
+     * @return array<string,array{title:string,description:string}>
+     */
+    private static function resource_catalog() {
+        return [
+            'royal-mcp://site-info'          => [
+                'title'       => 'Site info',
+                'description' => 'Site name, tagline, URL, language and timezone.',
+            ],
+            'royal-mcp://active-theme'       => [
+                'title'       => 'Active theme',
+                'description' => 'The active theme: name, slug, parent theme if it is a child theme, and whether it is a block theme.',
+            ],
+            'royal-mcp://tool-catalog'       => [
+                'title'       => 'Tool catalog',
+                'description' => 'Every tool by name with a one-line summary and whether it only reads or can change the site. Use get_tool_info for a full input schema.',
+            ],
+            'royal-mcp://agent-skills-index' => [
+                'title'       => 'Agent skills index',
+                'description' => 'Tool categories with a description and tool count for each; the same document the site publishes for agent discovery.',
+            ],
+            'royal-mcp://health'             => [
+                'title'       => 'Connection health',
+                'description' => 'This connection: endpoint, how the request authenticated, token lifetime, session ID, and which page builders are active.',
+            ],
+        ];
+    }
+
     private function handle_resources_list($params, $id) {
+        // The list is short enough to be one page, so no cursor is ever issued.
+        if ( is_array( $params ) && isset( $params['cursor'] ) && '' !== $params['cursor'] ) {
+            return [
+                'jsonrpc' => '2.0',
+                'id'      => $id,
+                'error'   => [
+                    'code'    => -32602,
+                    'message' => 'Invalid or expired cursor. Request resources/list again without a cursor.',
+                ],
+            ];
+        }
+
+        $resources = [];
+        if ( current_user_can( 'read' ) ) {
+            foreach ( self::resource_catalog() as $uri => $def ) {
+                $resources[] = [
+                    'uri'         => $uri,
+                    'name'        => substr( $uri, strlen( 'royal-mcp://' ) ),
+                    'title'       => $def['title'],
+                    'description' => $def['description'],
+                    'mimeType'    => 'application/json',
+                ];
+            }
+        }
+
         return [
             'jsonrpc' => '2.0',
             'id'      => $id,
             'result'  => $this->stamp_modern_list_envelope(
-                [ 'resources' => [] ],
+                [ 'resources' => $resources ],
+                'private',
+                300000,
+                $params
+            ),
+        ];
+    }
+
+    private function handle_resource_templates_list($params, $id) {
+        return [
+            'jsonrpc' => '2.0',
+            'id'      => $id,
+            'result'  => $this->stamp_modern_list_envelope(
+                [ 'resourceTemplates' => [] ],
                 'public',
                 300000,
                 $params
             ),
+        ];
+    }
+
+    private function handle_resources_read($params, $id) {
+        $uri = is_array( $params ) && isset( $params['uri'] ) && is_string( $params['uri'] ) ? $params['uri'] : '';
+        if ( '' === $uri ) {
+            return [
+                'jsonrpc' => '2.0',
+                'id'      => $id,
+                'error'   => [
+                    'code'    => -32602,
+                    'message' => 'A resource uri is required.',
+                ],
+            ];
+        }
+
+        // A resource the caller may not read is answered the same way as one
+        // that does not exist.
+        $data = current_user_can( 'read' ) ? $this->read_resource( $uri ) : null;
+        if ( null === $data ) {
+            return [
+                'jsonrpc' => '2.0',
+                'id'      => $id,
+                'error'   => [
+                    'code'    => -32002,
+                    'message' => 'Resource not found',
+                    'data'    => [ 'uri' => substr( sanitize_text_field( $uri ), 0, 200 ) ],
+                ],
+            ];
+        }
+
+        $result = [
+            'contents' => [
+                [
+                    'uri'      => $uri,
+                    'mimeType' => 'application/json',
+                    'text'     => (string) wp_json_encode( $data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ),
+                ],
+            ],
+        ];
+        if ( $this->is_modern_era( $params ) ) {
+            $result = [ 'resultType' => 'complete' ] + $result;
+        }
+
+        return [
+            'jsonrpc' => '2.0',
+            'id'      => $id,
+            'result'  => $result,
+        ];
+    }
+
+    /**
+     * The document behind a resource URI, or null when the URI is not one of
+     * this server's resources. Reads only; no tool handler runs.
+     *
+     * @param string $uri Resource URI, matched exactly.
+     * @return array|null
+     */
+    private function read_resource( $uri ) {
+        switch ( $uri ) {
+            case 'royal-mcp://site-info':
+                return [
+                    'name'        => get_bloginfo( 'name' ),
+                    'description' => get_bloginfo( 'description' ),
+                    'url'         => home_url(),
+                    'language'    => get_locale(),
+                    'timezone'    => wp_timezone_string(),
+                ];
+
+            case 'royal-mcp://active-theme':
+                $theme  = wp_get_theme();
+                $parent = $theme->parent();
+                return [
+                    'name'           => (string) $theme->get( 'Name' ),
+                    'slug'           => $theme->get_stylesheet(),
+                    'template'       => $theme->get_template(),
+                    'parent_slug'    => $parent ? $parent->get_stylesheet() : null,
+                    'is_block_theme' => function_exists( 'wp_is_block_theme' ) && wp_is_block_theme(),
+                ];
+
+            case 'royal-mcp://tool-catalog':
+                return $this->tool_catalog_resource();
+
+            case 'royal-mcp://agent-skills-index':
+                return \Royal_MCP\Discovery\Agent_Skills_Index::build_or_cached();
+
+            case 'royal-mcp://health':
+                return $this->connection_health_data();
+        }
+        return null;
+    }
+
+    private function tool_catalog_resource() {
+        $tools = $this->get_tools();
+        // Plugin presence is only disclosed to callers who could see the
+        // plugin list anyway.
+        if ( current_user_can( 'manage_options' ) ) {
+            $tools = self::stamp_tool_availability( $tools );
+        }
+
+        $rows      = [];
+        $read_only = 0;
+        foreach ( $tools as $tool ) {
+            $name = (string) ( $tool['name'] ?? '' );
+            if ( '' === $name ) {
+                continue;
+            }
+            $reads     = ! empty( $tool['annotations']['readOnlyHint'] );
+            $read_only += $reads ? 1 : 0;
+
+            $sentences = preg_split( '/(?<=[.!?])\s+/', trim( (string) ( $tool['description'] ?? '' ) ), 2 );
+            $summary   = (string) ( $sentences[0] ?? '' );
+            if ( strlen( $summary ) > 200 ) {
+                $summary = rtrim( function_exists( 'mb_strcut' ) ? mb_strcut( $summary, 0, 197, 'UTF-8' ) : substr( $summary, 0, 197 ) ) . '...';
+            }
+
+            $row = [
+                'name'      => $name,
+                'summary'   => $summary,
+                'read_only' => $reads,
+            ];
+            if ( isset( $tool['_meta']['royal-mcp/requires'] ) ) {
+                $row['requires']  = (string) $tool['_meta']['royal-mcp/requires'];
+                $row['available'] = ! empty( $tool['_meta']['royal-mcp/available'] );
+            }
+            $rows[] = $row;
+        }
+
+        return [
+            'total'        => count( $rows ),
+            'read_only'    => $read_only,
+            'changes_site' => count( $rows ) - $read_only,
+            'tools'        => $rows,
+        ];
+    }
+
+    /**
+     * What royal_mcp_connection_health reports about the current request.
+     * Presence flags for page builders rather than version strings: enough to
+     * branch on which builder a site uses, and no software versions for any
+     * authenticated caller to collect.
+     *
+     * @return array
+     */
+    private function connection_health_data() {
+        return [
+            'route'          => rest_url('royal-mcp/v1/mcp'),
+            'auth_method'    => $this->request_auth_method ?? 'unauthenticated',
+            'relay'          => null,
+            'token_ttl'      => $this->request_token_ttl,
+            'session_id'     => $this->request_session_id,
+            'active_scopes'  => ['tools'],
+            'builders'       => [
+                'divi_active'      => defined('ET_BUILDER_VERSION'),
+                'elementor_active' => defined('ELEMENTOR_VERSION'),
+                'gutenberg_active' => defined('GUTENBERG_VERSION'),
+            ],
         ];
     }
 
@@ -2482,6 +3032,9 @@ class Server {
     }
 
     private function execute_tool($name, $args) {
+        if ( self::read_only_mode() && ! $this->allowed_in_read_only_mode( $name ) ) {
+            throw new \Exception( 'This site is in read-only mode: tools that change the site are switched off.' );
+        }
         // Fire SiteVault pre-op backup hook for every destructive tool.
         // Non-blocking + fire-and-forget — see SiteVault_Hook::maybe_fire
         // + INVARIANTS §3. Fleet-wide via one call at the dispatcher
@@ -2538,15 +3091,45 @@ class Server {
                     }
                     $query_args['post_status'] = $requested_status;
                 }
+                // include: exactly these posts (up to 100), in this order, any
+                // status the caller may read; per_page and search are ignored.
+                $gp_include = [];
+                if (!empty($args['include'])) {
+                    $gp_include = array_values(array_unique(array_filter(array_map('intval', (array) $args['include']), static function ($v) { return $v > 0; })));
+                    if (count($gp_include) > 100) {
+                        throw new \Exception('include accepts at most 100 post IDs.');
+                    }
+                }
+                if ($gp_include) {
+                    $query_args = [
+                        'post__in'    => $gp_include,
+                        'orderby'     => 'post__in',
+                        'numberposts' => count($gp_include),
+                        'post_type'   => $query_args['post_type'] ?? 'any',
+                        'post_status' => 'any',
+                    ];
+                }
                 $posts = get_posts($query_args);
-                return array_map(function($p) {
+                if ($gp_include) {
+                    // Same post type rule as a normal listing, then the
+                    // per-post read check.
+                    $posts = array_values(array_filter($posts, static function ($p) {
+                        $gp_type = get_post_type_object($p->post_type);
+                        if (!$gp_type || (!is_post_type_viewable($gp_type) && !current_user_can($gp_type->cap->edit_posts))) {
+                            return false;
+                        }
+                        return current_user_can('read_post', $p->ID);
+                    }));
+                }
+                $gp_with_content = !empty($args['with_content']);
+                return array_map(function($p) use ($gp_with_content) {
                     // Surface featured_media symmetrically with the write
                     // schema — wp_create_post + wp_update_post both accept
                     // featured_media as a first-class param, so the read
                     // schema should return it as a first-class field rather
                     // than forcing a follow-up wp_get_post_meta('_thumbnail_id').
                     $thumb_id = (int) get_post_thumbnail_id( $p );
-                    return [
+                    $item = [
                         'id' => $p->ID,
                         'title' => $p->post_title,
                         'excerpt' => wp_trim_words($p->post_content, 50),
@@ -2558,6 +3141,16 @@ class Server {
                         'featured_media' => $thumb_id,
                         'featured_media_url' => $thumb_id > 0 ? ( wp_get_attachment_url( $thumb_id ) ?: null ) : null,
                     ];
+                    if ($gp_with_content) {
+                        // Plain text for drafting: shortcodes and tags removed, whitespace collapsed, at most 3000 characters.
+                        // Block-level tags become spaces so adjacent blocks don't run together.
+                        $text = (string) preg_replace('#</?(?:p|div|h[1-6]|li|ul|ol|br|hr|tr|td|th|table|blockquote|section|article|figure|figcaption|pre|header|footer)\b[^>]*>#i', ' ', strip_shortcodes((string) $p->post_content));
+                        $text = trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags($text)));
+                        $len  = function_exists('mb_strlen') ? mb_strlen($text) : strlen($text);
+                        $item['content_text']      = $len > 3000 ? (function_exists('mb_substr') ? mb_substr($text, 0, 3000) : substr($text, 0, 3000)) : $text;
+                        $item['content_truncated'] = $len > 3000;
+                    }
+                    return $item;
                 }, $posts);
 
             case 'wp_get_post':
@@ -2582,6 +3175,12 @@ class Server {
                     'author' => get_the_author_meta('display_name', $post->post_author),
                     'featured_media' => $thumb_id,
                     'featured_media_url' => $thumb_id > 0 ? ( wp_get_attachment_url( $thumb_id ) ?: null ) : null,
+                    // Taxonomy read-back. Category/tag *counts* exclude drafts,
+                    // so callers need the assignments themselves to verify a
+                    // wp_create_post / wp_add_post_terms write.
+                    'categories' => wp_get_object_terms($post->ID, 'category', ['fields' => 'ids']),
+                    'tags'       => wp_get_object_terms($post->ID, 'post_tag', ['fields' => 'ids']),
+                    'terms'      => (object) $this->get_post_terms_map($post),
                 ];
 
             case 'wp_create_post':
@@ -2655,18 +3254,23 @@ class Server {
                 // scheduling support. Parse ISO-8601 in site TZ, derive
                 // GMT from the same timestamp so the two fields never disagree.
                 if (!empty($args['date'])) {
-                    $ts = strtotime((string) $args['date']);
+                    $ts = $this->parse_site_datetime($args['date']);
                     if (false === $ts) {
                         throw new \Exception('Invalid date: could not parse "' . esc_html((string) $args['date']) . '" as ISO 8601.');
                     }
                     $post_data['post_date'] = wp_date('Y-m-d H:i:s', $ts);
                     $post_data['post_date_gmt'] = gmdate('Y-m-d H:i:s', $ts);
                 }
-                $post_id = wp_insert_post($post_data);
-                if (is_wp_error($post_id)) throw new \Exception(esc_html($post_id->get_error_message()));
-                if (isset($args['featured_media'])) {
-                    $this->apply_featured_media($post_id, intval($args['featured_media']));
+                // Featured image goes in with the post so save_post fires once
+                // and sees it; a second save_post would re-run every save hook.
+                if (isset($args['featured_media']) && intval($args['featured_media']) > 0) {
+                    $this->assert_featured_media(intval($args['featured_media']));
+                    $post_data['meta_input'] = (array) ($post_data['meta_input'] ?? []);
+                    $post_data['meta_input']['_thumbnail_id'] = intval($args['featured_media']);
                 }
+                $post_id = wp_insert_post($post_data, true);
+                if (is_wp_error($post_id)) throw new \Exception(esc_html($post_id->get_error_message()));
+                if (!$post_id) throw new \Exception('The post could not be created.');
                 // Re-read the created post so silent-modify by WP core hooks
                 // (SEO plugins rewriting slug, security plugins stripping
                 // content, page-builder plugins reformatting) is surfaced to
@@ -2795,7 +3399,7 @@ class Server {
                 if (array_key_exists('ping_status', $args)) $data['ping_status'] = $args['ping_status'];
                 // MUST set edit_date=true on wp_update_post() to change post_date on an existing post.
                 if (!empty($args['date'])) {
-                    $ts = strtotime((string) $args['date']);
+                    $ts = $this->parse_site_datetime($args['date']);
                     if (false === $ts) {
                         throw new \Exception('Invalid date: could not parse "' . esc_html((string) $args['date']) . '" as ISO 8601.');
                     }
@@ -2803,10 +3407,16 @@ class Server {
                     $data['post_date_gmt'] = gmdate('Y-m-d H:i:s', $ts);
                     $data['edit_date'] = true;
                 }
-                $result = wp_update_post($data);
-                if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
+                // Featured image first, so the one save_post below sees it.
                 if (isset($args['featured_media'])) {
-                    $this->apply_featured_media($post_id, intval($args['featured_media']));
+                    $this->set_featured_media_meta($post_id, intval($args['featured_media']));
+                }
+                $result = wp_update_post($data, true);
+                if (is_wp_error($result)) {
+                    if (isset($args['featured_media']) && null !== $up_prior_featured_id) {
+                        $this->set_featured_media_meta($post_id, (int) $up_prior_featured_id);
+                    }
+                    throw new \Exception(esc_html($result->get_error_message()));
                 }
 
                 // Product-type restore — if the target is a product AND the
@@ -3067,6 +3677,7 @@ class Server {
                     'parent' => $page->post_parent,
                     'featured_media' => $thumb_id,
                     'featured_media_url' => $thumb_id > 0 ? ( wp_get_attachment_url( $thumb_id ) ?: null ) : null,
+                    'terms'  => (object) $this->get_post_terms_map($page),
                 ];
 
             case 'wp_create_page':
@@ -3089,15 +3700,16 @@ class Server {
                 if (!empty($args['parent'])) $page_data['post_parent'] = intval($args['parent']);
                 // scheduling support. See wp_create_post handler for rationale.
                 if (!empty($args['date'])) {
-                    $ts = strtotime((string) $args['date']);
+                    $ts = $this->parse_site_datetime($args['date']);
                     if (false === $ts) {
                         throw new \Exception('Invalid date: could not parse "' . esc_html((string) $args['date']) . '" as ISO 8601.');
                     }
                     $page_data['post_date'] = wp_date('Y-m-d H:i:s', $ts);
                     $page_data['post_date_gmt'] = gmdate('Y-m-d H:i:s', $ts);
                 }
-                $page_id = wp_insert_post($page_data);
+                $page_id = wp_insert_post($page_data, true);
                 if (is_wp_error($page_id)) throw new \Exception(esc_html($page_id->get_error_message()));
+                if (!$page_id) throw new \Exception('The page could not be created.');
                 // Re-read to surface any silent modifications by WP core hooks.
                 $cpg_saved = get_post($page_id);
                 $cpg_saved_fields = $cpg_saved ? [
@@ -3162,7 +3774,7 @@ class Server {
                 if (array_key_exists('password', $args)) $data['post_password'] = (string) $args['password'];
                 // scheduling / backdating support on the update path. See wp_update_post handler.
                 if (!empty($args['date'])) {
-                    $ts = strtotime((string) $args['date']);
+                    $ts = $this->parse_site_datetime($args['date']);
                     if (false === $ts) {
                         throw new \Exception('Invalid date: could not parse "' . esc_html((string) $args['date']) . '" as ISO 8601.');
                     }
@@ -4264,6 +4876,23 @@ class Server {
                 ];
 
             // ==================== POST META ====================
+            case 'wp_get_post_terms':
+                $post_id = self::resolve_post_id_arg($args);
+                $post    = $post_id > 0 ? get_post($post_id) : null;
+                if (!$post) throw new \Exception('Post not found.');
+                if (!current_user_can('read_post', $post->ID)) {
+                    throw new \Exception('You do not have permission to read this post.');
+                }
+                $only = !empty($args['taxonomy']) ? sanitize_key($args['taxonomy']) : '';
+                if ('' !== $only && !taxonomy_exists($only)) {
+                    throw new \Exception('Unknown taxonomy: ' . esc_html($only));
+                }
+                return [
+                    'post_id'    => $post->ID,
+                    'post_type'  => $post->post_type,
+                    'taxonomies' => (object) $this->get_post_terms_map($post, $only),
+                ];
+
             case 'wp_get_post_meta':
                 $post_id = self::resolve_post_id_arg($args);
                 if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
@@ -4530,29 +5159,7 @@ class Server {
             // One-shot operator-visible environment diagnostic (WP + PHP + MySQL + plugins + theme).
             // Connection-health block below is self-attributable — no cap check required.
             case 'royal_mcp_connection_health':
-                global $wp_version;
-                // builders block lets an agent plan multi-step edits without
-                // probing — presence booleans (rather than version strings)
-                // are enough for "is this a Divi site?" branching, and keep
-                // the response from acting as a CVE-target datasource for
-                // any authenticated caller. Royal MCP + WordPress + PHP
-                // versions are not emitted here at all; admins can read them
-                // via wp-admin > Tools > Site Health.
-                $builders = [
-                    'divi_active'      => defined('ET_BUILDER_VERSION'),
-                    'elementor_active' => defined('ELEMENTOR_VERSION'),
-                    'gutenberg_active' => defined('GUTENBERG_VERSION'),
-                ];
-                unset( $wp_version );
-                return [
-                    'route'          => rest_url('royal-mcp/v1/mcp'),
-                    'auth_method'    => $this->request_auth_method ?? 'unauthenticated',
-                    'relay'          => null,
-                    'token_ttl'      => $this->request_token_ttl,
-                    'session_id'     => $this->request_session_id,
-                    'active_scopes'  => ['tools'],
-                    'builders'       => $builders,
-                ];
+                return $this->connection_health_data();
 
             case 'discover_tools':
                 $dt_tools = $this->get_tools();
@@ -4606,7 +5213,17 @@ class Server {
                     // reverse trust doesn't hold for writes-tagged tools.
                     static $rmcp_read_only_verbs = 'get|list|search|count|read|find|scan|audit|export';
                     static $rmcp_destr_verbs    = 'delete|remove|trash|reset|purge|revoke|clear|drop';
-                    if ( in_array( $dt_name, [ 'royal_mcp_connection_health', 'get_tool_info', 'discover_tools' ], true )
+                    $dt_annotations = isset( $dt_tool['annotations'] ) && is_array( $dt_tool['annotations'] ) ? $dt_tool['annotations'] : null;
+                    if ( null !== $dt_annotations && isset( $dt_annotations['readOnlyHint'] ) ) {
+                        // A tool's declared hints win over the name heuristic.
+                        if ( $dt_annotations['readOnlyHint'] ) {
+                            $dt_capability = 'read_only';
+                        } elseif ( preg_match( '/(?:^|_)(?:' . $rmcp_destr_verbs . ')(?:_|$)/', $dt_name ) ) {
+                            $dt_capability = 'destructive';
+                        } else {
+                            $dt_capability = 'write';
+                        }
+                    } elseif ( in_array( $dt_name, [ 'royal_mcp_connection_health', 'get_tool_info', 'discover_tools' ], true )
                         || preg_match( '/(?:^|_)(?:' . $rmcp_read_only_verbs . ')(?:_|$)/', $dt_name ) ) {
                         $dt_capability = 'read_only';
                     } elseif ( preg_match( '/(?:^|_)(?:' . $rmcp_destr_verbs . ')(?:_|$)/', $dt_name ) ) {
@@ -4702,6 +5319,7 @@ class Server {
                             'description' => (string) ( $gti_tool['description'] ?? '' ),
                             'inputSchema' => $gti_tool['inputSchema'] ?? new \stdClass(),
                             'outputSchema' => $gti_tool['outputSchema'] ?? null,
+                            'annotations'  => $gti_tool['annotations'] ?? null,
                         ];
                     }
                 }
@@ -4731,9 +5349,19 @@ class Server {
                 // Same-origin check — the tool is for verifying THIS site's
                 // output, not a general HTTP fetcher.
                 $vrp_home_host = wp_parse_url( home_url(), PHP_URL_HOST );
-                $vrp_url_host  = wp_parse_url( $vrp_url, PHP_URL_HOST );
-                if ( ! $vrp_home_host || ! $vrp_url_host
-                    || strtolower( (string) $vrp_home_host ) !== strtolower( (string) $vrp_url_host ) ) {
+                $vrp_home_port = (int) wp_parse_url( home_url(), PHP_URL_PORT );
+                $vrp_on_site   = static function ( $candidate ) use ( $vrp_home_host, $vrp_home_port ) {
+                    $parts = wp_parse_url( (string) $candidate );
+                    if ( ! $vrp_home_host || ! is_array( $parts ) || empty( $parts['host'] )
+                        || strtolower( (string) $vrp_home_host ) !== strtolower( (string) $parts['host'] ) ) {
+                        return false;
+                    }
+                    if ( ! in_array( strtolower( (string) ( $parts['scheme'] ?? '' ) ), [ 'http', 'https' ], true ) ) {
+                        return false;
+                    }
+                    return empty( $parts['port'] ) || in_array( (int) $parts['port'], array_filter( [ 80, 443, $vrp_home_port ] ), true );
+                };
+                if ( ! $vrp_on_site( $vrp_url ) ) {
                     throw new \Exception( 'url must belong to this WordPress site.' );
                 }
                 // Per-(site,url) rate limit: 10 fetches / 60 sec window. Keeps
@@ -4761,14 +5389,37 @@ class Server {
                 }
                 set_transient( $vrp_bucket, $vrp_state, $vrp_window );
 
-                $vrp_response = wp_remote_get( $vrp_url, [
+                // Follow redirects one hop at a time (up to 5) so each hop can be reported.
+                $vrp_request = [
                     'timeout'     => 10,
-                    'redirection' => 3,
+                    'redirection' => 0,
                     'sslverify'   => false,
                     'headers'     => [
                         'User-Agent' => 'Royal MCP wp_verify_rendered_page/' . ( defined( 'ROYAL_MCP_VERSION' ) ? ROYAL_MCP_VERSION : '1.0' ),
                     ],
-                ] );
+                ];
+                $vrp_chain     = [];
+                $vrp_fetch_url = $vrp_url;
+                for ( $vrp_hop = 0; $vrp_hop <= 5; $vrp_hop++ ) {
+                    $vrp_response = wp_remote_get( $vrp_fetch_url, $vrp_request );
+                    if ( is_wp_error( $vrp_response ) ) {
+                        break;
+                    }
+                    $vrp_hop_status = (int) wp_remote_retrieve_response_code( $vrp_response );
+                    $vrp_location   = (string) wp_remote_retrieve_header( $vrp_response, 'location' );
+                    if ( $vrp_hop_status >= 300 && $vrp_hop_status < 400 && '' !== $vrp_location && $vrp_hop < 5 ) {
+                        $vrp_next = \WP_Http::make_absolute_url( $vrp_location, $vrp_fetch_url );
+                        // A redirect that leaves this site is reported as the
+                        // final response, not followed.
+                        if ( ! $vrp_on_site( $vrp_next ) ) {
+                            break;
+                        }
+                        $vrp_chain[]   = [ 'url' => $vrp_fetch_url, 'status' => $vrp_hop_status ];
+                        $vrp_fetch_url = $vrp_next;
+                        continue;
+                    }
+                    break;
+                }
                 if ( is_wp_error( $vrp_response ) ) {
                     return [
                         'url'             => $vrp_url,
@@ -4798,6 +5449,29 @@ class Server {
                 $vrp_h1 = '';
                 if ( preg_match( '#<h1[^>]*>(.*?)</h1>#is', $vrp_body, $vrp_m ) ) {
                     $vrp_h1 = trim( html_entity_decode( wp_strip_all_tags( $vrp_m[1] ), ENT_QUOTES | ENT_HTML5 ) );
+                }
+                // First <meta name="robots">, whatever the attribute order.
+                $vrp_robots_meta = null;
+                if ( class_exists( '\WP_HTML_Tag_Processor' ) ) {
+                    $vrp_tags = new \WP_HTML_Tag_Processor( $vrp_body );
+                    while ( $vrp_tags->next_tag( 'meta' ) ) {
+                        if ( 'robots' === strtolower( trim( (string) $vrp_tags->get_attribute( 'name' ) ) ) ) {
+                            $vrp_robots_meta = trim( (string) $vrp_tags->get_attribute( 'content' ) );
+                            break;
+                        }
+                    }
+                }
+                $vrp_x_robots = $vrp_headers ? ( $vrp_headers['x-robots-tag'] ?? null ) : null;
+                if ( is_array( $vrp_x_robots ) ) {
+                    $vrp_x_robots = implode( ', ', $vrp_x_robots );
+                }
+                $vrp_x_robots = ( null === $vrp_x_robots || '' === (string) $vrp_x_robots ) ? null : (string) $vrp_x_robots;
+                // Certificate check: a separate request with verification on (the
+                // page fetch above keeps it off so local / staging sites work).
+                $vrp_tls_valid = null;
+                if ( 'https' === strtolower( (string) wp_parse_url( $vrp_url, PHP_URL_SCHEME ) ) ) {
+                    $vrp_tls = wp_remote_head( $vrp_url, [ 'timeout' => 10, 'redirection' => 0, 'sslverify' => true ] );
+                    $vrp_tls_valid = ! is_wp_error( $vrp_tls );
                 }
                 $vrp_script_count     = preg_match_all( '#<script\b#i', $vrp_body );
                 $vrp_stylesheet_count = preg_match_all( '#<link\s+[^>]*rel=["\']stylesheet["\']#i', $vrp_body );
@@ -4839,6 +5513,10 @@ class Server {
                     'stylesheet_count'       => (int) $vrp_stylesheet_count,
                     'selector_present'       => $vrp_selector_present,
                     'body_bytes'             => strlen( $vrp_body ),
+                    'robots_meta'            => $vrp_robots_meta,
+                    'x_robots_tag'           => $vrp_x_robots,
+                    'redirect_chain'         => $vrp_chain,
+                    'tls_valid'              => $vrp_tls_valid,
                 ];
                 if ( null !== $vrp_selector_note ) {
                     $vrp_out['selector_note'] = $vrp_selector_note;
@@ -5110,6 +5788,9 @@ class Server {
                 }
                 $slug = sanitize_text_field($args['plugin_slug'] ?? '');
                 if (empty($slug)) throw new \Exception('plugin_slug is required.');
+                if ($this->is_core_option_prefix($slug)) {
+                    throw new \Exception(sprintf('"%s" is a WordPress core option prefix. Use a plugin\'s slug or option prefix (e.g. its text domain), or wp_get_option for core options.', $slug));
+                }
                 return [
                     'slug'    => $slug,
                     'options' => $this->find_plugin_options($slug),
@@ -5147,6 +5828,7 @@ class Server {
 
                 // Gate 4: writable allowlist
                 $default_writable = ['blogname', 'blogdescription', 'posts_per_page', 'date_format', 'time_format', 'show_on_front', 'page_on_front'];
+                $default_writable = array_values(array_unique(array_merge($default_writable, $this->get_admin_allowlisted_options())));
                 $writable = apply_filters('royal_mcp_writable_options', $default_writable);
                 if (!is_array($writable)) $writable = $default_writable;
                 if (!in_array($name, $writable, true)) {
@@ -5177,7 +5859,7 @@ class Server {
                         'state'   => 'dry_run',
                         'preview' => [
                             'option_name'      => $name,
-                            'current_value'    => $opt_previous,
+                            'current_value'    => $this->redact_sensitive_keys( $opt_previous, $name ),
                             'proposed_value'   => $opt_value,
                             'is_autoloaded'    => $opt_is_autoloaded,
                             'existed_before'   => $opt_existed_before,
@@ -5231,7 +5913,7 @@ class Server {
                     [
                         'name'     => $name,
                         'updated'  => (bool) $opt_result,
-                        'previous' => $this->redact_sensitive_keys($opt_previous),
+                        'previous' => $this->redact_sensitive_keys($opt_previous, $name),
                     ],
                     \Royal_MCP\MCP\Support\WriteVerifier::response_partial( $opt_diff )
                 );
@@ -5622,12 +6304,17 @@ class Server {
                 $viewport_content     = '';
                 $og_fields            = ['title' => '', 'description' => '', 'image' => '', 'url' => '', 'type' => ''];
                 $tw_fields            = ['card' => '', 'title' => '', 'description' => '', 'image' => ''];
+                $robots_meta          = null;
                 $meta_nodes           = $seo_dom->getElementsByTagName('meta');
                 foreach ($meta_nodes as $m) {
                     $name     = strtolower((string) $m->getAttribute('name'));
                     $property = strtolower((string) $m->getAttribute('property'));
                     $content  = (string) $m->getAttribute('content');
-                    if ($name === 'description') {
+                    if ($name === 'robots') {
+                        if (null === $robots_meta) {
+                            $robots_meta = trim($content);
+                        }
+                    } elseif ($name === 'description') {
                         $meta_desc_values[] = $content;
                     } elseif ($name === 'viewport') {
                         $viewport_content = $content;
@@ -5646,10 +6333,51 @@ class Server {
 
                 // Canonicals
                 $canonical_hrefs = [];
+                $hreflang        = [];
                 $link_nodes      = $seo_dom->getElementsByTagName('link');
                 foreach ($link_nodes as $l) {
-                    if (strtolower((string) $l->getAttribute('rel')) === 'canonical') {
+                    $rel = strtolower((string) $l->getAttribute('rel'));
+                    if ($rel === 'canonical') {
                         $canonical_hrefs[] = (string) $l->getAttribute('href');
+                    } elseif ($rel === 'alternate' && $l->hasAttribute('hreflang')) {
+                        $hreflang[] = ['lang' => (string) $l->getAttribute('hreflang'), 'href' => (string) $l->getAttribute('href')];
+                    }
+                }
+
+                // Robots from the page and the response header.
+                $x_robots = wp_remote_retrieve_header($seo_response, 'x-robots-tag');
+                if (is_array($x_robots)) {
+                    $x_robots = implode(', ', $x_robots);
+                }
+                $x_robots = ('' === (string) $x_robots) ? null : (string) $x_robots;
+
+                // JSON-LD: @type values from every ld+json block, including @graph items.
+                $ld_types   = [];
+                $ld_present = false;
+                foreach ($seo_dom->getElementsByTagName('script') as $sc) {
+                    if (strtolower(trim((string) $sc->getAttribute('type'))) !== 'application/ld+json') {
+                        continue;
+                    }
+                    $ld_present = true;
+                    $ld = json_decode(trim($sc->textContent), true);
+                    if (!is_array($ld)) {
+                        continue;
+                    }
+                    $ld_nodes = isset($ld[0]) ? $ld : [$ld];
+                    foreach ($ld_nodes as $ld_node) {
+                        if (!is_array($ld_node)) {
+                            continue;
+                        }
+                        $ld_items = isset($ld_node['@graph']) && is_array($ld_node['@graph']) ? array_merge([$ld_node], $ld_node['@graph']) : [$ld_node];
+                        foreach ($ld_items as $ld_item) {
+                            if (is_array($ld_item) && isset($ld_item['@type'])) {
+                                foreach ((array) $ld_item['@type'] as $ld_type) {
+                                    if (is_string($ld_type) && '' !== $ld_type) {
+                                        $ld_types[$ld_type] = true;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 $canonical_first = $canonical_hrefs[0] ?? '';
@@ -5686,6 +6414,16 @@ class Server {
                     ],
                     'og'      => $og_fields,
                     'twitter' => $tw_fields,
+                    'robots'  => [
+                        'meta'         => $robots_meta,
+                        'x_robots_tag' => $x_robots,
+                        'noindex'      => false !== stripos((string) $robots_meta, 'noindex') || false !== stripos((string) $x_robots, 'noindex'),
+                    ],
+                    'hreflang' => $hreflang,
+                    'json_ld'  => [
+                        'present' => $ld_present,
+                        'types'   => array_keys($ld_types),
+                    ],
                 ];
 
             // ==================== UNDO (Free basic mode) ====================
@@ -7588,7 +8326,7 @@ class Server {
                                 if ( $undo_seo_adapt === 'rankmath' ) return in_array( 'noindex', (array) get_post_meta( $undo_seo_pid, 'rank_math_robots', true ), true );
                                 if ( $undo_seo_adapt === 'aioseo' )   return (bool) get_post_meta( $undo_seo_pid, '_aioseo_noindex', true );
                                 if ( $undo_seo_adapt === 'seopress' ) return 'yes' === get_post_meta( $undo_seo_pid, '_seopress_robots_index', true );
-                                if ( $undo_seo_adapt === 'seobolt' )  return (bool) get_post_meta( $undo_seo_pid, '_seobolt_noindex', true );
+                                if ( $undo_seo_adapt === 'seobolt' )  return (bool) get_post_meta( $undo_seo_pid, '_seobolt_robots_noindex', true );
                                 return false;
                             }
                             $mk = $undo_seo_field_map[ $arg_key ] ?? '';
@@ -7632,7 +8370,7 @@ class Server {
                                         delete_post_meta( $undo_seo_pid, '_seopress_robots_index' );
                                     }
                                 } elseif ( $undo_seo_adapt === 'seobolt' ) {
-                                    update_post_meta( $undo_seo_pid, '_seobolt_noindex', $prior_bool ? '1' : '' );
+                                    update_post_meta( $undo_seo_pid, '_seobolt_robots_noindex', $prior_bool ? '1' : '' );
                                 }
                                 continue;
                             }
@@ -8061,15 +8799,30 @@ class Server {
                 }
                 $plugins = get_plugins();
                 $active = get_option('active_plugins', []);
+                $network_active = is_multisite() ? array_keys( (array) get_site_option( 'active_sitewide_plugins', [] ) ) : [];
+                // "Tested up to" lives in the plugin's readme, which WordPress
+                // reads through its update check rather than the header.
+                $update_info = get_site_transient( 'update_plugins' );
                 $result = [];
                 foreach ($plugins as $path => $data) {
+                    $info = null;
+                    if ( is_object( $update_info ) ) {
+                        // response[] describes a pending update's new version; only
+                        // no_update[] describes what is installed.
+                        $info = $update_info->no_update[ $path ] ?? null;
+                    }
+                    $is_network = in_array( $path, $network_active, true );
                     $result[] = [
-                        'file'        => (string) $path,
-                        'name'        => (string) ( $data['Name'] ?? '' ),
-                        'version'     => (string) ( $data['Version'] ?? '' ),
-                        'description' => (string) ( $data['Description'] ?? '' ),
-                        'active'      => in_array($path, $active, true),
-                        'author'      => wp_strip_all_tags( (string) ( $data['Author'] ?? '' ) ),
+                        'file'           => (string) $path,
+                        'name'           => (string) ( $data['Name'] ?? '' ),
+                        'version'        => (string) ( $data['Version'] ?? '' ),
+                        'description'    => (string) ( $data['Description'] ?? '' ),
+                        'active'         => $is_network || in_array($path, $active, true),
+                        'network_active' => $is_network,
+                        'author'         => wp_strip_all_tags( (string) ( $data['Author'] ?? '' ) ),
+                        'requires_wp'    => ( $data['RequiresWP'] ?? '' ) !== '' ? (string) $data['RequiresWP'] : null,
+                        'requires_php'   => ( $data['RequiresPHP'] ?? '' ) !== '' ? (string) $data['RequiresPHP'] : null,
+                        'tested_up_to'   => is_object( $info ) && ! empty( $info->tested ) ? (string) $info->tested : null,
                     ];
                 }
                 return $result;
@@ -8083,6 +8836,7 @@ class Server {
                 $result = [];
                 foreach ($themes as $slug => $theme) {
                     $result[] = [
+                        'slug' => (string) $slug,
                         'name' => $theme->get('Name'),
                         'version' => $theme->get('Version'),
                         'active' => ($slug === $active),
@@ -8502,7 +9256,7 @@ class Server {
                         'title'         => (string) get_post_meta($post_id, '_seobolt_meta_title', true),
                         'description'   => (string) get_post_meta($post_id, '_seobolt_meta_description', true),
                         'focus_keyword' => (string) get_post_meta($post_id, '_seobolt_focus_keyword', true),
-                        'noindex'       => (bool) get_post_meta($post_id, '_seobolt_noindex', true),
+                        'noindex'       => (bool) get_post_meta($post_id, '_seobolt_robots_noindex', true),
                         'slug'          => $slug,
                     ];
                 }
@@ -8604,7 +9358,7 @@ class Server {
                         if ( $detected === 'rankmath' ) return in_array( 'noindex', (array) get_post_meta( $post_id, 'rank_math_robots', true ), true );
                         if ( $detected === 'aioseo' )   return (bool) get_post_meta( $post_id, '_aioseo_noindex', true );
                         if ( $detected === 'seopress' ) return 'yes' === get_post_meta( $post_id, '_seopress_robots_index', true );
-                        if ( $detected === 'seobolt' )  return (bool) get_post_meta( $post_id, '_seobolt_noindex', true );
+                        if ( $detected === 'seobolt' )  return (bool) get_post_meta( $post_id, '_seobolt_robots_noindex', true );
                         return false;
                     }
                     $meta_key = $field_map[ $arg_key ] ?? '';
@@ -8670,7 +9424,7 @@ class Server {
                             delete_post_meta( $post_id, '_seopress_robots_index' );
                         }
                     } elseif ( $detected === 'seobolt' ) {
-                        update_post_meta( $post_id, '_seobolt_noindex', $noindex_bool ? '1' : '' );
+                        update_post_meta( $post_id, '_seobolt_robots_noindex', $noindex_bool ? '1' : '' );
                     }
                 }
                 if ( array_key_exists( 'slug', $seo_requested ) ) {
@@ -8738,7 +9492,10 @@ class Server {
                     ! empty( $unsupported_fields ) ? sprintf( ', %d unsupported field(s) skipped', count( $unsupported_fields ) ) : '',
                     $seo_undo_envelope !== null ? ', undo available' : ''
                 );
-                \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
+                if ( ! array_key_exists( 'slug', $seo_requested ) ) {
+                    // A slug change already ran save_post via wp_update_post().
+                    \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
+                }
                 return \Royal_MCP\MCP\Support\Envelope::success(
                     $seo_summary,
                     $seo_struct,
@@ -9109,6 +9866,49 @@ class Server {
                 ];
 
             default:
+                /**
+                 * Lets another plugin run a tool it registered through the
+                 * royal_mcp_tools filter.
+                 *
+                 * Runs for any tool name Royal MCP does not define itself;
+                 * Royal MCP's own tools cannot be replaced. Return anything
+                 * other than null to answer the call; that value becomes the
+                 * tool result (a flat array or a full result envelope).
+                 * Return a WP_Error or throw an Exception to report a tool
+                 * error. Leave null untouched for tool names you don't own.
+                 *
+                 * The caller is already authenticated when this runs. The
+                 * handler must make its own capability checks for the
+                 * current user.
+                 *
+                 * The three parameters are stable.
+                 *
+                 * @param mixed  $result Null unless an earlier callback answered.
+                 * @param string $name   Tool name as received.
+                 * @param array  $args   Tool arguments as received.
+                 */
+                if ( ! $this->is_builtin_tool_name( $name ) ) {
+                    try {
+                        $external = apply_filters( 'royal_mcp_execute_tool_external', null, (string) $name, is_array( $args ) ? $args : [] );
+                    } catch ( \Exception $e ) {
+                        throw $e;
+                    } catch ( \Throwable $e ) {
+                        throw new \Exception( 'The tool could not be run.' );
+                    }
+                    if ( is_wp_error( $external ) ) {
+                        throw new \Exception( esc_html( $external->get_error_message() ) );
+                    }
+                    if ( is_object( $external ) ) {
+                        $external_array = json_decode( (string) wp_json_encode( $external ), true );
+                        if ( is_array( $external_array ) ) {
+                            $external = $external_array;
+                        }
+                    }
+                    if ( null !== $external ) {
+                        return $external;
+                    }
+                }
+
                 // Route to integration handlers
                 if ( strpos( $name, 'wc_' ) === 0 ) {
                     return WooIntegration::execute_tool( $name, $args );
@@ -9158,6 +9958,12 @@ class Server {
                 if ( strpos( $name, 'solid_' ) === 0 ) {
                     return SolidIntegration::execute_tool( $name, $args );
                 }
+                if ( strpos( $name, 'wordfence_' ) === 0 ) {
+                    return WordfenceIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'litespeed_' ) === 0 ) {
+                    return LiteSpeedIntegration::execute_tool( $name, $args );
+                }
                 if ( strpos( $name, 'cf7_' ) === 0 ) {
                     return CF7Integration::execute_tool( $name, $args );
                 }
@@ -9173,6 +9979,7 @@ class Server {
                 if ( strpos( $name, 'bp_' ) === 0 ) {
                     return BuddyPressIntegration::execute_tool( $name, $args );
                 }
+
                 throw new \Exception('Unknown tool: ' . esc_html($name));
         }
     }
@@ -9244,37 +10051,53 @@ class Server {
      * @return string 'yoast', 'rankmath', or 'none'.
      */
     private function detect_seo_plugin() {
-        if ( defined( 'WPSEO_VERSION' ) || class_exists( 'WPSEO_Options' ) ) {
-            return 'yoast';
-        }
-        if ( defined( 'RANK_MATH_VERSION' ) || class_exists( 'RankMath' ) ) {
-            return 'rankmath';
-        }
-        if ( defined( 'AIOSEO_VERSION' ) || function_exists( 'aioseo' ) ) {
-            return 'aioseo';
-        }
-        if ( defined( 'SEOPRESS_VERSION' ) ) {
-            return 'seopress';
-        }
-        if ( defined( 'SEOBOLT_VERSION' ) ) {
-            return 'seobolt';
-        }
-        return 'none';
+        return \Royal_MCP\MCP\Support\Seo_Plugin::detect();
     }
 
     private function apply_featured_media($post_id, $media_id) {
-        if ($media_id <= 0) {
-            delete_post_thumbnail($post_id);
-            \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
-            return;
+        $this->set_featured_media_meta($post_id, $media_id);
+        \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
+    }
+
+    /**
+     * Timestamp for a caller-supplied date. A date without an offset is read
+     * in the site timezone (as the tool schemas document); an explicit offset
+     * or "Z" is honoured. Returns false when the value can't be parsed.
+     */
+    private function parse_site_datetime($value) {
+        try {
+            return (new \DateTimeImmutable((string) $value, wp_timezone()))->getTimestamp();
+        } catch (\Exception $e) {
+            return false;
         }
+    }
+
+    /** Throws unless $media_id is an image attachment (the same check set_post_thumbnail() applies). */
+    private function assert_featured_media($media_id) {
         $attachment = get_post($media_id);
         if (!$attachment || $attachment->post_type !== 'attachment') {
             throw new \Exception('Media attachment not found.');
         }
-        $result = set_post_thumbnail($post_id, $media_id);
-        if (!$result) throw new \Exception('Failed to set featured image.');
-        \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
+        if (!wp_get_attachment_image($media_id, 'thumbnail')) {
+            throw new \Exception('Failed to set featured image.');
+        }
+    }
+
+    /** Set (or with 0, remove) the featured image without firing save hooks. */
+    private function set_featured_media_meta($post_id, $media_id) {
+        if ($media_id <= 0) {
+            delete_post_thumbnail($post_id);
+            return;
+        }
+        $this->assert_featured_media($media_id);
+        // set_post_thumbnail() returns false when the image is already set.
+        // Raw meta: get_post_thumbnail_id() is filterable (fallback-image plugins).
+        if ((int) get_post_meta($post_id, '_thumbnail_id', true) === (int) $media_id) {
+            return;
+        }
+        if (!set_post_thumbnail($post_id, $media_id)) {
+            throw new \Exception('Failed to set featured image.');
+        }
     }
 
     /**
@@ -9421,7 +10244,7 @@ class Server {
         foreach ($variants as $variant) {
             $clauses[] = '(option_name = %s OR option_name LIKE %s)';
             $values[]  = $variant;
-            $values[]  = $wpdb->esc_like($variant) . '_%';
+            $values[]  = $wpdb->esc_like($variant . '_') . '%';
         }
         $where = implode(' OR ', $clauses);
 
@@ -9436,10 +10259,36 @@ class Server {
 
         $result = [];
         foreach ($rows as $row) {
+            if ($this->is_denylisted_option($row->option_name)) {
+                continue;
+            }
             $value = maybe_unserialize($row->option_value);
             $result[$row->option_name] = $this->redact_sensitive_keys($value, $row->option_name);
         }
         return $result;
+    }
+
+    /**
+     * True when $slug is, or prefixes, a WordPress core option name, so the
+     * prefix lookup can't be pointed at core options (e.g. "admin" →
+     * admin_email). Names from populate_options().
+     */
+    private function is_core_option_prefix($slug) {
+        static $core = ['active_plugins', 'admin_email', 'admin_email_lifespan', 'auto_plugin_theme_update_emails', 'auto_update_core_dev', 'auto_update_core_major', 'auto_update_core_minor', 'avatar_default', 'avatar_rating', 'blog_charset', 'blog_public', 'blogdescription', 'blogname', 'category_base', 'close_comments_days_old', 'close_comments_for_old_posts', 'comment_max_links', 'comment_moderation', 'comment_order', 'comment_previously_approved', 'comment_registration', 'comments_notify', 'comments_per_page', 'date_format', 'db_version', 'default_category', 'default_comment_status', 'default_comments_page', 'default_email_category', 'default_link_category', 'default_ping_status', 'default_pingback_flag', 'default_post_format', 'default_role', 'disallowed_keys', 'finished_splitting_shared_terms', 'gmt_offset', 'hack_file', 'home', 'html_type', 'image_default_align', 'image_default_link_type', 'image_default_size', 'large_size_h', 'large_size_w', 'link_manager_enabled', 'links_updated_date_format', 'mailserver_login', 'mailserver_pass', 'mailserver_port', 'mailserver_url', 'medium_large_size_h', 'medium_large_size_w', 'medium_size_h', 'medium_size_w', 'moderation_keys', 'moderation_notify', 'page_comments', 'page_for_posts', 'page_on_front', 'permalink_structure', 'ping_sites', 'posts_per_page', 'posts_per_rss', 'recently_edited', 'require_name_email', 'rewrite_rules', 'rss_use_excerpt', 'show_avatars', 'show_comments_cookies_opt_in', 'show_on_front', 'site_icon', 'siteurl', 'start_of_week', 'sticky_posts', 'stylesheet', 'tag_base', 'template', 'thread_comments', 'thread_comments_depth', 'thumbnail_crop', 'thumbnail_size_h', 'thumbnail_size_w', 'time_format', 'timezone_string', 'uninstall_plugins', 'upload_path', 'upload_url_path', 'uploads_use_yearmonth_folders', 'use_smilies', 'use_trackback', 'users_can_register', 'widget_categories', 'widget_rss', 'widget_text', 'wp_attachment_pages_enabled', 'wp_force_deactivated_plugins', 'wp_notes_notify', 'wp_page_for_privacy_policy', 'wp_user_roles', 'cron'];
+        // Core options that are created outside populate_options().
+        static $core_extra = ['auth_key', 'auth_salt', 'logged_in_key', 'logged_in_salt', 'nonce_key', 'nonce_salt', 'secure_auth_key', 'secure_auth_salt', 'recovery_keys', 'recovery_mode_email_last_sent', 'theme_mods', 'theme_switched', 'user_count', 'user_roles', 'widget_block'];
+        $slug = sanitize_key($slug);
+        if ($slug === '') return true;
+        // Transients and other underscore-prefixed rows are not plugin settings.
+        if ('_' === $slug[0]) return true;
+        foreach (array_unique([$slug, str_replace('-', '_', $slug)]) as $variant) {
+            foreach (array_merge($core, $core_extra) as $name) {
+                if ($name === $variant || 0 === strpos($name, $variant . '_')) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -9494,9 +10343,8 @@ class Server {
      * @return mixed
      */
     private function redact_sensitive_keys($value, $key_hint = '') {
-        // Outer-key check: sensitive-named scalar values are the leak
-        // path Tomasz reported. Redact the whole subtree regardless of
-        // shape when the containing key is credential-shaped.
+        // Outer-key check: redact the whole subtree regardless of shape
+        // when the containing key is credential-shaped.
         if ($key_hint !== '' && $this->is_sensitive_key($key_hint)) {
             // Preserve falsy sentinels — an empty/null/false/[]/'0' value
             // under a sensitive-named key is a "not set" signal, not a
@@ -9765,9 +10613,67 @@ class Server {
      * ever adds one. Site Kit has ~4M installs; common read-tier lookup.
      */
     private function get_readable_options_allowlist() {
-        $default = ['blogname', 'blogdescription', 'siteurl', 'home', 'admin_email', 'posts_per_page', 'date_format', 'time_format', 'timezone_string', 'googlesitekit_analytics-4_settings', 'show_on_front', 'page_on_front'];
+        $default = ['blogname', 'blogdescription', 'siteurl', 'home', 'admin_email', 'posts_per_page', 'date_format', 'time_format', 'timezone_string', 'googlesitekit_analytics-4_settings', 'show_on_front', 'page_on_front', 'blog_public'];
+        // Admin-allowlisted options must be readable too (write ⊆ readable).
+        // Merged before the filter so developer callbacks keep the final say.
+        $default = array_values(array_unique(array_merge($default, $this->get_admin_allowlisted_options())));
         $allowed = apply_filters('royal_mcp_readable_options', $default);
         return is_array($allowed) ? $allowed : $default;
+    }
+
+    /**
+     * Terms assigned to a post, grouped by taxonomy: { tax => [ {id, slug, name} ] }.
+     * Covers every taxonomy registered for the post type (or one when $only
+     * is given). wp_get_object_terms reads assignments directly, so drafts
+     * and private posts report correctly even though term counts don't.
+     *
+     * @param \WP_Post $post
+     * @param string   $only Optional taxonomy slug.
+     * @return array<string,array<int,array{id:int,slug:string,name:string}>>
+     */
+    private function get_post_terms_map(\WP_Post $post, $only = '') {
+        $taxonomies = '' !== $only ? [$only] : get_object_taxonomies($post->post_type, 'names');
+        $map = [];
+        foreach ($taxonomies as $tax) {
+            // Taxonomies a site keeps out of public view are listed only
+            // for callers who can edit the post.
+            $tax_obj = get_taxonomy($tax);
+            if (!$tax_obj || (!$tax_obj->public && !$tax_obj->show_in_rest && !current_user_can('edit_post', $post->ID))) {
+                continue;
+            }
+            $terms = wp_get_object_terms($post->ID, $tax);
+            if (is_wp_error($terms)) {
+                continue;
+            }
+            $map[$tax] = [];
+            foreach ($terms as $t) {
+                $map[$tax][] = ['id' => (int) $t->term_id, 'slug' => (string) $t->slug, 'name' => (string) $t->name];
+            }
+        }
+        return $map;
+    }
+
+    /**
+     * Option names an admin listed under Settings → "Allowlisted plugin
+     * options". Applies to MCP reads and writes alike, only while the
+     * "Allow AI to write WordPress options" toggle is on, and never to
+     * options the write denylist blocks.
+     *
+     * @return string[]
+     */
+    private function get_admin_allowlisted_options() {
+        $settings = get_option('royal_mcp_settings', []);
+        if (!is_array($settings) || empty($settings['allow_option_writes'])
+            || empty($settings['writable_options_admin']) || !is_array($settings['writable_options_admin'])) {
+            return [];
+        }
+        $keys = [];
+        foreach ($settings['writable_options_admin'] as $admin_key) {
+            if (is_string($admin_key) && '' !== $admin_key && !$this->is_denylisted_option($admin_key)) {
+                $keys[] = $admin_key;
+            }
+        }
+        return $keys;
     }
 
     private function is_denylisted_option($name) {
@@ -9796,6 +10702,9 @@ class Server {
             'wp_user_level', 'wp_capabilities',
         ];
         if (in_array($name_lc, $exact, true)) return true;
+
+        // The roles option is named after the table prefix.
+        if (substr($name_lc, -10) === 'user_roles') return true;
 
         // Royal MCP namespace is reserved.
         if (strpos($name_lc, 'royal_mcp_') === 0) return true;

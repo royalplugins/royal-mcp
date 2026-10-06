@@ -42,11 +42,26 @@ class MCP_Adapter_Server {
 			return;
 		}
 
+		$settings = get_option( 'royal_mcp_settings', array() );
+		if ( empty( $settings['enabled'] ) ) {
+			return;
+		}
+
 		$ability_names = self::collect_our_ability_names();
 		if ( empty( $ability_names ) ) {
 			return;
 		}
 
+		try {
+			self::create_server( $ability_names );
+		} catch ( \Throwable $e ) {
+			// Older bundled adapter copies don't catch server-construction
+			// errors themselves; skip our server rather than break REST.
+			return;
+		}
+	}
+
+	private static function create_server( array $ability_names ): void {
 		$adapter = \WP\MCP\Core\McpAdapter::instance();
 		$adapter->create_server(
 			self::SERVER_ID,

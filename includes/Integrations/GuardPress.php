@@ -131,7 +131,7 @@ class GuardPress {
 				$results = $scanner->get_results();
 				$stats   = $scanner->get_statistics();
 				return [
-					'last_scan'  => $scanner->get_last_scan(),
+					'last_scan'  => self::site_time_to_iso( $scanner->get_last_scan() ),
 					'statistics' => $stats,
 					'results'    => is_array( $results ) ? $results : [],
 				];
@@ -153,7 +153,7 @@ class GuardPress {
 				return array_map( function( $ip ) {
 					return [
 						'ip_address'  => $ip->ip_address,
-						'blocked_at'  => $ip->blocked_at,
+						'blocked_at'  => self::site_time_to_iso( $ip->blocked_at ),
 						'reason'      => $ip->reason ?? 'brute_force',
 						'is_permanent' => ! empty( $ip->is_permanent ),
 					];
@@ -183,6 +183,25 @@ class GuardPress {
 
 			default:
 				throw new \Exception( 'Unknown GuardPress tool: ' . esc_html( $name ) );
+		}
+	}
+
+	/**
+	 * GuardPress hands these times back in site time with no offset; return
+	 * ISO 8601 with the site's offset so callers can compare them. Empty
+	 * stays null (e.g. a site that never scanned).
+	 */
+	private static function site_time_to_iso( $mysql_datetime ) {
+		if ( is_int( $mysql_datetime ) || ( is_string( $mysql_datetime ) && ctype_digit( $mysql_datetime ) ) ) {
+			return (int) $mysql_datetime > 0 ? wp_date( 'c', (int) $mysql_datetime ) : null;
+		}
+		if ( ! is_string( $mysql_datetime ) || '' === $mysql_datetime || 0 === strpos( $mysql_datetime, '0000-00-00' ) ) {
+			return null;
+		}
+		try {
+			return ( new \DateTimeImmutable( $mysql_datetime, wp_timezone() ) )->format( 'c' );
+		} catch ( \Exception $e ) {
+			return null;
 		}
 	}
 }

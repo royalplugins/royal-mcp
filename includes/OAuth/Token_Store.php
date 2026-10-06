@@ -398,7 +398,7 @@ class Token_Store {
     /**
      * Soft-delete every unrevoked access + refresh token in one operation.
      *
-     * Powers the "Revoke all active sessions" button on Settings → OAuth.
+     * Powers the "Revoke all" button on the Connected Clients screen.
      * Uses soft-delete (revoked = 1) rather than hard truncate so future
      * audit-log surfaces can still inspect what was revoked. Does not touch
      * registered clients or in-flight authorization codes.
@@ -428,6 +428,152 @@ class Token_Store {
             [ '%d' ],
             [ '%s', '%d' ]
         );
+    }
+
+    /**
+     * Revoke the grant a token belongs to: every unrevoked access and refresh
+     * token issued to the same client for the same user. Tokens carry no
+     * grant identifier, so client + user is the narrowest unit that is sure
+     * to take the token's partner with it.
+     *
+     * Changes nothing and returns 0 when the token is unknown or already
+     * revoked, when $client_id names a different client than the one the
+     * token was issued to, or when that client authenticates with a secret
+     * and the caller has not done so.
+     *
+     * @param string $raw_token            Access or refresh token as presented.
+     * @param string $client_id            Client making the request, '' when not stated.
+     * @param bool   $client_authenticated Whether $client_id proved itself with its secret.
+     * @return int Token rows revoked.
+     */
+    public static function revoke_by_token( $raw_token, $client_id = '', $client_authenticated = false ) {
+        global $wpdb;
+        $table = self::tokens_table();
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT client_id, user_id, revoked FROM `{$table}` WHERE token_hash = %s LIMIT 1",
+                hash( 'sha256', (string) $raw_token )
+            ),
+            ARRAY_A
+        );
+        if ( ! $row || (int) $row['revoked'] ) {
+            return 0;
+        }
+
+        $client_id = (string) $client_id;
+        if ( '' !== $client_id && ! hash_equals( (string) $row['client_id'], $client_id ) ) {
+            return 0;
+        }
+        if ( ! $client_authenticated ) {
+            $owner = self::get_client( $row['client_id'] );
+            if ( $owner && 'client_secret_post' === ( $owner['token_endpoint_auth_method'] ?? 'none' ) ) {
+                return 0;
+            }
+        }
+
+        return self::revoke_connection( $row['client_id'], (int) $row['user_id'] );
+    }
+
+    /**
+     * Revoke every live token one client holds for one user. The client's
+     * registration is kept, so it can be authorized again from the client.
+     *
+     * @param string $client_id Client the tokens were issued to.
+     * @param int    $user_id   User the tokens act as.
+     * @return int Token rows revoked.
+     */
+    public static function revoke_connection( $client_id, $user_id ) {
+        global $wpdb;
+        $table = self::tokens_table();
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+        return (int) $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE `{$table}` SET revoked = 1 WHERE client_id = %s AND user_id = %d AND revoked = 0",
+                (string) $client_id,
+                (int) $user_id
+            )
+        );
+    }
+
+    /**
+     * Connections that can use the site right now: one row per client and
+     * user holding at least one token that is neither revoked nor expired,
+     * most recently issued first.
+     *
+     * Ages are seconds counted by the database rather than timestamps: the
+     * created_at columns are stamped by the database in its own time zone.
+     *
+     * @param int $limit Most rows to return.
+     * @return array[] Each: client_id, client_name ('' when unknown), user_id,
+     *                 live_tokens, last_issued_age, registered_age (null when
+     *                 the client has no stored registration).
+     */
+    public static function list_connections( $limit = 200 ) {
+        global $wpdb;
+        $tokens  = self::tokens_table();
+        $clients = self::clients_table();
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT client_id, user_id, COUNT(*) AS live_tokens, MIN( TIMESTAMPDIFF( SECOND, created_at, NOW() ) ) AS last_issued_age
+                 FROM `{$tokens}`
+                 WHERE revoked = 0 AND expires_at > %s
+                 GROUP BY client_id, user_id
+                 ORDER BY last_issued_age ASC
+                 LIMIT %d",
+                gmdate( 'Y-m-d H:i:s' ),
+                max( 1, (int) $limit )
+            ),
+            ARRAY_A
+        );
+        if ( ! $rows ) {
+            return [];
+        }
+
+        $ids          = array_values( array_unique( array_column( $rows, 'client_id' ) ) );
+        $placeholders = implode( ',', array_fill( 0, count( $ids ), '%s' ) );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method; one %s placeholder per id.
+        $registered = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT client_id, client_name, TIMESTAMPDIFF( SECOND, created_at, NOW() ) AS registered_age FROM `{$clients}` WHERE client_id IN ( {$placeholders} )",
+                $ids
+            ),
+            ARRAY_A
+        );
+        $by_id = [];
+        foreach ( (array) $registered as $client ) {
+            $by_id[ (string) $client['client_id'] ] = $client;
+        }
+
+        $out = [];
+        foreach ( $rows as $row ) {
+            $client_id = (string) $row['client_id'];
+            $name      = '';
+            $age       = null;
+            if ( isset( $by_id[ $client_id ] ) ) {
+                $name = (string) $by_id[ $client_id ]['client_name'];
+                $age  = max( 0, (int) $by_id[ $client_id ]['registered_age'] );
+            } else {
+                // The client defined in the plugin's settings has no stored registration.
+                $static = self::get_client( $client_id );
+                if ( $static ) {
+                    $name = (string) $static['client_name'];
+                }
+            }
+            $out[] = [
+                'client_id'       => $client_id,
+                'client_name'     => $name,
+                'user_id'         => (int) $row['user_id'],
+                'live_tokens'     => (int) $row['live_tokens'],
+                'last_issued_age' => max( 0, (int) $row['last_issued_age'] ),
+                'registered_age'  => $age,
+            ];
+        }
+        return $out;
     }
 
     /**
@@ -463,7 +609,11 @@ class Token_Store {
         if ( is_array( $settings ) && ( ! empty( $settings['oauth_client_id'] ) || ! empty( $settings['oauth_client_secret'] ) ) ) {
             $settings['oauth_client_id']     = '';
             $settings['oauth_client_secret'] = '';
-            update_option( 'royal_mcp_settings', $settings );
+            if ( class_exists( '\\Royal_MCP\\Admin\\Settings_Page' ) ) {
+                \Royal_MCP\Admin\Settings_Page::save_programmatically( $settings );
+            } else {
+                update_option( 'royal_mcp_settings', $settings );
+            }
             $static_creds_cleared = 1;
         }
 

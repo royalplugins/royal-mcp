@@ -224,7 +224,11 @@ class SiteVault {
 				if ( ! method_exists( $manager, 'get_stats' ) ) {
 					throw new \Exception( 'Backup stats not available in this version' );
 				}
-				return $manager->get_stats();
+				$stats = $manager->get_stats();
+				if ( is_array( $stats ) && ! empty( $stats['last_backup'] ) && is_object( $stats['last_backup'] ) ) {
+					$stats['last_backup'] = self::format_backup( $stats['last_backup'] );
+				}
+				return $stats;
 
 			case 'sv_get_schedules':
 				$scheduler_class = self::scheduler_class();

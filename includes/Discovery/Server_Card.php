@@ -83,10 +83,9 @@ class Server_Card {
             ];
         }
 
-        // Empty in the unauthenticated card so this endpoint doesn't act as
-        // an install-fingerprint source. The serverInfo.version key stays
-        // present to satisfy the schema; authenticated callers can read the
-        // real version from the royal_mcp_connection_health tool.
+        // Empty so this endpoint doesn't act as an install-fingerprint
+        // source. The serverInfo.version key stays present to satisfy the
+        // schema.
         $version = '';
 
         // Shape follows SEP-1649 (modelcontextprotocol/modelcontextprotocol #2127):
@@ -103,7 +102,7 @@ class Server_Card {
             'endpoint'         => $home . '/mcp',
             'capabilities'     => [
                 'tools'       => true,
-                'resources'   => false,
+                'resources'   => true,
                 'prompts'     => false,
                 'completions' => false,
             ],
@@ -194,6 +193,8 @@ class Server_Card {
             'gp'              => 'guardpress',
             'raif'            => 'royal-ai-firewall',
             'solid'           => 'solid-security',
+            'wordfence'       => 'wordfence',
+            'litespeed'       => 'litespeed-cache',
             'fc'              => 'forgecache',
             'w3tc'            => 'w3-total-cache',
             'sv'              => 'sitevault',

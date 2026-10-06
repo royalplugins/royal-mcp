@@ -49,9 +49,9 @@ class GuardPress {
 					'type'                 => 'object',
 					'additionalProperties' => true,
 					'properties'           => array(
-						'ip'         => array( 'type' => 'string' ),
+						'ip_address' => array( 'type' => 'string' ),
 						'reason'     => array( 'type' => 'string' ),
-						'blocked_at' => array( 'type' => 'string' ),
+						'blocked_at' => array( 'type' => array( 'string', 'null' ), 'format' => 'date-time' ),
 					),
 				),
 			),

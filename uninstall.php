@@ -109,6 +109,7 @@ delete_transient('royal_mcp_agent_skills_index_json');
 delete_transient('royal_mcp_webmcp_bridge_status');
 delete_transient('royal_mcp_auth_header_status');
 delete_transient('royal_mcp_well_known_status');
+delete_transient('royal_mcp_foreign_as_endpoint');
 delete_transient('royal_mcp_missing_endpoints_list');
 delete_transient('royal_mcp_register_301_status');
 
@@ -118,8 +119,10 @@ wp_clear_scheduled_hook('royal_mcp_token_cleanup');
 // Clean up any user meta if applicable
 delete_metadata('user', 0, 'royal_mcp_dismissed_notices', '', true);
 delete_metadata('user', 0, 'royal_mcp_founders_dismissed', '', true);
+delete_metadata('user', 0, 'royal_mcp_foreign_as_dismissed', '', true);
 // version-stamped dismissal meta for founders + review banners.
 delete_metadata('user', 0, 'royal_mcp_founders_dismissed_version', '', true);
 delete_metadata('user', 0, 'royal_mcp_review_dismissed_version', '', true);
+delete_metadata('user', 0, 'royal_mcp_pro_launch_notice_dismissed', '', true);
 // Legacy chrome-callout dismissal meta.
 delete_metadata('user', 0, 'royal_plugins_dismissed_founders_callout', '', true);

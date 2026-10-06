@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.5.6
+ * Version: 1.5.7
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -41,7 +41,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 }
 
 // Define plugin constants.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.6' );
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.7' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -124,8 +124,11 @@ class Royal_MCP_Plugin {
         // Cloudflare-injected bridge script that expects to POST to /mcp.
         add_action('wp_enqueue_scripts', [$this, 'maybe_enqueue_webmcp_bootstrap'], 1);
 
-        // Strip GET/HEAD rewrites for POST-only endpoints (/register, /token) so browser visits fall through.
+        // Strip GET/HEAD rewrites for POST-only endpoints (/register, /token, /revoke) so browser visits fall through.
         add_filter('option_rewrite_rules', [__CLASS__, 'strip_oauth_get_only_rules']);
+        // ...and answer 405 for those visits when nothing else on the site is at that address.
+        // Priority 1: ahead of WordPress's own handling of a 404, which may redirect to a similar URL.
+        add_action('template_redirect', [$this, 'answer_405_for_oauth_post_paths'], 1);
 
         // Scheduled token cleanup.
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'cleanup_expired']);
@@ -178,10 +181,12 @@ class Royal_MCP_Plugin {
             add_action( 'wp_abilities_api_categories_init', array( \Royal_MCP\Abilities\Categories::class, 'register' ) );
             add_action( 'wp_abilities_api_init', array( \Royal_MCP\Abilities\Registrar::class, 'register' ) );
 
-            // MCP Adapter: own named server, explicit ability list, no auto-enroll on default server.
-            if ( class_exists( '\\WP\\MCP\\Core\\McpAdapter' ) ) {
-                add_action( 'mcp_adapter_init', array( \Royal_MCP\Abilities\MCP_Adapter_Server::class, 'register' ) );
-            }
+            // MCP Adapter: own named server, explicit ability list. Hooked
+            // unconditionally: plugins that bundle the adapter (e.g. inside an
+            // SEO or commerce plugin) can load it after this point, and the
+            // hook only fires when an adapter is present. register() checks
+            // the adapter classes itself.
+            add_action( 'mcp_adapter_init', array( \Royal_MCP\Abilities\MCP_Adapter_Server::class, 'register' ) );
         }
     }
 
@@ -523,6 +528,7 @@ class Royal_MCP_Plugin {
             'authorize' => 'authorize',
             'token'     => 'token',
             'register'  => 'register',
+            'revoke'    => 'revoke',
         ] );
     }
 
@@ -580,14 +586,21 @@ class Royal_MCP_Plugin {
     }
 
     /**
-     * Redirect GET/HEAD requests to POST-only OAuth endpoints (/register,
-     * /token) to a 405 Method Not Allowed handler instead of letting them
-     * fall through to a bare WordPress 404. 405 is the spec-correct
-     * response ("endpoint exists, wrong method") and gives probing MCP
-     * clients an Allow header they can act on.
+     * The OAuth endpoints that only accept POST. /authorize is not one of
+     * them: it has to answer GET.
+     */
+    const OAUTH_POST_ONLY_ACTIONS = [ 'register', 'token', 'revoke' ];
+
+    /**
+     * Take the POST-only OAuth endpoints (/register, /token, /revoke) out of
+     * the rewrite rules for GET and HEAD requests, so whatever else the site
+     * has at the same address — most often a membership plugin's /register
+     * page — is served to visitors by WordPress as usual. When nothing else
+     * is there, answer_405_for_oauth_post_paths() answers instead of a 404.
      *
      * MUST hook option_rewrite_rules, NOT rewrite_rules_array — the latter
-     * feeds update_option() during a flush and would persist the rewrite.
+     * feeds update_option() during a flush and would persist the removal,
+     * leaving the endpoints unreachable for POST as well.
      */
     public static function strip_oauth_get_only_rules( $rules ) {
         if ( ! is_array( $rules ) ) {
@@ -600,16 +613,112 @@ class Royal_MCP_Plugin {
             return $rules;
         }
         $paths = self::get_oauth_rewrite_paths();
-        foreach ( [ 'register', 'token' ] as $action ) {
+        foreach ( self::OAUTH_POST_ONLY_ACTIONS as $action ) {
             $slug = isset( $paths[ $action ] ) ? ltrim( trim( (string) $paths[ $action ] ), '/' ) : '';
             if ( $slug === '' ) continue;
             $rule_key = $slug . '/?$';
             if ( isset( $rules[ $rule_key ] )
                 && false !== strpos( (string) $rules[ $rule_key ], 'royal_mcp_oauth=' . $action ) ) {
-                $rules[ $rule_key ] = 'index.php?royal_mcp_oauth=method_not_allowed&royal_mcp_endpoint=' . $action;
+                unset( $rules[ $rule_key ] );
             }
         }
         return $rules;
+    }
+
+    /**
+     * Whether the rewrite rules WordPress has stored route an OAuth endpoint.
+     * Reads the stored rules as they are, without the per-request removal
+     * strip_oauth_get_only_rules() applies for GET and HEAD.
+     *
+     * @param string $action Endpoint action, e.g. 'token' or 'revoke'.
+     * @return bool
+     */
+    public static function has_oauth_rewrite_rule( $action ) {
+        $paths = self::get_oauth_rewrite_paths();
+        $slug  = isset( $paths[ $action ] ) ? ltrim( trim( (string) $paths[ $action ] ), '/' ) : '';
+        if ( '' === $slug ) {
+            return false;
+        }
+        $strip    = [ __CLASS__, 'strip_oauth_get_only_rules' ];
+        $stripped = remove_filter( 'option_rewrite_rules', $strip );
+        $rules    = get_option( 'rewrite_rules' );
+        if ( $stripped ) {
+            add_filter( 'option_rewrite_rules', $strip );
+        }
+        // The rule has to be this plugin's own, not another plugin's at the same address.
+        return is_array( $rules )
+            && isset( $rules[ $slug . '/?$' ] )
+            && false !== strpos( (string) $rules[ $slug . '/?$' ], 'royal_mcp_oauth=' . $action );
+    }
+
+    /**
+     * The published page or post at a POST-only OAuth endpoint's address when
+     * the current request is a POST that is not the OAuth request that
+     * endpoint takes: client registration is a JSON document, a token request
+     * carries grant_type, a revocation carries token. Null otherwise.
+     *
+     * @param string $action Endpoint action.
+     * @return WP_Post|null
+     */
+    private function content_posted_to_instead_of_oauth( $action ) {
+        $method = isset( $_SERVER['REQUEST_METHOD'] ) ? strtoupper( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) ) : '';
+        if ( 'POST' !== $method ) {
+            return null;
+        }
+        // phpcs:disable WordPress.Security.NonceVerification.Missing -- only the presence of OAuth fields is looked at.
+        $content_type = isset( $_SERVER['CONTENT_TYPE'] ) ? strtolower( sanitize_text_field( wp_unslash( $_SERVER['CONTENT_TYPE'] ) ) ) : '';
+        $oauth_shaped = ( 'register' === $action && false !== strpos( $content_type, 'application/json' ) )
+            || ( 'token' === $action && isset( $_POST['grant_type'] ) )
+            || ( 'revoke' === $action && isset( $_POST['token'] ) );
+        // phpcs:enable WordPress.Security.NonceVerification.Missing
+        if ( $oauth_shaped ) {
+            return null;
+        }
+        $paths = self::get_oauth_rewrite_paths();
+        $slug  = isset( $paths[ $action ] ) ? trim( trim( (string) $paths[ $action ] ), '/' ) : '';
+        if ( '' === $slug ) {
+            return null;
+        }
+        $content = get_page_by_path( $slug, OBJECT, array_values( get_post_types( [ 'public' => true ] ) ) );
+        return ( $content instanceof WP_Post && 'publish' === $content->post_status ) ? $content : null;
+    }
+
+    /**
+     * Answer 405 with an Allow header for a GET or HEAD to a POST-only OAuth
+     * endpoint, but only when the request would otherwise be a 404. A page,
+     * post or another plugin's route at the same address has already been
+     * found by WordPress at this point and is left alone.
+     */
+    public function answer_405_for_oauth_post_paths() {
+        if ( ! is_404() ) {
+            return;
+        }
+        $method = isset( $_SERVER['REQUEST_METHOD'] )
+            ? strtoupper( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) )
+            : 'GET';
+        if ( 'GET' !== $method && 'HEAD' !== $method ) {
+            return;
+        }
+        global $wp;
+        $request = isset( $wp->request ) ? trim( (string) $wp->request, '/' ) : '';
+        if ( '' === $request ) {
+            return;
+        }
+        $paths = self::get_oauth_rewrite_paths();
+        foreach ( self::OAUTH_POST_ONLY_ACTIONS as $action ) {
+            $slug = isset( $paths[ $action ] ) ? trim( trim( (string) $paths[ $action ] ), '/' ) : '';
+            if ( '' === $slug || $slug !== $request ) {
+                continue;
+            }
+            // An endpoint the site does not route for POST either stays a 404.
+            if ( ! self::has_oauth_rewrite_rule( $action ) ) {
+                return;
+            }
+            $wp->query_vars['royal_mcp_oauth']    = 'method_not_allowed';
+            $wp->query_vars['royal_mcp_endpoint'] = $action;
+            $this->handle_oauth_request( $wp );
+            return;
+        }
     }
 
     /**
@@ -688,8 +797,23 @@ class Royal_MCP_Plugin {
             return;
         }
 
-        // Only handle OAuth if plugin is enabled (allow metadata always for discovery).
         $action = sanitize_text_field( $wp->query_vars['royal_mcp_oauth'] );
+
+        // A form on a page published at one of these addresses posts back to
+        // the same address. A POST that is not shaped like the OAuth request
+        // the endpoint takes, when the site has content at that address, is
+        // handed back to WordPress as that content.
+        if ( in_array( $action, self::OAUTH_POST_ONLY_ACTIONS, true ) ) {
+            $content = $this->content_posted_to_instead_of_oauth( $action );
+            if ( $content instanceof WP_Post ) {
+                $wp->query_vars = 'page' === $content->post_type
+                    ? [ 'page_id' => (int) $content->ID ]
+                    : [ 'p' => (int) $content->ID, 'post_type' => $content->post_type ];
+                return;
+            }
+        }
+
+        // Only handle OAuth if plugin is enabled (allow metadata always for discovery).
         if ( ! in_array( $action, [ 'metadata', 'metadata_mcp', 'metadata_oidc', 'jwks' ], true ) ) {
             $settings = get_option( 'royal_mcp_settings', [] );
             if ( empty( $settings['enabled'] ) ) {
@@ -724,9 +848,19 @@ class Royal_MCP_Plugin {
         // only fire in the admin context regardless.
         new Royal_MCP\Admin\Pending_Clients_Page();
 
+        // Site Health tests. Registered outside the admin branch too: the
+        // weekly Site Health check runs from cron and calls them directly.
+        new Royal_MCP\Admin\Site_Health_Tests();
+
+        if ( defined( 'WP_CLI' ) && WP_CLI ) {
+            \WP_CLI::add_command( 'royal-mcp', 'Royal_MCP\CLI\Commands' );
+        }
+
         // Initialize components
         if (is_admin()) {
             new Royal_MCP\Admin\Settings_Page();
+            new Royal_MCP\Admin\Connected_Clients_Page();
+            new Royal_MCP\Admin\Pro_Notice();
             new Royal_MCP\Admin\Well_Known_Notice();
             new Royal_MCP\Admin\Authorization_Header_Notice();
             new Royal_MCP\Admin\Help_Page();

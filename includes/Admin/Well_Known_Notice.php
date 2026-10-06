@@ -42,6 +42,9 @@ class Well_Known_Notice {
     const PLAIN_PERMALINKS_SUPPORT_URL     = 'https://royalplugins.com/support/royal-mcp/plain-permalinks-blocks-discovery.html';
     const PAGE_SHADOW_SUPPORT_URL          = 'https://royalplugins.com/support/royal-mcp/oauth-page-shadow.html';
     const MISSING_ENDPOINTS_SUPPORT_URL    = 'https://royalplugins.com/support/royal-mcp/oauth-discovery-missing-endpoints.html';
+    const FOREIGN_AS_TRANSIENT             = 'royal_mcp_foreign_as_endpoint';
+    const FOREIGN_AS_DISMISS_KEY           = 'royal_mcp_foreign_as_dismissed';
+    const FOREIGN_AS_SUPPORT_URL           = 'https://royalplugins.com/support/royal-mcp/another-mcp-plugin-answers-oauth-discovery/';
     const PERFMATTERS_DISMISS_KEY          = 'royal_mcp_perfmatters_rest_dismissed';
     const PERFMATTERS_SUPPORT_URL          = 'https://royalplugins.com/support/royal-mcp/perfmatters-disable-rest-api-blocks-mcp.html';
 
@@ -77,6 +80,9 @@ class Well_Known_Notice {
             'plugins',
             'toplevel_page_royal-mcp',
             'royal-mcp_page_royal-mcp-logs',
+            // Pro moves Settings under its own top-level menu.
+            'toplevel_page_royal-mcp-pro',
+            'royal-mcp-pro_page_royal-mcp',
         ];
         if ( ! in_array( $screen->id, $allowed_screens, true ) ) {
             return;
@@ -125,6 +131,16 @@ class Well_Known_Notice {
         }
 
         $status = $this->check_well_known();
+
+        // Another plugin answered /.well-known/oauth-authorization-server.
+        // Checked before every host/WAF classification below, all of which
+        // assume the document we fetched is ours.
+        if ( 'foreign_as' === $status
+            && ! get_user_meta( $user_id, self::FOREIGN_AS_DISMISS_KEY, true )
+        ) {
+            $this->render_foreign_as_notice();
+            return;
+        }
 
         // Sucuri/CloudProxy fires BEFORE generic 'blocked' because it needs
         // Sucuri-specific fix guidance (edge-CDN allowlist / IDS exclusion),
@@ -253,12 +269,14 @@ class Well_Known_Notice {
      *  - blocked       : status 404 with no PHP/WP fingerprint (nginx static 404)
      *  - stale_static  : status 200 with JSON but endpoints advertise REST-namespace paths
      *                    (/wp-json/royal-mcp/v1/...) — leftover static file from an earlier layout
+     *  - foreign_as    : status 200 with JSON whose endpoints are not the ones this plugin
+     *                    serves — another plugin is answering discovery
      *  - body_is_html  : status 200 but body is an HTML document — a membership plugin or
      *                    theme template intercepted the request (e.g. a login page)
      *  - unknown       : connection error, timeout, or non-2xx/non-404
      *  - mismatch      : status 200 but content unexpected for unrelated reasons (issuer mismatch)
      */
-    private function check_well_known() {
+    public function check_well_known() {
         $cached = get_transient( self::TRANSIENT_KEY );
         if ( false !== $cached ) {
             return $cached;
@@ -470,6 +488,20 @@ class Well_Known_Notice {
                 }
             }
 
+            // Another OAuth plugin's document. Compare the endpoint URLs it
+            // advertises with the ones Royal MCP serves; a foreign endpoint
+            // means clients will sign in against the other plugin and fail.
+            // Checked whatever the issuer says and before the missing-key
+            // check, so a document from another plugin is reported as that
+            // rather than as an incomplete copy of ours. Endpoints the
+            // document leaves out are not compared.
+            $foreign = self::detect_foreign_endpoints( $data );
+            if ( null !== $foreign ) {
+                set_transient( self::FOREIGN_AS_TRANSIENT, $foreign, self::TRANSIENT_TTL );
+                return 'foreign_as';
+            }
+            delete_transient( self::FOREIGN_AS_TRANSIENT );
+
             // Missing-endpoints detection: a hand-authored static file that
             // omits one of the required RFC 8414 / RFC 7591 endpoint keys
             // leaves discovery clients with no URL to reach that leg of the
@@ -539,6 +571,108 @@ class Well_Known_Notice {
         }
 
         return 'unknown';
+    }
+
+    /**
+     * Compare the endpoint URLs in a fetched AS document with the ones this
+     * plugin serves. Returns null when they match, else details of the
+     * first foreign endpoint. Public static for testability.
+     *
+     * @param array $data Decoded /.well-known/oauth-authorization-server body.
+     * @return array|null { field, advertised, expected }
+     */
+    public static function detect_foreign_endpoints( array $data ) {
+        if ( ! class_exists( '\\Royal_MCP\\OAuth\\Server' ) ) {
+            return null;
+        }
+        $ours = \Royal_MCP\OAuth\Server::build_authorization_server_metadata();
+        foreach ( [ 'authorization_endpoint', 'token_endpoint', 'registration_endpoint' ] as $field ) {
+            if ( empty( $data[ $field ] ) || ! is_string( $data[ $field ] ) || empty( $ours[ $field ] ) ) {
+                continue;
+            }
+            if ( self::normalize_endpoint( $data[ $field ] ) !== self::normalize_endpoint( $ours[ $field ] ) ) {
+                return [
+                    'field'      => $field,
+                    'advertised' => $data[ $field ],
+                    'expected'   => $ours[ $field ],
+                ];
+            }
+        }
+        // Same paths as ours but a different documentation link: another
+        // plugin using the default /authorize, /token, /register slugs.
+        // A missing field is not treated as foreign.
+        if ( ! empty( $data['service_documentation'] ) && is_string( $data['service_documentation'] )
+            && ! empty( $ours['service_documentation'] )
+            && untrailingslashit( $data['service_documentation'] ) !== untrailingslashit( $ours['service_documentation'] )
+        ) {
+            return [
+                'field'      => 'service_documentation',
+                'advertised' => $data['service_documentation'],
+                'expected'   => $ours['service_documentation'],
+            ];
+        }
+        return null;
+    }
+
+    /** path + query, lowercase, no trailing slash — scheme/host differences are not "foreign". */
+    public static function normalize_endpoint( $url ) {
+        $parts = wp_parse_url( (string) $url );
+        if ( ! is_array( $parts ) ) {
+            return '';
+        }
+        $path  = isset( $parts['path'] ) ? rtrim( $parts['path'], '/' ) : '';
+        $query = isset( $parts['query'] ) ? '?' . $parts['query'] : '';
+        return strtolower( $path . $query );
+    }
+
+    /**
+     * Another plugin is answering /.well-known/oauth-authorization-server.
+     */
+    private function render_foreign_as_notice() {
+        $dismiss_url = wp_nonce_url(
+            add_query_arg( 'royal_mcp_dismiss_foreign_as', '1' ),
+            'royal_mcp_dismiss_foreign_as'
+        );
+        $detail = get_transient( self::FOREIGN_AS_TRANSIENT );
+        $detail = is_array( $detail ) ? $detail : [];
+        ?>
+        <div class="notice notice-error royal-mcp-foreign-as-notice">
+            <p>
+                <strong><?php esc_html_e( 'Royal MCP: another plugin is answering OAuth sign-in for this site.', 'royal-mcp' ); ?></strong>
+            </p>
+            <p>
+                <?php
+                printf(
+                    /* translators: %s: the discovery path /.well-known/oauth-authorization-server */
+                    esc_html__( 'AI clients find Royal MCP\'s sign-in pages through %s. On this site a different plugin answers that address, so OAuth connections to Royal MCP fail, usually with an "invalid_target" error. Only one OAuth plugin can run on a site.', 'royal-mcp' ),
+                    '<code>/.well-known/oauth-authorization-server</code>'
+                );
+                ?>
+            </p>
+            <?php if ( ! empty( $detail['advertised'] ) && ! empty( $detail['expected'] ) ) : ?>
+            <p>
+                <?php
+                printf(
+                    /* translators: 1: endpoint field name, 2: URL the other plugin advertises, 3: Royal MCP's URL */
+                    esc_html__( 'That document lists %1$s as %2$s. Royal MCP\'s is %3$s.', 'royal-mcp' ),
+                    '<code>' . esc_html( (string) ( $detail['field'] ?? '' ) ) . '</code>',
+                    '<code>' . esc_html( (string) $detail['advertised'] ) . '</code>',
+                    '<code>' . esc_html( (string) $detail['expected'] ) . '</code>'
+                );
+                ?>
+            </p>
+            <?php endif; ?>
+            <p>
+                <a href="<?php echo esc_url( self::FOREIGN_AS_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
+                    <?php esc_html_e( 'How to fix this', 'royal-mcp' ); ?>
+                </a>
+                <?php $this->render_recheck_button(); ?>
+                <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
+                    <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
+                </a>
+            </p>
+        </div>
+        <?php
     }
 
     /**
@@ -650,6 +784,14 @@ class Well_Known_Notice {
             exit;
         }
 
+        if ( isset( $_GET['royal_mcp_dismiss_foreign_as'] )
+            && isset( $_GET['_wpnonce'] )
+            && wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'royal_mcp_dismiss_foreign_as' )
+        ) {
+            update_user_meta( get_current_user_id(), self::FOREIGN_AS_DISMISS_KEY, time() );
+            wp_safe_redirect( remove_query_arg( [ 'royal_mcp_dismiss_foreign_as', '_wpnonce' ] ) );
+            exit;
+        }
         if ( isset( $_GET['royal_mcp_dismiss_missing_endpoints'] )
             && isset( $_GET['_wpnonce'] )
             && wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'royal_mcp_dismiss_missing_endpoints' )
