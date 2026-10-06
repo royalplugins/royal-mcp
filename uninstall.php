@@ -123,5 +123,6 @@ delete_metadata('user', 0, 'royal_mcp_foreign_as_dismissed', '', true);
 // version-stamped dismissal meta for founders + review banners.
 delete_metadata('user', 0, 'royal_mcp_founders_dismissed_version', '', true);
 delete_metadata('user', 0, 'royal_mcp_review_dismissed_version', '', true);
+delete_metadata('user', 0, 'royal_mcp_pro_launch_notice_dismissed', '', true);
 // Legacy chrome-callout dismissal meta.
 delete_metadata('user', 0, 'royal_plugins_dismissed_founders_callout', '', true);

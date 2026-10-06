@@ -44,7 +44,7 @@ class Server {
         $request_method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'GET';
 
         // Set CORS headers for token and register endpoints (may be called cross-origin).
-        if ( in_array( $action, [ 'token', 'register', 'metadata', 'metadata_mcp', 'metadata_oidc', 'jwks', 'protected_resource', 'protected_resource_endpoint', 'method_not_allowed' ], true ) ) {
+        if ( in_array( $action, [ 'token', 'revoke', 'register', 'metadata', 'metadata_mcp', 'metadata_oidc', 'jwks', 'protected_resource', 'protected_resource_endpoint', 'method_not_allowed' ], true ) ) {
             header( 'Access-Control-Allow-Origin: *' );
             header( 'Access-Control-Allow-Methods: GET, POST, OPTIONS' );
             header( 'Access-Control-Allow-Headers: Content-Type, Authorization' );
@@ -94,6 +94,10 @@ class Server {
 
             case 'token':
                 $this->token( $request_method );
+                break;
+
+            case 'revoke':
+                $this->revoke( $request_method );
                 break;
 
             case 'method_not_allowed':
@@ -371,7 +375,7 @@ class Server {
             return $slug === '' ? $action : $slug;
         };
 
-        return [
+        $metadata = [
             'issuer'                                => $base,
             'authorization_endpoint'                => $base . '/' . $slug_for( $paths, 'authorize' ),
             'token_endpoint'                        => $base . '/' . $slug_for( $paths, 'token' ),
@@ -388,6 +392,17 @@ class Server {
             // dynamic-registration only.
             'client_id_metadata_document_supported' => (bool) apply_filters( 'royal_mcp_cimd_enabled', true ),
         ];
+
+        // Advertised only when the site can route it: the path has to be in
+        // the path list and in the rewrite rules WordPress has stored, which
+        // are rebuilt on the first admin page load after an update.
+        $revoke_slug = isset( $paths['revoke'] ) ? ltrim( trim( (string) $paths['revoke'] ), '/' ) : '';
+        if ( '' !== $revoke_slug && \Royal_MCP_Plugin::has_oauth_rewrite_rule( 'revoke' ) ) {
+            $metadata['revocation_endpoint']                       = $base . '/' . $revoke_slug;
+            $metadata['revocation_endpoint_auth_methods_supported'] = [ 'none', 'client_secret_post' ];
+        }
+
+        return $metadata;
     }
 
     private function metadata() {
@@ -921,6 +936,58 @@ class Server {
     }
 
     /* ------------------------------------------------------------------
+     *  POST /revoke  — Token revocation (RFC 7009)
+     * ----------------------------------------------------------------*/
+
+    /**
+     * Revoke the grant behind an access or refresh token.
+     *
+     * Answers 200 whether or not anything was revoked, so the endpoint cannot
+     * be used to test whether a token exists. token_type_hint is accepted and
+     * not needed: one lookup covers both kinds of token.
+     */
+    private function revoke( $request_method = 'GET' ) {
+        // OAuth revocation endpoint — external MCP clients cannot provide WP nonces.
+        // phpcs:disable WordPress.Security.NonceVerification.Missing
+        if ( 'POST' !== $request_method ) {
+            header( 'Allow: POST, OPTIONS' );
+            $this->json_error( 'invalid_request', 'POST method required.', 405 );
+        }
+
+        $token     = isset( $_POST['token'] ) ? sanitize_text_field( wp_unslash( $_POST['token'] ) ) : '';
+        $client_id = isset( $_POST['client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['client_id'] ) ) : '';
+
+        if ( '' === $token ) {
+            $this->json_error( 'invalid_request', 'Missing required parameter: token.', 400 );
+        }
+
+        // A client that authenticates with a secret at the token endpoint
+        // must do the same here.
+        $authenticated = false;
+        if ( '' !== $client_id ) {
+            $client = Token_Store::get_client( $client_id );
+            if ( $client && 'client_secret_post' === ( $client['token_endpoint_auth_method'] ?? 'none' ) ) {
+                $client_secret = isset( $_POST['client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['client_secret'] ) ) : '';
+                if ( empty( $client_secret ) || ! hash_equals( (string) $client['client_secret_hash'], hash( 'sha256', $client_secret ) ) ) {
+                    $this->json_error( 'invalid_client', 'Client authentication failed.', 401 );
+                }
+                $authenticated = true;
+            }
+        }
+
+        $revoked = Token_Store::revoke_by_token( $token, $client_id, $authenticated );
+
+        if ( $revoked > 0 ) {
+            $this->log_event( 'token_revoked', 'Access and refresh tokens revoked at the client\'s request.', 200, 'success' );
+        } else {
+            $this->log_event( 'revoke_no_match', 'Revocation request did not match a live token for this client.', 200, 'success' );
+        }
+
+        $this->json_response( new \stdClass(), 200 );
+        // phpcs:enable WordPress.Security.NonceVerification.Missing
+    }
+
+    /* ------------------------------------------------------------------
      *  Helpers
      * ----------------------------------------------------------------*/
 
@@ -992,9 +1059,17 @@ class Server {
         $grant_type    = $this->log_pick_param( 'grant_type' );
         $response_type = $this->log_pick_param( 'response_type' );
 
+        $uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
+        // These endpoints take their parameters in the request body, so a
+        // query string is not part of a valid request and is not logged
+        // (nor for a GET to one of them, which is answered as not allowed).
+        if ( in_array( $this->current_action, [ 'token', 'revoke', 'register', 'method_not_allowed' ], true ) ) {
+            $uri = (string) strtok( $uri, '?' );
+        }
+
         $request_meta = [
             'method'        => isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '',
-            'uri'           => isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '',
+            'uri'           => $uri,
             'ip'            => $this->get_client_ip(),
             'user_agent'    => isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '',
             'client_id'     => $client_id,

@@ -18,8 +18,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 $rmcp_wn_img_base   = ROYAL_MCP_PLUGIN_URL . 'assets/img/whats-new/';
 $rmcp_wn_review_url = 'https://wordpress.org/support/plugin/royal-mcp/reviews/?rate=5#new-post';
 $rmcp_wn_help_url   = admin_url( 'admin.php?page=royal-mcp-help&view=troubleshooting' );
-$rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_6&utm_content=footer_cta';
-$rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_6&utm_content=slide_1_cta';
+$rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_7&utm_content=footer_cta';
+$rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_7&utm_content=slide_1_cta';
 ?>
 <div class="rmcp-wn-backdrop" data-royal-mcp-wn-backdrop hidden>
     <div class="rmcp-wn-modal" role="dialog" aria-modal="true" aria-labelledby="rmcp-wn-title">
@@ -27,7 +27,7 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
             <img class="rmcp-wn-header-logo" src="<?php echo esc_url( $rmcp_wn_img_base . 'royal-shield.png' ); ?>" alt="">
             <div class="rmcp-wn-header-titles">
                 <h2 id="rmcp-wn-title"><?php esc_html_e( "What's New in Royal MCP", 'royal-mcp' ); ?></h2>
-                <p><?php esc_html_e( 'Version 1.5.5-1.5.6 Dry run & Oauth connector hotfix', 'royal-mcp' ); ?></p>
+                <p><?php esc_html_e( 'Version 1.5.7 — Read-only mode, Connected Clients & more', 'royal-mcp' ); ?></p>
             </div>
             <button type="button" class="rmcp-wn-close" data-royal-mcp-wn-close aria-label="<?php esc_attr_e( 'Close', 'royal-mcp' ); ?>">&times;</button>
         </div>
@@ -53,117 +53,108 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                 </div>
             </div>
 
-            <!-- SLIDE 2 — DRY-RUN PREVIEW MODE (safer writes) -->
+            <!-- SLIDE 2 — READ-ONLY MODE (the 1.5.7 headline) -->
             <div class="rmcp-wn-slide is-reversed">
                 <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Preview First', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'Preview the exact change before you write anything', 'royal-mcp' ); ?></h3>
-                    <p>
-                        <?php
-                        echo wp_kses(
-                            __( 'Two of the highest-blast-radius write tools now accept a <code>dry_run</code> flag. <code>wp_update_option</code> preview returns the current value, the proposed value, whether the option is autoloaded, and the size delta in bytes. <code>wp_update_permalink_structure</code> preview returns the current and proposed structures, every public post type that would resolve through them, and a sample of current URLs.', 'royal-mcp' ),
-                            [ 'code' => [] ]
-                        );
-                        ?>
-                    </p>
-                    <p><?php esc_html_e( 'The preview response never writes and never flushes rewrite rules, so the caller gets the full picture and can decide whether to run the real call in a second step.', 'royal-mcp' ); ?></p>
-                    <p><?php esc_html_e( 'Great for AI agents that want to explain the change to the site owner before executing it, and for scripted deployments that want a plan-then-apply flow.', 'royal-mcp' ); ?></p>
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Read-only mode', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'Let AI read everything and change nothing', 'royal-mcp' ); ?></h3>
+                    <p><?php esc_html_e( 'One switch in Royal MCP settings. When it is on, every tool that creates, updates or deletes is refused for every client and every user, administrators included, while every read keeps working.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( "The tools stay in your clients' tool lists, marked as switched off, so an assistant knows what it can and cannot do before it tries. Turn it on while you decide what AI may change, or leave it on for sites that should only ever be read.", 'royal-mcp' ); ?></p>
                 </div>
                 <div class="rmcp-wn-slide-visual">
                     <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone">
-<span class="c">// dry_run preview response</span>
+<span class="c">// wp_update_post, read-only mode on</span>
 <span class="k">{</span>
-  <span class="s hl">"state"</span>: <span class="s">"dry_run"</span>,
-  <span class="s">"preview"</span>: <span class="k">{</span>
-    <span class="s">"option_name"</span>: <span class="s">"blogname"</span>,
-    <span class="s">"current_value"</span>: <span class="s">"My Site"</span>,
-    <span class="s">"proposed_value"</span>: <span class="s">"New Name"</span>,
-    <span class="s">"is_autoloaded"</span>: <span class="k">true</span>,
-    <span class="s">"size_delta_bytes"</span>: <span class="k">+1</span>
-  <span class="k">}</span>,
-  <span class="s">"would_execute"</span>: <span class="k">true</span>
+  <span class="s hl">"isError"</span>: <span class="k">true</span>,
+  <span class="s">"content"</span>: <span class="k">[{</span>
+    <span class="s">"type"</span>: <span class="s">"text"</span>,
+    <span class="s">"text"</span>: <span class="s">"This site is in read-only
+      mode: tools that change the
+      site are switched off."</span>
+  <span class="k">}]</span>
 <span class="k">}</span>
                     </div>
                 </div>
             </div>
 
-            <!-- SLIDE 3 — OAUTH CONNECTOR COMPATIBILITY (the 1.5.6 headline) -->
+            <!-- SLIDE 3 — CONNECTED CLIENTS, SITE HEALTH, WP-CLI -->
             <div class="rmcp-wn-slide">
                 <div class="rmcp-wn-slide-visual">
-                    <div class="rmcp-wn-circle" role="img" aria-label="<?php esc_attr_e( 'Multiple AI connectors linked to a central endpoint', 'royal-mcp' ); ?>">
+                    <div class="rmcp-wn-circle" role="img" aria-label="<?php esc_attr_e( 'A list of connected AI clients with a revoke button', 'royal-mcp' ); ?>">
                         <svg viewBox="0 0 200 200" width="170" height="170" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="100" cy="100" r="30" fill="#2C2C2C" stroke="#C9A227" stroke-width="2.5"/>
-                            <text x="100" y="97" text-anchor="middle" font-family="Inter, sans-serif" font-size="8" font-weight="700" fill="#C9A227">Royal MCP</text>
-                            <text x="100" y="108" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" fill="#FAF8F5">/mcp</text>
-                            <circle cx="100" cy="30"  r="18" fill="#FEFCF7" stroke="#C9A227" stroke-width="2"/>
-                            <text x="100" y="33" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" font-weight="700" fill="#2C2C2C">Claude</text>
-                            <circle cx="170" cy="100" r="18" fill="#FEFCF7" stroke="#C9A227" stroke-width="2"/>
-                            <text x="170" y="103" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" font-weight="700" fill="#2C2C2C">ChatGPT</text>
-                            <circle cx="100" cy="170" r="18" fill="#FEFCF7" stroke="#C9A227" stroke-width="2"/>
-                            <text x="100" y="173" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" font-weight="700" fill="#2C2C2C">Cursor</text>
-                            <circle cx="30"  cy="100" r="18" fill="#FEFCF7" stroke="#C9A227" stroke-width="2"/>
-                            <text x="30" y="103" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" font-weight="700" fill="#2C2C2C">VS Code</text>
-                            <line x1="100" y1="48"  x2="100" y2="70"  stroke="#C9A227" stroke-width="1.5"/>
-                            <line x1="152" y1="100" x2="130" y2="100" stroke="#C9A227" stroke-width="1.5"/>
-                            <line x1="100" y1="152" x2="100" y2="130" stroke="#C9A227" stroke-width="1.5"/>
-                            <line x1="48"  y1="100" x2="70"  y2="100" stroke="#C9A227" stroke-width="1.5"/>
+                            <rect x="20" y="40" width="160" height="30" rx="5" fill="#FEFCF7" stroke="#C9A227" stroke-width="1.5"/>
+                            <text x="30" y="59" font-family="Inter, sans-serif" font-size="8" font-weight="700" fill="#2C2C2C">Claude</text>
+                            <text x="78" y="59" font-family="Inter, sans-serif" font-size="7" fill="#787c82">as jamie</text>
+                            <rect x="20" y="85" width="160" height="30" rx="5" fill="#FEFCF7" stroke="#C9A227" stroke-width="1.5"/>
+                            <text x="30" y="104" font-family="Inter, sans-serif" font-size="8" font-weight="700" fill="#2C2C2C">ChatGPT</text>
+                            <text x="78" y="104" font-family="Inter, sans-serif" font-size="7" fill="#787c82">as jamie</text>
+                            <rect x="128" y="91" width="44" height="18" rx="9" fill="#FEFCF7" stroke="#b32d2e" stroke-width="1.5"/>
+                            <text x="150" y="103" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" font-weight="700" fill="#b32d2e">Revoke</text>
+                            <rect x="20" y="130" width="160" height="30" rx="5" fill="#FEFCF7" stroke="#C9A227" stroke-width="1.5"/>
+                            <text x="30" y="149" font-family="Inter, sans-serif" font-size="8" font-weight="700" fill="#2C2C2C">Cursor</text>
+                            <text x="78" y="149" font-family="Inter, sans-serif" font-size="7" fill="#787c82">as sam</text>
                         </svg>
                     </div>
                 </div>
                 <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Compatibility', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'Every major AI connector completes OAuth cleanly', 'royal-mcp' ); ?></h3>
-                    <p><?php esc_html_e( "Recent updates on the connector side introduced strict compatibility requirements around how OAuth redirect URIs, resource identifiers, and refresh tokens are validated. This release brings Royal MCP's OAuth surface fully in line with the latest client behavior so setup completes on the first attempt in Claude, ChatGPT, Cursor, and VS Code.", 'royal-mcp' ); ?></p>
-                    <p><?php esc_html_e( 'Loopback redirect handling now follows the native-app spec so desktop connectors that pick a fresh local port each session succeed on every attempt. Private-use URI schemes are accepted at registration for editor connectors that use them.', 'royal-mcp' ); ?></p>
-                    <p><?php esc_html_e( 'ChatGPT connector setup passes the resource-parameter check that was previously failing on some site configurations.', 'royal-mcp' ); ?></p>
-                </div>
-            </div>
-
-            <!-- SLIDE 4 — DISCOVERY + HOSTING -->
-            <div class="rmcp-wn-slide is-reversed">
-                <div class="rmcp-wn-slide-visual">
-                    <div class="rmcp-wn-circle" role="img" aria-label="<?php esc_attr_e( 'Discovery through HTTPS proxy', 'royal-mcp' ); ?>">
-                        <svg viewBox="0 0 200 200" width="170" height="170" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-                            <rect x="10" y="80" width="42" height="40" rx="5" fill="#FEFCF7" stroke="#C9A227" stroke-width="2"/>
-                            <text x="31" y="104" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" font-weight="700" fill="#2C2C2C">Client</text>
-                            <rect x="72" y="70" width="56" height="60" rx="6" fill="#C9A227" stroke="#A8871D" stroke-width="1.5"/>
-                            <text x="100" y="94" text-anchor="middle" font-family="Inter, sans-serif" font-size="8" font-weight="700" fill="#FEFCF7">HTTPS</text>
-                            <text x="100" y="107" text-anchor="middle" font-family="Inter, sans-serif" font-size="8" font-weight="700" fill="#FEFCF7">proxy</text>
-                            <rect x="148" y="80" width="42" height="40" rx="5" fill="#2C2C2C" stroke="#C9A227" stroke-width="2"/>
-                            <text x="169" y="98" text-anchor="middle" font-family="Inter, sans-serif" font-size="6.5" font-weight="700" fill="#C9A227">WordPress</text>
-                            <text x="169" y="109" text-anchor="middle" font-family="Inter, sans-serif" font-size="6.5" fill="#FAF8F5">/mcp</text>
-                            <line x1="52" y1="100" x2="72" y2="100" stroke="#C9A227" stroke-width="1.5" marker-end="url(#arrow)"/>
-                            <line x1="128" y1="100" x2="148" y2="100" stroke="#C9A227" stroke-width="1.5" marker-end="url(#arrow)"/>
-                            <defs>
-                                <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-                                    <polygon points="0 0, 6 3, 0 6" fill="#C9A227"/>
-                                </marker>
-                            </defs>
-                            <circle cx="100" cy="52" r="10" fill="#FEFCF7" stroke="#C9A227" stroke-width="1.5"/>
-                            <rect x="96" y="50" width="8" height="7" rx="1" fill="#C9A227"/>
-                            <path d="M97 50 v-3 a3 3 0 0 1 6 0 v3" fill="none" stroke="#C9A227" stroke-width="1.2"/>
-                            <line x1="100" y1="62" x2="100" y2="70" stroke="#C9A227" stroke-width="1.5" stroke-dasharray="2 2"/>
-                            <text x="169" y="145" text-anchor="middle" font-family="monospace" font-size="6" fill="#787c82">openid-configuration</text>
-                            <text x="169" y="154" text-anchor="middle" font-family="monospace" font-size="6" fill="#787c82">served</text>
-                        </svg>
-                    </div>
-                </div>
-                <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Broader hosting compatibility', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'OAuth discovery works on more host configurations', 'royal-mcp' ); ?></h3>
+                    <span class="rmcp-wn-tag"><?php esc_html_e( "Who's connected", 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'See every connected AI client, and revoke one at a time', 'royal-mcp' ); ?></h3>
+                    <p><?php esc_html_e( 'Royal MCP > Connected Clients lists each AI client signed in through OAuth, which WordPress user it acts as, when it registered and when it last signed in. One button ends that client\'s access without touching anyone else; the client can reconnect from its side.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'Tools > Site Health now checks the four things AI clients need from your server: pretty permalinks, the discovery document, the Authorization header reaching WordPress, and the sign-in addresses, each with a link to the fix when it fails.', 'royal-mcp' ); ?></p>
                     <p>
                         <?php
                         echo wp_kses(
-                            __( 'Sites hosted behind an SSL-terminating proxy with an <code>http://</code> site address configured in WordPress now advertise <code>https://</code> discovery endpoints correctly. Token exchange no longer gets rewritten to a GET request on those setups.', 'royal-mcp' ),
+                            __( 'For agencies: <code>wp royal-mcp connection-health</code>, <code>list-clients</code> and <code>rotate-api-key</code> do the same from the command line.', 'royal-mcp' ),
                             [ 'code' => [] ]
                         );
                         ?>
                     </p>
-                    <p><?php esc_html_e( 'OpenID Connect discovery is now served alongside the existing OAuth authorization-server discovery, giving SDK-based clients a fallback discovery path on subdirectory installs and hosts that intercept the primary well-known path.', 'royal-mcp' ); ?></p>
                 </div>
             </div>
 
-            <!-- SLIDE 5 — UNDER THE HOOD RELIABILITY -->
+            <!-- SLIDE 4 — WORDFENCE + LITESPEED CACHE INTEGRATIONS -->
+            <div class="rmcp-wn-slide is-reversed">
+                <div class="rmcp-wn-slide-body">
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Two new integrations', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'Wordfence and LiteSpeed Cache: twelve new tools', 'royal-mcp' ); ?></h3>
+                    <p>
+                        <?php
+                        echo wp_kses(
+                            __( '<strong>Wordfence.</strong> Read the security status, firewall mode and scan findings, list blocked IPs, block or unblock an address, read failed logins and blocked requests, and start a scan.', 'royal-mcp' ),
+                            [ 'strong' => [] ]
+                        );
+                        ?>
+                    </p>
+                    <p>
+                        <?php
+                        echo wp_kses(
+                            __( '<strong>LiteSpeed Cache.</strong> Read the cache status and the settings that shape caching, purge everything, or purge specific pages by URL or post.', 'royal-mcp' ),
+                            [ 'strong' => [] ]
+                        );
+                        ?>
+                    </p>
+                    <p><?php esc_html_e( 'Both follow the rules every integration follows: administrators only, every change confirmed against what the plugin actually stored, and text from logs handed to the AI as text, never as instructions.', 'royal-mcp' ); ?></p>
+                </div>
+                <div class="rmcp-wn-slide-visual">
+                    <div class="rmcp-wn-circle" role="img" aria-label="<?php esc_attr_e( 'Wordfence and LiteSpeed Cache linked to Royal MCP', 'royal-mcp' ); ?>">
+                        <svg viewBox="0 0 200 200" width="170" height="170" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="100" cy="100" r="30" fill="#2C2C2C" stroke="#C9A227" stroke-width="2.5"/>
+                            <text x="100" y="97" text-anchor="middle" font-family="Inter, sans-serif" font-size="8" font-weight="700" fill="#C9A227">Royal MCP</text>
+                            <text x="100" y="108" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" fill="#FAF8F5">136 tools</text>
+                            <circle cx="100" cy="32" r="22" fill="#FEFCF7" stroke="#C9A227" stroke-width="2"/>
+                            <text x="100" y="30" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" font-weight="700" fill="#2C2C2C">Wordfence</text>
+                            <text x="100" y="40" text-anchor="middle" font-family="Inter, sans-serif" font-size="6.5" fill="#787c82">8 tools</text>
+                            <circle cx="100" cy="168" r="22" fill="#FEFCF7" stroke="#C9A227" stroke-width="2"/>
+                            <text x="100" y="166" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" font-weight="700" fill="#2C2C2C">LiteSpeed</text>
+                            <text x="100" y="176" text-anchor="middle" font-family="Inter, sans-serif" font-size="6.5" fill="#787c82">4 tools</text>
+                            <line x1="100" y1="54" x2="100" y2="70" stroke="#C9A227" stroke-width="1.5"/>
+                            <line x1="100" y1="146" x2="100" y2="130" stroke="#C9A227" stroke-width="1.5"/>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 5 — CLEARER SIGNALS FOR CLIENTS -->
             <div class="rmcp-wn-slide">
                 <div class="rmcp-wn-slide-visual">
                     <div class="rmcp-wn-mark" role="img" aria-label="Royal Plugins">
@@ -172,11 +163,11 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                 </div>
                 <div class="rmcp-wn-slide-body">
                     <span class="rmcp-wn-tag"><?php esc_html_e( 'Under the hood', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'Fewer re-consent prompts, longer-lived connections', 'royal-mcp' ); ?></h3>
+                    <h3><?php esc_html_e( 'Clearer signals for AI clients, smoother sign-in', 'royal-mcp' ); ?></h3>
                     <p>
                         <?php
                         echo wp_kses(
-                            __( '<strong>Refresh-token grace window.</strong> A short reuse-interval on refresh-token rotation absorbs the concurrent refresh-token presentations that connectors make when reactive and proactive refresh overlap, so the second presentation no longer forces a re-consent.', 'royal-mcp' ),
+                            __( '<strong>Read or change, declared up front.</strong> Every tool now tells clients whether it only reads or can change the site, so assistants can run reads freely and ask before a write.', 'royal-mcp' ),
                             [ 'strong' => [] ]
                         );
                         ?>
@@ -184,7 +175,7 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                     <p>
                         <?php
                         echo wp_kses(
-                            __( '<strong>Idle-connector retention.</strong> Registered clients that have completed at least one authorization are no longer garbage-collected between sessions. Long-idle connectors reconnect against their existing registration instead of failing with an unknown-client error.', 'royal-mcp' ),
+                            __( '<strong>Resources.</strong> Site info, the active theme, the tool catalog and connection health can be loaded by clients as context, without a tool call.', 'royal-mcp' ),
                             [ 'strong' => [] ]
                         );
                         ?>
@@ -192,8 +183,8 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                     <p>
                         <?php
                         echo wp_kses(
-                            __( '<strong>Setup guidance refresh.</strong> The in-plugin Claude setup guidance was refreshed to reflect current connector behavior.', 'royal-mcp' ),
-                            [ 'strong' => [] ]
+                            __( '<strong>Sign-in.</strong> Clients can revoke their own access when you disconnect them, and a page you publish at <code>/register</code> or <code>/token</code> is shown to your visitors as usual.', 'royal-mcp' ),
+                            [ 'strong' => [], 'code' => [] ]
                         );
                         ?>
                     </p>

@@ -17,6 +17,8 @@ use Royal_MCP\Integrations\YoastSEO as YoastIntegration;
 use Royal_MCP\Integrations\UpdraftPlus as UpdraftIntegration;
 use Royal_MCP\Integrations\WPForms as WPFormsIntegration;
 use Royal_MCP\Integrations\SolidSecurity as SolidIntegration;
+use Royal_MCP\Integrations\Wordfence as WordfenceIntegration;
+use Royal_MCP\Integrations\LiteSpeed as LiteSpeedIntegration;
 use Royal_MCP\Integrations\ContactForm7 as CF7Integration;
 use Royal_MCP\Integrations\MonsterInsights as MonsterInsightsIntegration;
 use Royal_MCP\Integrations\W3TotalCache as W3TCIntegration;
@@ -172,6 +174,104 @@ class Server {
         if ( ! has_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_site_host_suffix' ] ) ) {
             add_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_site_host_suffix' ], PHP_INT_MAX );
         }
+        if ( ! has_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_annotations' ] ) ) {
+            add_filter( 'royal_mcp_tools', [ __CLASS__, 'stamp_annotations' ], PHP_INT_MAX );
+        }
+    }
+
+    /** Leading verbs that only read. Matched against the verb word only, never anywhere in the name. */
+    const READ_VERBS = [ 'get', 'list', 'count', 'search', 'audit', 'verify', 'validate', 'diff', 'discover' ];
+
+    /** Reads whose names don't start with a read verb. */
+    const READ_ONLY_TOOLS = [
+        'royal_mcp_connection_health',
+        'royal_mcp_pro_diagnostics',
+        'divi_library_get',
+        'redirection_bulk_export',
+        'formforge_bulk_export_entries',
+        'acf_export_field_group_json',
+        'elementor_export_theme_builder_template',
+        'wp_monthly_maintenance_report',
+        '_active_profile_notice',
+    ];
+
+    /** Exact hints for tools whose annotations other systems rely on. */
+    const ANNOTATION_OVERRIDES = [
+        'yoast_bulk_update_meta'        => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
+        'rankmath_bulk_update_meta'     => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
+        'seopress_bulk_update_meta'     => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
+        'aioseo_bulk_update_meta'       => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
+        'seobolt_bulk_update_meta'      => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
+        'royal_mcp_undo_last_operation' => [ 'readOnlyHint' => false, 'destructiveHint' => true ],
+        'mcp_undo_last_operation'       => [ 'readOnlyHint' => false, 'destructiveHint' => true ],
+    ];
+
+    /** MCP tool annotations for one tool name. Anything not known to be a read is treated as destructive. */
+    public static function annotations_for( $name ) {
+        $name = (string) $name;
+        if ( isset( self::ANNOTATION_OVERRIDES[ $name ] ) ) {
+            return self::ANNOTATION_OVERRIDES[ $name ];
+        }
+        $words = explode( '_', $name );
+        // The verb is the first word for unprefixed names (get_tool_info),
+        // otherwise the word after the integration prefix (wp_get_post).
+        $verb = in_array( $words[0], self::READ_VERBS, true ) ? $words[0] : ( $words[1] ?? '' );
+        if ( in_array( $verb, self::READ_VERBS, true ) || in_array( $name, self::READ_ONLY_TOOLS, true ) ) {
+            return [ 'readOnlyHint' => true, 'destructiveHint' => false, 'idempotentHint' => true ];
+        }
+        return [ 'readOnlyHint' => false, 'destructiveHint' => true ];
+    }
+
+    /**
+     * Whether the site is in read-only mode: every tool that can change the
+     * site is refused, for every client and every user.
+     */
+    public static function read_only_mode() {
+        $settings = get_option( 'royal_mcp_settings', [] );
+        return is_array( $settings ) && ! empty( $settings['read_only_mode'] );
+    }
+
+    /**
+     * The tools read-only mode lets through: those the tool list marks as
+     * read-only, plus execute_tool, which runs the tool it is given through
+     * this same check.
+     *
+     * @var array<string,bool>|null name => allowed, built on first use.
+     */
+    private $read_only_allowed = null;
+
+    private function allowed_in_read_only_mode( $name ) {
+        $name = (string) $name;
+        if ( 'execute_tool' === $name ) {
+            return true;
+        }
+        if ( null === $this->read_only_allowed ) {
+            $this->read_only_allowed = [];
+            foreach ( $this->get_tools() as $tool ) {
+                if ( is_array( $tool ) && ! empty( $tool['name'] ) ) {
+                    $this->read_only_allowed[ (string) $tool['name'] ] = ! empty( $tool['annotations']['readOnlyHint'] );
+                }
+            }
+        }
+        if ( isset( $this->read_only_allowed[ $name ] ) ) {
+            return $this->read_only_allowed[ $name ];
+        }
+        return ! empty( self::annotations_for( $name )['readOnlyHint'] );
+    }
+
+    /** Stamp annotations on every tool in the list; hints a tool declares itself win. */
+    public static function stamp_annotations( $tools ) {
+        if ( ! is_array( $tools ) ) {
+            return $tools;
+        }
+        foreach ( $tools as $i => $tool ) {
+            if ( ! is_array( $tool ) || empty( $tool['name'] ) ) {
+                continue;
+            }
+            $declared = isset( $tool['annotations'] ) && is_array( $tool['annotations'] ) ? $tool['annotations'] : [];
+            $tools[ $i ]['annotations'] = array_merge( self::annotations_for( $tool['name'] ), $declared );
+        }
+        return $tools;
     }
 
     /**
@@ -186,7 +286,9 @@ class Server {
         $this->register_method_handler('tools/call',                [ $this, 'handle_tools_call' ]);
         $this->register_method_handler('ping',                      [ $this, 'handle_ping' ]);
         $this->register_method_handler('resources/list',            [ $this, 'handle_resources_list' ]);
-        $this->register_method_handler('prompts/list',              [ $this, 'handle_prompts_list' ]);
+        $this->register_method_handler('resources/read',            [ $this, 'handle_resources_read' ]);
+        $this->register_method_handler('resources/templates/list',  [ $this, 'handle_resource_templates_list' ]);
+        $this->register_method_handler('prompts/list',             [ $this, 'handle_prompts_list' ]);
         $this->register_method_handler('server/discover',           [ $this, 'handle_server_discover' ]);
     }
 
@@ -1322,6 +1424,8 @@ class Server {
         $tools = array_merge( $tools, UpdraftIntegration::get_tools() );
         $tools = array_merge( $tools, WPFormsIntegration::get_tools() );
         $tools = array_merge( $tools, SolidIntegration::get_tools() );
+        $tools = array_merge( $tools, WordfenceIntegration::get_tools() );
+        $tools = array_merge( $tools, LiteSpeedIntegration::get_tools() );
         $tools = array_merge( $tools, CF7Integration::get_tools() );
         $tools = array_merge( $tools, MonsterInsightsIntegration::get_tools() );
         $tools = array_merge( $tools, W3TCIntegration::get_tools() );
@@ -1551,7 +1655,7 @@ class Server {
         // has its own per-tool log rows via log_tool_call() already. Logging
         // it a second time at method level would create duplicate noise.
         if ($method !== 'tools/call') {
-            $this->log_method_call($method, $result);
+            $this->log_method_call($method, $result, $params);
         }
 
         // initialize still emits Mcp-Session-Id for clients that consume it.
@@ -1607,7 +1711,7 @@ class Server {
      * body is a bare method-name marker, response records status +
      * error_code + error_message when the dispatch returned an error object.
      */
-    private function log_method_call($method, $result) {
+    private function log_method_call($method, $result, $params = null) {
         global $wpdb;
 
         $is_error = is_array($result) && isset($result['error']);
@@ -1618,6 +1722,10 @@ class Server {
             'mcp_method_hint' => $this->request_mcp_method_hint,
             'mcp_name_hint'   => $this->request_mcp_name_hint,
         ];
+        // Which resource was asked for, so the activity log shows what was read.
+        if ( 'resources/read' === $method && is_array( $params ) && isset( $params['uri'] ) && is_string( $params['uri'] ) ) {
+            $request_meta['resource_uri'] = substr( sanitize_text_field( $params['uri'] ), 0, 200 );
+        }
         $response_meta = [ 'status' => $status ];
         if ($is_error) {
             $response_meta['error_code']    = (int) ($result['error']['code'] ?? 0);
@@ -2066,22 +2174,120 @@ class Server {
             } ) );
         }
 
+        $page = self::page_of_tools( $tools, $params );
+        if ( null === $page ) {
+            return [
+                'jsonrpc' => '2.0',
+                'id'      => $id,
+                'error'   => [
+                    'code'    => -32602,
+                    'message' => 'Invalid or expired cursor. Request tools/list again without a cursor.',
+                ],
+            ];
+        }
+        $tools = $page['tools'];
+
         // Plugin presence is only disclosed to callers who could see the
         // plugin list anyway.
         if ( current_user_can( 'manage_options' ) ) {
             $tools = self::stamp_tool_availability( $tools );
         }
 
+        // Tools read-only mode refuses stay listed, marked so clients can tell.
+        if ( self::read_only_mode() ) {
+            foreach ( $tools as $i => $tool ) {
+                if ( ! $this->allowed_in_read_only_mode( (string) ( $tool['name'] ?? '' ) ) ) {
+                    $tools[ $i ]['_meta']['royal-mcp/read_only_mode'] = true;
+                }
+            }
+        }
+
+        $body = [ 'tools' => $tools ];
+        if ( null !== $page['next'] ) {
+            $body['nextCursor'] = $page['next'];
+        }
+
         return [
             'jsonrpc' => '2.0',
             'id'      => $id,
             'result'  => $this->stamp_modern_list_envelope(
-                [ 'tools' => $tools ],
+                $body,
                 'private',
                 300000,
                 $params
             ),
         ];
+    }
+
+    /**
+     * Tools per tools/list page. 0 sends the whole list in one response,
+     * which is the default: a client that reads only the first page of a
+     * paged list would never see the tools after it.
+     *
+     * @return int
+     */
+    private static function tools_list_page_size() {
+        $size = (int) apply_filters( 'royal_mcp_tools_list_page_size', 0 );
+        return $size <= 0 ? 0 : max( 10, min( 500, $size ) );
+    }
+
+    /**
+     * One page of a tool list. The cursor is an opaque token; a result with
+     * no 'next' is the last page.
+     *
+     * A cursor holds a position and a fingerprint of the list it was issued
+     * for, so a cursor for a list that has since changed is refused instead
+     * of skipping or repeating tools.
+     *
+     * @param array $tools  The caller's full tool list, in its final order.
+     * @param mixed $params Request params.
+     * @return array|null [ 'tools' => array, 'next' => string|null ], or null for a cursor that cannot be used.
+     */
+    private static function page_of_tools( array $tools, $params ) {
+        $tools  = array_values( $tools );
+        $cursor = is_array( $params ) && isset( $params['cursor'] ) ? $params['cursor'] : null;
+        $size   = self::tools_list_page_size();
+        $total  = count( $tools );
+        $offset = 0;
+
+        if ( null !== $cursor && '' !== $cursor ) {
+            $offset = ( $size > 0 && is_string( $cursor ) ) ? self::read_list_cursor( $cursor, $tools ) : null;
+            if ( null === $offset || $offset < 1 || $offset >= $total ) {
+                return null;
+            }
+        }
+        if ( $size <= 0 ) {
+            return [ 'tools' => $tools, 'next' => null ];
+        }
+
+        $end = $offset + $size;
+        return [
+            'tools' => array_slice( $tools, $offset, $size ),
+            'next'  => $end < $total ? self::make_list_cursor( $end, $tools ) : null,
+        ];
+    }
+
+    private static function list_fingerprint( array $tools ) {
+        return substr( hash( 'sha256', implode( "\n", array_map( 'strval', array_column( $tools, 'name' ) ) ) ), 0, 16 );
+    }
+
+    private static function make_list_cursor( $offset, array $tools ) {
+        $json = wp_json_encode( [ 'o' => (int) $offset, 'h' => self::list_fingerprint( $tools ) ] );
+        return rtrim( strtr( base64_encode( (string) $json ), '+/', '-_' ), '=' );
+    }
+
+    /**
+     * @return int|null The position a cursor points at, or null when it was not issued for this list.
+     */
+    private static function read_list_cursor( $cursor, array $tools ) {
+        if ( strlen( $cursor ) > 200 || ! preg_match( '/^[A-Za-z0-9_-]+$/', $cursor ) ) {
+            return null;
+        }
+        $data = json_decode( (string) base64_decode( strtr( $cursor, '-_', '+/' ), true ), true );
+        if ( ! is_array( $data ) || ! isset( $data['o'], $data['h'] ) || ! is_int( $data['o'] ) || ! is_string( $data['h'] ) ) {
+            return null;
+        }
+        return hash_equals( self::list_fingerprint( $tools ), $data['h'] ) ? $data['o'] : null;
     }
 
     /**
@@ -2164,6 +2370,8 @@ class Server {
             'updraftplus_'         => [ 'UpdraftPlus', [ UpdraftIntegration::class, 'is_available' ] ],
             'wpforms_'             => [ 'WPForms', [ WPFormsIntegration::class, 'is_available' ] ],
             'solid_'               => [ 'Solid Security', [ SolidIntegration::class, 'is_available' ] ],
+            'wordfence_'           => [ 'Wordfence', [ WordfenceIntegration::class, 'is_available' ] ],
+            'litespeed_'           => [ 'LiteSpeed Cache', [ LiteSpeedIntegration::class, 'is_available' ] ],
             'cf7_'                 => [ 'Contact Form 7', [ CF7Integration::class, 'is_available' ] ],
             'monsterinsights_'     => [ 'MonsterInsights', [ MonsterInsightsIntegration::class, 'is_available' ] ],
             'w3tc_'                => [ 'W3 Total Cache', [ W3TCIntegration::class, 'is_available' ] ],
@@ -2188,16 +2396,245 @@ class Server {
         ];
     }
 
+    /**
+     * Resources this server offers, keyed by URI. Each is a small JSON
+     * document made of things a caller with the 'read' capability can already
+     * get from a tool, so a client can load it as context without a tool call.
+     * None of them carries a software version. A resource's name is the part
+     * of its URI after the scheme.
+     *
+     * @return array<string,array{title:string,description:string}>
+     */
+    private static function resource_catalog() {
+        return [
+            'royal-mcp://site-info'          => [
+                'title'       => 'Site info',
+                'description' => 'Site name, tagline, URL, language and timezone.',
+            ],
+            'royal-mcp://active-theme'       => [
+                'title'       => 'Active theme',
+                'description' => 'The active theme: name, slug, parent theme if it is a child theme, and whether it is a block theme.',
+            ],
+            'royal-mcp://tool-catalog'       => [
+                'title'       => 'Tool catalog',
+                'description' => 'Every tool by name with a one-line summary and whether it only reads or can change the site. Use get_tool_info for a full input schema.',
+            ],
+            'royal-mcp://agent-skills-index' => [
+                'title'       => 'Agent skills index',
+                'description' => 'Tool categories with a description and tool count for each; the same document the site publishes for agent discovery.',
+            ],
+            'royal-mcp://health'             => [
+                'title'       => 'Connection health',
+                'description' => 'This connection: endpoint, how the request authenticated, token lifetime, session ID, and which page builders are active.',
+            ],
+        ];
+    }
+
     private function handle_resources_list($params, $id) {
+        // The list is short enough to be one page, so no cursor is ever issued.
+        if ( is_array( $params ) && isset( $params['cursor'] ) && '' !== $params['cursor'] ) {
+            return [
+                'jsonrpc' => '2.0',
+                'id'      => $id,
+                'error'   => [
+                    'code'    => -32602,
+                    'message' => 'Invalid or expired cursor. Request resources/list again without a cursor.',
+                ],
+            ];
+        }
+
+        $resources = [];
+        if ( current_user_can( 'read' ) ) {
+            foreach ( self::resource_catalog() as $uri => $def ) {
+                $resources[] = [
+                    'uri'         => $uri,
+                    'name'        => substr( $uri, strlen( 'royal-mcp://' ) ),
+                    'title'       => $def['title'],
+                    'description' => $def['description'],
+                    'mimeType'    => 'application/json',
+                ];
+            }
+        }
+
         return [
             'jsonrpc' => '2.0',
             'id'      => $id,
             'result'  => $this->stamp_modern_list_envelope(
-                [ 'resources' => [] ],
+                [ 'resources' => $resources ],
+                'private',
+                300000,
+                $params
+            ),
+        ];
+    }
+
+    private function handle_resource_templates_list($params, $id) {
+        return [
+            'jsonrpc' => '2.0',
+            'id'      => $id,
+            'result'  => $this->stamp_modern_list_envelope(
+                [ 'resourceTemplates' => [] ],
                 'public',
                 300000,
                 $params
             ),
+        ];
+    }
+
+    private function handle_resources_read($params, $id) {
+        $uri = is_array( $params ) && isset( $params['uri'] ) && is_string( $params['uri'] ) ? $params['uri'] : '';
+        if ( '' === $uri ) {
+            return [
+                'jsonrpc' => '2.0',
+                'id'      => $id,
+                'error'   => [
+                    'code'    => -32602,
+                    'message' => 'A resource uri is required.',
+                ],
+            ];
+        }
+
+        // A resource the caller may not read is answered the same way as one
+        // that does not exist.
+        $data = current_user_can( 'read' ) ? $this->read_resource( $uri ) : null;
+        if ( null === $data ) {
+            return [
+                'jsonrpc' => '2.0',
+                'id'      => $id,
+                'error'   => [
+                    'code'    => -32002,
+                    'message' => 'Resource not found',
+                    'data'    => [ 'uri' => substr( sanitize_text_field( $uri ), 0, 200 ) ],
+                ],
+            ];
+        }
+
+        $result = [
+            'contents' => [
+                [
+                    'uri'      => $uri,
+                    'mimeType' => 'application/json',
+                    'text'     => (string) wp_json_encode( $data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ),
+                ],
+            ],
+        ];
+        if ( $this->is_modern_era( $params ) ) {
+            $result = [ 'resultType' => 'complete' ] + $result;
+        }
+
+        return [
+            'jsonrpc' => '2.0',
+            'id'      => $id,
+            'result'  => $result,
+        ];
+    }
+
+    /**
+     * The document behind a resource URI, or null when the URI is not one of
+     * this server's resources. Reads only; no tool handler runs.
+     *
+     * @param string $uri Resource URI, matched exactly.
+     * @return array|null
+     */
+    private function read_resource( $uri ) {
+        switch ( $uri ) {
+            case 'royal-mcp://site-info':
+                return [
+                    'name'        => get_bloginfo( 'name' ),
+                    'description' => get_bloginfo( 'description' ),
+                    'url'         => home_url(),
+                    'language'    => get_locale(),
+                    'timezone'    => wp_timezone_string(),
+                ];
+
+            case 'royal-mcp://active-theme':
+                $theme  = wp_get_theme();
+                $parent = $theme->parent();
+                return [
+                    'name'           => (string) $theme->get( 'Name' ),
+                    'slug'           => $theme->get_stylesheet(),
+                    'template'       => $theme->get_template(),
+                    'parent_slug'    => $parent ? $parent->get_stylesheet() : null,
+                    'is_block_theme' => function_exists( 'wp_is_block_theme' ) && wp_is_block_theme(),
+                ];
+
+            case 'royal-mcp://tool-catalog':
+                return $this->tool_catalog_resource();
+
+            case 'royal-mcp://agent-skills-index':
+                return \Royal_MCP\Discovery\Agent_Skills_Index::build_or_cached();
+
+            case 'royal-mcp://health':
+                return $this->connection_health_data();
+        }
+        return null;
+    }
+
+    private function tool_catalog_resource() {
+        $tools = $this->get_tools();
+        // Plugin presence is only disclosed to callers who could see the
+        // plugin list anyway.
+        if ( current_user_can( 'manage_options' ) ) {
+            $tools = self::stamp_tool_availability( $tools );
+        }
+
+        $rows      = [];
+        $read_only = 0;
+        foreach ( $tools as $tool ) {
+            $name = (string) ( $tool['name'] ?? '' );
+            if ( '' === $name ) {
+                continue;
+            }
+            $reads     = ! empty( $tool['annotations']['readOnlyHint'] );
+            $read_only += $reads ? 1 : 0;
+
+            $sentences = preg_split( '/(?<=[.!?])\s+/', trim( (string) ( $tool['description'] ?? '' ) ), 2 );
+            $summary   = (string) ( $sentences[0] ?? '' );
+            if ( strlen( $summary ) > 200 ) {
+                $summary = rtrim( function_exists( 'mb_strcut' ) ? mb_strcut( $summary, 0, 197, 'UTF-8' ) : substr( $summary, 0, 197 ) ) . '...';
+            }
+
+            $row = [
+                'name'      => $name,
+                'summary'   => $summary,
+                'read_only' => $reads,
+            ];
+            if ( isset( $tool['_meta']['royal-mcp/requires'] ) ) {
+                $row['requires']  = (string) $tool['_meta']['royal-mcp/requires'];
+                $row['available'] = ! empty( $tool['_meta']['royal-mcp/available'] );
+            }
+            $rows[] = $row;
+        }
+
+        return [
+            'total'        => count( $rows ),
+            'read_only'    => $read_only,
+            'changes_site' => count( $rows ) - $read_only,
+            'tools'        => $rows,
+        ];
+    }
+
+    /**
+     * What royal_mcp_connection_health reports about the current request.
+     * Presence flags for page builders rather than version strings: enough to
+     * branch on which builder a site uses, and no software versions for any
+     * authenticated caller to collect.
+     *
+     * @return array
+     */
+    private function connection_health_data() {
+        return [
+            'route'          => rest_url('royal-mcp/v1/mcp'),
+            'auth_method'    => $this->request_auth_method ?? 'unauthenticated',
+            'relay'          => null,
+            'token_ttl'      => $this->request_token_ttl,
+            'session_id'     => $this->request_session_id,
+            'active_scopes'  => ['tools'],
+            'builders'       => [
+                'divi_active'      => defined('ET_BUILDER_VERSION'),
+                'elementor_active' => defined('ELEMENTOR_VERSION'),
+                'gutenberg_active' => defined('GUTENBERG_VERSION'),
+            ],
         ];
     }
 
@@ -2595,6 +3032,9 @@ class Server {
     }
 
     private function execute_tool($name, $args) {
+        if ( self::read_only_mode() && ! $this->allowed_in_read_only_mode( $name ) ) {
+            throw new \Exception( 'This site is in read-only mode: tools that change the site are switched off.' );
+        }
         // Fire SiteVault pre-op backup hook for every destructive tool.
         // Non-blocking + fire-and-forget — see SiteVault_Hook::maybe_fire
         // + INVARIANTS §3. Fleet-wide via one call at the dispatcher
@@ -4719,29 +5159,7 @@ class Server {
             // One-shot operator-visible environment diagnostic (WP + PHP + MySQL + plugins + theme).
             // Connection-health block below is self-attributable — no cap check required.
             case 'royal_mcp_connection_health':
-                global $wp_version;
-                // builders block lets an agent plan multi-step edits without
-                // probing — presence booleans (rather than version strings)
-                // are enough for "is this a Divi site?" branching, and keep
-                // the response from acting as a CVE-target datasource for
-                // any authenticated caller. Royal MCP + WordPress + PHP
-                // versions are not emitted here at all; admins can read them
-                // via wp-admin > Tools > Site Health.
-                $builders = [
-                    'divi_active'      => defined('ET_BUILDER_VERSION'),
-                    'elementor_active' => defined('ELEMENTOR_VERSION'),
-                    'gutenberg_active' => defined('GUTENBERG_VERSION'),
-                ];
-                unset( $wp_version );
-                return [
-                    'route'          => rest_url('royal-mcp/v1/mcp'),
-                    'auth_method'    => $this->request_auth_method ?? 'unauthenticated',
-                    'relay'          => null,
-                    'token_ttl'      => $this->request_token_ttl,
-                    'session_id'     => $this->request_session_id,
-                    'active_scopes'  => ['tools'],
-                    'builders'       => $builders,
-                ];
+                return $this->connection_health_data();
 
             case 'discover_tools':
                 $dt_tools = $this->get_tools();
@@ -9539,6 +9957,12 @@ class Server {
                 }
                 if ( strpos( $name, 'solid_' ) === 0 ) {
                     return SolidIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'wordfence_' ) === 0 ) {
+                    return WordfenceIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'litespeed_' ) === 0 ) {
+                    return LiteSpeedIntegration::execute_tool( $name, $args );
                 }
                 if ( strpos( $name, 'cf7_' ) === 0 ) {
                     return CF7Integration::execute_tool( $name, $args );

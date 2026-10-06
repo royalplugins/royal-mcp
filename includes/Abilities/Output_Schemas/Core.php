@@ -228,15 +228,12 @@ class Core {
 					'token_ttl'      => array( 'type' => array( 'integer', 'null' ) ),
 					'session_id'     => array( 'type' => array( 'string', 'null' ) ),
 					'active_scopes'  => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
-					'server_version' => array( 'type' => 'string' ),
-					'wp_version'     => array( 'type' => 'string' ),
-					'php_version'    => array( 'type' => 'string' ),
 					'builders'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'divi_version'      => array( 'type' => array( 'string', 'null' ) ),
-							'elementor_version' => array( 'type' => array( 'string', 'null' ) ),
-							'gutenberg_version' => array( 'type' => 'string' ),
+							'divi_active'      => array( 'type' => 'boolean' ),
+							'elementor_active' => array( 'type' => 'boolean' ),
+							'gutenberg_active' => array( 'type' => 'boolean' ),
 						),
 					),
 				),

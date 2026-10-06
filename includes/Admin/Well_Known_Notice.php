@@ -276,7 +276,7 @@ class Well_Known_Notice {
      *  - unknown       : connection error, timeout, or non-2xx/non-404
      *  - mismatch      : status 200 but content unexpected for unrelated reasons (issuer mismatch)
      */
-    private function check_well_known() {
+    public function check_well_known() {
         $cached = get_transient( self::TRANSIENT_KEY );
         if ( false !== $cached ) {
             return $cached;
