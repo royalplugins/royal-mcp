@@ -56,6 +56,9 @@ class Server {
     private $rate_limit_max_authed = 300;
     private $rate_limit_window     = 60; // seconds
 
+    /** What the last upload's image step did (size, format, quality), or null when it ran no image step. */
+    private $last_media_processing = null;
+
     /**
      * Auth fingerprint for the current request. Populated by the credential
      * validators (validate_bearer_token / validate_api_key_value) once the
@@ -135,6 +138,12 @@ class Server {
      * get a well-tested wire shape rather than the latest spec draft.
      */
     const DEFAULT_NEGOTIATED_PROTOCOL_VERSION = '2025-11-25';
+
+    /** wp_upload_media: the client named a file but sent no link the site can download it from. */
+    const FILE_WITHOUT_LINK_MESSAGE = 'The file arrived without a download link, so the site cannot fetch it. ChatGPT includes a link only for files that are part of the conversation (attached with the paperclip, or made by its image generator), and some ChatGPT apps, such as the mobile app, send no link at all. To fix it: attach the file to the chat with the paperclip in ChatGPT on the web or desktop and ask again, or upload the original generated image.';
+
+    /** wp_upload_media: the link points inside the client's own workspace, which the site cannot reach. */
+    const FILE_IN_CLIENT_WORKSPACE_MESSAGE = 'This file only exists inside ChatGPT\'s own workspace, which the site cannot reach: files ChatGPT creates or edits there (for example a resized or compressed copy) have no download link. To fix it: download the file from ChatGPT, attach it to the chat with the paperclip and ask again, or upload the original generated image.';
 
     /**
      * Spec revision at which the modern-era per-request _meta model and the
@@ -1004,6 +1013,36 @@ class Server {
     }
 
     /**
+     * Move a post of any type to the trash, or refuse without deleting anything.
+     * Throws when the post can't be trashed (already in the trash, trash turned
+     * off, media trash off) or when it isn't in the trash afterwards.
+     */
+    private static function trash_post_or_refuse(\WP_Post $post) {
+        $post_id = (int) $post->ID;
+        $reason  = '';
+        if ('trash' === $post->post_status) {
+            $reason = 'it is already in the trash.';
+        } elseif (!(defined('EMPTY_TRASH_DAYS') && EMPTY_TRASH_DAYS)) {
+            $reason = 'the trash is turned off on this site.';
+        } elseif ('attachment' === $post->post_type && !(defined('MEDIA_TRASH') && MEDIA_TRASH)) {
+            $reason = 'media items skip the trash on this site.';
+        }
+        if ('' !== $reason) {
+            throw new \Exception(sprintf('Post %d was not deleted because %s Pass force: true to delete it permanently.', $post_id, $reason));
+        }
+
+        $trashed = wp_trash_post($post_id);
+        clean_post_cache($post_id);
+        if ('trash' === get_post_status($post_id)) {
+            return;
+        }
+        if (!get_post($post_id)) {
+            throw new \Exception(sprintf('Post %d was deleted permanently instead of being moved to the trash, and cannot be restored.', $post_id));
+        }
+        throw new \Exception(sprintf('Post %d could not be moved to the trash%s.', $post_id, $trashed ? '' : ' (another plugin may have blocked it)'));
+    }
+
+    /**
      * Normalize wp_comments.comment_approved (the schema column) to the
      * wp_set_comment_status vocabulary ('approve' / 'hold' / 'spam' / 'trash').
      * The column stores '1' | '0' | 'spam' | 'trash'; the mutator function
@@ -1292,7 +1331,7 @@ class Server {
             ['name' => 'wp_update_post', 'description' => 'Update existing post (any post type). Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image (pass 0 to remove)'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as the post author. Use wp_get_users to discover available author IDs.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling posts/pages. Lower = earlier.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent post ID (0 = no parent). Useful for hierarchical CPTs. Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Post password. Empty string removes protection.'], 'comment_status' => ['type' => 'string', 'enum' => ['open', 'closed'], 'description' => 'Allow (open) or disallow (closed) new comments.'], 'ping_status' => ['type' => 'string', 'enum' => ['open', 'closed'], 'description' => 'Allow (open) or disallow (closed) trackbacks / pingbacks.']], 'required' => ['id']]],
             ['name' => 'wp_replace_in_post', 'description' => 'Find/replace a literal string inside a post\'s content (any post type) without resending the full body. Use for surgical edits to large posts (page-builder content, embedded base64 payloads) where wp_update_post\'s full-content replacement is impractical. Case-sensitive literal match, no regex. All occurrences are replaced. Response includes occurrence count and read-after-write verification. Set dry_run=true to preview the match count without writing; set expected_count to abort unless exactly that many matches exist.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'find' => ['type' => 'string', 'minLength' => 1, 'description' => 'Literal text to find in post_content (case-sensitive, no regex).'], 'replace' => ['type' => 'string', 'description' => 'Literal replacement text. Empty string deletes the matched text.'], 'expected_count' => ['type' => 'integer', 'description' => 'Optional guard: abort without writing unless the number of occurrences equals this value.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Report the occurrence count without writing. Default false.']], 'required' => ['id', 'find', 'replace']]],
             ['name' => 'wp_get_post_types', 'description' => 'Get all registered public post types (including custom post types)', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
-            ['name' => 'wp_delete_post', 'description' => 'Delete post', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean', 'description' => 'Skip trash and permanently delete']], 'required' => ['id']]],
+            ['name' => 'wp_delete_post', 'description' => 'Delete a post of any post type. Without force it moves to the trash and can be undone; if the post cannot be trashed (already in the trash, or the site has the trash turned off) the call is refused and nothing is deleted. force: true deletes permanently.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean', 'description' => 'Skip the trash and delete permanently']], 'required' => ['id']]],
             ['name' => 'wp_count_posts', 'description' => 'Get post counts by status', 'inputSchema' => ['type' => 'object', 'properties' => ['post_type' => ['type' => 'string', 'description' => 'Post type (post, page, etc)']]]],
 
             // Pages
@@ -1301,13 +1340,13 @@ class Server {
             ['name' => 'wp_create_page', 'description' => 'Create new page. Combine status="future" with date to schedule. Excerpt (via wp_update_post_meta on _excerpt or via wp_create_post fallback) may contain safe HTML.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule.'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID']], 'required' => ['title', 'content']]],
             ['name' => 'wp_update_page', 'description' => 'Update existing page. Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional page excerpt. May contain safe HTML.'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as page author.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling pages. Lower = earlier in navigation.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent page ID (0 = top-level). Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Page password. Empty string removes protection.']], 'required' => ['id']]],
             ['name' => 'wp_replace_in_page', 'description' => 'Find/replace a literal string inside a page\'s content without resending the full body. Page-typed variant of wp_replace_in_post — same semantics: case-sensitive literal match, all occurrences replaced, dry_run preview, expected_count guard, read-after-write verification.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'find' => ['type' => 'string', 'minLength' => 1, 'description' => 'Literal text to find in the page content (case-sensitive, no regex).'], 'replace' => ['type' => 'string', 'description' => 'Literal replacement text. Empty string deletes the matched text.'], 'expected_count' => ['type' => 'integer', 'description' => 'Optional guard: abort without writing unless the number of occurrences equals this value.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Report the occurrence count without writing. Default false.']], 'required' => ['id', 'find', 'replace']]],
-            ['name' => 'wp_delete_page', 'description' => 'Delete page', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean']], 'required' => ['id']]],
+            ['name' => 'wp_delete_page', 'description' => 'Delete page. Without force it moves to the trash; if the page cannot be trashed (already in the trash, or the site has the trash turned off) the call is refused and nothing is deleted. force: true deletes permanently.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean', 'description' => 'Skip the trash and delete permanently']], 'required' => ['id']]],
 
             // Media
             ['name' => 'wp_get_media', 'description' => 'List media library attachments. Returns id, title, source_url, alt_text, mime_type, and date for each. Filter by mime_type to narrow to images / videos / audio / documents. Pass search to find a specific attachment by title, filename, or alt text instead of paging the whole library. For libraries over 100 items, paginate with offset (offset=0 first page, offset=100 second page). Filter by alt_text to answer alt-audit questions ("empty" = no alt text yet, "present" = alt text set).', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of items (default 10, max 100)'], 'offset' => ['type' => 'integer', 'description' => 'Zero-based offset for pagination. Combine with per_page to walk past 100 items. Default 0.'], 'mime_type' => ['type' => 'string', 'description' => 'Filter by mime type prefix or full type (image, video, audio, application/pdf)'], 'search' => ['type' => 'string', 'description' => 'Optional. Matches attachment title, filename, or alt text (case-insensitive, partial match).'], 'alt_text' => ['type' => 'string', 'enum' => ['any', 'empty', 'present'], 'description' => 'Filter by alt-text state. empty = attachments missing alt text (accessibility/SEO audit). present = attachments with alt text set. any (default) = no alt filter.']]]],
             ['name' => 'wp_get_media_item', 'description' => 'Get single media item by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer']], 'required' => ['id']]],
-            ['name' => 'wp_upload_media_from_url', 'description' => 'Download an image from a public HTTPS URL and add it to the WordPress media library. Use this when you have an image URL (Unsplash, Pexels, client asset, etc) that needs to become a library attachment — for example before setting it as a featured image. Returns the new attachment ID.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Public HTTPS URL of the image to download'], 'filename' => ['type' => 'string', 'description' => 'Optional filename (with extension). Derived from URL if omitted.'], 'alt_text' => ['type' => 'string', 'description' => 'Alt text for accessibility and SEO'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string']], 'required' => ['url']]],
-            ['name' => 'wp_upload_media', 'description' => 'Upload an image to the media library from base64-encoded bytes. Use this for AI-generated images or pasted screenshots where you have raw bytes rather than a URL. For images already hosted somewhere, prefer wp_upload_media_from_url.', 'inputSchema' => ['type' => 'object', 'properties' => ['filename' => ['type' => 'string', 'description' => 'Filename with extension (e.g. hero.jpg)'], 'content_base64' => ['type' => 'string', 'description' => 'Base64-encoded file bytes'], 'alt_text' => ['type' => 'string'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string']], 'required' => ['filename', 'content_base64']]],
+            ['name' => 'wp_upload_media_from_url', 'description' => 'Download a file from a public HTTPS URL and add it to the WordPress media library. Accepts images and any document type the site allows in its media library (for example PDF). Use this when you have a file URL (Unsplash, Pexels, client asset, an official PDF, etc) that needs to become a library attachment — for example before setting an image as a featured image. Returns the new attachment ID and its MIME type. To convert, resize or compress an image on the way in (for example a JPEG under 400 KB), pass convert_to, max_width / max_height and max_kb.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Public HTTPS URL of the file to download'], 'filename' => ['type' => 'string', 'description' => 'Optional filename (with extension). Derived from URL if omitted.'], 'alt_text' => ['type' => 'string', 'description' => 'Alt text for accessibility and SEO (images only)'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string']] + self::image_option_properties(), 'required' => ['url']]],
+            ['name' => 'wp_upload_media', 'description' => 'Upload a file to the media library. Accepts images and any document type the site allows in its media library (for example PDF). Send the file one of two ways: as `file`, a file the user attached or generated in the chat (clients that support file parameters, such as ChatGPT, fill this in), or as `content_base64` with `filename` when you have the raw bytes. For files already hosted at a public link, prefer wp_upload_media_from_url. Only files that are part of the conversation (attached, or made by an image generator) come with a download link: a file created or edited in a code sandbox (a path like /mnt/data/...) has none, so ask the user to attach that file to the chat first, or upload the original instead. To convert, resize or compress an image on the way in (for example a JPEG under 400 KB), pass convert_to, max_width / max_height and max_kb here rather than editing the image in a code sandbox first: the site does the work, and the original generated or attached file keeps its download link.', 'inputSchema' => ['type' => 'object', 'properties' => ['file' => ['type' => 'object', 'description' => 'A file from the conversation. The client supplies a short-lived download link; the site fetches it once.', 'properties' => ['download_url' => ['type' => 'string'], 'file_id' => ['type' => 'string'], 'mime_type' => ['type' => 'string'], 'file_name' => ['type' => 'string']], 'required' => ['download_url', 'file_id'], 'additionalProperties' => false], 'filename' => ['type' => 'string', 'description' => 'Filename with extension (e.g. hero.jpg, report.pdf). Required with content_base64; optional with file.'], 'content_base64' => ['type' => 'string', 'description' => 'Base64-encoded file bytes. Use this or file, not both.'], 'alt_text' => ['type' => 'string', 'description' => 'Alt text (images only)'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string']] + self::image_option_properties()], '_meta' => ['openai/fileParams' => ['file']]],
             ['name' => 'wp_set_featured_image', 'description' => 'Set or replace the featured image on a post or page. Accepts EITHER an existing media_id from wp_get_media, OR an image_url that will be downloaded into the library first. Pass media_id=0 to remove the featured image.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer', 'description' => 'Post or page ID'], 'media_id' => ['type' => 'integer', 'description' => 'Existing attachment ID (use 0 to remove the featured image)'], 'image_url' => ['type' => 'string', 'description' => 'Public HTTPS image URL to download and use instead of media_id'], 'alt_text' => ['type' => 'string', 'description' => 'Alt text to persist on the attachment. Works for both media_id and image_url input paths.']], 'required' => ['post_id']]],
             ['name' => 'wp_update_media', 'description' => 'Update metadata on an existing media attachment: alt text, caption, title, description. Great for adding SEO-friendly alt text to images already in the library.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'alt_text' => ['type' => 'string'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string'], 'description' => ['type' => 'string']], 'required' => ['id']]],
             ['name' => 'wp_delete_media', 'description' => 'Delete media item', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean']], 'required' => ['id']]],
@@ -1358,14 +1397,14 @@ class Server {
             ['name' => 'discover_tools', 'description' => 'List Royal MCP tools filtered by category, plugin, capability class, or undo support. Returns a compact index — name, description, and metadata only — WITHOUT the full inputSchema. Use with the compact tool discovery profile (X-MCP-Profile: compact on initialize) to keep the tools/list payload small on context-limited clients: caller discovers, calls get_tool_info for the specific tool it wants to invoke, then dispatches via execute_tool.', 'inputSchema' => ['type' => 'object', 'properties' => ['by_category' => ['type' => 'string', 'description' => 'Filter by category prefix, e.g. "posts", "pages", "media", "terms", "menus", "options", "elementor", "divi", "wc".'], 'by_plugin' => ['type' => 'string', 'description' => 'Filter by third-party integration slug, e.g. "core", "woocommerce", "elementor", "divi", "acf", "yoast".'], 'by_capability' => ['type' => 'string', 'enum' => ['read_only', 'write', 'destructive'], 'description' => 'Filter by capability class inferred from the tool name (get_/list_ = read_only, update_/create_/add_ = write, delete_/reset_/bulk_delete_ = destructive).'], 'by_undo_support' => ['type' => 'string', 'enum' => ['has_undo_token', 'no_undo'], 'description' => 'Filter by whether the tool emits an undo token.']]]],
             ['name' => 'get_tool_info', 'description' => 'Return the full inputSchema (and, when available, an example invocation) for a single tool named in tool_name. Pairs with discover_tools + execute_tool for the compact discovery flow.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name (e.g. "wp_update_post").']], 'required' => ['tool_name']]],
             ['name' => 'execute_tool', 'description' => 'Pass-through dispatcher for the compact discovery flow. Invokes the tool named in tool_name with the arguments in arguments — semantically identical to a direct tools/call for that tool. Useful when the client only advertised the routing tools via X-MCP-Profile: compact but still wants to invoke a specific underlying tool without renegotiating the profile.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name to invoke.'], 'arguments' => ['type' => 'object', 'description' => 'Arguments object forwarded to the underlying tool. Same shape you\'d pass in tools/call.']], 'required' => ['tool_name']]],
-            ['name' => 'wp_verify_rendered_page', 'description' => 'Post-write verification tool. Fetches the actual rendered HTML that WordPress serves at a URL via a loopback request and returns the response status, a subset of response headers (content-type, cache-control, x-cache), the page title, meta description, first h1, counts of script and stylesheet link tags, robots_meta (content of <meta name="robots">, null when absent), x_robots_tag (the X-Robots-Tag header, null when absent), redirect_chain ([{url, status}] for each redirect followed, up to 5; [] when none — response_status is the final status), tls_valid (whether the https certificate verifies; null for http), and (when include_body_excerpt is true) a 500-char excerpt of the page body. Optional selector arg reports whether an id/class selector is present in the served HTML. Use after any write that changes content, theme, or options to catch page-builder caches, object caches, or edge caches serving stale HTML even when the DB write returned success. Rate-limited to 10 fetches per minute per (site, URL). Requires read on the target post/page or manage_options. URL must belong to the current WordPress site.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Absolute URL on this site to fetch (must match home_url() origin).'], 'selector' => ['type' => 'string', 'description' => 'Optional #id or .class selector to check for presence in the rendered HTML.'], 'include_body_excerpt' => ['type' => 'boolean', 'description' => 'When true, include a 500-char excerpt of the <body> in the response. Default false.']], 'required' => ['url']]],
+            ['name' => 'wp_verify_rendered_page', 'description' => 'Post-write verification tool. Fetches the actual rendered HTML that WordPress serves at a URL via a loopback request and returns the response status, a subset of response headers (content-type, cache-control, x-cache), the page title, meta description, first h1, counts of script and stylesheet link tags, robots_meta (content of <meta name="robots">, null when absent), x_robots_tag (the X-Robots-Tag header, null when absent), redirect_chain ([{url, status}] for each redirect followed, up to 5; [] when none — response_status is the final status), tls_valid (whether the https certificate verifies; null for http), and (when include_body_excerpt is true) a 500-char excerpt of the page body. Optional selector arg reports whether an id/class selector is present in the served HTML. Use after any write that changes content, theme, or options to catch page-builder caches, object caches, or edge caches serving stale HTML even when the DB write returned success. Rate-limited to 10 calls per minute per URL; the redirect hops within one call are not counted separately. Requires read on the target post/page or manage_options. URL must belong to the current WordPress site.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Absolute URL on this site to fetch (must match home_url() origin).'], 'selector' => ['type' => 'string', 'description' => 'Optional #id or .class selector to check for presence in the rendered HTML.'], 'include_body_excerpt' => ['type' => 'boolean', 'description' => 'When true, include a 500-char excerpt of the <body> in the response. Default false.']], 'required' => ['url']]],
             ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, wp_update_post, wp_update_page, wp_update_post_meta, wp_add_post_meta, wp_delete_post_meta, wp_delete_post, wp_delete_page, wp_delete_media, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_term_meta, wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, yoast_update_meta (aliases wp_update_seo_meta), wp_update_widget, wp_delete_comment, plus every Elementor write tool (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_rebuild_post_content), Divi write tools (divi_replace_text, divi_replace_image, divi_clone_page, divi_import_template) and comment edit/reply ops. Tokens live 72 hours and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Restore may be refused with a drift error if the target was modified between the tracked write and this undo call (protects downstream writes from silent clobber). Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).']], 'required' => ['token']]],
             ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page). Each result includes content_length (bytes of stored content) for size triage.', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.']], 'required' => ['query']]],
 
             // Options
-            ['name' => 'wp_get_option', 'description' => 'Get a single WordPress option value. Requires manage_options capability. The option name must be in the readable allowlist — 13 defaults (blogname, blogdescription, siteurl, home, admin_email, posts_per_page, date_format, time_format, timezone_string, googlesitekit_analytics-4_settings, show_on_front, page_on_front, blog_public) plus any keys plugin authors opt in via the royal_mcp_readable_options filter, plus options an admin allowlists under Royal MCP settings while option writes are enabled. Sensitive keys inside the returned value are redacted regardless of what the option contains.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string']], 'required' => ['name']]],
+            ['name' => 'wp_get_option', 'description' => 'Get a single WordPress option value. Requires manage_options capability. The option name must be in the readable allowlist — 13 defaults (blogname, blogdescription, siteurl, home, admin_email, posts_per_page, date_format, time_format, timezone_string, googlesitekit_analytics-4_settings, show_on_front, page_on_front, blog_public) plus any keys plugin authors opt in via the royal_mcp_readable_options filter, plus options an admin allowlists under Royal MCP settings (Allowlisted plugin options) while option writes are enabled. Sensitive keys inside the returned value are redacted regardless of what the option contains.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string']], 'required' => ['name']]],
             ['name' => 'wp_get_plugin_settings', 'description' => 'Get all options stored by a plugin, looked up by its slug or option prefix — options named <slug> or <slug>_* (e.g. "royal-affiliate-pro", or "rafp" for that plugin\'s rafp_* options). WordPress core option prefixes are refused (use wp_get_option). Sensitive keys (api keys, secrets, tokens, passwords) are redacted and protected options are left out.', 'inputSchema' => ['type' => 'object', 'properties' => ['plugin_slug' => ['type' => 'string', 'description' => 'Plugin slug, e.g. royalcomply or royal-affiliate-pro']], 'required' => ['plugin_slug']]],
-            ['name' => 'wp_update_option', 'description' => 'Update a WordPress option. Four gates in order: (1) manage_options capability on the caller; (2) master "Allow AI to write WordPress options" admin toggle enabled; (3) hard denylist (siteurl, home, admin_email, mailserver_*, upload_path, users_can_register, wp_user_roles, wp_capabilities, api_key/secret/*_pass/*_key patterns, royal_mcp_* namespace — permanent, cannot be filter-overridden); (4) write⊆readable invariant + writable allowlist (option must appear in both royal_mcp_readable_options AND royal_mcp_writable_options — plugin authors must opt into READS before opting into WRITES). Error text names which gate blocked. "Not in allowlist" is fixable via filter opt-in; "permanently denylisted" is not. Set dry_run=true to preview the change (current + proposed value, autoload state, size delta) without writing.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'New value (any JSON type). Full overwrite — read first, merge in your client, then write back.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Preview the write without persisting. Returns current/proposed value, autoload state, and size delta.']], 'required' => ['name', 'value']]],
+            ['name' => 'wp_update_option', 'description' => 'Update a WordPress option. Four gates in order: (1) manage_options capability on the caller; (2) master "Allow AI to write WordPress options" admin toggle enabled; (3) hard denylist (siteurl, home, admin_email, mailserver_*, upload_path, users_can_register, wp_user_roles, wp_capabilities, api_key/secret/*_pass/*_key patterns, royal_mcp_* namespace — permanent, cannot be filter-overridden); (4) write⊆readable invariant + writable allowlist (option must appear in both royal_mcp_readable_options AND royal_mcp_writable_options — plugin authors must opt into READS before opting into WRITES). Error text names which gate blocked. "Not in allowlist" is fixable by an administrator under Royal MCP settings (Allowlisted plugin options) or via filter opt-in; "permanently denylisted" is not. Set dry_run=true to preview the change (current + proposed value, autoload state, size delta) without writing.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'New value (any JSON type). Full overwrite — read first, merge in your client, then write back.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Preview the write without persisting. Returns current/proposed value, autoload state, and size delta.']], 'required' => ['name', 'value']]],
 
             // Menus
             ['name' => 'wp_get_menus', 'description' => 'List all registered navigation menus (nav_menu taxonomy). Returns id, name, slug, and item count for each. Use wp_get_menu_items to enumerate items within a specific menu.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -3129,10 +3168,12 @@ class Server {
                     // schema should return it as a first-class field rather
                     // than forcing a follow-up wp_get_post_meta('_thumbnail_id').
                     $thumb_id = (int) get_post_thumbnail_id( $p );
+                    $gp_withheld = $this->content_withheld($p);
                     $item = [
                         'id' => $p->ID,
                         'title' => $p->post_title,
-                        'excerpt' => wp_trim_words($p->post_content, 50),
+                        'excerpt' => $gp_withheld ? '' : wp_trim_words($p->post_content, 50),
+                        'protected' => '' !== (string) $p->post_password,
                         'status' => $p->post_status,
                         'type' => $p->post_type,
                         'url' => get_permalink($p),
@@ -3141,7 +3182,10 @@ class Server {
                         'featured_media' => $thumb_id,
                         'featured_media_url' => $thumb_id > 0 ? ( wp_get_attachment_url( $thumb_id ) ?: null ) : null,
                     ];
-                    if ($gp_with_content) {
+                    if ($gp_with_content && $gp_withheld) {
+                        $item['content_text']      = '';
+                        $item['content_truncated'] = false;
+                    } elseif ($gp_with_content) {
                         // Plain text for drafting: shortcodes and tags removed, whitespace collapsed, at most 3000 characters.
                         // Block-level tags become spaces so adjacent blocks don't run together.
                         $text = (string) preg_replace('#</?(?:p|div|h[1-6]|li|ul|ol|br|hr|tr|td|th|table|blockquote|section|article|figure|figcaption|pre|header|footer)\b[^>]*>#i', ' ', strip_shortcodes((string) $p->post_content));
@@ -3162,11 +3206,13 @@ class Server {
                     throw new \Exception('You do not have permission to read this post.');
                 }
                 $thumb_id = (int) get_post_thumbnail_id( $post );
+                $withheld = $this->content_withheld($post);
                 return [
                     'id' => $post->ID,
                     'title' => $post->post_title,
-                    'content' => $post->post_content,
-                    'excerpt' => $post->post_excerpt,
+                    'content' => $withheld ? '' : $post->post_content,
+                    'excerpt' => $withheld ? '' : $post->post_excerpt,
+                    'protected' => '' !== (string) $post->post_password,
                     'status' => $post->post_status,
                     'type' => $post->post_type,
                     'url' => get_permalink($post),
@@ -3549,8 +3595,15 @@ class Server {
                     ];
                 }
 
-                $dp_result = wp_delete_post($dp_pid, $dp_force);
-                if (!$dp_result) throw new \Exception('Failed to delete post');
+                if ($dp_force) {
+                    $dp_result = wp_delete_post($dp_pid, true);
+                    if (!$dp_result) throw new \Exception('Failed to delete post');
+                } else {
+                    // wp_delete_post() without force only trashes post and
+                    // page; every other type would be deleted outright. Trash
+                    // explicitly and confirm the outcome before reporting it.
+                    self::trash_post_or_refuse($dp_existing);
+                }
 
                 $dp_summary = '';
                 $dp_undo_envelope = null;
@@ -3671,7 +3724,8 @@ class Server {
                 return [
                     'id' => $page->ID,
                     'title' => $page->post_title,
-                    'content' => $page->post_content,
+                    'content' => $this->content_withheld($page) ? '' : $page->post_content,
+                    'protected' => '' !== (string) $page->post_password,
                     'status' => $page->post_status,
                     'url' => get_permalink($page),
                     'parent' => $page->post_parent,
@@ -3806,9 +3860,13 @@ class Server {
                     throw new \Exception('You do not have permission to delete this page.');
                 }
                 $force = !empty($args['force']);
-                $result = wp_delete_post($page_id, $force);
-                if (!$result) throw new \Exception('Failed to delete page');
-                return ['message' => $force ? 'Page permanently deleted' : 'Page moved to trash'];
+                if ($force) {
+                    $result = wp_delete_post($page_id, true);
+                    if (!$result) throw new \Exception('Failed to delete page');
+                    return ['message' => 'Page permanently deleted'];
+                }
+                self::trash_post_or_refuse($existing_page);
+                return ['message' => 'Page moved to trash'];
 
             // ==================== MEDIA ====================
             case 'wp_get_media':
@@ -3918,46 +3976,99 @@ class Server {
                 }
                 $url = isset($args['url']) ? esc_url_raw(trim($args['url'])) : '';
                 if (empty($url)) throw new \Exception('A url is required.');
-                $attachment_id = $this->sideload_image_from_url(
+                $uf_opts = $this->image_options_from_args($args);
+                $attachment_id = $this->sideload_media_from_url(
                     $url,
                     isset($args['filename']) ? sanitize_file_name($args['filename']) : '',
                     isset($args['title']) ? \Royal_MCP\MCP\Support\SafeText::field($args['title']) : '',
                     isset($args['caption']) ? \Royal_MCP\MCP\Support\SafeText::field($args['caption']) : '',
-                    isset($args['alt_text']) ? \Royal_MCP\MCP\Support\SafeText::field($args['alt_text']) : ''
+                    isset($args['alt_text']) ? \Royal_MCP\MCP\Support\SafeText::field($args['alt_text']) : '',
+                    false,
+                    $uf_opts
                 );
-                return [
-                    'id' => $attachment_id,
-                    'url' => wp_get_attachment_url($attachment_id),
-                    'message' => 'Image uploaded to media library.',
-                ];
+                return $this->media_upload_response($attachment_id);
 
             case 'wp_upload_media':
                 if (!current_user_can('upload_files')) {
                     throw new \Exception('You do not have permission to upload files.');
                 }
-                $filename = isset($args['filename']) ? sanitize_file_name($args['filename']) : '';
-                $b64      = isset($args['content_base64']) ? (string) $args['content_base64'] : '';
-                if (empty($filename) || empty($b64)) {
-                    throw new \Exception('filename and content_base64 are required.');
+                $um_title   = isset($args['title']) ? \Royal_MCP\MCP\Support\SafeText::field($args['title']) : '';
+                $um_caption = isset($args['caption']) ? \Royal_MCP\MCP\Support\SafeText::field($args['caption']) : '';
+                $um_alt     = isset($args['alt_text']) ? \Royal_MCP\MCP\Support\SafeText::field($args['alt_text']) : '';
+                $filename   = isset($args['filename']) ? sanitize_file_name((string) $args['filename']) : '';
+                $b64        = isset($args['content_base64']) ? (string) $args['content_base64'] : '';
+                $um_opts    = $this->image_options_from_args($args);
+                $um_file    = $args['file'] ?? null;
+                if ('' === $um_file) {
+                    $um_file = null; // An empty file field counts as not sent.
                 }
-                // Strip data-URL prefix if present.
-                if (strpos($b64, 'base64,') !== false) {
-                    $b64 = substr($b64, strpos($b64, 'base64,') + 7);
+                if (is_string($um_file) && $um_file !== '') {
+                    $um_decoded = json_decode($um_file, true);
+                    if (!is_array($um_decoded)) {
+                        // A bare reference such as a file ID or an app-internal handle, with no link.
+                        throw new \Exception(self::FILE_WITHOUT_LINK_MESSAGE);
+                    }
+                    $um_file = $um_decoded;
                 }
-                $bytes = base64_decode($b64, true);
-                if ($bytes === false) throw new \Exception('content_base64 is not valid base64.');
-                $attachment_id = $this->sideload_image_from_bytes(
-                    $bytes,
-                    $filename,
-                    isset($args['title']) ? \Royal_MCP\MCP\Support\SafeText::field($args['title']) : '',
-                    isset($args['caption']) ? \Royal_MCP\MCP\Support\SafeText::field($args['caption']) : '',
-                    isset($args['alt_text']) ? \Royal_MCP\MCP\Support\SafeText::field($args['alt_text']) : ''
-                );
-                return [
-                    'id' => $attachment_id,
-                    'url' => wp_get_attachment_url($attachment_id),
-                    'message' => 'Image uploaded to media library.',
-                ];
+                if (null !== $um_file && !is_array($um_file)) {
+                    throw new \Exception('file must be an object with download_url and file_id.');
+                }
+                if (is_array($um_file) && $b64 !== '') {
+                    throw new \Exception('Send either file or content_base64, not both.');
+                }
+
+                if (is_array($um_file)) {
+                    // A file handed over by the client as a short-lived download link.
+                    $um_url = isset($um_file['download_url']) ? trim((string) $um_file['download_url']) : '';
+                    if ($um_url === '') {
+                        throw new \Exception(self::FILE_WITHOUT_LINK_MESSAGE);
+                    }
+                    if (empty($um_file['file_id'])) {
+                        throw new \Exception('file needs download_url and file_id.');
+                    }
+                    $um_scheme = strtolower((string) wp_parse_url($um_url, PHP_URL_SCHEME));
+                    if (!in_array($um_scheme, ['http', 'https'], true)) {
+                        // A path inside the client's own workspace (for example /mnt/data/… or sandbox:…).
+                        throw new \Exception(self::FILE_IN_CLIENT_WORKSPACE_MESSAGE);
+                    }
+                    if ($filename === '' && !empty($um_file['file_name'])) {
+                        $filename = sanitize_file_name((string) $um_file['file_name']);
+                    }
+                    $um_mime = isset($um_file['mime_type']) ? strtolower(trim(explode(';', (string) $um_file['mime_type'])[0])) : '';
+                    if ($um_mime !== '' && pathinfo($filename, PATHINFO_EXTENSION) === '') {
+                        $um_ext = $this->extension_for_mime_type($um_mime, false);
+                        if ($um_ext !== '') {
+                            $filename = ($filename !== '' ? $filename : 'upload') . '.' . $um_ext;
+                        }
+                    }
+                    if ($filename === '') {
+                        // Never name the file after the client's download link (it carries the client's file ID).
+                        $filename = 'upload';
+                    }
+                    try {
+                        $attachment_id = $this->sideload_media_from_url(esc_url_raw($um_url), $filename, $um_title, $um_caption, $um_alt, false, $um_opts);
+                    } catch (\Exception $e) {
+                        if (0 === strpos($e->getMessage(), 'Download failed with HTTP ')) {
+                            throw new \Exception('The file link from the conversation has expired or was refused (' . esc_html(rtrim(substr($e->getMessage(), strlen('Download failed with ')), '.')) . '). Attach the file again and retry.');
+                        }
+                        throw $e;
+                    }
+                } else {
+                    if ($b64 === '') {
+                        throw new \Exception('Send the file as file, or as content_base64 with filename.');
+                    }
+                    if ($filename === '') {
+                        throw new \Exception('filename is required with content_base64.');
+                    }
+                    // Strip data-URL prefix if present.
+                    if (strpos($b64, 'base64,') !== false) {
+                        $b64 = substr($b64, strpos($b64, 'base64,') + 7);
+                    }
+                    $bytes = base64_decode($b64, true);
+                    if ($bytes === false) throw new \Exception('content_base64 is not valid base64.');
+                    $attachment_id = $this->sideload_media_from_bytes($bytes, $filename, $um_title, $um_caption, $um_alt, false, $um_opts);
+                }
+                return $this->media_upload_response($attachment_id);
 
             case 'wp_set_featured_image':
                 $post_id = intval($args['post_id'] ?? 0);
@@ -3970,12 +4081,13 @@ class Server {
                     if (!current_user_can('upload_files')) {
                         throw new \Exception('You do not have permission to upload files.');
                     }
-                    $media_id = $this->sideload_image_from_url(
+                    $media_id = $this->sideload_media_from_url(
                         esc_url_raw(trim($args['image_url'])),
                         '',
                         '',
                         '',
-                        isset($args['alt_text']) ? \Royal_MCP\MCP\Support\SafeText::field($args['alt_text']) : ''
+                        isset($args['alt_text']) ? \Royal_MCP\MCP\Support\SafeText::field($args['alt_text']) : '',
+                        true
                     );
                 } else {
                     $media_id = isset($args['media_id']) ? intval($args['media_id']) : -1;
@@ -4405,8 +4517,12 @@ class Server {
             case 'wp_add_post_terms':
                 $taxonomy = sanitize_text_field($args['taxonomy']);
                 if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
-                $post_id = self::resolve_post_id_arg($args);
-                if ($post_id <= 0 || !get_post($post_id)) throw new \Exception('Post not found.');
+                $post_id  = self::resolve_post_id_arg($args);
+                $apt_post = $post_id > 0 ? get_post($post_id) : null;
+                if (!$apt_post) throw new \Exception('Post not found.');
+                if (!in_array($taxonomy, get_object_taxonomies($apt_post->post_type, 'names'), true)) {
+                    throw new \Exception('Taxonomy ' . esc_html($taxonomy) . ' is not registered for the ' . esc_html($apt_post->post_type) . ' post type. Use wp_get_taxonomies to see which post types each taxonomy applies to.');
+                }
                 // assigning terms to a post requires the post's own
                 // edit cap (so a Subscriber can't tag an admin's draft).
                 if (!current_user_can('edit_post', $post_id)) {
@@ -4886,6 +5002,9 @@ class Server {
                 $only = !empty($args['taxonomy']) ? sanitize_key($args['taxonomy']) : '';
                 if ('' !== $only && !taxonomy_exists($only)) {
                     throw new \Exception('Unknown taxonomy: ' . esc_html($only));
+                }
+                if ('' !== $only && !in_array($only, get_object_taxonomies($post->post_type, 'names'), true)) {
+                    throw new \Exception('Taxonomy ' . esc_html($only) . ' is not registered for the ' . esc_html($post->post_type) . ' post type. Use wp_get_taxonomies to see which post types each taxonomy applies to.');
                 }
                 return [
                     'post_id'    => $post->ID,
@@ -5376,7 +5495,7 @@ class Server {
                     && ( $vrp_now - (int) $vrp_state['start'] ) < $vrp_window
                     && (int) $vrp_state['count'] >= $vrp_limit ) {
                     throw new \Exception( sprintf(
-                        'Rate limit exceeded — up to %d fetches per %d seconds per URL. Retry after %d seconds.',
+                        'Rate limit exceeded — up to %d calls per %d seconds per URL. Retry after %d seconds.',
                         $vrp_limit,
                         $vrp_window,
                         $vrp_window - ( $vrp_now - (int) $vrp_state['start'] )
@@ -5762,10 +5881,10 @@ class Server {
                 ];
                 $posts = get_posts($search_args);
                 return array_map(function($p) use ($query, $snippet_len) {
-                    $row = ['id' => $p->ID, 'title' => $p->post_title, 'type' => $p->post_type, 'url' => get_permalink($p), 'content_length' => strlen((string) $p->post_content)];
+                    $row = ['id' => $p->ID, 'title' => $p->post_title, 'type' => $p->post_type, 'url' => get_permalink($p), 'content_length' => strlen((string) $p->post_content), 'protected' => '' !== (string) $p->post_password];
                     if ($snippet_len > 0) {
                         $row['slug'] = $p->post_name;
-                        $row['snippet'] = $this->extract_snippet($p->post_content, $query, $snippet_len);
+                        $row['snippet'] = $this->content_withheld($p) ? '' : $this->extract_snippet($p->post_content, $query, $snippet_len);
                     }
                     return $row;
                 }, $posts);
@@ -5778,7 +5897,7 @@ class Server {
                 $name = \Royal_MCP\MCP\Support\SafeText::field($args['name']);
                 $allowed = $this->get_readable_options_allowlist();
                 if (!in_array($name, $allowed, true)) {
-                    throw new \Exception('Option not in readable allowlist: ' . esc_html($name) . '. Plugin authors can opt their settings in via add_filter("royal_mcp_readable_options", ...).');
+                    throw new \Exception('Option not in readable allowlist: ' . esc_html($name) . '. A site administrator can add it under Royal MCP settings, Allowlisted plugin options (while option writes are enabled); plugin authors can opt their settings in via add_filter("royal_mcp_readable_options", ...).');
                 }
                 return ['name' => $name, 'value' => $this->redact_sensitive_keys(get_option($name), $name)];
 
@@ -5832,7 +5951,7 @@ class Server {
                 $writable = apply_filters('royal_mcp_writable_options', $default_writable);
                 if (!is_array($writable)) $writable = $default_writable;
                 if (!in_array($name, $writable, true)) {
-                    throw new \Exception('Option not in writable allowlist: ' . esc_html($name) . '. Plugin authors can opt their settings in via add_filter("royal_mcp_writable_options", ...).');
+                    throw new \Exception('Option not in writable allowlist: ' . esc_html($name) . '. A site administrator can add it under Royal MCP settings, Allowlisted plugin options; plugin authors can opt their settings in via add_filter("royal_mcp_writable_options", ...).');
                 }
 
                 // Value is intentionally accepted as-is (any JSON type). update_option will serialize.
@@ -9754,14 +9873,17 @@ class Server {
                 if (!current_user_can('read_post', (int) $revision->post_parent)) {
                     throw new \Exception('You do not have permission to read revisions on this post.');
                 }
+                $rev_parent   = get_post((int) $revision->post_parent);
+                $rev_withheld = $rev_parent instanceof \WP_Post && $this->content_withheld($rev_parent);
                 return [
                     'revision_id'    => (int) $revision->ID,
                     'parent_id'      => (int) $revision->post_parent,
                     'date'           => $revision->post_date,
                     'author_name'    => get_the_author_meta('display_name', $revision->post_author),
                     'title'          => $revision->post_title,
-                    'content'        => $revision->post_content,
-                    'excerpt'        => $revision->post_excerpt,
+                    'content'        => $rev_withheld ? '' : $revision->post_content,
+                    'excerpt'        => $rev_withheld ? '' : $revision->post_excerpt,
+                    'protected'      => $rev_parent instanceof \WP_Post && '' !== (string) $rev_parent->post_password,
                     'content_length' => strlen((string) $revision->post_content),
                 ];
 
@@ -10101,11 +10223,13 @@ class Server {
     }
 
     /**
-     * Download an image from a public URL and create a media attachment.
+     * Download a file from a public URL and create a media attachment.
      * SSRF-hardened: blocks private/reserved IP ranges, requires https,
      * caps size and time, validates mime type against extension.
+     *
+     * @param bool $images_only True accepts images only; false accepts any type the site allows.
      */
-    private function sideload_image_from_url($url, $filename, $title, $caption, $alt_text) {
+    private function sideload_media_from_url($url, $filename, $title, $caption, $alt_text, $images_only = true, array $image_opts = []) {
         $parts = wp_parse_url($url);
         if (empty($parts['scheme']) || empty($parts['host'])) {
             throw new \Exception('URL must include scheme and host.');
@@ -10143,39 +10267,238 @@ class Server {
             $path = isset($parts['path']) ? basename($parts['path']) : '';
             $filename = sanitize_file_name($path ?: 'download');
         }
-        // Many image CDNs (Unsplash, Pexels, etc) serve extensionless URLs. If the filename has no
-        // extension, derive one from the response Content-Type so wp_check_filetype_and_ext can validate.
+        // Many CDNs serve extensionless URLs. If the filename has no extension, derive one from
+        // the response Content-Type so wp_check_filetype_and_ext can validate.
         if (empty(pathinfo($filename, PATHINFO_EXTENSION))) {
             $content_type = wp_remote_retrieve_header($response, 'content-type');
-            if ($content_type) {
-                $content_type = strtolower(trim(explode(';', $content_type)[0]));
+            if (is_array($content_type)) {
+                $content_type = (string) reset($content_type);
             }
-            $mime_to_ext = [
-                'image/jpeg' => 'jpg',
-                'image/jpg'  => 'jpg',
-                'image/png'  => 'png',
-                'image/gif'  => 'gif',
-                'image/webp' => 'webp',
-                'image/avif' => 'avif',
-                'image/bmp'  => 'bmp',
-            ];
-            if (isset($mime_to_ext[$content_type])) {
-                $filename .= '.' . $mime_to_ext[$content_type];
-            } else {
-                throw new \Exception('Could not determine image type (Content-Type: ' . esc_html($content_type ?: 'unknown') . ').');
+            $content_type = $content_type ? strtolower(trim(explode(';', (string) $content_type)[0])) : '';
+            $ext = $this->extension_for_mime_type($content_type, $images_only);
+            if ($ext === '') {
+                throw new \Exception('Could not determine the file type (Content-Type: ' . esc_html($content_type ?: 'unknown') . '). Pass a filename with an extension.');
             }
+            $filename .= '.' . $ext;
         }
-        return $this->sideload_image_from_bytes($body, $filename, $title, $caption, $alt_text);
+        return $this->sideload_media_from_bytes($body, $filename, $title, $caption, $alt_text, $images_only, $image_opts);
+    }
+
+    /** Input properties shared by the two upload tools for converting, resizing and compressing an image. */
+    private static function image_option_properties() {
+        return [
+            'convert_to' => ['type' => 'string', 'enum' => ['jpeg', 'webp'], 'description' => 'Images only. Save the image in this format; a PNG from an image generator usually becomes a much smaller JPEG.'],
+            'max_width'  => ['type' => 'integer', 'minimum' => 1, 'maximum' => 10000, 'description' => 'Images only. Scale down to at most this many pixels wide, keeping proportions (never scales up).'],
+            'max_height' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 10000, 'description' => 'Images only. Scale down to at most this many pixels high, keeping proportions (never scales up).'],
+            'max_kb'     => ['type' => 'integer', 'minimum' => 10, 'maximum' => 20480, 'description' => 'Images only. Lower the quality step by step until the file is at most this many kilobytes. Works best with convert_to jpeg or webp.'],
+            'quality'    => ['type' => 'integer', 'minimum' => 10, 'maximum' => 100, 'description' => 'Images only. Starting quality for JPEG or WebP (default 82).'],
+        ];
+    }
+
+    /** Response of the two upload tools; adds what the image step did when it ran. */
+    private function media_upload_response($attachment_id) {
+        $response = [
+            'id'        => $attachment_id,
+            'url'       => wp_get_attachment_url($attachment_id),
+            'mime_type' => (string) get_post_mime_type($attachment_id),
+            'message'   => 'File uploaded to media library.',
+        ];
+        if (null !== $this->last_media_processing) {
+            $response['processed'] = $this->last_media_processing;
+        }
+        return $response;
     }
 
     /**
-     * Persist raw image bytes to the uploads dir and create an attachment.
-     * Validates mime against extension and rejects scriptable formats.
+     * The image options of an upload call (convert_to, max_width, max_height, max_kb, quality),
+     * validated before anything is downloaded. Returns [] when none are given.
      */
-    private function sideload_image_from_bytes($bytes, $filename, $title, $caption, $alt_text) {
+    private function image_options_from_args($args) {
+        $opts = [];
+        if (!is_array($args)) {
+            return $opts;
+        }
+        if (isset($args['convert_to']) && '' !== $args['convert_to'] && null !== $args['convert_to']) {
+            $to = strtolower(trim((string) $args['convert_to']));
+            if ('jpg' === $to) {
+                $to = 'jpeg';
+            }
+            if (!in_array($to, ['jpeg', 'webp'], true)) {
+                throw new \Exception('convert_to must be jpeg or webp.');
+            }
+            $opts['convert_to'] = $to;
+        }
+        $ranges = ['max_width' => [1, 10000], 'max_height' => [1, 10000], 'max_kb' => [10, 20480], 'quality' => [10, 100]];
+        foreach ($ranges as $key => $range) {
+            if (!isset($args[$key]) || '' === $args[$key]) {
+                continue;
+            }
+            $value = $args[$key];
+            if (!is_numeric($value) || (int) $value != $value || (int) $value < $range[0] || (int) $value > $range[1]) {
+                throw new \Exception(sprintf('%s must be a whole number from %d to %d.', $key, $range[0], $range[1]));
+            }
+            $opts[$key] = (int) $value;
+        }
+        return $opts;
+    }
+
+    /**
+     * Resize, convert and compress an image before it is saved: scale down to max_width / max_height,
+     * save as convert_to, and step the quality down until the file fits max_kb.
+     *
+     * @return array [temp path of the processed image, filename with the matching extension]
+     */
+    private function process_image_for_upload($tmp, $filename, $mime, array $opts) {
+        $editor = wp_get_image_editor($tmp, ['mime_type' => $mime]);
+        if (is_wp_error($editor)) {
+            throw new \Exception('This site cannot process images (' . esc_html($editor->get_error_message()) . '), so it cannot resize, convert or compress them.');
+        }
+        $original_bytes = (int) filesize($tmp);
+        // Re-encoding drops the EXIF orientation, so apply it first (phone photos stay upright);
+        // every size below is the upright one.
+        if (method_exists($editor, 'maybe_exif_rotate')) {
+            $editor->maybe_exif_rotate();
+        }
+        $original = $editor->get_size();
+
+        $max_w = (int) ($opts['max_width'] ?? 0);
+        $max_h = (int) ($opts['max_height'] ?? 0);
+        if (($max_w && $original['width'] > $max_w) || ($max_h && $original['height'] > $max_h)) {
+            $resized = $editor->resize($max_w ?: null, $max_h ?: null, false);
+            if (is_wp_error($resized)) {
+                throw new \Exception('The image could not be resized (' . esc_html($resized->get_error_message()) . ').');
+            }
+        }
+
+        $target = $mime;
+        if (!empty($opts['convert_to'])) {
+            $target = 'webp' === $opts['convert_to'] ? 'image/webp' : 'image/jpeg';
+            if (!wp_image_editor_supports(['mime_type' => $target])) {
+                throw new \Exception('This site cannot save images as ' . esc_html($opts['convert_to']) . '.');
+            }
+        }
+        $ext = $this->extension_for_mime_type($target, true);
+        if ('' === $ext) {
+            throw new \Exception('This site does not allow ' . esc_html($target) . ' uploads.');
+        }
+
+        $lossy = in_array($target, ['image/jpeg', 'image/webp'], true);
+        $start = (int) ($opts['quality'] ?? 82);
+        $limit = !empty($opts['max_kb']) ? (int) $opts['max_kb'] * 1024 : 0;
+        $steps = [$start];
+        if ($limit && $lossy) {
+            foreach ([75, 68, 60, 52, 45, 38] as $q) {
+                if ($q < $start) {
+                    $steps[] = $q;
+                }
+            }
+        }
+
+        $out     = '';
+        $written = $target;
+        $bytes   = 0;
+        $used    = $start;
+        // When a save changes the format, the editor resets quality to its default through these
+        // filters; pin them to the step being tried so each save is encoded at that quality.
+        $pinned = $start;
+        $pin    = static function () use (&$pinned) {
+            return $pinned;
+        };
+        add_filter('wp_editor_set_quality', $pin, PHP_INT_MAX);
+        add_filter('jpeg_quality', $pin, PHP_INT_MAX);
+        try {
+            foreach ($steps as $q) {
+                $pinned = $q;
+                $editor->set_quality($q);
+                $dest  = trailingslashit(get_temp_dir()) . 'rmcp-upload-' . wp_generate_password(12, false, false) . '.' . $ext;
+                $saved = $editor->save($dest, $target);
+                if (is_wp_error($saved) || empty($saved['path'])) {
+                    if ('' !== $out) {
+                        wp_delete_file($out);
+                    }
+                    throw new \Exception('The image could not be saved as ' . esc_html($target) . (is_wp_error($saved) ? ' (' . esc_html($saved->get_error_message()) . ')' : '') . '.');
+                }
+                if ('' !== $out) {
+                    wp_delete_file($out);
+                }
+                $out = $saved['path'];
+                // A site may map output formats (image_editor_output_format), so record what was written.
+                $written = !empty($saved['mime-type']) ? (string) $saved['mime-type'] : $target;
+                clearstatcache(true, $out);
+                $bytes = (int) filesize($out);
+                $used  = $q;
+                if (!$limit || $bytes <= $limit) {
+                    break;
+                }
+            }
+        } finally {
+            remove_filter('wp_editor_set_quality', $pin, PHP_INT_MAX);
+            remove_filter('jpeg_quality', $pin, PHP_INT_MAX);
+        }
+        if ($limit && $bytes > $limit) {
+            wp_delete_file($out);
+            throw new \Exception(sprintf(
+                'Could not get the image under %d KB: at quality %d it is still %d KB. Allow a larger max_kb or a smaller max_width%s.',
+                (int) $opts['max_kb'],
+                $used,
+                (int) ceil($bytes / 1024),
+                $lossy ? '' : ', or pass convert_to jpeg'
+            ));
+        }
+
+        wp_delete_file($tmp);
+        $final   = $editor->get_size();
+        $out_ext = strtolower((string) pathinfo($out, PATHINFO_EXTENSION));
+        if ('' !== $out_ext) {
+            $ext = $out_ext;
+        }
+        $this->last_media_processing = [
+            'format'   => $written,
+            'width'    => (int) $final['width'],
+            'height'   => (int) $final['height'],
+            'kb'       => round($bytes / 1024, 1),
+            'quality'  => $lossy ? $used : null,
+            'original' => [
+                'format' => $mime,
+                'width'  => (int) $original['width'],
+                'height' => (int) $original['height'],
+                'kb'     => round($original_bytes / 1024, 1),
+            ],
+        ];
+        $base = pathinfo($filename, PATHINFO_FILENAME);
+        return [$out, ('' !== $base ? $base : 'upload') . '.' . $ext];
+    }
+
+    /**
+     * File extension for a MIME type, taken from the types this site allows in its media library.
+     * Returns '' when the type is unknown or not allowed (or not an image when $images_only).
+     */
+    private function extension_for_mime_type($mime_type, $images_only) {
+        if ($mime_type === '' || ($images_only && strpos($mime_type, 'image/') !== 0)) {
+            return '';
+        }
+        if ($mime_type === 'image/jpg') {
+            $mime_type = 'image/jpeg';
+        }
+        foreach (get_allowed_mime_types() as $exts => $type) {
+            if (strtolower($type) === $mime_type) {
+                return (string) strtok($exts, '|');
+            }
+        }
+        return '';
+    }
+
+    /**
+     * Persist raw file bytes to the uploads dir and create an attachment.
+     * Validates mime against extension and rejects scriptable formats.
+     *
+     * @param bool $images_only True accepts images only; false accepts any type the site allows.
+     */
+    private function sideload_media_from_bytes($bytes, $filename, $title, $caption, $alt_text, $images_only = true, array $image_opts = []) {
         require_once ABSPATH . 'wp-admin/includes/file.php';
         require_once ABSPATH . 'wp-admin/includes/image.php';
         require_once ABSPATH . 'wp-admin/includes/media.php';
+        $this->last_media_processing = null;
 
         if (empty($bytes))    throw new \Exception('No file contents provided.');
         if (empty($filename)) throw new \Exception('Filename is required.');
@@ -10183,7 +10506,7 @@ class Server {
 
         // Reject scriptable formats outright — SVG/XML can contain script payloads.
         $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
-        $blocked_ext = ['svg', 'svgz', 'html', 'htm', 'xml', 'js', 'php', 'phtml', 'phar', 'exe'];
+        $blocked_ext = ['svg', 'svgz', 'html', 'htm', 'xhtml', 'shtml', 'xml', 'js', 'php', 'php5', 'php7', 'phps', 'pht', 'phtml', 'phar', 'exe'];
         if (in_array($ext, $blocked_ext, true)) {
             throw new \Exception('File type .' . esc_html($ext) . ' is not allowed.');
         }
@@ -10195,14 +10518,44 @@ class Server {
             wp_delete_file($tmp);
             throw new \Exception('Could not write temp file.');
         }
+        // An image saved under an extension the site does not list (.jfif for a JPEG, or no
+        // extension at all) takes the extension of its real image type.
+        if ('' === (string) wp_check_filetype($filename)['type']) {
+            $real_mime = wp_get_image_mime($tmp);
+            $real_ext  = $real_mime ? $this->extension_for_mime_type((string) $real_mime, true) : '';
+            if ($real_ext !== '') {
+                $base     = pathinfo($filename, PATHINFO_FILENAME);
+                $filename = ($base !== '' ? $base : 'upload') . '.' . $real_ext;
+            }
+        }
         $check = wp_check_filetype_and_ext($tmp, $filename);
         if (empty($check['type']) || empty($check['ext'])) {
             wp_delete_file($tmp);
             throw new \Exception('File type could not be verified or is not permitted by WordPress.');
         }
-        if (strpos($check['type'], 'image/') !== 0) {
+        if ($images_only && strpos($check['type'], 'image/') !== 0) {
             wp_delete_file($tmp);
-            throw new \Exception('Only image uploads are supported here (got ' . esc_html($check['type']) . ').');
+            throw new \Exception('Only images are accepted here (got ' . esc_html($check['type']) . ').');
+        }
+        if (!empty($image_opts)) {
+            if (strpos($check['type'], 'image/') !== 0) {
+                wp_delete_file($tmp);
+                throw new \Exception('convert_to, max_width, max_height, max_kb and quality apply to images only (this file is ' . esc_html($check['type']) . ').');
+            }
+            try {
+                list($tmp, $filename) = $this->process_image_for_upload($tmp, $filename, (string) $check['type'], $image_opts);
+            } catch (\Throwable $e) {
+                wp_delete_file($tmp);
+                if ($e instanceof \Exception) {
+                    throw $e;
+                }
+                throw new \Exception('The image could not be processed (' . esc_html($e->getMessage()) . ').');
+            }
+            $check = wp_check_filetype_and_ext($tmp, $filename);
+            if (empty($check['type']) || empty($check['ext'])) {
+                wp_delete_file($tmp);
+                throw new \Exception('File type could not be verified or is not permitted by WordPress.');
+            }
         }
 
         $file_array = [
@@ -10218,7 +10571,7 @@ class Server {
         if (!empty($caption)) {
             wp_update_post(['ID' => $attachment_id, 'post_excerpt' => $caption]);
         }
-        if (!empty($alt_text)) {
+        if (!empty($alt_text) && wp_attachment_is_image($attachment_id)) {
             update_post_meta($attachment_id, '_wp_attachment_image_alt', $alt_text);
         }
         return (int) $attachment_id;
@@ -10619,6 +10972,15 @@ class Server {
         $default = array_values(array_unique(array_merge($default, $this->get_admin_allowlisted_options())));
         $allowed = apply_filters('royal_mcp_readable_options', $default);
         return is_array($allowed) ? $allowed : $default;
+    }
+
+    /**
+     * Whether this caller gets the body of a password-protected post:
+     * only users who can edit it do. The password itself is never checked
+     * here; a client has no cookie to carry it.
+     */
+    private function content_withheld(\WP_Post $post) {
+        return '' !== (string) $post->post_password && !current_user_can('edit_post', $post->ID);
     }
 
     /**

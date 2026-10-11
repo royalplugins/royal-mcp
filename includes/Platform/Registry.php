@@ -44,18 +44,21 @@ class Registry {
                         'type' => 'select',
                         'label' => 'Model',
                         'required' => false,
-                        'default' => 'claude-sonnet-4-6',
+                        'default' => 'claude-sonnet-5-5',
                         'options' => [
-                            'claude-opus-4-7' => 'Claude Opus 4.7 (Most Capable)',
-                            'claude-sonnet-4-6' => 'Claude Sonnet 4.6 (Latest, Recommended)',
-                            'claude-haiku-4-5-20251001' => 'Claude Haiku 4.5 (Fast & Cheap)',
+                            'claude-opus-5-5' => 'Claude Opus 5.5',
+                            'claude-sonnet-5-5' => 'Claude Sonnet 5.5 (Recommended)',
+                            'claude-haiku-5-5' => 'Claude Haiku 5.5 (Fast & Cheap)',
+                            'claude-opus-4-7' => 'Claude Opus 4.7 (previous)',
+                            'claude-sonnet-4-6' => 'Claude Sonnet 4.6 (previous)',
+                            'claude-haiku-4-5-20251001' => 'Claude Haiku 4.5 (previous)',
                         ],
                     ],
                 ],
                 'test_endpoint' => '/v1/messages',
                 'test_method' => 'POST',
                 'test_body' => [
-                    'model' => 'claude-haiku-4-5-20251001',
+                    'model' => 'claude-haiku-5-5',
                     'max_tokens' => 10,
                     'messages' => [
                         ['role' => 'user', 'content' => 'Hi']

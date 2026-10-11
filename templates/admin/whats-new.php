@@ -2,6 +2,8 @@
 /**
  * Royal MCP — What's New modal template.
  *
+ * Whats-New-For-Version: 1.5.8
+ *
  * Rendered from Whats_New::render_modal() on admin_footer (Royal MCP pages
  * only). JS (assets/js/whats-new.js) handles show/hide + AJAX dismissal.
  *
@@ -18,8 +20,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 $rmcp_wn_img_base   = ROYAL_MCP_PLUGIN_URL . 'assets/img/whats-new/';
 $rmcp_wn_review_url = 'https://wordpress.org/support/plugin/royal-mcp/reviews/?rate=5#new-post';
 $rmcp_wn_help_url   = admin_url( 'admin.php?page=royal-mcp-help&view=troubleshooting' );
-$rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_7&utm_content=footer_cta';
-$rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_7&utm_content=slide_1_cta';
+$rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_8&utm_content=footer_cta';
+$rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_8&utm_content=slide_1_cta';
 ?>
 <div class="rmcp-wn-backdrop" data-royal-mcp-wn-backdrop hidden>
     <div class="rmcp-wn-modal" role="dialog" aria-modal="true" aria-labelledby="rmcp-wn-title">
@@ -27,7 +29,7 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
             <img class="rmcp-wn-header-logo" src="<?php echo esc_url( $rmcp_wn_img_base . 'royal-shield.png' ); ?>" alt="">
             <div class="rmcp-wn-header-titles">
                 <h2 id="rmcp-wn-title"><?php esc_html_e( "What's New in Royal MCP", 'royal-mcp' ); ?></h2>
-                <p><?php esc_html_e( 'Version 1.5.7 — Read-only mode, Connected Clients & more', 'royal-mcp' ); ?></p>
+                <p><?php esc_html_e( '1.5.7 – 1.5.8: AI image and PDF uploads, read-only mode and more.', 'royal-mcp' ); ?></p>
             </div>
             <button type="button" class="rmcp-wn-close" data-royal-mcp-wn-close aria-label="<?php esc_attr_e( 'Close', 'royal-mcp' ); ?>">&times;</button>
         </div>
@@ -53,14 +55,37 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                 </div>
             </div>
 
-            <!-- SLIDE 2 — READ-ONLY MODE (the 1.5.7 headline) -->
+            <!-- SLIDE 2 — IMAGE AND PDF UPLOADS (the 1.5.8 headline) -->
             <div class="rmcp-wn-slide is-reversed">
                 <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Read-only mode', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'Let AI read everything and change nothing', 'royal-mcp' ); ?></h3>
-                    <p><?php esc_html_e( 'One switch in Royal MCP settings. When it is on, every tool that creates, updates or deletes is refused for every client and every user, administrators included, while every read keeps working.', 'royal-mcp' ); ?></p>
-                    <p><?php esc_html_e( "The tools stay in your clients' tool lists, marked as switched off, so an assistant knows what it can and cannot do before it tries. Turn it on while you decide what AI may change, or leave it on for sites that should only ever be read.", 'royal-mcp' ); ?></p>
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v1.5.8', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'AI agents can upload images and PDFs, compressed on the way in', 'royal-mcp' ); ?></h3>
+                    <p><?php esc_html_e( 'Ask ChatGPT, Claude or any AI agent to put an image or a PDF in your media library and it lands there directly. Files you attach to the chat, and images ChatGPT generates, are handed straight to WordPress.', 'royal-mcp' ); ?></p>
+                    <p>
+                        <?php
+                        echo wp_kses(
+                            __( '<strong>Compression on upload.</strong> Ask for a JPEG under 400 KB, or an image 1200 pixels wide, and Royal MCP converts, resizes and compresses it itself, so the AI never has to edit the file first. PDFs and any other file type your media library allows upload the same way.', 'royal-mcp' ),
+                            [ 'strong' => [] ]
+                        );
+                        ?>
+                    </p>
                 </div>
+                <div class="rmcp-wn-slide-visual">
+                    <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone"><span class="c"><?php esc_html_e( '// "Generate a red bicycle,', 'royal-mcp' ); ?></span>
+<span class="c"><?php esc_html_e( '//  upload it as a JPEG', 'royal-mcp' ); ?></span>
+<span class="c"><?php esc_html_e( '//  under 400 KB"', 'royal-mcp' ); ?></span>
+
+<span class="k">wp_upload_media</span>
+  <span class="s">file</span>        <span class="c">red-bicycle.png</span>
+  <span class="s">convert_to</span>  <span class="c">jpeg</span>
+  <span class="s">max_kb</span>      <span class="c">400</span>
+
+<span class="k">&rarr;</span> <span class="s hl">red-bicycle.jpg</span>  <span class="c">184 KB &#10003;</span></div>
+                </div>
+            </div>
+
+            <!-- SLIDE 3 — READ-ONLY MODE (the 1.5.7 headline) -->
+            <div class="rmcp-wn-slide">
                 <div class="rmcp-wn-slide-visual">
                     <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone">
 <span class="c">// wp_update_post, read-only mode on</span>
@@ -75,10 +100,16 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
 <span class="k">}</span>
                     </div>
                 </div>
+                <div class="rmcp-wn-slide-body">
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Read-only mode', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'Let AI read everything and change nothing', 'royal-mcp' ); ?></h3>
+                    <p><?php esc_html_e( 'One switch in Royal MCP settings. When it is on, every tool that creates, updates or deletes is refused for every client and every user, administrators included, while every read keeps working.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( "The tools stay in your clients' tool lists, marked as switched off, so an assistant knows what it can and cannot do before it tries. Turn it on while you decide what AI may change, or leave it on for sites that should only ever be read.", 'royal-mcp' ); ?></p>
+                </div>
             </div>
 
-            <!-- SLIDE 3 — CONNECTED CLIENTS, SITE HEALTH, WP-CLI -->
-            <div class="rmcp-wn-slide">
+            <!-- SLIDE 4 — CONNECTED CLIENTS, SITE HEALTH, WP-CLI -->
+            <div class="rmcp-wn-slide is-reversed">
                 <div class="rmcp-wn-slide-visual">
                     <div class="rmcp-wn-circle" role="img" aria-label="<?php esc_attr_e( 'A list of connected AI clients with a revoke button', 'royal-mcp' ); ?>">
                         <svg viewBox="0 0 200 200" width="170" height="170" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -112,8 +143,25 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                 </div>
             </div>
 
-            <!-- SLIDE 4 — WORDFENCE + LITESPEED CACHE INTEGRATIONS -->
-            <div class="rmcp-wn-slide is-reversed">
+            <!-- SLIDE 5 — WORDFENCE + LITESPEED CACHE INTEGRATIONS -->
+            <div class="rmcp-wn-slide">
+                <div class="rmcp-wn-slide-visual">
+                    <div class="rmcp-wn-circle" role="img" aria-label="<?php esc_attr_e( 'Wordfence and LiteSpeed Cache linked to Royal MCP', 'royal-mcp' ); ?>">
+                        <svg viewBox="0 0 200 200" width="170" height="170" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="100" cy="100" r="30" fill="#2C2C2C" stroke="#C9A227" stroke-width="2.5"/>
+                            <text x="100" y="97" text-anchor="middle" font-family="Inter, sans-serif" font-size="8" font-weight="700" fill="#C9A227">Royal MCP</text>
+                            <text x="100" y="108" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" fill="#FAF8F5">136 tools</text>
+                            <circle cx="100" cy="32" r="22" fill="#FEFCF7" stroke="#C9A227" stroke-width="2"/>
+                            <text x="100" y="30" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" font-weight="700" fill="#2C2C2C">Wordfence</text>
+                            <text x="100" y="40" text-anchor="middle" font-family="Inter, sans-serif" font-size="6.5" fill="#787c82">8 tools</text>
+                            <circle cx="100" cy="168" r="22" fill="#FEFCF7" stroke="#C9A227" stroke-width="2"/>
+                            <text x="100" y="166" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" font-weight="700" fill="#2C2C2C">LiteSpeed</text>
+                            <text x="100" y="176" text-anchor="middle" font-family="Inter, sans-serif" font-size="6.5" fill="#787c82">4 tools</text>
+                            <line x1="100" y1="54" x2="100" y2="70" stroke="#C9A227" stroke-width="1.5"/>
+                            <line x1="100" y1="146" x2="100" y2="130" stroke="#C9A227" stroke-width="1.5"/>
+                        </svg>
+                    </div>
+                </div>
                 <div class="rmcp-wn-slide-body">
                     <span class="rmcp-wn-tag"><?php esc_html_e( 'Two new integrations', 'royal-mcp' ); ?></span>
                     <h3><?php esc_html_e( 'Wordfence and LiteSpeed Cache: twelve new tools', 'royal-mcp' ); ?></h3>
@@ -135,27 +183,10 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                     </p>
                     <p><?php esc_html_e( 'Both follow the rules every integration follows: administrators only, every change confirmed against what the plugin actually stored, and text from logs handed to the AI as text, never as instructions.', 'royal-mcp' ); ?></p>
                 </div>
-                <div class="rmcp-wn-slide-visual">
-                    <div class="rmcp-wn-circle" role="img" aria-label="<?php esc_attr_e( 'Wordfence and LiteSpeed Cache linked to Royal MCP', 'royal-mcp' ); ?>">
-                        <svg viewBox="0 0 200 200" width="170" height="170" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="100" cy="100" r="30" fill="#2C2C2C" stroke="#C9A227" stroke-width="2.5"/>
-                            <text x="100" y="97" text-anchor="middle" font-family="Inter, sans-serif" font-size="8" font-weight="700" fill="#C9A227">Royal MCP</text>
-                            <text x="100" y="108" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" fill="#FAF8F5">136 tools</text>
-                            <circle cx="100" cy="32" r="22" fill="#FEFCF7" stroke="#C9A227" stroke-width="2"/>
-                            <text x="100" y="30" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" font-weight="700" fill="#2C2C2C">Wordfence</text>
-                            <text x="100" y="40" text-anchor="middle" font-family="Inter, sans-serif" font-size="6.5" fill="#787c82">8 tools</text>
-                            <circle cx="100" cy="168" r="22" fill="#FEFCF7" stroke="#C9A227" stroke-width="2"/>
-                            <text x="100" y="166" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" font-weight="700" fill="#2C2C2C">LiteSpeed</text>
-                            <text x="100" y="176" text-anchor="middle" font-family="Inter, sans-serif" font-size="6.5" fill="#787c82">4 tools</text>
-                            <line x1="100" y1="54" x2="100" y2="70" stroke="#C9A227" stroke-width="1.5"/>
-                            <line x1="100" y1="146" x2="100" y2="130" stroke="#C9A227" stroke-width="1.5"/>
-                        </svg>
-                    </div>
-                </div>
             </div>
 
-            <!-- SLIDE 5 — CLEARER SIGNALS FOR CLIENTS -->
-            <div class="rmcp-wn-slide">
+            <!-- SLIDE 6 — CLEARER SIGNALS FOR CLIENTS -->
+            <div class="rmcp-wn-slide is-reversed">
                 <div class="rmcp-wn-slide-visual">
                     <div class="rmcp-wn-mark" role="img" aria-label="Royal Plugins">
                         <span>R</span>
