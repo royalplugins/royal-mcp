@@ -30,7 +30,7 @@ class Composers {
 						'title'              => [ 'type' => 'string',  'description' => 'Post title. Required.' ],
 						'content'            => [ 'type' => 'string',  'description' => 'Post content (HTML). Required.' ],
 						'status'             => [ 'type' => 'string',  'enum' => [ 'draft', 'publish', 'pending', 'private', 'future' ], 'description' => 'Default "publish" (LIVE). Pass "draft" to stage.' ],
-						'publish_date'       => [ 'type' => 'string',  'description' => 'Optional. Format YYYY-MM-DD HH:MM:SS. If in the future and status=publish, post_status auto-becomes "future".' ],
+						'publish_date'       => [ 'type' => 'string',  'description' => 'Optional. Format YYYY-MM-DD HH:MM:SS in the site timezone. If in the future and status=publish, post_status auto-becomes "future".' ],
 						'featured_image_url' => [ 'type' => 'string',  'description' => 'Optional. Publicly-fetchable image URL to sideload as the featured image.' ],
 						'category'           => [ 'type' => 'string',  'description' => 'Optional. Category name. Created if it does not exist.' ],
 						'tags'               => [ 'type' => 'array',   'items' => [ 'type' => 'string' ], 'description' => 'Optional. Array of tag names. Created if they do not exist.' ],
@@ -135,7 +135,8 @@ class Composers {
 			// Validate parseability before feeding to wp_insert_post — otherwise
 			// garbage input can create posts with invalid date fields that
 			// break sorting and archive queries downstream.
-			$parsed = strtotime( $publish_date );
+			$parsed_date = date_create_immutable( $publish_date, wp_timezone() );
+			$parsed      = $parsed_date ? $parsed_date->getTimestamp() : false;
 			if ( false === $parsed ) {
 				$warnings[] = [ 'step' => 'publish_date', 'message' => sprintf( 'publish_date "%s" could not be parsed; using current time.', $publish_date ) ];
 			} else {

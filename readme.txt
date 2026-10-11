@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.5.7
+Stable tag: 1.5.8
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -296,6 +296,17 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 10. Royal MCP tool list in ChatGPT after connection
 
 == Changelog ==
+
+= 1.5.8 =
+* New: ChatGPT can hand a file from the conversation straight to the media upload tool.
+* New: the media upload tools can convert, resize and compress an image as it uploads, for example to a JPEG under 400 KB.
+* Enhancement: the media upload tools accept PDFs and any other file type your site allows in its media library.
+* Enhancement: an image whose file name has an unfamiliar extension, such as .jfif, is saved under its real image type.
+* Enhancement: option tool messages say where an administrator can allowlist an option.
+* Fix: post term reads and writes refuse a taxonomy that is not registered for the post type.
+* Fix: password-protected content is returned only to users who can edit the post.
+* Fix: publish-and-promote reads the publish date in the site timezone.
+* Fix: the page-check rate limit counts calls, not redirect hops.
 
 = 1.5.7 =
 * New: a tool to read the terms assigned to a post, and post and page reads now include their assigned terms.
