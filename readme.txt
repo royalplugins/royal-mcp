@@ -303,6 +303,7 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Enhancement: the media upload tools accept PDFs and any other file type your site allows in its media library.
 * Enhancement: an image whose file name has an unfamiliar extension, such as .jfif, is saved under its real image type.
 * Enhancement: option tool messages say where an administrator can allowlist an option.
+* Fix: deleting a post or page without force moves any post type to the trash, and refuses when the trash is not available.
 * Fix: post term reads and writes refuse a taxonomy that is not registered for the post type.
 * Fix: password-protected content is returned only to users who can edit the post.
 * Fix: publish-and-promote reads the publish date in the site timezone.
