@@ -82,7 +82,7 @@ Royal MCP publishes machine-readable MCP Server Card, Skills Index, and OAuth Pr
 * Pages - full CRUD with parent page support
 * Post Types - discover all registered public post types on the site
 * Post Revisions - list revision history and roll a post back to any prior version
-* Media - browse, upload from URL or base64, update alt text/caption/title/description, set as featured image, delete
+* Media - browse; upload images, PDFs and any other file type the site allows from a URL, base64 or a file handed over by ChatGPT; convert, resize and compress images on upload; update alt text/caption/title/description, set as featured image, delete
 * Comments - create, read, delete; full moderation suite (list pending, approve, mark spam, trash)
 * Users - display names and roles (emails and usernames are not exposed)
 * Categories, Tags & Custom Taxonomies - full CRUD, assign, count, discover registered taxonomies
@@ -109,7 +109,7 @@ Royal MCP publishes machine-readable MCP Server Card, Skills Index, and OAuth Pr
 If the plugin is active on your Wordpress site, it's tools auto-register with no additional configuration needed.
 
 * **WooCommerce (29 tools)** — full store CRUD: products (simple + variable), variations, global attributes (`pa_*`), coupons with bulk-trash purge, orders + notes, customers, and store statistics
-* **Elementor (11 tools, free + Pro)** — clone a page with fresh element IDs, bulk text/image replacement across 12+ widget types, compact page outlines, widget-level settings reads, template library import/insert, `post_content` restoration on damaged pages (72-hour undo per write)
+* **Elementor (14 tools, free + Pro)** — clone a page with fresh element IDs, bulk text/image replacement across 12+ widget types, add widgets, compact page outlines, widget-level settings reads, widget schema and dynamic-tag discovery, template library import/insert, `post_content` restoration on damaged pages (72-hour undo per write)
 * **Divi (9 tools, Divi 4 + Divi 5)** — format detection, page outlines, layout validation, library reads, dry-run find-and-replace with active-editor-session detection, page cloning (D5 `clientIds` regenerated), image swaps, library-to-page apply in merge or replace mode (72-hour undo per write)
 * **Advanced Custom Fields (4 tools, free + Pro)** — type-aware field reads (each field's Return Format respected: hydrated post objects, parsed repeater rows, image arrays), bulk-read all fields on a post, type-aware writes, field-group enumeration
 * **Yoast SEO (5 tools)** — read/write Yoast meta (raw + resolved), capture the JSON-LD schema graph, list indexed internal links, list Yoast Premium redirects
@@ -132,7 +132,7 @@ Every Royal Plugin auto-exposes MCP tools alongside Royal MCP:
 * **Royal AI Firewall (6 tools)** — review AI bot traffic, dashboard stats, and set allow/block/challenge policies per bot signature
 * **GuardPress (7 tools)** — review your security score, run vulnerability scans, inspect failed logins and blocked IPs
 * **SiteVault (6 tools)** — list backups, trigger new ones, check progress, review schedules
-* **ForgeCache (3 tools)** — purge and inspect your page cache
+* **ForgeCache (4 tools)** — purge and inspect your page cache, and read real-user Core Web Vitals
 * **Royal Ledger (4 tools)** — review recurring software costs and masked license entries
 * **Royal Links (3 tools)** — manage branded short links and click stats
 
