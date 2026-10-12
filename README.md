@@ -19,11 +19,11 @@ Agents can read and write posts, pages, media, users, menus, WooCommerce orders,
 
 ## Capabilities
 
-### WordPress core (85 tools, always available)
+### WordPress core (90 tools, always available)
 
 - **Content** — Posts, pages, custom post types (full CRUD + revisions + featured images)
 - **Taxonomies** — Categories, tags, custom taxonomies, term meta, post-term linking
-- **Media** — Browse, upload (URL or base64), update metadata, delete
+- **Media** — Browse, upload images, PDFs and other allowed files (URL, base64, or a file handed over by ChatGPT), convert / resize / compress images on upload, update metadata, delete
 - **Comments** — Create, moderate (approve / spam / trash)
 - **Users** — Read display names + roles (emails and usernames are not exposed)
 - **Menus** — Read, create items, reorder, update with destructive-write guardrails
@@ -33,7 +33,7 @@ Agents can read and write posts, pages, media, users, menus, WooCommerce orders,
 - **SEO** — Yoast / Rank Math / AIOSEO meta read/write where the plugin is active
 - **Diagnostics** — Site status (WP/PHP/MySQL/plugins/themes/cron in one call), PHP error-log tail, WP cron schedule, and MCP `royal_mcp_connection_health` (returns route, auth method, session ID, plugin version, and active page-builder versions for Divi + Elementor + Gutenberg)
 
-### Plugin integrations (124 tools, conditional)
+### Plugin integrations (136 tools, conditional)
 
 Auto-register only when the integrated plugin is active.
 
@@ -42,6 +42,7 @@ Auto-register only when the integrated plugin is active.
 | WooCommerce | 29 | Products, variations, attributes, coupons, orders (create/update/notes), customers, store stats |
 | Elementor | 14 | Clone pages, replace text, swap images, get outline (with optional include-styles), read single element, list templates, import templates, add widget, rebuild post_content, widget-schema discovery, widget-list discovery, dynamic-tag discovery |
 | Divi | 9 | Format detection (D4 shortcode vs D5 block), page outline, layout validation, library list + get, find/replace with builder-format awareness, clone, image swap, library apply |
+| Wordfence | 8 | Security status, firewall mode and scan findings, blocked IPs, block / unblock an IP, failed logins, blocked requests, start a scan |
 | GuardPress | 7 | Security score, failed logins, blocked IPs, vulnerability scans, audit log |
 | SiteVault | 6 | Trigger backups, monitor progress, list schedules |
 | Royal AI Firewall | 6 | Dashboard stats, recent bot hits, per-bot policies (allow / block / challenge), daily rollups |
@@ -54,6 +55,7 @@ Auto-register only when the integrated plugin is active.
 | Solid Security | 4 | Read security status, list currently locked-out IPs, read the security event log, add an IP to the ban list |
 | MonsterInsights | 4 | Read the analytics overview, top pages, traffic sources, and top Google Search Console queries |
 | BuddyPress | 4 | List community members, read a single member profile, list groups, read the activity feed (same detection covers BuddyBoss Platform) |
+| LiteSpeed Cache | 4 | Cache status and the settings that shape caching, purge everything, purge specific pages by URL or post |
 | Contact Form 7 | 3 | List forms, read a single form's parsed field schema, list submissions (via Flamingo add-on) |
 | W3 Total Cache | 3 | Read cache configuration across every module, purge cache (all / by URL / by post), read usage statistics |
 | Duplicator | 3 | List migration packages, read per-package status, get the installer URL for a completed package |
