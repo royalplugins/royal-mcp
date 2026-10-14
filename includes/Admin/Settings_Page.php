@@ -1,7 +1,6 @@
 <?php
 namespace Royal_MCP\Admin;
 
-use Royal_MCP\Platform\Registry;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -28,98 +27,13 @@ class Settings_Page {
     public function __construct() {
         add_action('admin_menu', [$this, 'add_menu_page']);
         add_action('admin_init', [$this, 'register_settings']);
-        add_action('admin_init', [$this, 'maybe_dismiss_founders_banner']);
         add_action('admin_init', [$this, 'maybe_dismiss_review_banner']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_scripts']);
         add_filter('admin_footer_text', [$this, 'admin_footer_text']);
 
         // AJAX handlers
-        add_action('wp_ajax_royal_mcp_test_connection', [$this, 'ajax_test_connection']);
         add_action('wp_ajax_royal_mcp_reset_oauth_state', [$this, 'ajax_reset_oauth_state']);
         add_action('wp_ajax_royal_mcp_clear_oauth_field', [$this, 'ajax_clear_oauth_field']);
-    }
-
-    /**
-     * Render the Founders Bundle banner. $permanent=true skips dismiss X + per-user check (Pro).
-     * Dismissal is version-stamped so the banner re-appears after each plugin update.
-     */
-    public static function render_founders_banner( $permanent = false ) {
-        $user_id = get_current_user_id();
-        if (!$user_id) {
-            return;
-        }
-        if (!$permanent) {
-            $dismissed_at = get_user_meta($user_id, 'royal_mcp_founders_dismissed_version', true);
-            if ($dismissed_at && version_compare($dismissed_at, ROYAL_MCP_VERSION, '>=')) {
-                return;
-            }
-        }
-
-        $dismiss_url = ! $permanent ? wp_nonce_url(
-            add_query_arg('royal_mcp_dismiss_founders', '1'),
-            'royal_mcp_dismiss_founders'
-        ) : '';
-
-        $bundle_url = 'https://royalplugins.com/founders/';
-        $plugins    = [
-            ['icon' => 'shield-alt',  'name' => __('GuardPress Pro', 'royal-mcp'),       'url' => $bundle_url],
-            ['icon' => 'superhero',   'name' => __('ForgeCache', 'royal-mcp'),           'url' => $bundle_url],
-            ['icon' => 'database',    'name' => __('SiteVault Pro', 'royal-mcp'),        'url' => $bundle_url],
-            ['icon' => 'chart-line',  'name' => __('SEObolt Pro', 'royal-mcp'),          'url' => $bundle_url],
-            ['icon' => 'feedback',    'name' => __('FormForge Pro', 'royal-mcp'),        'url' => $bundle_url],
-            ['icon' => 'groups',      'name' => __('Royal Affiliate Pro', 'royal-mcp'),  'url' => $bundle_url],
-        ];
-        ?>
-        <div class="royal-mcp-founders-banner">
-            <?php if ( ! $permanent ) : ?>
-                <a href="<?php echo esc_url($dismiss_url); ?>" class="royal-mcp-founders-dismiss" aria-label="<?php esc_attr_e('Dismiss this notice', 'royal-mcp'); ?>">
-                    <span class="dashicons dashicons-no-alt" aria-hidden="true"></span>
-                </a>
-            <?php endif; ?>
-            <div class="royal-mcp-founders-left">
-                <span class="royal-mcp-founders-eyebrow">
-                    <span class="dashicons dashicons-star-filled" aria-hidden="true"></span>
-                    <?php esc_html_e('Founders Pricing', 'royal-mcp'); ?>
-                </span>
-                <h2 class="royal-mcp-founders-title"><?php esc_html_e('Royal Plugins Founders Bundle', 'royal-mcp'); ?></h2>
-                <p class="royal-mcp-founders-subtitle"><?php esc_html_e('All 6 premium plugins. Lifetime updates. One bundle, one purchase. Built by the team behind Royal MCP.', 'royal-mcp'); ?></p>
-                <a href="<?php echo esc_url($bundle_url); ?>" target="_blank" rel="noopener noreferrer" class="royal-mcp-founders-cta-primary">
-                    <?php esc_html_e('View bundle', 'royal-mcp'); ?>
-                    <span class="dashicons dashicons-arrow-right-alt" aria-hidden="true"></span>
-                </a>
-            </div>
-            <div class="royal-mcp-founders-grid">
-                <?php foreach ($plugins as $plugin) : ?>
-                    <a href="<?php echo esc_url($plugin['url']); ?>" target="_blank" rel="noopener noreferrer" class="royal-mcp-founders-grid-item">
-                        <span class="dashicons dashicons-<?php echo esc_attr($plugin['icon']); ?>" aria-hidden="true"></span>
-                        <span class="royal-mcp-founders-grid-item-name"><?php echo esc_html($plugin['name']); ?></span>
-                    </a>
-                <?php endforeach; ?>
-            </div>
-        </div>
-        <?php
-    }
-
-    /**
-     * Persist a per-user dismissal of the Founders banner when the dismiss
-     * link is followed. Validates capability and nonce, then redirects.
-     */
-    public function maybe_dismiss_founders_banner() {
-        if (!isset($_GET['royal_mcp_dismiss_founders'])) {
-            return;
-        }
-        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- writes per-user meta only (no per-site or network-scope state)
-            return;
-        }
-        if (!isset($_GET['_wpnonce']) ||
-            !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'royal_mcp_dismiss_founders')) {
-            return;
-        }
-
-        update_user_meta(get_current_user_id(), 'royal_mcp_founders_dismissed_version', ROYAL_MCP_VERSION);
-
-        wp_safe_redirect(remove_query_arg(['royal_mcp_dismiss_founders', '_wpnonce']));
-        exit;
     }
 
     /** Render the wp.org review-request banner (Free tier only, version-stamped dismissal). */
@@ -167,9 +81,8 @@ class Settings_Page {
     }
 
     /**
-     * Persist a per-user dismissal of the review banner. Mirrors
-     * maybe_dismiss_founders_banner. Version-stamped — banner reappears
-     * on each plugin version update.
+     * Persist a per-user dismissal of the review banner. Version-stamped —
+     * the banner reappears on each plugin version update.
      */
     public function maybe_dismiss_review_banner() {
         if (!isset($_GET['royal_mcp_dismiss_review'])) {
@@ -329,6 +242,33 @@ class Settings_Page {
             $this->log_toggle_change( 'settings:read_only_mode', $prior_read_only, $sanitized['read_only_mode'] );
         }
 
+        // Drafts-only mode: AI clients may create and edit drafts, nothing else.
+        $prior_drafts_only = ! empty( $settings['drafts_only_mode'] );
+        $sanitized['drafts_only_mode'] = isset( $input['drafts_only_mode'] ) ? (bool) $input['drafts_only_mode'] : false;
+        if ( $prior_drafts_only !== $sanitized['drafts_only_mode'] ) {
+            $this->log_toggle_change( 'settings:drafts_only_mode', $prior_drafts_only, $sanitized['drafts_only_mode'] );
+        }
+
+        // Access levels for the API key and for calls through other MCP
+        // servers and browser agents (per-client levels live on Connected Clients).
+        foreach ( [ 'api_key_access', 'other_routes_access' ] as $access_key ) {
+            $prior_access = \Royal_MCP\MCP\Support\Access_Levels::normalize( $settings[ $access_key ] ?? '' );
+            $prior_access = '' !== $prior_access ? $prior_access : 'full';
+            $next_access  = \Royal_MCP\MCP\Support\Access_Levels::normalize( isset( $input[ $access_key ] ) ? sanitize_text_field( wp_unslash( (string) $input[ $access_key ] ) ) : '' );
+            $sanitized[ $access_key ] = '' !== $next_access ? $next_access : 'full';
+            if ( $prior_access !== $sanitized[ $access_key ] ) {
+                $this->log_toggle_change( 'settings:' . $access_key, $prior_access, $sanitized[ $access_key ] );
+            }
+        }
+
+        // Delete all data when the plugin is deleted — off by default, so a
+        // delete-and-reinstall keeps settings, logs and undo history.
+        $prior_delete_data = ! empty( $settings['delete_data_on_uninstall'] );
+        $sanitized['delete_data_on_uninstall'] = isset( $input['delete_data_on_uninstall'] ) ? (bool) $input['delete_data_on_uninstall'] : false;
+        if ( $prior_delete_data !== $sanitized['delete_data_on_uninstall'] ) {
+            $this->log_toggle_change( 'settings:delete_data_on_uninstall', $prior_delete_data, $sanitized['delete_data_on_uninstall'] );
+        }
+
         // WebMCP browser-agent bridge — opt-in cookie-auth path for the Cloudflare
         // WebMCP bridge. Off by default so the cookie-auth surface is never a
         // hidden auth path. Toggle change gets an Activity Log row (below) for
@@ -437,64 +377,6 @@ class Settings_Page {
             $sanitized['oauth_client_secret'] = $settings['oauth_client_secret'] ?? '';
         }
 
-        // Sanitize AI Platforms (new structure)
-        $sanitized['platforms'] = [];
-        if (isset($input['platforms']) && is_array($input['platforms'])) {
-            foreach ($input['platforms'] as $index => $platform_config) {
-                if (empty($platform_config['platform'])) {
-                    continue;
-                }
-
-                $platform_id = sanitize_text_field($platform_config['platform']);
-                $platform = Registry::get_platform($platform_id);
-
-                if (!$platform) {
-                    continue;
-                }
-
-                $sanitized_platform = [
-                    'platform' => $platform_id,
-                    'enabled' => isset($platform_config['enabled']) ? (bool) $platform_config['enabled'] : true,
-                ];
-
-                // Sanitize each field based on platform configuration
-                foreach ($platform['fields'] as $field_id => $field_config) {
-                    if (isset($platform_config[$field_id])) {
-                        switch ($field_config['type']) {
-                            case 'url':
-                                $sanitized_platform[$field_id] = esc_url_raw($platform_config[$field_id]);
-                                break;
-                            case 'password':
-                            case 'text':
-                            case 'select':
-                            default:
-                                $sanitized_platform[$field_id] = sanitize_text_field($platform_config[$field_id]);
-                                break;
-                        }
-                    } elseif (isset($field_config['default'])) {
-                        $sanitized_platform[$field_id] = $field_config['default'];
-                    }
-                }
-
-                $sanitized['platforms'][] = $sanitized_platform;
-            }
-        }
-
-        // Legacy: Also keep mcp_servers for backward compatibility
-        $sanitized['mcp_servers'] = [];
-        if (isset($input['mcp_servers']) && is_array($input['mcp_servers'])) {
-            foreach ($input['mcp_servers'] as $server) {
-                if (!empty($server['name']) && !empty($server['url'])) {
-                    $sanitized['mcp_servers'][] = [
-                        'name' => sanitize_text_field($server['name']),
-                        'url' => esc_url_raw($server['url']),
-                        'api_key' => sanitize_text_field($server['api_key'] ?? ''),
-                        'enabled' => isset($server['enabled']) ? (bool) $server['enabled'] : true,
-                    ];
-                }
-            }
-        }
-
         return $sanitized;
     }
 
@@ -528,26 +410,11 @@ class Settings_Page {
             true
         );
 
-        // Get platform data for JavaScript
-        $platforms = Registry::get_platforms();
-        $platform_groups = Registry::get_platform_groups();
-
         wp_localize_script('royal-mcp-admin', 'royalMcp', [
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('royal_mcp_nonce'),
             'restUrl' => rest_url('royal-mcp/v1/'),
-            'platforms' => $platforms,
-            'platformGroups' => $platform_groups,
             'strings' => [
-                'selectPlatform' => esc_html__('Select a platform...', 'royal-mcp'),
-                'testConnection' => esc_html__('Test Connection', 'royal-mcp'),
-                'testing' => esc_html__('Testing...', 'royal-mcp'),
-                'connectionSuccess' => esc_html__('Connection successful!', 'royal-mcp'),
-                'connectionFailed' => esc_html__('Connection failed', 'royal-mcp'),
-                'removePlatform' => esc_html__('Remove', 'royal-mcp'),
-                'getApiKey' => esc_html__('Get API Key', 'royal-mcp'),
-                'documentation' => esc_html__('Documentation', 'royal-mcp'),
-                'confirmRemove' => esc_html__('Are you sure you want to remove this platform?', 'royal-mcp'),
                 'confirmRegenerate' => esc_html__('Are you sure? This will invalidate the current API key.', 'royal-mcp'),
             ],
         ]);
@@ -560,15 +427,10 @@ class Settings_Page {
 
         $settings = get_option('royal_mcp_settings', [
             'enabled'         => false,
-            'platforms'       => [],
-            'mcp_servers'     => [],
             'api_key'         => '',
             'api_key_hash'    => '',
             'api_key_user_id' => 0,
         ]);
-
-        $platforms = Registry::get_platforms();
-        $platform_groups = Registry::get_platform_groups();
 
         include ROYAL_MCP_PLUGIN_DIR . 'templates/admin/settings.php';
     }
@@ -602,40 +464,6 @@ class Settings_Page {
         // phpcs:enable
 
         include ROYAL_MCP_PLUGIN_DIR . 'templates/admin/logs.php';
-    }
-
-    /**
-     * AJAX handler for testing platform connections
-     */
-    public function ajax_test_connection() {
-        check_ajax_referer('royal_mcp_nonce', 'nonce');
-
-        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- stateless outbound HTTP test only (no state mutation)
-            wp_send_json_error(['message' => esc_html__('Unauthorized', 'royal-mcp')]);
-        }
-
-        $platform_id = isset($_POST['platform']) ? sanitize_text_field(wp_unslash($_POST['platform'])) : '';
-        $config = [];
-
-        // Get config from POST data
-        if (isset($_POST['config']) && is_array($_POST['config'])) {
-            $posted_config = map_deep(wp_unslash($_POST['config']), 'sanitize_text_field');
-            foreach ($posted_config as $key => $value) {
-                $config[sanitize_text_field($key)] = sanitize_text_field($value);
-            }
-        }
-
-        if (empty($platform_id)) {
-            wp_send_json_error(['message' => esc_html__('No platform selected', 'royal-mcp')]);
-        }
-
-        $result = Registry::test_connection($platform_id, $config);
-
-        if ($result['success']) {
-            wp_send_json_success($result);
-        } else {
-            wp_send_json_error($result);
-        }
     }
 
     /**

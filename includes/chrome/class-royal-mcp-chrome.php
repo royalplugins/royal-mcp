@@ -289,10 +289,6 @@ class Royal_MCP_Chrome {
                 </div>
             </div>
 
-            <?php if ( class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false ) ) : ?>
-                <?php \Royal_MCP\Admin\Settings_Page::render_founders_banner( true ); ?>
-            <?php endif; ?>
-
             <div class="royal-mcp-tools-section-head">
                 <h2><?php echo esc_html( apply_filters( 'royal_mcp_chrome_tools_section_heading', __( 'Free companion plugins', 'royal-mcp' ) ) ); ?></h2>
                 <p><?php echo esc_html( apply_filters( 'royal_mcp_chrome_tools_section_subheading', __( 'All available on WordPress.org. Every feature ships free.', 'royal-mcp' ) ) ); ?></p>
@@ -304,9 +300,6 @@ class Royal_MCP_Chrome {
                 <?php endforeach; ?>
             </div>
 
-            <?php if ( ! class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false ) ) : ?>
-                <?php \Royal_MCP\Admin\Settings_Page::render_founders_banner( false ); ?>
-            <?php endif; ?>
         </div>
         <?php
     }
@@ -433,7 +426,7 @@ class Royal_MCP_Chrome {
                 'basename'    => 'royal-ai-firewall/royal-ai-firewall.php',
                 'icon'        => '&#128737;',
                 'search_slug' => 'royal-ai-firewall',
-                'learn_url'   => 'https://royalplugins.com/founders/',
+                'learn_url'   => 'https://royalplugins.com/royal-ai-firewall/',
                 'pitch'       => __( 'See every AI agent hitting your site and decide who gets in. Blocks GPTBot, ClaudeBot, PerplexityBot and 60+ others at the WordPress layer.', 'royal-mcp' ),
             ],
             'royal-mcp' => [
@@ -441,7 +434,7 @@ class Royal_MCP_Chrome {
                 'basename'    => 'royal-mcp/royal-mcp.php',
                 'icon'        => '&#128268;',
                 'search_slug' => 'royal-mcp',
-                'learn_url'   => 'https://royalplugins.com/founders/',
+                'learn_url'   => 'https://royalplugins.com/royal-mcp/',
                 'pitch'       => __( 'Connect Claude, ChatGPT, and Cursor directly to your WordPress site via MCP. Full-stack tools for AI-driven content and store management.', 'royal-mcp' ),
             ],
             'sitevault' => [
@@ -449,7 +442,7 @@ class Royal_MCP_Chrome {
                 'basename'    => 'sitevault-backup-restore-migration/sitevault.php',
                 'icon'        => '&#128190;',
                 'search_slug' => 'sitevault backup',
-                'learn_url'   => 'https://royalplugins.com/founders/',
+                'learn_url'   => 'https://royalplugins.com/sitevault/',
                 'pitch'       => __( 'Full-site backup, restore, and migration in your WordPress admin. WP-CLI commands for automation. No cloud upsell, no seat limits.', 'royal-mcp' ),
             ],
             'royal-access' => [
@@ -457,7 +450,7 @@ class Royal_MCP_Chrome {
                 'basename'    => 'royal-access/royal-access.php',
                 'icon'        => '&#9855;',
                 'search_slug' => 'royal-access',
-                'learn_url'   => 'https://royalplugins.com/founders/',
+                'learn_url'   => 'https://royalplugins.com/royal-access/',
                 'pitch'       => __( 'Accessibility toolbar, contrast checker, and WCAG-fix suggestions for your WordPress site. Every setting free.', 'royal-mcp' ),
             ],
             'royal-links' => [
@@ -465,7 +458,7 @@ class Royal_MCP_Chrome {
                 'basename'    => 'royal-links/royal-links.php',
                 'icon'        => '&#128279;',
                 'search_slug' => 'royal-links',
-                'learn_url'   => 'https://royalplugins.com/founders/',
+                'learn_url'   => 'https://royalplugins.com/royal-links/',
                 'pitch'       => __( 'Link cloaking, click tracking, geo-targeting, A/B testing, QR codes, and 404 redirect manager.', 'royal-mcp' ),
             ],
         ] );

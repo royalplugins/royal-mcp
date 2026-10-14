@@ -75,6 +75,13 @@ class Core {
 				'items' => self::media_summary_schema(),
 			),
 			'wp_get_media_item'        => self::media_full_schema(),
+			'wp_find_media'            => array(
+				'type'       => 'object',
+				'properties' => array(
+					'count'   => array( 'type' => 'integer' ),
+					'matches' => array( 'type' => 'array', 'items' => self::media_full_schema() ),
+				),
+			),
 			'wp_upload_media_from_url' => self::media_upload_response_schema(),
 			'wp_upload_media'          => self::media_upload_response_schema(),
 			'wp_set_featured_image'    => array(
@@ -224,6 +231,7 @@ class Core {
 				'properties' => array(
 					'route'          => array( 'type' => 'string' ),
 					'auth_method'    => array( 'type' => 'string' ),
+					'access_level'   => array( 'type' => 'string', 'enum' => array( 'full', 'read-only', 'drafts-only' ) ),
 					'relay'          => array( 'type' => array( 'string', 'null' ) ),
 					'token_ttl'      => array( 'type' => array( 'integer', 'null' ) ),
 					'session_id'     => array( 'type' => array( 'string', 'null' ) ),
@@ -236,6 +244,53 @@ class Core {
 							'gutenberg_active' => array( 'type' => 'boolean' ),
 						),
 					),
+				),
+			),
+			'mcp_list_recent_changes' => array(
+				'type'       => 'object',
+				'properties' => array(
+					'changes'      => array( 'type' => 'array', 'items' => array( 'type' => 'object', 'properties' => self::change_summary_properties() ) ),
+					'count'        => array( 'type' => 'integer' ),
+					'total'        => array( 'type' => 'integer' ),
+					'window_hours' => array( 'type' => 'integer' ),
+				),
+			),
+			'mcp_get_change' => array(
+				'type'       => 'object',
+				'properties' => self::change_summary_properties() + array(
+					'fields'               => array(
+						'type'  => 'array',
+						'items' => array(
+							'type'       => 'object',
+							'properties' => array(
+								'field'         => array( 'type' => 'string' ),
+								'before'        => array( 'description' => 'Value before the change, any JSON type.' ),
+								'after'         => array( 'description' => 'Value the change wrote, any JSON type.' ),
+								'current'       => array( 'description' => 'Value now, any JSON type.' ),
+								'absent'        => array( 'type' => 'array', 'items' => array( 'type' => 'string', 'enum' => array( 'before', 'after', 'current' ) ) ),
+								'changed_since' => array( 'type' => 'boolean' ),
+								'truncated'     => array( 'type' => 'boolean' ),
+							),
+						),
+					),
+					'fields_truncated'     => array( 'type' => 'boolean' ),
+					'unchanged_fields'     => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+					'diffs'                => array(
+						'type'  => 'array',
+						'items' => array(
+							'type'       => 'object',
+							'properties' => array(
+								'field'     => array( 'type' => 'string' ),
+								'compare'   => array( 'type' => 'string' ),
+								'unified'   => array( 'type' => 'string' ),
+								'added'     => array( 'type' => 'integer' ),
+								'removed'   => array( 'type' => 'integer' ),
+								'truncated' => array( 'type' => 'boolean' ),
+							),
+						),
+					),
+					'changed_since_change' => array( 'type' => 'boolean' ),
+					'note'                 => array( 'type' => 'string' ),
 				),
 			),
 			'wp_get_site_status' => array(
@@ -479,9 +534,22 @@ class Core {
 			'wp_update_seo_meta' => array(
 				'type'       => 'object',
 				'properties' => array(
-					'plugin'  => array( 'type' => 'string' ),
-					'post_id' => array( 'type' => 'integer' ),
-					'updated' => array( 'type' => 'object', 'additionalProperties' => true ),
+					'plugin'       => array( 'type' => 'string' ),
+					'post_id'      => array( 'type' => 'integer' ),
+					'saved_fields' => array( 'type' => 'object', 'additionalProperties' => true ),
+					'fields'       => array(
+						'type'                 => 'object',
+						'additionalProperties' => array(
+							'type'       => 'object',
+							'properties' => array(
+								'before'    => array(),
+								'requested' => array(),
+								'saved'     => array(),
+								'verified'  => array( 'type' => 'boolean' ),
+							),
+						),
+					),
+					'unsupported_fields' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
 				),
 			),
 
@@ -541,6 +609,31 @@ class Core {
 	 * Loose additionalProperties=true because list handlers may include extras like
 	 * featured_media_url that are host/plugin dependent.
 	 */
+	/** Fields of one change row, shared by the list and the detail view. */
+	private static function change_summary_properties(): array {
+		return array(
+			'change_id'     => array( 'type' => 'string' ),
+			'time'          => array( 'type' => 'string' ),
+			'tool'          => array( 'type' => 'string' ),
+			'target_label'  => array( 'type' => 'string' ),
+			'undo_summary'  => array( 'type' => 'string' ),
+			'target'        => array( 'type' => 'object' ),
+			'connection'    => array(
+				'type'       => 'object',
+				'properties' => array(
+					'type'      => array( 'type' => 'string', 'enum' => array( 'oauth-client', 'api-key', 'other-mcp-server', 'browser-agent', 'none', 'unknown' ) ),
+					'label'     => array( 'type' => 'string' ),
+					'client_id' => array( 'type' => 'string' ),
+				),
+			),
+			'status'        => array( 'type' => 'string', 'enum' => array( 'active', 'undone', 'expired', 'not_found' ) ),
+			'undo_possible' => array( 'type' => 'boolean' ),
+			'expires_at'    => array( 'type' => 'string' ),
+			'undone_at'     => array( 'type' => 'string' ),
+			'undo_token'    => array( 'type' => 'string' ),
+		);
+	}
+
 	private static function revision_content_response_schema(): array {
 		return array(
 			'type'       => 'object',
@@ -737,6 +830,10 @@ class Core {
 				'source_url' => array( 'type' => 'string' ),
 				'alt_text'   => array( 'type' => 'string' ),
 				'mime_type'  => array( 'type' => 'string' ),
+				'file_size'  => array( 'type' => array( 'integer', 'null' ) ),
+				'width'      => array( 'type' => array( 'integer', 'null' ) ),
+				'height'     => array( 'type' => array( 'integer', 'null' ) ),
+				'sha256'     => array( 'type' => array( 'string', 'null' ) ),
 			),
 		);
 	}

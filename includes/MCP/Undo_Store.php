@@ -23,6 +23,19 @@ class Undo_Store {
     const DEFAULT_TTL   = 259200; // 72 * 3600 seconds (avoid HOUR_IN_SECONDS eval order in const context)
 
     /**
+     * The connection making the current tool call, recorded on every
+     * snapshot so a change can say which AI client made it.
+     *
+     * @var array{auth: string, route: string, client_id: string}
+     */
+    private static $context = [ 'auth' => '', 'route' => 'native', 'client_id' => '' ];
+
+    /** Set by the MCP server before each tool call. */
+    public static function set_context( string $auth, string $route, string $client_id ): void {
+        self::$context = [ 'auth' => $auth, 'route' => $route, 'client_id' => $client_id ];
+    }
+
+    /**
      * Persist a snapshot and return the undo envelope for the tool response.
      *
      * @param array $snapshot Free-form snapshot payload. Expected keys:
@@ -48,6 +61,7 @@ class Undo_Store {
             'created_at' => $created_at_int,
             'expires_at' => $expires_at_int,
             'user_id'    => (int) get_current_user_id(),
+            'via'        => self::$context,
         ] );
 
         // Compress + base64 so the option value stays plain-text (some hosts
@@ -93,6 +107,9 @@ class Undo_Store {
             self::delete( $token );
             return null;
         }
+        if ( ! empty( $data['undone_at'] ) ) {
+            return null;
+        }
         // Owner gate: return the same opaque null as the other failure modes
         // when the caller is not the user who created the snapshot. Snapshots
         // stored before the owner-binding change lack the user_id field and
@@ -114,6 +131,101 @@ class Undo_Store {
             return false;
         }
         return delete_option( self::OPTION_PREFIX . $token );
+    }
+
+    /**
+     * Mark a snapshot as used by a successful undo. It can't be used
+     * again, but stays readable as an undone change until it expires.
+     */
+    public static function consume( string $token ): bool {
+        $data = self::decode_row( $token );
+        if ( null === $data ) {
+            return self::delete( $token );
+        }
+        $data['undone_at'] = time();
+        $data['undone_by'] = (int) get_current_user_id();
+        return update_option( self::OPTION_PREFIX . $token, base64_encode( gzcompress( wp_json_encode( $data ), 9 ) ), false );
+    }
+
+    /**
+     * Public reference for a change: a hash of its token, so a log row or
+     * an admin link can point at the change without holding the token.
+     */
+    public static function change_id( string $token ): string {
+        return substr( hash( 'sha256', 'royal-mcp-change|' . $token ), 0, 20 );
+    }
+
+    /**
+     * Every snapshot still inside its window, undone ones included, newest
+     * first. Owner and capability checks are the caller's job.
+     *
+     * @param int|null $user_id         Only this user's snapshots, or every user's when null.
+     * @param bool     $include_expired Also return expired rows the daily sweep hasn't removed yet.
+     * @return array<int, array>
+     */
+    public static function all_changes( ?int $user_id = null, bool $include_expired = false ): array {
+        global $wpdb;
+        $prefix = $wpdb->esc_like( self::OPTION_PREFIX ) . '%';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE %s",
+                $prefix
+            )
+        );
+        $out = [];
+        $now = time();
+        foreach ( (array) $rows as $row ) {
+            $data = self::decode( isset( $row->option_value ) ? (string) $row->option_value : '' );
+            if ( null === $data || empty( $data['token'] ) || ( ! $include_expired && (int) ( $data['expires_at'] ?? 0 ) <= $now ) ) {
+                continue;
+            }
+            if ( null !== $user_id && (int) ( $data['user_id'] ?? 0 ) !== $user_id ) {
+                continue;
+            }
+            $data['change_id'] = self::change_id( (string) $data['token'] );
+            $out[]             = $data;
+        }
+        usort( $out, static function ( $a, $b ) {
+            if ( (int) $a['created_at'] === (int) $b['created_at'] ) {
+                return strcmp( (string) $b['token'], (string) $a['token'] );
+            }
+            return (int) $b['created_at'] <=> (int) $a['created_at'];
+        } );
+        return $out;
+    }
+
+    /** One change by its change_id, or null. Same visibility rules as all_changes(). */
+    public static function find_change( string $change_id, ?int $user_id = null, bool $include_expired = false ): ?array {
+        if ( ! preg_match( '/^[a-f0-9]{20}$/', $change_id ) ) {
+            return null;
+        }
+        foreach ( self::all_changes( $user_id, $include_expired ) as $change ) {
+            if ( hash_equals( (string) $change['change_id'], $change_id ) ) {
+                return $change;
+            }
+        }
+        return null;
+    }
+
+    /** Decode one stored row by token, with no expiry or owner checks. */
+    private static function decode_row( string $token ): ?array {
+        if ( ! preg_match( '/^[a-f0-9]{32}$/', $token ) ) {
+            return null;
+        }
+        return self::decode( (string) get_option( self::OPTION_PREFIX . $token, '' ) );
+    }
+
+    private static function decode( string $stored ): ?array {
+        if ( '' === $stored ) {
+            return null;
+        }
+        $raw = @gzuncompress( base64_decode( $stored ) );
+        if ( false === $raw ) {
+            return null;
+        }
+        $data = json_decode( $raw, true );
+        return is_array( $data ) ? $data : null;
     }
 
     /**
@@ -173,7 +285,7 @@ class Undo_Store {
             $data = json_decode( $raw, true );
             if ( ! is_array( $data ) ) continue;
             $expires_at = isset( $data['expires_at'] ) ? (int) $data['expires_at'] : 0;
-            if ( $expires_at <= $now ) continue;
+            if ( $expires_at <= $now || ! empty( $data['undone_at'] ) ) continue;
             $out[] = [
                 'token'              => isset( $data['token'] ) ? (string) $data['token'] : '',
                 'op'                 => isset( $data['op'] ) ? (string) $data['op'] : '',
@@ -233,6 +345,9 @@ class Undo_Store {
             if ( $expires_at <= $now ) {
                 // Expired but not yet swept. Skip for the widget metric —
                 // cron cleanup will remove eventually.
+                continue;
+            }
+            if ( ! empty( $data['undone_at'] ) ) {
                 continue;
             }
             $count++;

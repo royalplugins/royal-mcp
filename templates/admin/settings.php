@@ -3,14 +3,9 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-use Royal_MCP\Platform\Registry;
-
 $royal_mcp_settings = isset($settings) ? $settings : get_option('royal_mcp_settings', []);
 $royal_mcp_abilities_raw = get_option('royal_mcp_abilities_registration_enabled', null);
 $royal_mcp_abilities_registration_enabled = (null === $royal_mcp_abilities_raw || '' === $royal_mcp_abilities_raw) ? true : (bool) $royal_mcp_abilities_raw;
-$royal_mcp_platforms = isset($platforms) ? $platforms : Registry::get_platforms();
-$royal_mcp_platform_groups = isset($royal_mcp_platform_groups) ? $royal_mcp_platform_groups : Registry::get_platform_groups();
-$royal_mcp_configured_platforms = $royal_mcp_settings['platforms'] ?? [];
 
 // The MCP endpoint — same URL for every MCP client (Claude.ai, ChatGPT,
 // Claude Desktop, Cursor, Gemini, etc.). Forced HTTPS because MCP backends
@@ -92,6 +87,72 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                 </label>
                                 <p class="description">
                                     <?php esc_html_e('When ON, AI clients can read your site but not change it: every tool that creates, updates or deletes anything is refused, for every client and every user, including administrators. The tools stay in clients\' tool lists, marked as switched off. Turn ON to let AI work with your content safely while you decide what it may change.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="drafts_only_mode"><?php esc_html_e('Drafts only', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[drafts_only_mode]"
+                                           id="drafts_only_mode"
+                                           value="1"
+                                           <?php checked(!empty($royal_mcp_settings['drafts_only_mode'])); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When ON, AI clients can create drafts and edit posts and pages that are still drafts or pending, and nothing else: they cannot publish, change published content, or change settings, menus, comments or other plugins. Images and files can still be uploaded for the drafts. Read-only mode, when also on, wins.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="api_key_access"><?php esc_html_e('Access level: API key', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <select name="royal_mcp_settings[api_key_access]" id="api_key_access">
+                                    <?php foreach (['full', 'read-only', 'drafts-only'] as $royal_mcp_level) : ?>
+                                        <option value="<?php echo esc_attr($royal_mcp_level); ?>" <?php selected(\Royal_MCP\MCP\Support\Access_Levels::normalize($royal_mcp_settings['api_key_access'] ?? '') ?: 'full', $royal_mcp_level); ?>><?php echo esc_html(\Royal_MCP\MCP\Support\Access_Levels::label($royal_mcp_level)); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <p class="description">
+                                    <?php esc_html_e('What AI clients that connect with the WordPress API key may do. Read-only: read the site only. Drafts only: create drafts and edit drafts and pending posts. Each OAuth client gets its own level on the Connected Clients screen.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="other_routes_access"><?php esc_html_e('Access level: other MCP servers and browser agents', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <select name="royal_mcp_settings[other_routes_access]" id="other_routes_access">
+                                    <?php foreach (['full', 'read-only', 'drafts-only'] as $royal_mcp_level) : ?>
+                                        <option value="<?php echo esc_attr($royal_mcp_level); ?>" <?php selected(\Royal_MCP\MCP\Support\Access_Levels::normalize($royal_mcp_settings['other_routes_access'] ?? '') ?: 'full', $royal_mcp_level); ?>><?php echo esc_html(\Royal_MCP\MCP\Support\Access_Levels::label($royal_mcp_level)); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <p class="description">
+                                    <?php esc_html_e('What calls that reach Royal MCP tools another way may do: through other MCP servers on this site (the WordPress MCP Adapter, Elementor) or through browser agents. Read-only mode and Drafts only above still apply to every connection.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="delete_data_on_uninstall"><?php esc_html_e('Delete all data when the plugin is deleted', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[delete_data_on_uninstall]"
+                                           id="delete_data_on_uninstall"
+                                           value="1"
+                                           <?php checked(!empty($royal_mcp_settings['delete_data_on_uninstall'])); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When OFF (the default), deleting the plugin keeps your settings, API key, activity log, undo history and connected clients, so a reinstall picks up where you left off. Turn ON only if you want deleting the plugin to remove all of that permanently. It cannot be recovered.', 'royal-mcp'); ?>
                                 </p>
                             </td>
                         </tr>
@@ -406,6 +467,108 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                 </div>
             </div>
 
+            <?php if ( ! empty( $royal_mcp_settings['enabled'] ) ) : ?>
+            <?php
+            // Commands for terminal coding agents, filled in with this site's
+            // MCP URL. The API key is never printed: the key variants use a
+            // placeholder the admin replaces.
+            $royal_mcp_cmd_url = preg_match( '#^[A-Za-z0-9:/._~%-]+$#', $royal_mcp_url_https ) ? $royal_mcp_url_https : '"' . $royal_mcp_url_https . '"';
+            $royal_mcp_connect_oauth = [
+                'royal-mcp-cmd-claude-code' => [
+                    'label' => __( 'Claude Code', 'royal-mcp' ),
+                    'note'  => __( 'Start a Claude Code session. On the first Royal MCP call your browser opens the approval screen; click Authorize and the connection is saved for later sessions.', 'royal-mcp' ),
+                    'cmd'   => 'claude mcp add --transport http royal-mcp ' . $royal_mcp_cmd_url,
+                ],
+                'royal-mcp-cmd-codex' => [
+                    'label' => __( 'Codex', 'royal-mcp' ),
+                    'note'  => __( 'The second command opens your browser to approve the connection.', 'royal-mcp' ),
+                    'cmd'   => 'codex mcp add royal-mcp --url ' . $royal_mcp_cmd_url . "\n" . 'codex mcp login royal-mcp',
+                ],
+            ];
+            $royal_mcp_connect_key = [
+                'royal-mcp-cmd-claude-code-key' => [
+                    'label' => __( 'Claude Code with an API key', 'royal-mcp' ),
+                    'note'  => '',
+                    'cmd'   => 'claude mcp add --transport http royal-mcp ' . $royal_mcp_cmd_url . ' --header "Authorization: Bearer your-api-key-here"',
+                ],
+                'royal-mcp-cmd-codex-key-unix' => [
+                    'label' => __( 'Codex with an API key: save the key (macOS and Linux)', 'royal-mcp' ),
+                    'note'  => __( 'Add the export line to your shell profile to keep it.', 'royal-mcp' ),
+                    'cmd'   => 'export ROYAL_MCP_API_KEY="your-api-key-here"',
+                ],
+                'royal-mcp-cmd-codex-key-windows' => [
+                    'label' => __( 'Codex with an API key: save the key (Windows PowerShell)', 'royal-mcp' ),
+                    'note'  => __( 'Open a new terminal afterwards.', 'royal-mcp' ),
+                    'cmd'   => 'setx ROYAL_MCP_API_KEY "your-api-key-here"',
+                ],
+                'royal-mcp-cmd-codex-key' => [
+                    'label' => __( 'Codex with an API key: connect', 'royal-mcp' ),
+                    'note'  => '',
+                    'cmd'   => 'codex mcp add royal-mcp --url ' . $royal_mcp_cmd_url . ' --bearer-token-env-var ROYAL_MCP_API_KEY',
+                ],
+            ];
+            $royal_mcp_render_cmd = static function ( $id, array $item ) {
+                $btn_style = 'display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;';
+                $svg_style = 'width:14px;height:14px;flex-shrink:0;';
+                ?>
+                <div class="royal-mcp-connect-command" style="margin:0 0 16px;">
+                    <strong style="display:block;margin:0 0 6px;"><?php echo esc_html( $item['label'] ); ?></strong>
+                    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;">
+                        <pre class="code" style="flex:1 1 280px;min-width:0;margin:0;padding:8px 10px;background:#fff;border:1px solid #8c8f94;border-radius:4px;white-space:pre-wrap;word-break:break-all;font-size:13px;line-height:1.5;"><?php echo esc_html( $item['cmd'] ); ?></pre>
+                        <textarea id="<?php echo esc_attr( $id ); ?>" hidden aria-hidden="true" tabindex="-1"><?php echo esc_textarea( $item['cmd'] ); ?></textarea>
+                        <button type="button" class="button copy-btn" data-target="<?php echo esc_attr( $id ); ?>" style="<?php echo esc_attr( $btn_style ); ?>"
+                                aria-label="<?php echo esc_attr( sprintf( /* translators: %s: command name, for example Claude Code */ __( 'Copy: %s', 'royal-mcp' ), $item['label'] ) ); ?>">
+                            <svg style="<?php echo esc_attr( $svg_style ); ?>" viewBox="0 0 24 24" fill="none"
+                                 stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                 stroke-linejoin="round" aria-hidden="true">
+                                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                                <rect x="8" y="2" width="8" height="4" rx="1"/>
+                            </svg>
+                            <?php esc_html_e( 'Copy', 'royal-mcp' ); ?>
+                        </button>
+                    </div>
+                    <?php if ( '' !== $item['note'] ) : ?>
+                        <p class="description" style="margin-top:4px;"><?php echo esc_html( $item['note'] ); ?></p>
+                    <?php endif; ?>
+                </div>
+                <?php
+            };
+            ?>
+            <!-- ==========================================================
+                 Connect a coding agent
+                 ========================================================== -->
+            <div class="postbox" id="royal-mcp-connect-agents">
+                <div class="postbox-header">
+                    <h2><?php esc_html_e( 'Connect a coding agent', 'royal-mcp' ); ?></h2>
+                </div>
+                <div class="inside">
+                    <p class="description">
+                        <?php esc_html_e( 'Claude Code and Codex connect from the terminal. Copy the command for your agent and run it; these already contain this site\'s MCP Server URL. Signing in uses OAuth, so there is no key to copy or store.', 'royal-mcp' ); ?>
+                    </p>
+                    <?php
+                    foreach ( $royal_mcp_connect_oauth as $royal_mcp_cmd_id => $royal_mcp_cmd_item ) {
+                        $royal_mcp_render_cmd( $royal_mcp_cmd_id, $royal_mcp_cmd_item );
+                    }
+                    ?>
+                    <details class="royal-mcp-connect-key-commands">
+                        <summary style="cursor:pointer;font-weight:600;margin:0 0 12px;"><?php esc_html_e( 'Show API key commands', 'royal-mcp' ); ?></summary>
+                        <p class="description" style="margin:0 0 12px;">
+                            <?php esc_html_e( 'For agents that run where no browser can open, such as a server or CI. Replace your-api-key-here with the WordPress API Key from General Settings above; this page never shows the key in these commands.', 'royal-mcp' ); ?>
+                        </p>
+                        <?php
+                        foreach ( $royal_mcp_connect_key as $royal_mcp_cmd_id => $royal_mcp_cmd_item ) {
+                            $royal_mcp_render_cmd( $royal_mcp_cmd_id, $royal_mcp_cmd_item );
+                        }
+                        ?>
+                    </details>
+                    <a href="https://royalplugins.com/support/royal-mcp/claude-code-and-codex/" target="_blank" rel="noopener noreferrer" class="setup-guide-full-link">
+                        <?php esc_html_e( 'Full guide: Claude Code and Codex', 'royal-mcp' ); ?>
+                        <span class="dashicons dashicons-external"></span>
+                    </a>
+                </div>
+            </div>
+            <?php endif; ?>
+
             <!-- ==========================================================
                  MCP Client Setup Guides
                  ========================================================== -->
@@ -541,233 +704,6 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
             </div>
 
             <!-- ==========================================================
-                 Outbound AI Provider Configuration
-                 (your WP site calling AI providers — distinct from
-                 the inbound MCP server flow above)
-                 ========================================================== -->
-            <div class="postbox">
-                <div class="postbox-header">
-                    <h2><?php esc_html_e('Outbound AI Provider Configuration', 'royal-mcp'); ?></h2>
-                </div>
-                <div class="inside">
-                    <div class="outbound-banner">
-                        <span class="dashicons dashicons-info"></span>
-                        <p>
-                            <strong><?php esc_html_e('This section is for OUTBOUND calls only.', 'royal-mcp'); ?></strong>
-                            <?php esc_html_e('Configure how this WordPress site calls AI providers (e.g., generating post content with ChatGPT, summarizing comments with Claude). To connect Claude, ChatGPT, or other tools TO this site as an MCP server, use the MCP Server URL in General Settings above — no configuration needed in this section.', 'royal-mcp'); ?>
-                        </p>
-                    </div>
-
-                    <div id="platforms-list">
-                        <?php
-                        if (empty($royal_mcp_configured_platforms)) {
-                            ?>
-                            <div class="platform-empty-state">
-                                <div class="empty-icon">
-                                    <span class="dashicons dashicons-cloud"></span>
-                                </div>
-                                <h3><?php esc_html_e('No outbound AI providers configured', 'royal-mcp'); ?></h3>
-                                <p><?php esc_html_e('Add a provider below to give this site outbound API access — purely optional, only needed if you want WordPress to call out to AI services.', 'royal-mcp'); ?></p>
-                            </div>
-                            <?php
-                        } else {
-                            foreach ($royal_mcp_configured_platforms as $royal_mcp_index => $royal_mcp_platform_config) :
-                                $royal_mcp_platform_id = $royal_mcp_platform_config['platform'] ?? '';
-                                $royal_mcp_platform = Registry::get_platform($royal_mcp_platform_id);
-                                if (!$royal_mcp_platform) continue;
-                            ?>
-                            <div class="platform-item" data-index="<?php echo esc_attr($royal_mcp_index); ?>" data-platform="<?php echo esc_attr($royal_mcp_platform_id); ?>">
-                                <div class="platform-header">
-                                    <div class="platform-info">
-                                        <span class="platform-icon" style="background-color: <?php echo esc_attr($royal_mcp_platform['color']); ?>">
-                                            <?php echo esc_html(substr($royal_mcp_platform['label'], 0, 1)); ?>
-                                        </span>
-                                        <div class="platform-details">
-                                            <h3 class="platform-name"><?php echo esc_html($royal_mcp_platform['label']); ?></h3>
-                                            <span class="platform-description"><?php echo esc_html($royal_mcp_platform['description']); ?></span>
-                                        </div>
-                                    </div>
-                                    <div class="platform-actions">
-                                        <label class="switch small">
-                                            <input type="checkbox"
-                                                   name="royal_mcp_settings[platforms][<?php echo esc_attr($royal_mcp_index); ?>][enabled]"
-                                                   value="1"
-                                                   <?php checked($royal_mcp_platform_config['enabled'] ?? true); ?>>
-                                            <span class="slider"></span>
-                                        </label>
-                                        <button type="button" class="button platform-toggle" aria-label="<?php esc_attr_e('Expand / collapse', 'royal-mcp'); ?>">
-                                            <span class="dashicons dashicons-arrow-down-alt2"></span>
-                                        </button>
-                                        <button type="button" class="button remove-platform" aria-label="<?php esc_attr_e('Remove provider', 'royal-mcp'); ?>">
-                                            <span class="dashicons dashicons-trash"></span>
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="platform-config" style="display: none;">
-                                    <input type="hidden"
-                                           name="royal_mcp_settings[platforms][<?php echo esc_attr($royal_mcp_index); ?>][platform]"
-                                           value="<?php echo esc_attr($royal_mcp_platform_id); ?>">
-
-                                    <table class="form-table platform-fields">
-                                        <?php
-                                        foreach ($royal_mcp_platform['fields'] as $royal_mcp_field_id => $royal_mcp_field) :
-                                            $royal_mcp_field_name = "royal_mcp_settings[platforms][{$royal_mcp_index}][{$royal_mcp_field_id}]";
-                                            $royal_mcp_field_value = $royal_mcp_platform_config[$royal_mcp_field_id] ?? ($royal_mcp_field['default'] ?? '');
-                                        ?>
-                                        <tr class="platform-field platform-field-<?php echo esc_attr($royal_mcp_field_id); ?>">
-                                            <th scope="row">
-                                                <label for="platform-<?php echo esc_attr($royal_mcp_index); ?>-<?php echo esc_attr($royal_mcp_field_id); ?>">
-                                                    <?php echo esc_html($royal_mcp_field['label']); ?>
-                                                    <?php if (!empty($royal_mcp_field['required'])) : ?>
-                                                        <span class="required">*</span>
-                                                    <?php endif; ?>
-                                                </label>
-                                            </th>
-                                            <td>
-                                                <?php
-                                                switch ($royal_mcp_field['type']) {
-                                                    case 'select':
-                                                        ?>
-                                                        <select
-                                                            name="<?php echo esc_attr($royal_mcp_field_name); ?>"
-                                                            id="platform-<?php echo esc_attr($royal_mcp_index); ?>-<?php echo esc_attr($royal_mcp_field_id); ?>"
-                                                            class="regular-text"
-                                                            data-field="<?php echo esc_attr($royal_mcp_field_id); ?>"
-                                                        >
-                                                            <?php foreach ($royal_mcp_field['options'] as $royal_mcp_value => $royal_mcp_label) : ?>
-                                                                <option value="<?php echo esc_attr($royal_mcp_value); ?>" <?php selected($royal_mcp_field_value, $royal_mcp_value); ?>>
-                                                                    <?php echo esc_html($royal_mcp_label); ?>
-                                                                </option>
-                                                            <?php endforeach; ?>
-                                                        </select>
-                                                        <?php
-                                                        break;
-
-                                                    case 'password':
-                                                        ?>
-                                                        <input
-                                                            type="password"
-                                                            name="<?php echo esc_attr($royal_mcp_field_name); ?>"
-                                                            id="platform-<?php echo esc_attr($royal_mcp_index); ?>-<?php echo esc_attr($royal_mcp_field_id); ?>"
-                                                            value="<?php echo esc_attr($royal_mcp_field_value); ?>"
-                                                            class="regular-text"
-                                                            placeholder="<?php echo esc_attr($royal_mcp_field['placeholder'] ?? ''); ?>"
-                                                            data-field="<?php echo esc_attr($royal_mcp_field_id); ?>"
-                                                            autocomplete="new-password"
-                                                        >
-                                                        <button type="button" class="button toggle-password" title="<?php esc_attr_e('Show/Hide', 'royal-mcp'); ?>">
-                                                            <span class="dashicons dashicons-visibility"></span>
-                                                        </button>
-                                                        <?php
-                                                        break;
-
-                                                    case 'url':
-                                                        ?>
-                                                        <input
-                                                            type="url"
-                                                            name="<?php echo esc_attr($royal_mcp_field_name); ?>"
-                                                            id="platform-<?php echo esc_attr($royal_mcp_index); ?>-<?php echo esc_attr($royal_mcp_field_id); ?>"
-                                                            value="<?php echo esc_attr($royal_mcp_field_value); ?>"
-                                                            class="regular-text"
-                                                            placeholder="<?php echo esc_attr($royal_mcp_field['placeholder'] ?? ''); ?>"
-                                                            data-field="<?php echo esc_attr($royal_mcp_field_id); ?>"
-                                                        >
-                                                        <?php
-                                                        break;
-
-                                                    case 'text':
-                                                    default:
-                                                        ?>
-                                                        <input
-                                                            type="text"
-                                                            name="<?php echo esc_attr($royal_mcp_field_name); ?>"
-                                                            id="platform-<?php echo esc_attr($royal_mcp_index); ?>-<?php echo esc_attr($royal_mcp_field_id); ?>"
-                                                            value="<?php echo esc_attr($royal_mcp_field_value); ?>"
-                                                            class="regular-text"
-                                                            placeholder="<?php echo esc_attr($royal_mcp_field['placeholder'] ?? ''); ?>"
-                                                            data-field="<?php echo esc_attr($royal_mcp_field_id); ?>"
-                                                        >
-                                                        <?php
-                                                        break;
-                                                }
-
-                                                if (!empty($royal_mcp_field['help'])) :
-                                                ?>
-                                                <p class="description"><?php echo esc_html($royal_mcp_field['help']); ?></p>
-                                                <?php endif; ?>
-                                            </td>
-                                        </tr>
-                                        <?php endforeach; ?>
-                                    </table>
-
-                                    <div class="platform-footer">
-                                        <div class="platform-links">
-                                            <?php if (!empty($royal_mcp_platform['api_key_url'])) : ?>
-                                            <a href="<?php echo esc_url($royal_mcp_platform['api_key_url']); ?>" target="_blank" class="button button-link">
-                                                <span class="dashicons dashicons-external"></span>
-                                                <?php esc_html_e('Get API Key', 'royal-mcp'); ?>
-                                            </a>
-                                            <?php endif; ?>
-                                            <?php if (!empty($royal_mcp_platform['docs_url'])) : ?>
-                                            <a href="<?php echo esc_url($royal_mcp_platform['docs_url']); ?>" target="_blank" class="button button-link">
-                                                <span class="dashicons dashicons-book"></span>
-                                                <?php esc_html_e('Documentation', 'royal-mcp'); ?>
-                                            </a>
-                                            <?php endif; ?>
-                                        </div>
-                                        <div class="platform-test">
-                                            <button type="button" class="button test-connection">
-                                                <span class="dashicons dashicons-update"></span>
-                                                <?php esc_html_e('Test Connection', 'royal-mcp'); ?>
-                                            </button>
-                                            <span class="connection-status"></span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <?php endforeach;
-                        }
-                        ?>
-                    </div>
-
-                    <div class="add-platform-section">
-                        <div class="add-platform-dropdown">
-                            <select id="add-platform-select">
-                                <option value=""><?php esc_html_e('Select a provider to add...', 'royal-mcp'); ?></option>
-                                <?php foreach ($royal_mcp_platform_groups as $royal_mcp_group_id => $royal_mcp_group) : ?>
-                                <optgroup label="<?php echo esc_attr($royal_mcp_group['label']); ?>">
-                                    <?php foreach ($royal_mcp_group['platforms'] as $royal_mcp_pid) :
-                                        $royal_mcp_p = $royal_mcp_platforms[$royal_mcp_pid] ?? null;
-                                        if (!$royal_mcp_p) continue;
-                                    ?>
-                                    <option value="<?php echo esc_attr($royal_mcp_pid); ?>" data-color="<?php echo esc_attr($royal_mcp_p['color']); ?>">
-                                        <?php echo esc_html($royal_mcp_p['label']); ?>
-                                    </option>
-                                    <?php endforeach; ?>
-                                </optgroup>
-                                <?php endforeach; ?>
-                            </select>
-                            <?php
-                            // Inline SVG with currentColor + inline flex.
-                            $btn_style_add = 'display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;';
-                            $svg_style_add = 'width:14px;height:14px;flex-shrink:0;';
-                            ?>
-                            <button type="button" class="button button-primary" id="add-platform-btn"
-                                    style="<?php echo esc_attr( $btn_style_add ); ?>">
-                                <svg style="<?php echo esc_attr( $svg_style_add ); ?>" viewBox="0 0 24 24" fill="none"
-                                     stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                     stroke-linejoin="round" aria-hidden="true">
-                                    <line x1="12" y1="5" x2="12" y2="19"/>
-                                    <line x1="5" y1="12" x2="19" y2="12"/>
-                                </svg>
-                                <?php esc_html_e('Add Provider', 'royal-mcp'); ?>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ==========================================================
                  Available API Endpoints (reference)
                  ========================================================== -->
             <div class="postbox">
@@ -886,68 +822,3 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
     </div>
 
 </div>
-
-<!-- Platform Item Template -->
-<script type="text/template" id="platform-item-template">
-    <div class="platform-item" data-index="{{index}}" data-platform="{{platform_id}}">
-        <div class="platform-header">
-            <div class="platform-info">
-                <span class="platform-icon" style="background-color: {{color}}">
-                    {{icon_letter}}
-                </span>
-                <div class="platform-details">
-                    <h3 class="platform-name">{{label}}</h3>
-                    <span class="platform-description">{{description}}</span>
-                </div>
-            </div>
-            <div class="platform-actions">
-                <label class="switch small">
-                    <input type="checkbox"
-                           name="royal_mcp_settings[platforms][{{index}}][enabled]"
-                           value="1"
-                           checked>
-                    <span class="slider"></span>
-                </label>
-                <button type="button" class="button platform-toggle" aria-label="<?php esc_attr_e('Expand / collapse', 'royal-mcp'); ?>">
-                    <span class="dashicons dashicons-arrow-down-alt2"></span>
-                </button>
-                <button type="button" class="button remove-platform" aria-label="<?php esc_attr_e('Remove provider', 'royal-mcp'); ?>">
-                    <span class="dashicons dashicons-trash"></span>
-                </button>
-            </div>
-        </div>
-        <div class="platform-config">
-            <input type="hidden"
-                   name="royal_mcp_settings[platforms][{{index}}][platform]"
-                   value="{{platform_id}}">
-
-            <table class="form-table platform-fields">
-                {{fields_html}}
-            </table>
-
-            <div class="platform-footer">
-                <div class="platform-links">
-                    {{#api_key_url}}
-                    <a href="{{api_key_url}}" target="_blank" class="button button-link">
-                        <span class="dashicons dashicons-external"></span>
-                        <?php esc_html_e('Get API Key', 'royal-mcp'); ?>
-                    </a>
-                    {{/api_key_url}}
-                    {{#docs_url}}
-                    <a href="{{docs_url}}" target="_blank" class="button button-link">
-                        <span class="dashicons dashicons-book"></span>
-                        <?php esc_html_e('Documentation', 'royal-mcp'); ?>
-                    </a>
-                    {{/docs_url}}
-                </div>
-                <div class="platform-test">
-                    <button type="button" class="button test-connection">
-                        <span class="dashicons dashicons-update"></span>
-                        <?php esc_html_e('Test Connection', 'royal-mcp'); ?>
-                    </button>
-                    <span class="connection-status"></span>
-                </div>
-            </div>
-        </div>
-    </div>
-</script>

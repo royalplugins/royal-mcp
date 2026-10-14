@@ -23,6 +23,8 @@ class Connected_Clients_Page {
     const REVOKE_NONCE      = 'royal_mcp_revoke_connection_nonce';
     const REVOKE_ALL_ACTION = 'royal_mcp_revoke_all_connections';
     const REVOKE_ALL_NONCE  = 'royal_mcp_revoke_all_connections_nonce';
+    const ACCESS_ACTION     = 'royal_mcp_set_client_access';
+    const ACCESS_NONCE      = 'royal_mcp_set_client_access_nonce';
     const SCRIPT_HANDLE     = 'royal-mcp-connected-clients';
 
     public function __construct() {
@@ -30,6 +32,7 @@ class Connected_Clients_Page {
         add_action( 'admin_menu', [ $this, 'add_menu' ], 12 );
         add_action( 'admin_post_' . self::REVOKE_ACTION, [ $this, 'handle_revoke' ] );
         add_action( 'admin_post_' . self::REVOKE_ALL_ACTION, [ $this, 'handle_revoke_all' ] );
+        add_action( 'admin_post_' . self::ACCESS_ACTION, [ $this, 'handle_set_access' ] );
         add_action( 'admin_enqueue_scripts', [ $this, 'enqueue' ] );
     }
 
@@ -69,12 +72,22 @@ class Connected_Clients_Page {
         $revoked     = isset( $_GET['revoked'] ) ? absint( wp_unslash( $_GET['revoked'] ) ) : null;
         $revoked_all = isset( $_GET['revoked_all'] ) ? absint( wp_unslash( $_GET['revoked_all'] ) ) : null;
         $blocked     = ! empty( $_GET['revoke_blocked'] );
+        $access_saved = isset( $_GET['access_saved'] ) ? sanitize_text_field( wp_unslash( $_GET['access_saved'] ) ) : '';
         // phpcs:enable WordPress.Security.NonceVerification.Recommended
         $format  = trim( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ) );
         ?>
         <div class="wrap">
             <h1><?php esc_html_e( 'Connected Clients', 'royal-mcp' ); ?></h1>
             <p><?php esc_html_e( 'AI clients that are signed in through OAuth and can use this site right now. Revoking a row ends that client\'s access for that user; the client stays registered, so the user can connect it again from the client. Connections that use the API key are not listed here.', 'royal-mcp' ); ?></p>
+
+            <?php if ( '' !== $access_saved ) : ?>
+                <div class="notice notice-success is-dismissible"><p>
+                    <?php
+                    /* translators: %s: access level, for example Read-only */
+                    echo esc_html( sprintf( __( 'Access level saved: %s. It applies to every user of that client.', 'royal-mcp' ), \Royal_MCP\MCP\Support\Access_Levels::label( \Royal_MCP\MCP\Support\Access_Levels::normalize( $access_saved ) ) ) );
+                    ?>
+                </p></div>
+            <?php endif; ?>
 
             <?php if ( $blocked ) : ?>
                 <div class="notice notice-error"><p><?php esc_html_e( 'Session revocation is disabled by a filter on this site.', 'royal-mcp' ); ?></p></div>
@@ -122,6 +135,7 @@ class Connected_Clients_Page {
                             <th><?php esc_html_e( 'Connected as', 'royal-mcp' ); ?></th>
                             <th><?php esc_html_e( 'Registered', 'royal-mcp' ); ?></th>
                             <th><?php esc_html_e( 'Last signed in or renewed', 'royal-mcp' ); ?></th>
+                            <th><?php esc_html_e( 'Access', 'royal-mcp' ); ?></th>
                             <th><?php esc_html_e( 'Actions', 'royal-mcp' ); ?></th>
                         </tr>
                     </thead>
@@ -147,6 +161,19 @@ class Connected_Clients_Page {
                             </td>
                             <td><?php echo esc_html( null === $row['registered_age'] ? __( 'Set in plugin settings', 'royal-mcp' ) : self::describe_age( $row['registered_age'], $format ) ); ?></td>
                             <td><?php echo esc_html( self::describe_age( $row['last_issued_age'], $format ) ); ?></td>
+                            <td>
+                                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin:0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                                    <input type="hidden" name="action" value="<?php echo esc_attr( self::ACCESS_ACTION ); ?>">
+                                    <input type="hidden" name="client_id" value="<?php echo esc_attr( $row['client_id'] ); ?>">
+                                    <?php wp_nonce_field( self::ACCESS_NONCE ); ?>
+                                    <select name="level" aria-label="<?php esc_attr_e( 'Access level for this client', 'royal-mcp' ); ?>">
+                                        <?php foreach ( \Royal_MCP\MCP\Support\Access_Levels::LEVELS as $level ) : ?>
+                                            <option value="<?php echo esc_attr( $level ); ?>" <?php selected( \Royal_MCP\MCP\Support\Access_Levels::for_client( $row['client_id'] ), $level ); ?>><?php echo esc_html( \Royal_MCP\MCP\Support\Access_Levels::label( $level ) ); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <button type="submit" class="button"><?php esc_html_e( 'Save', 'royal-mcp' ); ?></button>
+                                </form>
+                            </td>
                             <td>
                                 <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin:0;">
                                     <input type="hidden" name="action" value="<?php echo esc_attr( self::REVOKE_ACTION ); ?>">
@@ -218,6 +245,49 @@ class Connected_Clients_Page {
         );
 
         wp_safe_redirect( add_query_arg( 'revoked', (string) $revoked, $page ) );
+        exit;
+    }
+
+    /**
+     * Set one OAuth client's access level (Full, Read-only, Drafts only).
+     * It applies to every user of that client and survives a revoke, since
+     * the client stays registered.
+     */
+    public function handle_set_access() {
+        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- per-site option royal_mcp_client_access only
+            wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
+        }
+        check_admin_referer( self::ACCESS_NONCE );
+
+        $client_id = isset( $_POST['client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['client_id'] ) ) : '';
+        $level     = isset( $_POST['level'] ) ? sanitize_text_field( wp_unslash( $_POST['level'] ) ) : '';
+        $prior     = \Royal_MCP\MCP\Support\Access_Levels::for_client( $client_id );
+        try {
+            $saved = \Royal_MCP\MCP\Support\Access_Levels::set_client( $client_id, $level );
+        } catch ( \InvalidArgumentException $e ) {
+            wp_die( esc_html( $e->getMessage() ), '', [ 'response' => 400 ] );
+        }
+
+        global $wpdb;
+        $current_user = wp_get_current_user();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Intentional direct insert to the logs table.
+        $wpdb->insert(
+            $wpdb->prefix . 'royal_mcp_logs',
+            [
+                'mcp_server'    => 'OAuth Server',
+                'action'        => 'oauth:set_client_access',
+                'request_data'  => wp_json_encode( [
+                    'user_id'    => (int) $current_user->ID,
+                    'user_login' => $current_user->user_login,
+                    'client_id'  => $client_id,
+                ] ),
+                'response_data' => wp_json_encode( [ 'previous' => $prior, 'next' => $saved ] ),
+                'status'        => 'success',
+            ],
+            [ '%s', '%s', '%s', '%s', '%s' ]
+        );
+
+        wp_safe_redirect( add_query_arg( 'access_saved', $saved, admin_url( 'admin.php?page=' . self::MENU_SLUG ) ) );
         exit;
     }
 

@@ -54,6 +54,8 @@ class Commands {
             $this->row( 'endpoint', 'info', rest_url( 'royal-mcp/v1/mcp' ) ),
             $this->row( 'plugin_enabled', empty( $settings['enabled'] ) ? 'critical' : 'good', empty( $settings['enabled'] ) ? 'Royal MCP is switched off in its settings; no AI client can connect.' : 'AI clients can connect.' ),
             $this->row( 'read_only_mode', 'info', empty( $settings['read_only_mode'] ) ? 'off' : 'on: tools that change the site are refused' ),
+            $this->row( 'drafts_only_mode', 'info', empty( $settings['drafts_only_mode'] ) ? 'off' : 'on: AI clients may create and edit drafts only' ),
+            $this->row( 'connection_access', 'info', sprintf( 'API key: %s; other MCP servers and browser agents: %s; OAuth clients limited: %d', \Royal_MCP\MCP\Support\Access_Levels::for_api_key(), \Royal_MCP\MCP\Support\Access_Levels::for_other_routes(), count( \Royal_MCP\MCP\Support\Access_Levels::clients() ) ) ),
             $this->row( 'api_key_bound_to', $bound ? 'info' : 'recommended', $bound ? $bound->user_login . ' (ID ' . (int) $bound->ID . ')' : 'no user; run `wp royal-mcp rotate-api-key --user=<login>`' ),
             $this->row( 'oauth_connections', 'info', (string) count( Token_Store::list_connections( 500 ) ) ),
         ];
@@ -119,6 +121,7 @@ class Commands {
      * * live_tokens
      * * last_issued
      * * registered
+     * * access
      *
      * ## EXAMPLES
      *
@@ -134,7 +137,7 @@ class Commands {
      * @subcommand list-clients
      */
     public function list_clients( $args, $assoc_args ) {
-        $formatter = new \WP_CLI\Formatter( $assoc_args, [ 'client_id', 'client_name', 'user_login', 'user_id', 'live_tokens', 'last_issued', 'registered' ] );
+        $formatter = new \WP_CLI\Formatter( $assoc_args, [ 'client_id', 'client_name', 'user_login', 'user_id', 'live_tokens', 'last_issued', 'registered', 'access' ] );
         $rows      = [];
         foreach ( Token_Store::list_connections( 500 ) as $c ) {
             $user   = get_userdata( (int) $c['user_id'] );
@@ -146,6 +149,7 @@ class Commands {
                 'live_tokens' => (int) $c['live_tokens'],
                 'last_issued' => $this->ago( (int) $c['last_issued_age'] ),
                 'registered'  => null === $c['registered_age'] ? '(set in plugin settings)' : $this->ago( (int) $c['registered_age'] ),
+                'access'      => \Royal_MCP\MCP\Support\Access_Levels::for_client( $c['client_id'] ),
             ];
         }
         if ( in_array( $formatter->format, [ 'ids', 'count' ], true ) ) {
@@ -229,6 +233,88 @@ class Commands {
         }
         \WP_CLI::success( sprintf( 'New API key, acting as %s. Copy it now; it is not shown again.', $user->user_login ) );
         \WP_CLI::line( $plaintext );
+    }
+
+    /**
+     * Turn drafts-only mode on or off, or show whether it is on.
+     *
+     * When on, AI clients can create drafts and edit posts and pages that
+     * are still drafts or pending, and nothing else.
+     *
+     * ## OPTIONS
+     *
+     * <state>
+     * : on, off or status.
+     * ---
+     * options:
+     *   - on
+     *   - off
+     *   - status
+     * ---
+     *
+     * ## EXAMPLES
+     *
+     *     $ wp royal-mcp drafts-only on
+     *     $ wp royal-mcp drafts-only status
+     *
+     * @subcommand drafts-only
+     */
+    public function drafts_only( $args, $assoc_args ) {
+        $state    = isset( $args[0] ) ? strtolower( (string) $args[0] ) : 'status';
+        $settings = get_option( 'royal_mcp_settings', [] );
+        $settings = is_array( $settings ) ? $settings : [];
+        if ( 'status' === $state ) {
+            \WP_CLI::line( empty( $settings['drafts_only_mode'] ) ? 'Drafts-only mode is off.' : 'Drafts-only mode is on.' );
+            return;
+        }
+        if ( ! in_array( $state, [ 'on', 'off' ], true ) ) {
+            \WP_CLI::error( 'Say on, off or status.' );
+        }
+        $settings['drafts_only_mode'] = 'on' === $state;
+        Settings_Page::save_programmatically( $settings );
+        \WP_CLI::success( 'on' === $state ? 'Drafts-only mode is on: AI clients may create and edit drafts only.' : 'Drafts-only mode is off.' );
+    }
+
+    /**
+     * Set the access level of an OAuth client, of the API key, or of calls
+     * through other MCP servers and browser agents.
+     *
+     * ## OPTIONS
+     *
+     * <connection>
+     * : An OAuth client_id (see list-clients), api-key, or other-routes.
+     *
+     * <level>
+     * : full, read-only or drafts-only.
+     *
+     * ## EXAMPLES
+     *
+     *     $ wp royal-mcp set-access api-key read-only
+     *     $ wp royal-mcp set-access other-routes drafts-only
+     *     $ wp royal-mcp set-access <client_id> full
+     *
+     * @subcommand set-access
+     */
+    public function set_access( $args, $assoc_args ) {
+        $connection = isset( $args[0] ) ? (string) $args[0] : '';
+        $level      = \Royal_MCP\MCP\Support\Access_Levels::normalize( $args[1] ?? '' );
+        if ( '' === $level ) {
+            \WP_CLI::error( 'Level must be full, read-only or drafts-only.' );
+        }
+        if ( in_array( $connection, [ 'api-key', 'other-routes' ], true ) ) {
+            $settings = get_option( 'royal_mcp_settings', [] );
+            $settings = is_array( $settings ) ? $settings : [];
+            $settings[ 'api-key' === $connection ? 'api_key_access' : 'other_routes_access' ] = $level;
+            Settings_Page::save_programmatically( $settings );
+            \WP_CLI::success( sprintf( '%s access level: %s.', $connection, $level ) );
+            return;
+        }
+        try {
+            \Royal_MCP\MCP\Support\Access_Levels::set_client( $connection, $level );
+        } catch ( \InvalidArgumentException $e ) {
+            \WP_CLI::error( $e->getMessage() );
+        }
+        \WP_CLI::success( sprintf( 'Client %s access level: %s.', $connection, $level ) );
     }
 
     private function row( $check, $status, $detail ) {
