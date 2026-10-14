@@ -394,7 +394,7 @@ class Elementor {
 		foreach ( $meta_keys_to_copy as $key ) {
 			$value = get_post_meta( $source_id, $key, true );
 			if ( $value !== '' && $value !== null && $value !== false ) {
-				update_post_meta( $new_id, $key, $value );
+				update_post_meta( $new_id, $key, wp_slash( $value ) );
 			}
 		}
 
@@ -1072,7 +1072,7 @@ class Elementor {
 				if ( ! current_user_can( 'edit_post', $attachment_id ) ) {
 					continue;
 				}
-				update_post_meta( $attachment_id, '_wp_attachment_image_alt', (string) $new_alt );
+				update_post_meta( $attachment_id, '_wp_attachment_image_alt', wp_slash( (string) $new_alt ) );
 				$synced_attachments[] = $attachment_id;
 			}
 		}

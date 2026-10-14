@@ -1857,7 +1857,7 @@ class Divi {
 		foreach ( self::CLONE_META_KEYS as $key ) {
 			$val = get_post_meta( $source_id, $key, true );
 			if ( $val !== '' && $val !== null && $val !== false ) {
-				update_post_meta( $new_id, $key, $val );
+				update_post_meta( $new_id, $key, wp_slash( $val ) );
 			}
 		}
 		self::assert_divi_meta_flags( (int) $new_id, $format );

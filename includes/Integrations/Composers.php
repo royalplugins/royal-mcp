@@ -147,7 +147,7 @@ class Composers {
 				}
 			}
 		}
-		$post_id = wp_insert_post( $insert, true );
+		$post_id = wp_insert_post( wp_slash( $insert ), true );
 		if ( is_wp_error( $post_id ) ) {
 			$steps[] = [ 'name' => 'create_post', 'status' => 'error', 'message' => $post_id->get_error_message() ];
 			return Envelope::error(
@@ -345,15 +345,15 @@ class Composers {
 		}
 
 		if ( '' !== $title ) {
-			update_post_meta( $post_id, $map['title'], $title );
+			update_post_meta( $post_id, $map['title'], wp_slash( $title ) );
 			$fields[] = 'title';
 		}
 		if ( '' !== $desc ) {
-			update_post_meta( $post_id, $map['description'], $desc );
+			update_post_meta( $post_id, $map['description'], wp_slash( $desc ) );
 			$fields[] = 'description';
 		}
 		if ( '' !== $focus_kw ) {
-			update_post_meta( $post_id, $map['focus_keyword'], $focus_kw );
+			update_post_meta( $post_id, $map['focus_keyword'], wp_slash( $focus_kw ) );
 			$fields[] = 'focus_keyword';
 		}
 

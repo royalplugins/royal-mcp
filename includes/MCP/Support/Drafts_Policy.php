@@ -22,14 +22,37 @@ class Drafts_Policy {
 	/** Statuses a call may not ask for. */
 	const PUBLISHING_STATUSES = [ 'publish', 'future', 'private' ];
 
+	/** The only statuses a call may ask for while drafts-only applies. */
+	const SAFE_STATUSES = [ 'draft', 'pending' ];
+
+	/** Post-id arguments the handlers read, checked on every edit tool. */
+	const ID_KEYS = [ 'id', 'post_id' ];
+
+	/**
+	 * Undo is allowed only for these content changes, and only while their
+	 * post is still a draft. Value: the snapshot target key naming the post.
+	 */
+	const UNDO_CONTENT_OPS = [
+		'wp_update_post'                   => 'post_id',
+		'wp_update_post_meta'              => 'post_id',
+		'wp_add_post_meta'                 => 'post_id',
+		'wp_update_seo_meta'               => 'post_id',
+		'elementor_replace_text'           => 'post_id',
+		'elementor_replace_image'          => 'post_id',
+		'elementor_add_widget'             => 'post_id',
+		'elementor_apply_template_to_page' => 'post_id',
+		'elementor_rebuild_post_content'   => 'post_id',
+		'divi_replace_image'               => 'post_id',
+		'divi_import_template'             => 'target_post_id',
+	];
+
 	/**
 	 * Writes that never change what visitors see: uploads (needed to build a
-	 * draft), preview links, undo, and the dispatcher (the tool it calls is
-	 * checked on its own).
+	 * draft), preview links, and the dispatcher (the tool it calls is checked
+	 * on its own). Undo is checked against its snapshot instead.
 	 */
 	const ALWAYS_ALLOWED = [
 		'execute_tool',
-		'mcp_undo_last_operation',
 		'wp_upload_media',
 		'wp_upload_media_from_url',
 		'wp_create_preview_link',
@@ -98,33 +121,42 @@ class Drafts_Policy {
 		if ( $read_only || in_array( $name, self::ALWAYS_ALLOWED, true ) ) {
 			return null;
 		}
+		if ( 'mcp_undo_last_operation' === $name ) {
+			return self::undo_refusal( $args );
+		}
 
 		if ( array_key_exists( $name, self::CREATE_TOOLS ) ) {
 			$status_arg = self::CREATE_TOOLS[ $name ];
-			$status     = '' !== $status_arg && isset( $args[ $status_arg ] ) ? strtolower( (string) $args[ $status_arg ] ) : '';
-			if ( in_array( $status, self::PUBLISHING_STATUSES, true ) ) {
-				return sprintf( '%1$s would set the status to %2$s. Save it as a draft or pending instead.', $name, $status );
+			if ( '' !== $status_arg && array_key_exists( $status_arg, $args ) ) {
+				return self::status_refusal( $name, $args[ $status_arg ] );
 			}
 			return null;
 		}
 
 		if ( array_key_exists( $name, self::EDIT_TOOLS ) ) {
 			foreach ( self::EDIT_STATUS_ARGS as $status_arg ) {
-				$status = isset( $args[ $status_arg ] ) ? strtolower( (string) $args[ $status_arg ] ) : '';
-				if ( in_array( $status, self::PUBLISHING_STATUSES, true ) ) {
-					return sprintf( '%1$s would set the status to %2$s. Drafts stay drafts; a person publishes them.', $name, $status );
+				if ( array_key_exists( $status_arg, $args ) ) {
+					$why = self::status_refusal( $name, $args[ $status_arg ] );
+					if ( null !== $why ) {
+						return $why;
+					}
 				}
 			}
-			$post_id = 0;
-			foreach ( self::EDIT_TOOLS[ $name ] as $id_arg ) {
-				if ( isset( $args[ $id_arg ] ) && is_numeric( $args[ $id_arg ] ) && (int) $args[ $id_arg ] > 0 ) {
-					$post_id = (int) $args[ $id_arg ];
-					break;
+			// Every post-id argument the call carries, read the way the handlers
+			// read them (intval), so the guard and the handler see the same post.
+			$ids = [];
+			foreach ( array_unique( array_merge( self::EDIT_TOOLS[ $name ], self::ID_KEYS ) ) as $id_arg ) {
+				if ( array_key_exists( $id_arg, $args ) && intval( $args[ $id_arg ] ) > 0 ) {
+					$ids[ $id_arg ] = intval( $args[ $id_arg ] );
 				}
 			}
-			if ( $post_id <= 0 ) {
+			if ( ! $ids ) {
 				return sprintf( '%s needs the ID of a draft or pending post.', $name );
 			}
+			if ( count( array_unique( $ids ) ) > 1 ) {
+				return sprintf( '%s was given more than one post ID (%s). Pass a single post ID.', $name, implode( ', ', array_map( static function ( $k, $v ) { return $k . ' ' . $v; }, array_keys( $ids ), $ids ) ) );
+			}
+			$post_id = (int) reset( $ids );
 			if ( 'wp_restore_revision' === $name ) {
 				$revision = get_post( $post_id );
 				$post_id  = $revision && 'revision' === $revision->post_type ? (int) $revision->post_parent : 0;
@@ -132,10 +164,14 @@ class Drafts_Policy {
 					return 'wp_restore_revision needs a revision of a draft or pending post.';
 				}
 			}
-			$status = (string) get_post_status( $post_id );
-			if ( '' === $status ) {
+			if ( ! get_post( $post_id ) ) {
 				return null; // Let the tool report the missing post itself.
 			}
+			// Name the status only to someone who may edit the post.
+			if ( ! current_user_can( 'edit_post', $post_id ) ) {
+				return sprintf( '%s needs a draft or pending post you can edit.', $name );
+			}
+			$status = (string) get_post_status( $post_id );
 			if ( ! in_array( $status, self::DRAFT_STATUSES, true ) ) {
 				return sprintf(
 					'post %1$d is %2$s, and only drafts and pending posts can be changed. Clone it as a draft first (elementor_clone_page or divi_clone_page for builder pages) and edit the copy.',
@@ -150,6 +186,58 @@ class Drafts_Policy {
 	}
 
 	/**
+	 * Why a requested status is refused, or null. The value must read as draft
+	 * or pending however a handler sanitizes it.
+	 *
+	 * @param string $name Tool name.
+	 * @param mixed  $raw  Status argument as sent.
+	 * @return string|null
+	 */
+	private static function status_refusal( $name, $raw ) {
+		$text = is_scalar( $raw ) ? (string) $raw : '';
+		if ( is_scalar( $raw ) && '' === trim( $text ) ) {
+			return null;
+		}
+		$forms = [ strtolower( trim( $text ) ), strtolower( sanitize_text_field( $text ) ), sanitize_key( $text ) ];
+		foreach ( $forms as $form ) {
+			if ( ! in_array( $form, self::SAFE_STATUSES, true ) ) {
+				return sprintf( '%1$s may only set the status to draft or pending (asked for "%2$s"). Drafts stay drafts; a person publishes them.', $name, sanitize_text_field( $text ) );
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Undo runs only when it reverts a content change on a post that is still a
+	 * draft, and would not put a published status back.
+	 *
+	 * @param array $args Undo arguments.
+	 * @return string|null
+	 */
+	private static function undo_refusal( array $args ) {
+		$token    = isset( $args['token'] ) && is_scalar( $args['token'] ) ? sanitize_text_field( (string) $args['token'] ) : '';
+		$snapshot = '' !== $token ? \Royal_MCP\MCP\Undo_Store::read( $token ) : null;
+		if ( ! is_array( $snapshot ) ) {
+			return null; // The undo tool gives its usual answer for unknown tokens.
+		}
+		$op = (string) ( $snapshot['op'] ?? '' );
+		if ( ! isset( self::UNDO_CONTENT_OPS[ $op ] ) ) {
+			return sprintf( 'undoing %s changes more than a draft\'s content, so it is not allowed while drafts-only applies.', $op );
+		}
+		$target  = (array) ( $snapshot['target'] ?? [] );
+		$post_id = (int) ( $target[ self::UNDO_CONTENT_OPS[ $op ] ] ?? ( $target['post_id'] ?? 0 ) );
+		$status  = $post_id > 0 ? (string) get_post_status( $post_id ) : '';
+		if ( ! in_array( $status, self::DRAFT_STATUSES, true ) ) {
+			return 'this undo would change a post that is not a draft or pending post, so it is not allowed while drafts-only applies.';
+		}
+		$prior_status = (string) ( $snapshot['pre_op_state']['prior_values']['post_status'] ?? '' );
+		if ( '' !== $prior_status && ! in_array( $prior_status, self::DRAFT_STATUSES, true ) ) {
+			return sprintf( 'this undo would set the post back to %s, so it is not allowed while drafts-only applies.', $prior_status );
+		}
+		return null;
+	}
+
+	/**
 	 * Whether a tool can never run under drafts-only rules (it is neither a
 	 * read, nor allowed, nor a create or edit tool). Used to mark tool lists.
 	 *
@@ -160,6 +248,7 @@ class Drafts_Policy {
 	public static function always_refused( $name, $read_only ) {
 		$name = (string) $name;
 		return ! $read_only
+			&& 'mcp_undo_last_operation' !== $name
 			&& ! in_array( $name, self::ALWAYS_ALLOWED, true )
 			&& ! array_key_exists( $name, self::CREATE_TOOLS )
 			&& ! array_key_exists( $name, self::EDIT_TOOLS );

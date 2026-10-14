@@ -26,6 +26,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Block_Tools {
 
 	const OUTLINE_LIMIT  = 500;
+	const MAX_MARKUP_BYTES = 2097152;
+	const MAX_DEPTH      = 100;
 	const PREVIEW_CHARS  = 80;
 	const LIST_LIMIT     = 100;
 
@@ -297,7 +299,7 @@ class Block_Tools {
 		$at     = isset( $args['at'] ) ? (string) $args['at'] : 'end';
 		$target = isset( $args['path'] ) && '' !== (string) $args['path'] ? self::parse_path( $args['path'] ) : [];
 		$tree   = self::insert_at( $tree, $at, $target, $new );
-		return self::write( $post, [ 'post_content' => serialize_blocks( $tree ) ], 'wp_insert_blocks', sprintf( 'Inserted %d block(s)', count( $new ) ), [ 'inserted' => count( $new ) ] );
+		return self::write_tree( $post, $tree, 'wp_insert_blocks', sprintf( 'Inserted %d block(s)', count( $new ) ), [ 'inserted' => count( $new ) ] );
 	}
 
 	private static function replace_tool( array $args ) {
@@ -308,7 +310,7 @@ class Block_Tools {
 		$check = self::require_good_markup( self::markup_arg( $args ) );
 		$new   = self::named( $check['parsed'] );
 		$tree  = self::replace_at( $tree, $path, $new );
-		return self::write( $post, [ 'post_content' => serialize_blocks( $tree ) ], 'wp_replace_block', sprintf( 'Replaced %s at %s with %d block(s)', $block['blockName'], implode( '.', $path ), count( $new ) ), [ 'replaced' => (string) $block['blockName'] ] );
+		return self::write_tree( $post, $tree, 'wp_replace_block', sprintf( 'Replaced %s at %s with %d block(s)', $block['blockName'], implode( '.', $path ), count( $new ) ), [ 'replaced' => (string) $block['blockName'] ] );
 	}
 
 	private static function move_tool( array $args ) {
@@ -327,7 +329,7 @@ class Block_Tools {
 		$tree   = self::remove_at( $tree, $path );
 		$target = self::shift_after_removal( $target, $path );
 		$tree   = self::insert_at( $tree, $at, $target, [ $block ] );
-		return self::write( $post, [ 'post_content' => serialize_blocks( $tree ) ], 'wp_move_block', sprintf( 'Moved %s from %s', $block['blockName'], implode( '.', $path ) ), [ 'moved' => (string) $block['blockName'] ] );
+		return self::write_tree( $post, $tree, 'wp_move_block', sprintf( 'Moved %s from %s', $block['blockName'], implode( '.', $path ) ), [ 'moved' => (string) $block['blockName'] ] );
 	}
 
 	private static function delete_tool( array $args ) {
@@ -336,7 +338,7 @@ class Block_Tools {
 		$tree  = parse_blocks( (string) $post->post_content );
 		$block = self::expect_block( $tree, $path, $args );
 		$tree  = self::remove_at( $tree, $path );
-		return self::write( $post, [ 'post_content' => serialize_blocks( $tree ) ], 'wp_delete_block', sprintf( 'Deleted %s at %s', $block['blockName'], implode( '.', $path ) ), [ 'deleted' => (string) $block['blockName'] ] );
+		return self::write_tree( $post, $tree, 'wp_delete_block', sprintf( 'Deleted %s at %s', $block['blockName'], implode( '.', $path ) ), [ 'deleted' => (string) $block['blockName'] ] );
 	}
 
 	private static function replace_text_tool( array $args ) {
@@ -357,18 +359,25 @@ class Block_Tools {
 		if ( $scope && null === self::block_at( $tree, $scope ) ) {
 			throw new \Exception( 'No block at path ' . implode( '.', $scope ) . '.' );
 		}
-		$counts = [ 'markup' => 0, 'attributes' => 0, 'blocks' => [] ];
-		$tree   = self::map_blocks( $tree, $scope, static function ( array $block, array $path ) use ( $find, $replace, &$counts ) {
+		// Markup stores text HTML-encoded (&amp; &lt; &quot;), attributes may store
+		// it raw or encoded: replace every form together so the two stay in step.
+		$forms  = self::text_forms( $find, $replace );
+		$markup = self::markup_forms( $find, $replace, $forms );
+		$counts = [ 'markup' => 0, 'attributes' => 0, 'blocks' => [], 'attribute_only' => [] ];
+		$tree   = self::map_blocks( $tree, $scope, static function ( array $block, array $path ) use ( $forms, $markup, &$counts ) {
 			$in_markup = 0;
 			foreach ( $block['innerContent'] as $k => $chunk ) {
 				if ( is_string( $chunk ) ) {
-					$in_markup                  += substr_count( $chunk, $find );
-					$block['innerContent'][ $k ] = str_replace( $find, $replace, $chunk );
+					$in_markup                  += self::count_forms( $chunk, $markup );
+					$block['innerContent'][ $k ] = strtr( $chunk, $markup );
 				}
 			}
-			$block['innerHTML'] = str_replace( $find, $replace, (string) $block['innerHTML'] );
+			$block['innerHTML'] = strtr( (string) $block['innerHTML'], $markup );
 			$in_attrs           = 0;
-			$block['attrs']     = self::replace_deep( (array) $block['attrs'], $find, $replace, $in_attrs );
+			$block['attrs']     = self::replace_deep( (array) $block['attrs'], $forms, $in_attrs );
+			if ( $in_attrs > 0 && 0 === $in_markup && self::stores_markup( $block ) ) {
+				$counts['attribute_only'][] = (string) $block['blockName'] . ' at ' . implode( '.', $path );
+			}
 			if ( $in_markup + $in_attrs > 0 ) {
 				$counts['markup']     += $in_markup;
 				$counts['attributes'] += $in_attrs;
@@ -381,13 +390,21 @@ class Block_Tools {
 			throw new \Exception( sprintf( 'expected_count is %d but %d occurrence(s) found inside blocks; nothing changed.', (int) $args['expected_count'], $total ) );
 		}
 		$report = [ 'occurrences' => $total, 'in_markup' => $counts['markup'], 'in_attributes' => $counts['attributes'], 'blocks' => array_slice( $counts['blocks'], 0, 100 ) ];
+		$attr_only = sprintf( 'The text is in the attributes of %s but not in their markup, so replacing it would put the two out of step and break the block. Replace the block with wp_replace_block instead.', implode( ', ', array_slice( $counts['attribute_only'], 0, 10 ) ) );
 		if ( ! empty( $args['dry_run'] ) ) {
-			return [ 'state' => 'dry_run', 'would_execute' => $total > 0, 'id' => (int) $post->ID ] + $report;
+			$out = [ 'state' => 'dry_run', 'would_execute' => $total > 0 && ! $counts['attribute_only'], 'id' => (int) $post->ID ] + $report;
+			if ( $counts['attribute_only'] ) {
+				$out['refused'] = $attr_only;
+			}
+			return $out;
+		}
+		if ( $counts['attribute_only'] ) {
+			throw new \Exception( $attr_only );
 		}
 		if ( 0 === $total ) {
 			throw new \Exception( 'find text not found inside any block; nothing changed. Use dry_run=true to probe safely.' );
 		}
-		return self::write( $post, [ 'post_content' => serialize_blocks( $tree ) ], 'wp_replace_text_in_blocks', sprintf( 'Replaced %d occurrence(s) in %d block(s)', $total, count( $counts['blocks'] ) ), $report );
+		return self::write_tree( $post, $tree, 'wp_replace_text_in_blocks', sprintf( 'Replaced %d occurrence(s) in %d block(s)', $total, count( $counts['blocks'] ) ), $report );
 	}
 
 	private static function attributes_tool( array $args ) {
@@ -436,7 +453,7 @@ class Block_Tools {
 			}
 			return $b;
 		} );
-		return self::write( $post, [ 'post_content' => serialize_blocks( $tree ) ], 'wp_update_block_attributes', sprintf( 'Updated attributes of %s at %s', $block['blockName'], implode( '.', $path ) ), [ 'attributes' => $attrs ] );
+		return self::write_tree( $post, $tree, 'wp_update_block_attributes', sprintf( 'Updated attributes of %s at %s', $block['blockName'], implode( '.', $path ) ), [ 'attributes' => $attrs ] );
 	}
 
 	private static function create_pattern( array $args ) {
@@ -450,7 +467,7 @@ class Block_Tools {
 		}
 		$markup = self::markup_arg( $args );
 		self::require_good_markup( $markup );
-		self::assert_survives_kses( $markup );
+		self::assert_survives_save( $markup, 0 );
 		$id = wp_insert_post( [ 'post_type' => 'wp_block', 'post_status' => 'publish', 'post_title' => $title, 'post_content' => wp_slash( $markup ) ], true );
 		if ( is_wp_error( $id ) ) {
 			throw new \Exception( esc_html( $id->get_error_message() ) );
@@ -489,6 +506,19 @@ class Block_Tools {
 	 * ------------------------------------------------------------------ */
 
 	/**
+	 * Serialize a changed block tree and save it, refusing when the result would
+	 * not read back as the same blocks (markup inside a block that contains block
+	 * comments would re-nest the tree).
+	 */
+	private static function write_tree( \WP_Post $post, array $tree, $tool, $what, array $extra = [] ) {
+		$content = serialize_blocks( $tree );
+		if ( self::shape( parse_blocks( $content ) ) !== self::shape( $tree ) ) {
+			throw new \Exception( 'The result would not read back as the same blocks (some markup contains block comments), so nothing was written. Check the markup with wp_validate_blocks.' );
+		}
+		return self::write( $post, [ 'post_content' => $content ], $tool, $what, $extra );
+	}
+
+	/**
 	 * Save the changed fields of one post with the edit-lock and filter checks,
 	 * a revision, read-back verification and an undo token.
 	 */
@@ -502,7 +532,7 @@ class Block_Tools {
 		}
 		self::assert_not_locked( (int) $post->ID );
 		if ( isset( $changes['post_content'] ) ) {
-			self::assert_survives_kses( (string) $changes['post_content'] );
+			self::assert_survives_save( (string) $changes['post_content'], (int) $post->ID );
 		}
 		$data = [ 'ID' => (int) $post->ID ];
 		foreach ( $changes as $field => $value ) {
@@ -551,21 +581,26 @@ class Block_Tools {
 	}
 
 	/**
-	 * Users without unfiltered_html have post content filtered on save, which
-	 * strips markup some blocks need (inline SVG, data attributes). Refuse such a
-	 * write and name the blocks it would break.
+	 * Content is filtered on save: kses for users without unfiltered_html (which
+	 * strips markup some blocks need, such as inline SVG and data attributes) and
+	 * any content_save_pre filter a plugin adds. Run the same chain first and
+	 * refuse, naming the blocks, when it would change them.
 	 */
-	private static function assert_survives_kses( $content ) {
-		if ( current_user_can( 'unfiltered_html' ) ) {
-			return;
+	private static function assert_survives_save( $content, $post_id ) {
+		$filtered = sanitize_post_field( 'post_content', wp_slash( $content ), (int) $post_id, 'db' );
+		if ( ! current_user_can( 'unfiltered_html' ) && false === has_filter( 'content_save_pre', 'wp_filter_post_kses' ) ) {
+			$filtered = wp_filter_post_kses( $filtered );
 		}
-		$filtered = wp_unslash( wp_filter_post_kses( wp_slash( $content ) ) );
+		$filtered = wp_unslash( $filtered );
 		if ( self::same_markup( $filtered, $content ) ) {
 			return;
 		}
 		$broken = [];
 		self::diff_blocks( parse_blocks( $content ), parse_blocks( $filtered ), [], $broken );
 		$list = $broken ? implode( ', ', array_slice( $broken, 0, 10 ) ) : 'content outside blocks';
+		if ( current_user_can( 'unfiltered_html' ) ) {
+			throw new \Exception( sprintf( 'A content filter on this site changes this markup when it is saved, so saving would break: %s. Nothing was written.', $list ) );
+		}
 		throw new \Exception( sprintf(
 			'Your account cannot save the markup some blocks on this post use (WordPress removes it on save for users without the unfiltered_html capability), so saving would break them: %s. Ask an administrator to make this change.',
 			$list
@@ -609,7 +644,12 @@ class Block_Tools {
 	 * @return array{ok: bool, blocks: int, block_names: string[], unknown: string[], core_html_blocks: int, freeform_chars: int, broken_delimiters: bool, stable: bool, problems: string[], parsed: array}
 	 */
 	public static function check_markup( $markup ) {
-		$parsed   = parse_blocks( (string) $markup );
+		$markup = (string) $markup;
+		$limit  = self::markup_limit( $markup );
+		if ( null !== $limit ) {
+			return [ 'ok' => false, 'blocks' => 0, 'block_names' => [], 'unknown' => [], 'editor_only' => [], 'core_html_blocks' => 0, 'freeform_chars' => 0, 'broken_delimiters' => false, 'stable' => false, 'problems' => [ $limit ], 'parsed' => [] ];
+		}
+		$parsed   = parse_blocks( $markup );
 		$registry = \WP_Block_Type_Registry::get_instance();
 		$names    = [];
 		$unknown  = [];
@@ -650,7 +690,10 @@ class Block_Tools {
 		}
 		// The parser closes an unclosed block silently (swallowing the parent's
 		// closing tags), so count openers and closers per block name as well.
-		if ( preg_match_all( '#<!--\s+(?<close>/)?wp:(?<name>[a-z][a-z0-9_-]*(?:/[a-z][a-z0-9_-]*)?)(?:\s+\{.*?\})?\s+(?<void>/)?-->#s', (string) $markup, $delims, PREG_SET_ORDER ) ) {
+		$found = preg_match_all( '#<!--\s+(?<close>/)?wp:(?<name>[a-z][a-z0-9_-]*(?:/[a-z][a-z0-9_-]*)?)(?:\s+\{.*?\})?\s+(?<void>/)?-->#s', $markup, $delims, PREG_SET_ORDER );
+		if ( false === $found ) {
+			$broken = true;
+		} elseif ( $found ) {
 			$depth = [];
 			foreach ( $delims as $d ) {
 				if ( ! empty( $d['void'] ) ) {
@@ -713,6 +756,33 @@ class Block_Tools {
 		];
 	}
 
+	/**
+	 * Size and nesting limits, checked from the block comments before the markup
+	 * is parsed or serialized (serializing deep nesting is quadratic).
+	 */
+	private static function markup_limit( $markup ) {
+		if ( strlen( $markup ) > self::MAX_MARKUP_BYTES ) {
+			return sprintf( 'The markup is %1$s; the limit is %2$s per call. Send it in smaller parts.', size_format( strlen( $markup ) ), size_format( self::MAX_MARKUP_BYTES ) );
+		}
+		$found = preg_match_all( '#<!--\s+(/)?wp:[a-z][a-z0-9_/-]*(?:\s+\{.*?\})?\s+(/)?-->#s', $markup, $delims, PREG_SET_ORDER );
+		if ( false === $found ) {
+			return 'The markup is too complex to check. Send it in smaller parts.';
+		}
+		$depth = 0;
+		$max   = 0;
+		foreach ( $delims as $d ) {
+			if ( ! empty( $d[2] ) ) {
+				continue;
+			}
+			$depth += empty( $d[1] ) ? 1 : -1;
+			$max    = max( $max, $depth );
+		}
+		if ( $max > self::MAX_DEPTH ) {
+			return sprintf( 'Blocks are nested %1$d deep; the limit is %2$d.', $max, self::MAX_DEPTH );
+		}
+		return null;
+	}
+
 	private static function require_good_markup( $markup ) {
 		$check = self::check_markup( $markup );
 		if ( ! $check['ok'] ) {
@@ -730,7 +800,13 @@ class Block_Tools {
 				}
 				continue;
 			}
-			$out[] = [ $b['blockName'], (array) $b['attrs'], trim( (string) $b['innerHTML'] ), self::shape( (array) $b['innerBlocks'] ) ];
+			$own = '';
+			foreach ( (array) $b['innerContent'] as $chunk ) {
+				if ( is_string( $chunk ) ) {
+					$own .= $chunk;
+				}
+			}
+			$out[] = [ $b['blockName'], (array) $b['attrs'], preg_replace( '/\s+/', ' ', trim( $own ) ), self::shape( (array) $b['innerBlocks'] ) ];
 		}
 		return $out;
 	}
@@ -997,17 +1073,62 @@ class Block_Tools {
 		return $list;
 	}
 
-	private static function replace_deep( $value, $find, $replace, &$count ) {
+	private static function replace_deep( $value, array $forms, &$count ) {
 		if ( is_string( $value ) ) {
-			$count += substr_count( $value, $find );
-			return str_replace( $find, $replace, $value );
+			$count += self::count_forms( $value, $forms );
+			return strtr( $value, $forms );
 		}
 		if ( is_array( $value ) ) {
 			foreach ( $value as $k => $v ) {
-				$value[ $k ] = self::replace_deep( $v, $find, $replace, $count );
+				$value[ $k ] = self::replace_deep( $v, $forms, $count );
 			}
 		}
 		return $value;
+	}
+
+	/**
+	 * The text and its HTML-encoded forms, each mapped to the replacement encoded
+	 * the same way, for strtr().
+	 *
+	 * @return array<string, string>
+	 */
+	private static function text_forms( $find, $replace ) {
+		$maps  = [
+			[ '&' => '&amp;', '<' => '&lt;', '>' => '&gt;' ],
+			[ '&' => '&amp;', '<' => '&lt;', '>' => '&gt;', '"' => '&quot;' ],
+			[ '&' => '&amp;', '<' => '&lt;', '>' => '&gt;', '"' => '&quot;', "'" => '&#039;' ],
+			[ '&' => '&amp;', '<' => '&lt;', '>' => '&gt;', '"' => '&quot;', "'" => '&#39;' ],
+		];
+		$forms = [ (string) $find => (string) $replace ];
+		foreach ( $maps as $map ) {
+			$encoded = strtr( (string) $find, $map );
+			if ( ! isset( $forms[ $encoded ] ) ) {
+				$forms[ $encoded ] = strtr( (string) $replace, $map );
+			}
+		}
+		return $forms;
+	}
+
+	/**
+	 * Forms for markup. Plain search text is text in markup (in a text node or an
+	 * attribute value), so its replacement goes in HTML-encoded; search text that
+	 * contains HTML characters is matched as markup and replaced literally.
+	 *
+	 * @return array<string, string>
+	 */
+	private static function markup_forms( $find, $replace, array $forms ) {
+		if ( strpbrk( (string) $find, '&<>"\'' ) !== false ) {
+			return $forms;
+		}
+		return [ (string) $find => htmlspecialchars( (string) $replace, ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ];
+	}
+
+	private static function count_forms( $text, array $forms ) {
+		$n = 0;
+		foreach ( array_keys( $forms ) as $form ) {
+			$n += substr_count( (string) $text, (string) $form );
+		}
+		return $n;
 	}
 
 	/** Whether a block stores markup of its own (the editor validates it). */
@@ -1087,7 +1208,7 @@ class Block_Tools {
 	}
 
 	private static function post_arg( array $args ) {
-		$id   = (int) ( $args['id'] ?? $args['post_id'] ?? 0 );
+		$id   = intval( $args['post_id'] ?? $args['id'] ?? 0 );
 		$post = $id > 0 ? get_post( $id ) : null;
 		if ( ! $post || in_array( $post->post_type, [ 'revision', 'attachment', 'nav_menu_item' ], true ) ) {
 			throw new \Exception( 'Post not found.' );

@@ -1465,7 +1465,7 @@ class Server {
             ['name' => 'wp_replace_block', 'description' => 'Replace the block at path with new block markup (one or more blocks). The way to change a block\'s settings when it stores its own markup. Checks the edit lock, refuses changes WordPress would strip for your account, saves a revision and returns an undo token.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID (any post type that stores block content).'], 'path' => ['type' => 'string', 'description' => 'Block path from wp_get_block_outline, e.g. "2" or "2.0.1" (counting from 0).'], 'markup' => ['type' => 'string', 'description' => 'Serialized block markup, e.g. <!-- wp:paragraph --><p>Text</p><!-- /wp:paragraph -->. Copy existing markup from wp_get_post or wp_get_synced_pattern as a model.'], 'expected_name' => ['type' => 'string', 'description' => 'Optional guard: the block name you expect at path (e.g. core/heading). Nothing changes if it differs.']], 'required' => ['id', 'path', 'markup']]],
             ['name' => 'wp_move_block', 'description' => 'Move the block at path (with its inner blocks) to the start or end of the post, or before, after or inside the block at target_path. Checks the edit lock, refuses changes WordPress would strip for your account, saves a revision and returns an undo token.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID (any post type that stores block content).'], 'path' => ['type' => 'string', 'description' => 'Block path from wp_get_block_outline, e.g. "2" or "2.0.1" (counting from 0).'], 'at' => ['type' => 'string', 'enum' => ['start', 'end', 'before', 'after', 'inside_start', 'inside_end'], 'description' => 'Where to move it (default end). before/after/inside_start/inside_end need target_path.'], 'target_path' => ['type' => 'string', 'description' => 'Path of the block to move next to or inside, as read before the move.'], 'expected_name' => ['type' => 'string', 'description' => 'Optional guard: the block name you expect at path (e.g. core/heading). Nothing changes if it differs.']], 'required' => ['id', 'path']]],
             ['name' => 'wp_delete_block', 'description' => 'Delete the block at path, with its inner blocks. Checks the edit lock, refuses changes WordPress would strip for your account, saves a revision and returns an undo token.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID (any post type that stores block content).'], 'path' => ['type' => 'string', 'description' => 'Block path from wp_get_block_outline, e.g. "2" or "2.0.1" (counting from 0).'], 'expected_name' => ['type' => 'string', 'description' => 'Optional guard: the block name you expect at path (e.g. core/heading). Nothing changes if it differs.']], 'required' => ['id', 'path']]],
-            ['name' => 'wp_replace_text_in_blocks', 'description' => 'Find and replace literal text inside the blocks of a post (all blocks, or the block at path and its inner blocks). Text is replaced in each block\'s markup and attributes together so blocks stay valid; block comments are never touched. Case-sensitive, no regex. dry_run reports matches per block without writing; expected_count aborts unless exactly that many matches exist. Checks the edit lock, refuses changes WordPress would strip for your account, saves a revision and returns an undo token.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID (any post type that stores block content).'], 'find' => ['type' => 'string', 'minLength' => 1], 'replace' => ['type' => 'string', 'description' => 'Replacement text; empty string deletes the match.'], 'path' => ['type' => 'string', 'description' => 'Optional: only this block and its inner blocks.'], 'expected_count' => ['type' => 'integer'], 'dry_run' => ['type' => 'boolean']], 'required' => ['id', 'find', 'replace']]],
+            ['name' => 'wp_replace_text_in_blocks', 'description' => 'Find and replace literal text inside the blocks of a post (all blocks, or the block at path and its inner blocks). Text is replaced in each block\'s markup and attributes together so blocks stay valid; the replacement goes in as text (HTML characters are encoded), and block comments are never touched; to change markup use wp_replace_block. Case-sensitive, no regex. dry_run reports matches per block without writing; expected_count aborts unless exactly that many matches exist. Checks the edit lock, refuses changes WordPress would strip for your account, saves a revision and returns an undo token.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID (any post type that stores block content).'], 'find' => ['type' => 'string', 'minLength' => 1], 'replace' => ['type' => 'string', 'description' => 'Replacement text; empty string deletes the match.'], 'path' => ['type' => 'string', 'description' => 'Optional: only this block and its inner blocks.'], 'expected_count' => ['type' => 'integer'], 'dry_run' => ['type' => 'boolean']], 'required' => ['id', 'find', 'replace']]],
             ['name' => 'wp_update_block_attributes', 'description' => 'Change attributes of the block at path, for blocks that store no markup of their own (server-rendered blocks such as latest posts, query loops and many plugin blocks; wp_get_block_outline marks them). Values are checked against the block type\'s attribute definitions; null removes an attribute. Blocks that store markup are refused: use wp_replace_block for those. Checks the edit lock, refuses changes WordPress would strip for your account, saves a revision and returns an undo token.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID (any post type that stores block content).'], 'path' => ['type' => 'string', 'description' => 'Block path from wp_get_block_outline, e.g. "2" or "2.0.1" (counting from 0).'], 'attributes' => ['type' => 'object', 'description' => 'Attribute names and new values; null removes one.'], 'expected_name' => ['type' => 'string', 'description' => 'Optional guard: the block name you expect at path (e.g. core/heading). Nothing changes if it differs.']], 'required' => ['id', 'path', 'attributes']]],
             ['name' => 'wp_list_synced_patterns', 'description' => 'List the site\'s patterns (reusable blocks): ID, title, status, whether synced, categories and size. Read-only.', 'inputSchema' => ['type' => 'object', 'properties' => ['search' => ['type' => 'string'], 'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 100]]]],
             ['name' => 'wp_get_synced_pattern', 'description' => 'Get one pattern\'s block markup and block stats. Read-only.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Pattern ID from wp_list_synced_patterns.']], 'required' => ['id']]],
@@ -4238,7 +4238,7 @@ class Server {
                 $alt_written = null;
                 if ( $media_id > 0 && isset( $args['alt_text'] ) && $args['alt_text'] !== '' ) {
                     $alt_written = \Royal_MCP\MCP\Support\SafeText::field( $args['alt_text'] );
-                    update_post_meta( $media_id, '_wp_attachment_image_alt', $alt_written );
+                    update_post_meta( $media_id, '_wp_attachment_image_alt', wp_slash( $alt_written ) );
                 }
 
                 // Re-read the thumbnail id to catch silent-drop from filter
@@ -4299,7 +4299,7 @@ class Server {
                     if (is_wp_error($mres)) throw new \Exception(esc_html($mres->get_error_message()));
                 }
                 if ( isset($media_requested['alt_text']) ) {
-                    update_post_meta($media_id, '_wp_attachment_image_alt', $media_requested['alt_text']);
+                    update_post_meta($media_id, '_wp_attachment_image_alt', wp_slash($media_requested['alt_text']));
                 }
                 clean_post_cache($media_id);
                 wp_cache_delete($media_id, 'post_meta');
@@ -4416,14 +4416,14 @@ class Server {
                 if (!empty($args['description'])) $term_args['description'] = wp_kses_post($args['description']);
                 if (!empty($args['slug'])) $term_args['slug'] = sanitize_title($args['slug']);
                 if (!empty($args['parent']) && $tax_obj && $tax_obj->hierarchical) $term_args['parent'] = intval($args['parent']);
-                $result = wp_insert_term(\Royal_MCP\MCP\Support\SafeText::field($args['name']), $taxonomy, $term_args);
+                $result = wp_insert_term(wp_slash(\Royal_MCP\MCP\Support\SafeText::field($args['name'])), $taxonomy, wp_slash($term_args));
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
                 return ['id' => $result['term_id'], 'taxonomy' => $taxonomy, 'message' => 'Term created successfully'];
 
             case 'wp_update_term':
                 $taxonomy = sanitize_text_field($args['taxonomy']);
                 if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
-                $term_id = intval($args['id']);
+                $term_id = intval($args['id'] ?? 0);
                 $term_obj = get_term($term_id, $taxonomy);
                 if (!$term_obj || is_wp_error($term_obj)) throw new \Exception('Term not found in taxonomy ' . esc_html($taxonomy));
                 if (!current_user_can('edit_term', $term_id)) {
@@ -4453,7 +4453,7 @@ class Server {
                 }
 
                 // Execute — map tool-arg names back to wp_update_term keys (identical here).
-                $term_result = wp_update_term( $term_id, $taxonomy, $term_requested );
+                $term_result = wp_update_term( $term_id, $taxonomy, wp_slash( $term_requested ) );
                 if (is_wp_error($term_result)) throw new \Exception(esc_html($term_result->get_error_message()));
 
                 // Cache invalidate + re-read.
@@ -4741,7 +4741,7 @@ class Server {
 
                 $tmeta_before = get_term_meta($term_id, $tmeta_key, true);
 
-                $tmeta_result = update_term_meta($term_id, $tmeta_key, $tmeta_value);
+                $tmeta_result = update_term_meta($term_id, $tmeta_key, wp_slash($tmeta_value));
 
                 wp_cache_delete($term_id, 'term_meta');
                 $tmeta_actual = get_term_meta($term_id, $tmeta_key, true);
@@ -4864,7 +4864,7 @@ class Server {
                 ];
                 // Respect WordPress comment moderation settings
                 $comment_data['comment_approved'] = wp_allow_comment($comment_data);
-                $cc_new_id = wp_insert_comment($comment_data);
+                $cc_new_id = wp_insert_comment(wp_slash($comment_data));
                 if (!$cc_new_id) throw new \Exception('Failed to create comment');
                 $cc_new_id     = (int) $cc_new_id;
                 $cc_approved   = $comment_data['comment_approved'] === 1;
@@ -5204,7 +5204,7 @@ class Server {
                 $before_value = get_post_meta($post_id, $meta_key, true);
 
                 // Execute the write.
-                $result = update_post_meta($post_id, $meta_key, $meta_value);
+                $result = update_post_meta($post_id, $meta_key, wp_slash($meta_value));
 
                 // Fresh re-read — post-meta cache is per-post scoped.
                 wp_cache_delete($post_id, 'post_meta');
@@ -5294,7 +5294,7 @@ class Server {
                 }
                 $add_value  = self::filter_meta_value($args['value'], $add_key, $post_id, 'wp_add_post_meta');
                 $add_unique = !empty($args['unique']);
-                $add_meta_id = add_post_meta($post_id, $add_key, $add_value, $add_unique);
+                $add_meta_id = add_post_meta($post_id, $add_key, wp_slash($add_value), $add_unique);
 
                 // add_post_meta returns false when unique=true and the key already exists.
                 // That's a semantic conflict, not a runtime error — surface via envelope
@@ -6715,6 +6715,8 @@ class Server {
             // ==================== CHANGES (before / after of undo-tracked writes) ====================
             case 'mcp_list_recent_changes':
                 $lrc_user  = (int) get_current_user_id();
+                // Undo tokens only to a connection that could use them for anything.
+                $lrc_token = !self::read_only_mode() && !self::drafts_only_mode() && 'full' === $this->connection_access_level()[0];
                 $lrc_limit = isset($args['limit']) ? max(1, min(100, (int) $args['limit'])) : 20;
                 $lrc_tool  = isset($args['tool']) ? sanitize_key((string) $args['tool']) : '';
                 $lrc_undone = !isset($args['include_undone']) || filter_var($args['include_undone'], FILTER_VALIDATE_BOOLEAN);
@@ -6732,7 +6734,7 @@ class Server {
                     }
                     $lrc_total++;
                     if (count($lrc_rows) < $lrc_limit) {
-                        $lrc_rows[] = \Royal_MCP\MCP\Support\Change_View::summary($lrc_change, true);
+                        $lrc_rows[] = \Royal_MCP\MCP\Support\Change_View::summary($lrc_change, $lrc_token);
                     }
                 }
                 return [
@@ -6760,9 +6762,10 @@ class Server {
                         'note'      => 'No change with this id is available to you. Changes are kept for 72 hours, so it may have expired; mcp_list_recent_changes shows the ones still kept.',
                     ];
                 }
+                $gc_token = !self::read_only_mode() && !self::drafts_only_mode() && 'full' === $this->connection_access_level()[0];
                 return \Royal_MCP\MCP\Support\Change_View::detail($gc_change, function ($value, $key) {
                     return $this->redact_sensitive_keys($value, (string) $key);
-                }, true);
+                }, $gc_token);
 
             // ==================== UNDO (Free basic mode) ====================
             case 'mcp_undo_last_operation':
@@ -6865,7 +6868,7 @@ class Server {
                         if ( $undo_current !== $undo_applied ) {
                             throw new \Exception('Cannot undo: post meta value was modified after the tracked operation. Current value differs from what was written. Investigate before retrying or use SiteVault to restore a full-site snapshot.');
                         }
-                        update_post_meta( $undo_meta_pid, $undo_meta_key, $undo_meta_pre['prior_value'] );
+                        update_post_meta( $undo_meta_pid, $undo_meta_key, wp_slash( $undo_meta_pre['prior_value'] ) );
                         wp_cache_delete( $undo_meta_pid, 'post_meta' );
                         // One-shot: consume the token so the undo can't be replayed.
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
@@ -6901,7 +6904,7 @@ class Server {
                         if ( $undo_tmeta_current !== $undo_tmeta_applied ) {
                             throw new \Exception('Cannot undo: term meta value was modified after the tracked operation. Current value differs from what was written. Investigate before retrying or use SiteVault to restore a full-site snapshot.');
                         }
-                        update_term_meta( $undo_tmeta_tid, $undo_tmeta_key, $undo_tmeta_pre['prior_value'] );
+                        update_term_meta( $undo_tmeta_tid, $undo_tmeta_key, wp_slash( $undo_tmeta_pre['prior_value'] ) );
                         wp_cache_delete( $undo_tmeta_tid, 'term_meta' );
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
                         return \Royal_MCP\MCP\Support\Envelope::success(
@@ -6961,11 +6964,11 @@ class Server {
                         if ( array_key_exists( 'caption', $mundo_prior ) )     $mrestore_post['post_excerpt'] = (string) $mundo_prior['caption'];
                         if ( array_key_exists( 'description', $mundo_prior ) ) $mrestore_post['post_content'] = (string) $mundo_prior['description'];
                         if ( count( $mrestore_post ) > 1 ) {
-                            $mrres = wp_update_post( $mrestore_post, true );
+                            $mrres = wp_update_post( wp_slash( $mrestore_post ), true );
                             if ( is_wp_error( $mrres ) ) throw new \Exception( esc_html( $mrres->get_error_message() ) );
                         }
                         if ( array_key_exists( 'alt_text', $mundo_prior ) ) {
-                            update_post_meta( $undo_mid, '_wp_attachment_image_alt', (string) $mundo_prior['alt_text'] );
+                            update_post_meta( $undo_mid, '_wp_attachment_image_alt', wp_slash( (string) $mundo_prior['alt_text'] ) );
                         }
                         clean_post_cache( $undo_mid );
                         wp_cache_delete( $undo_mid, 'post_meta' );
@@ -7028,7 +7031,7 @@ class Server {
                         if ( array_key_exists( 'slug', $tundo_prior ) )        $trestore_args['slug']        = (string) $tundo_prior['slug'];
                         if ( array_key_exists( 'description', $tundo_prior ) ) $trestore_args['description'] = (string) $tundo_prior['description'];
                         if ( array_key_exists( 'parent', $tundo_prior ) )      $trestore_args['parent']      = (int)    $tundo_prior['parent'];
-                        $trres = wp_update_term( $undo_tid, $undo_ttax, $trestore_args );
+                        $trres = wp_update_term( $undo_tid, $undo_ttax, wp_slash( $trestore_args ) );
                         if ( is_wp_error( $trres ) ) throw new \Exception( esc_html( $trres->get_error_message() ) );
                         clean_term_cache( $undo_tid, $undo_ttax );
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
@@ -7640,7 +7643,7 @@ class Server {
                             'menu-item-description' => (string) ( $dmi_row['description'] ?? '' ),
                             'menu-item-status'    => 'publish',
                         ];
-                        $dmi_new_id = wp_update_nav_menu_item( $undo_dmi_mid, 0, $dmi_args );
+                        $dmi_new_id = wp_update_nav_menu_item( $undo_dmi_mid, 0, wp_slash( $dmi_args ) );
                         if ( is_wp_error( $dmi_new_id ) ) {
                             throw new \Exception( esc_html( $dmi_new_id->get_error_message() ) );
                         }
@@ -7700,7 +7703,7 @@ class Server {
                             'parent'      => (int)    ( $dt_row['parent']      ?? 0 ),
                             'slug'        => (string) ( $dt_row['slug']        ?? '' ),
                         ];
-                        $dt_res = wp_insert_term( (string) $dt_row['name'], $undo_dt_tax, $dt_insert_args );
+                        $dt_res = wp_insert_term( wp_slash( (string) $dt_row['name'] ), $undo_dt_tax, wp_slash( $dt_insert_args ) );
                         if ( is_wp_error( $dt_res ) ) {
                             throw new \Exception( esc_html( $dt_res->get_error_message() ) );
                         }
@@ -7709,7 +7712,7 @@ class Server {
                         if ( isset( $dt_row['meta'] ) && is_array( $dt_row['meta'] ) ) {
                             foreach ( $dt_row['meta'] as $mk => $mvals ) {
                                 foreach ( (array) $mvals as $mv ) {
-                                    add_term_meta( $dt_new_tid, (string) $mk, $mv, false );
+                                    add_term_meta( $dt_new_tid, (string) $mk, wp_slash( $mv ), false );
                                 }
                             }
                         }
@@ -7793,7 +7796,7 @@ class Server {
                             'post_date_gmt'  => (string) ( $dpf_row['post_date_gmt']  ?? '' ),
                             'post_mime_type' => (string) ( $dpf_row['post_mime_type'] ?? '' ),
                         ];
-                        $dpf_new_id = wp_insert_post( $dpf_insert_args, true );
+                        $dpf_new_id = wp_insert_post( wp_slash( $dpf_insert_args ), true );
                         if ( is_wp_error( $dpf_new_id ) ) {
                             throw new \Exception( esc_html( $dpf_new_id->get_error_message() ) );
                         }
@@ -7803,7 +7806,7 @@ class Server {
                         if ( isset( $dpf_row['meta'] ) && is_array( $dpf_row['meta'] ) ) {
                             foreach ( $dpf_row['meta'] as $mk => $mvals ) {
                                 foreach ( (array) $mvals as $mv ) {
-                                    add_post_meta( $dpf_new_id, (string) $mk, $mv, false );
+                                    add_post_meta( $dpf_new_id, (string) $mk, wp_slash( $mv ), false );
                                 }
                             }
                         }
@@ -7865,7 +7868,7 @@ class Server {
                         if ( isset( $up_undo_data['post_date'] ) ) {
                             $up_undo_data['edit_date'] = true;
                         }
-                        $up_undo_res = wp_update_post( $up_undo_data, true );
+                        $up_undo_res = wp_update_post( wp_slash( $up_undo_data ), true );
                         if ( is_wp_error( $up_undo_res ) ) {
                             throw new \Exception( esc_html( $up_undo_res->get_error_message() ) );
                         }
@@ -8500,7 +8503,7 @@ class Server {
                         if ( empty( $dcf_row ) ) {
                             throw new \Exception('Undo snapshot has no row data to recreate.');
                         }
-                        $dcf_new_id = wp_insert_comment( $dcf_row );
+                        $dcf_new_id = wp_insert_comment( wp_slash( $dcf_row ) );
                         if ( ! $dcf_new_id ) {
                             throw new \Exception('wp_insert_comment failed on undo — the row could not be recreated.');
                         }
@@ -8567,7 +8570,7 @@ class Server {
                         if ( array_key_exists( 'target', $mi_prior ) )    $mi_overrides['menu-item-target']    = (string) $mi_prior['target'];
                         $mi_merged_undo = $this->build_safe_menu_item_args( $undo_mi_id, $mi_overrides );
                         if ( is_wp_error( $mi_merged_undo ) ) throw new \Exception( esc_html( $mi_merged_undo->get_error_message() ) );
-                        $mi_res_undo = wp_update_nav_menu_item( $undo_mi_mid, $undo_mi_id, $mi_merged_undo );
+                        $mi_res_undo = wp_update_nav_menu_item( $undo_mi_mid, $undo_mi_id, wp_slash( $mi_merged_undo ) );
                         if ( is_wp_error( $mi_res_undo ) ) throw new \Exception( esc_html( $mi_res_undo->get_error_message() ) );
                         clean_post_cache( $undo_mi_id );
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
@@ -8639,7 +8642,7 @@ class Server {
                         // Restore per-field using the same adapter-branched logic.
                         foreach ( $undo_seo_prior as $arg_key => $prior ) {
                             if ( $arg_key === 'slug' ) {
-                                $upd_slug = wp_update_post( [ 'ID' => $undo_seo_pid, 'post_name' => (string) $prior ], true );
+                                $upd_slug = wp_update_post( [ 'ID' => $undo_seo_pid, 'post_name' => wp_slash( (string) $prior ) ], true );
                                 if ( is_wp_error( $upd_slug ) ) throw new \Exception( 'Slug restore failed: ' . esc_html( $upd_slug->get_error_message() ) );
                                 continue;
                             }
@@ -8669,7 +8672,7 @@ class Server {
                             }
                             $mk = $undo_seo_field_map[ $arg_key ] ?? '';
                             if ( $mk !== '' ) {
-                                update_post_meta( $undo_seo_pid, $mk, (string) $prior );
+                                update_post_meta( $undo_seo_pid, $mk, wp_slash( (string) $prior ) );
                             }
                         }
                         wp_cache_delete( $undo_seo_pid, 'post_meta' );
@@ -8996,7 +8999,7 @@ class Server {
                         $rc_prior_content = isset( $rc_pre['prior_content'] ) ? (string) $rc_pre['prior_content'] : '';
                         wp_update_post( [
                             'ID'           => $rc_pid,
-                            'post_content' => $rc_prior_content,
+                            'post_content' => wp_slash( $rc_prior_content ),
                         ] );
                         clean_post_cache( $rc_pid );
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
@@ -9033,7 +9036,7 @@ class Server {
                         ] );
                         if ( isset( $dv_pre['meta'] ) && is_array( $dv_pre['meta'] ) ) {
                             foreach ( $dv_pre['meta'] as $mk => $mv ) {
-                                update_post_meta( $dv_pid, (string) $mk, $mv );
+                                update_post_meta( $dv_pid, (string) $mk, wp_slash( $mv ) );
                             }
                         }
                         clean_post_cache( $dv_pid );
