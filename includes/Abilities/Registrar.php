@@ -153,7 +153,7 @@ class Registrar {
 			$args = is_array( $input ) ? $input : array();
 			try {
 				$server = new Server();
-				return $server->invoke( $tool_name, $args );
+				return $server->invoke( $tool_name, $args, 'abilities' );
 			} catch ( \Throwable $e ) {
 				return new \WP_Error(
 					'royal_mcp_ability_exception',

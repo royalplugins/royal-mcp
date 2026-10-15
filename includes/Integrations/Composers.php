@@ -23,13 +23,13 @@ class Composers {
 		return [
 			[
 				'name'        => 'wp_publish_and_promote',
-				'description' => 'Publish a WordPress post in one call: optional featured image sideload, post creation, optional category (created if missing), optional tags (created if missing), optional SEO meta write (Yoast / Rank Math / SEObolt auto-detected). Best-effort composition — the post is the anchor step; if any downstream step (featured image, taxonomy, SEO) fails, the post is still created and the failure surfaces as a warning. Status defaults to "publish" (writes a LIVE post); pass status="draft" to stage. Supports scheduling via publish_date (future date auto-converts status to "future"). Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.',
+				'description' => 'Publish a WordPress post in one call: optional featured image sideload, post creation, optional category (created if missing), optional tags (created if missing), optional SEO meta write (Yoast / Rank Math / SEObolt auto-detected). Best-effort composition — the post is the anchor step; if any downstream step (featured image, taxonomy, SEO) fails, the post is still created and the failure surfaces as a warning. Status defaults to "draft"; pass status="publish" to publish the post live. Supports scheduling via publish_date (future date auto-converts status to "future"). Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
 						'title'              => [ 'type' => 'string',  'description' => 'Post title. Required.' ],
 						'content'            => [ 'type' => 'string',  'description' => 'Post content (HTML). Required.' ],
-						'status'             => [ 'type' => 'string',  'enum' => [ 'draft', 'publish', 'pending', 'private', 'future' ], 'description' => 'Default "publish" (LIVE). Pass "draft" to stage.' ],
+						'status'             => [ 'type' => 'string',  'enum' => [ 'draft', 'publish', 'pending', 'private', 'future' ], 'description' => 'Default "draft". Pass "publish" to publish live.' ],
 						'publish_date'       => [ 'type' => 'string',  'description' => 'Optional. Format YYYY-MM-DD HH:MM:SS in the site timezone. If in the future and status=publish, post_status auto-becomes "future".' ],
 						'featured_image_url' => [ 'type' => 'string',  'description' => 'Optional. Publicly-fetchable image URL to sideload as the featured image.' ],
 						'category'           => [ 'type' => 'string',  'description' => 'Optional. Category name. Created if it does not exist.' ],
@@ -92,9 +92,9 @@ class Composers {
 		}
 
 		$status_explicit = isset( $args['status'] );
-		$status          = $status_explicit ? sanitize_key( (string) $args['status'] ) : 'publish';
+		$status          = $status_explicit ? sanitize_key( (string) $args['status'] ) : 'draft';
 		if ( ! in_array( $status, [ 'draft', 'publish', 'pending', 'private', 'future' ], true ) ) {
-			$status = 'publish';
+			$status = 'draft';
 		}
 		$publish_date = isset( $args['publish_date'] )       ? sanitize_text_field( (string) $args['publish_date'] )       : '';
 		$featured_url = isset( $args['featured_image_url'] ) ? esc_url_raw( (string) $args['featured_image_url'] )         : '';
@@ -147,7 +147,7 @@ class Composers {
 				}
 			}
 		}
-		$post_id = wp_insert_post( $insert, true );
+		$post_id = wp_insert_post( wp_slash( $insert ), true );
 		if ( is_wp_error( $post_id ) ) {
 			$steps[] = [ 'name' => 'create_post', 'status' => 'error', 'message' => $post_id->get_error_message() ];
 			return Envelope::error(
@@ -216,12 +216,12 @@ class Composers {
 			}
 		}
 
-		// Status-default warning — matches Pro's exact phrasing (envelope
-		// mirror ensures this note reaches clients that drop structuredContent).
-		if ( ! $status_explicit && 'publish' === $status ) {
+		// Status-default note (the envelope mirror carries it to clients that
+		// drop structuredContent).
+		if ( ! $status_explicit ) {
 			$warnings[] = [
 				'step'    => 'status_default',
-				'message' => 'status defaulted to "publish" — this composer wrote a LIVE post. If you meant to stage first, pass status="draft" explicitly.',
+				'message' => 'status defaulted to "draft": the post is saved as a draft and is not live. Pass status="publish" to publish it.',
 			];
 		}
 
@@ -345,15 +345,15 @@ class Composers {
 		}
 
 		if ( '' !== $title ) {
-			update_post_meta( $post_id, $map['title'], $title );
+			update_post_meta( $post_id, $map['title'], wp_slash( $title ) );
 			$fields[] = 'title';
 		}
 		if ( '' !== $desc ) {
-			update_post_meta( $post_id, $map['description'], $desc );
+			update_post_meta( $post_id, $map['description'], wp_slash( $desc ) );
 			$fields[] = 'description';
 		}
 		if ( '' !== $focus_kw ) {
-			update_post_meta( $post_id, $map['focus_keyword'], $focus_kw );
+			update_post_meta( $post_id, $map['focus_keyword'], wp_slash( $focus_kw ) );
 			$fields[] = 'focus_keyword';
 		}
 

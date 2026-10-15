@@ -1003,7 +1003,7 @@ class YoastSEO {
 		foreach ( $requested as $arg_key => $value ) {
 			$meta_key = $field_map[ $arg_key ] ?? '';
 			if ( $meta_key !== '' ) {
-				update_post_meta( $post_id, $meta_key, $value );
+				update_post_meta( $post_id, $meta_key, wp_slash( $value ) );
 			}
 		}
 

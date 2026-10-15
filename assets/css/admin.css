@@ -5,8 +5,8 @@
    (Foundation: every Royal MCP button is a flex
    container so dashicons center visually instead
    of sitting on the text baseline. color: inherit
-   on dashicons fixes the blue-on-blue invisible
-   icon on .button-primary.)
+   on dashicons keeps the icon the same colour as
+   the button text on .button-primary.)
    ========================================== */
 
 .royal-mcp-settings .button {
@@ -30,29 +30,12 @@
 }
 
 /* Icon-only buttons (no text label) collapse to clean squares */
-.royal-mcp-settings .platform-actions .button,
-.royal-mcp-settings .platform-fields .toggle-password,
 .royal-mcp-settings .advanced-content .button.copy-btn,
 .royal-mcp-settings .advanced-content .toggle-password {
     padding: 6px 8px;
     min-width: 36px;
     min-height: 34px;
     gap: 0;
-}
-
-/* Platform card footer buttons (Get API Key, Documentation, Test Connection)
-   need a touch more breathing room — they sit at the visual base of each card. */
-.royal-mcp-settings .platform-links .button,
-.royal-mcp-settings .platform-test .button {
-    padding: 7px 16px;
-    min-height: 36px;
-    gap: 8px;
-}
-
-/* Add Provider button — primary CTA, slightly weightier */
-.royal-mcp-settings #add-platform-btn {
-    padding: 8px 18px;
-    min-height: 36px;
 }
 
 /* Visible focus ring for keyboard navigation */
@@ -149,328 +132,6 @@ input:checked + .slider:before {
 
 .switch.small input:checked + .slider:before {
     transform: translateX(20px);
-}
-
-/* ==========================================
-   Platform Items
-   ========================================== */
-
-#platforms-list {
-    margin: 20px 0;
-}
-
-.platform-item {
-    background: #fff;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    margin-bottom: 15px;
-    overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    transition: box-shadow 0.2s ease;
-}
-
-.platform-item:hover {
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-}
-
-.platform-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 15px 20px;
-    background: #fafafa;
-    border-bottom: 1px solid #eee;
-}
-
-.platform-info {
-    display: flex;
-    align-items: center;
-    gap: 15px;
-}
-
-.platform-icon {
-    width: 44px;
-    height: 44px;
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #fff;
-    font-size: 20px;
-    font-weight: 600;
-    text-transform: uppercase;
-    flex-shrink: 0;
-}
-
-.platform-details {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.platform-name {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: #1d2327;
-}
-
-.platform-description {
-    font-size: 13px;
-    color: #646970;
-}
-
-.platform-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.platform-actions .button {
-    padding: 4px 8px;
-    min-height: 30px;
-}
-
-.platform-actions .button .dashicons {
-    font-size: 18px;
-    width: 18px;
-    height: 18px;
-    line-height: 1;
-}
-
-.platform-toggle .dashicons {
-    transition: transform 0.2s ease;
-}
-
-.remove-platform:hover {
-    color: #d63638;
-    border-color: #d63638;
-}
-
-.platform-config {
-    padding: 20px;
-    background: #fff;
-}
-
-.platform-fields {
-    margin: 0 0 20px 0;
-}
-
-.platform-fields th {
-    width: 180px;
-    padding: 12px 10px 12px 0;
-    vertical-align: top;
-}
-
-.platform-fields td {
-    padding: 12px 10px 12px 0;
-}
-
-.platform-fields .required {
-    color: #d63638;
-    margin-left: 2px;
-}
-
-.platform-fields input[type="text"],
-.platform-fields input[type="password"],
-.platform-fields input[type="url"],
-.platform-fields select {
-    width: 100%;
-    max-width: 400px;
-}
-
-.platform-fields .toggle-password {
-    margin-left: 5px;
-    vertical-align: middle;
-}
-
-.platform-fields .toggle-password .dashicons {
-    font-size: 16px;
-    width: 16px;
-    height: 16px;
-}
-
-.platform-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding-top: 15px;
-    border-top: 1px solid #eee;
-    margin-top: 10px;
-}
-
-.platform-links {
-    display: flex;
-    gap: 10px;
-}
-
-.platform-links .button-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    text-decoration: none;
-    color: #2271b1;
-}
-
-.platform-links .button-link:hover {
-    color: #135e96;
-}
-
-.platform-links .dashicons {
-    font-size: 16px;
-    width: 16px;
-    height: 16px;
-}
-
-.platform-test {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.test-connection {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-}
-
-.test-connection .dashicons {
-    font-size: 16px;
-    width: 16px;
-    height: 16px;
-}
-
-.test-connection .dashicons.spin {
-    animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-    100% { transform: rotate(360deg); }
-}
-
-.connection-status {
-    font-size: 13px;
-    padding: 4px 10px;
-    border-radius: 4px;
-}
-
-.connection-status.success {
-    background: #d4edda;
-    color: #155724;
-}
-
-.connection-status.error {
-    background: #f8d7da;
-    color: #721c24;
-}
-
-/* Empty State */
-.platform-empty-state {
-    text-align: center;
-    padding: 40px 20px;
-    background: #f9f9f9;
-    border: 2px dashed #ddd;
-    border-radius: 8px;
-    margin: 20px 0;
-}
-
-.platform-empty-state .empty-icon {
-    margin-bottom: 15px;
-}
-
-.platform-empty-state .empty-icon .dashicons {
-    font-size: 48px;
-    width: 48px;
-    height: 48px;
-    color: #c3c4c7;
-}
-
-.platform-empty-state h3 {
-    margin: 0 0 10px 0;
-    font-size: 18px;
-    color: #1d2327;
-}
-
-.platform-empty-state p {
-    margin: 0;
-    color: #646970;
-}
-
-/* Add Platform Section */
-.add-platform-section {
-    margin-top: 20px;
-    padding-top: 20px;
-    border-top: 1px solid #eee;
-}
-
-.add-platform-dropdown {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-}
-
-#add-platform-select {
-    min-width: 280px;
-    padding: 8px 12px;
-}
-
-#add-platform-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-}
-
-#add-platform-btn .dashicons {
-    font-size: 16px;
-    width: 16px;
-    height: 16px;
-}
-
-/* ==========================================
-   Legacy MCP Servers (Backward Compatibility)
-   ========================================== */
-
-#mcp-servers-list {
-    margin: 20px 0;
-}
-
-.mcp-server-item {
-    background: #f9f9f9;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    padding: 15px;
-    margin-bottom: 15px;
-}
-
-.mcp-server-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 15px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid #ddd;
-}
-
-.mcp-server-header h3 {
-    margin: 0;
-    font-size: 16px;
-}
-
-.mcp-server-item .form-table {
-    margin: 0;
-}
-
-.mcp-server-item .form-table th {
-    width: 200px;
-    padding: 10px 10px 10px 0;
-}
-
-.mcp-server-item .form-table td {
-    padding: 10px 10px 10px 0;
-}
-
-#add-server {
-    margin-top: 10px;
 }
 
 /* ==========================================
@@ -618,60 +279,6 @@ input:checked + .slider:before {
    ========================================== */
 
 @media screen and (max-width: 782px) {
-    .platform-header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 15px;
-    }
-
-    .platform-info {
-        width: 100%;
-    }
-
-    .platform-actions {
-        width: 100%;
-        justify-content: flex-end;
-    }
-
-    .platform-footer {
-        flex-direction: column;
-        gap: 15px;
-        align-items: flex-start;
-    }
-
-    .platform-links {
-        flex-wrap: wrap;
-    }
-
-    .platform-fields th {
-        width: 100%;
-        display: block;
-        padding-bottom: 5px;
-    }
-
-    .platform-fields td {
-        display: block;
-        padding-top: 0;
-    }
-
-    .add-platform-dropdown {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
-    #add-platform-select {
-        min-width: 100%;
-    }
-
-    .mcp-server-header {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-
-    .mcp-server-header .button {
-        margin-top: 10px;
-    }
-
     .api-endpoints-reference li {
         flex-direction: column;
         align-items: flex-start;
@@ -910,214 +517,9 @@ input:checked + .slider:before {
 }
 
 /* ==========================================
-   Founders Bundle Banner — hero with 6-card grid
-   ========================================== */
-
-.royal-mcp-founders-banner {
-    position: relative;
-    background: linear-gradient(135deg, #14102e 0%, #241a52 50%, #3a1f6b 100%);
-    border-radius: 12px;
-    padding: 32px 36px;
-    margin: 32px 0 32px 0;
-    overflow: hidden;
-    color: #fff;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
-    gap: 36px;
-    align-items: center;
-    box-shadow: 0 8px 24px rgba(20, 16, 46, 0.18);
-}
-
-.royal-mcp-founders-banner::before {
-    content: '';
-    position: absolute;
-    top: -40%;
-    right: -8%;
-    width: 60%;
-    height: 200%;
-    background: radial-gradient(ellipse at center, rgba(201, 162, 39, 0.12) 0%, transparent 60%);
-    pointer-events: none;
-}
-
-.royal-mcp-founders-banner::after {
-    content: '';
-    position: absolute;
-    top: -50%;
-    left: -10%;
-    width: 50%;
-    height: 200%;
-    background: radial-gradient(ellipse at center, rgba(107, 45, 184, 0.18) 0%, transparent 60%);
-    pointer-events: none;
-}
-
-.royal-mcp-founders-left {
-    position: relative;
-    z-index: 1;
-}
-
-.royal-mcp-founders-eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #f0c83a;
-    margin-bottom: 12px;
-    padding: 4px 10px;
-    background: rgba(240, 200, 58, 0.1);
-    border: 1px solid rgba(240, 200, 58, 0.25);
-    border-radius: 100px;
-}
-
-.royal-mcp-founders-eyebrow .dashicons {
-    font-size: 12px;
-    width: 12px;
-    height: 12px;
-    line-height: 1;
-}
-
-.royal-mcp-founders-title {
-    font-size: 24px;
-    font-weight: 700;
-    line-height: 1.2;
-    margin: 0 0 10px 0;
-    color: #fff;
-    letter-spacing: -0.01em;
-}
-
-.royal-mcp-founders-subtitle {
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.82);
-    line-height: 1.55;
-    margin: 0 0 20px 0;
-    max-width: 440px;
-}
-
-.royal-mcp-founders-banner .royal-mcp-founders-cta-primary {
-    background: linear-gradient(135deg, #f0c83a, #d4a517);
-    color: #1a1438;
-    border: 0;
-    padding: 10px 20px;
-    border-radius: 8px;
-    font-weight: 600;
-    font-size: 13.5px;
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
-    box-shadow: 0 4px 12px rgba(212, 165, 23, 0.3);
-}
-
-.royal-mcp-founders-banner .royal-mcp-founders-cta-primary:hover,
-.royal-mcp-founders-banner .royal-mcp-founders-cta-primary:focus {
-    transform: translateY(-1px);
-    color: #1a1438;
-    box-shadow: 0 6px 16px rgba(212, 165, 23, 0.45);
-}
-
-.royal-mcp-founders-banner .royal-mcp-founders-cta-primary .dashicons {
-    font-size: 14px;
-    width: 14px;
-    height: 14px;
-}
-
-.royal-mcp-founders-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-    position: relative;
-    z-index: 1;
-}
-
-.royal-mcp-founders-grid-item {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 10px;
-    padding: 16px 12px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    gap: 8px;
-    color: rgba(255, 255, 255, 0.92);
-    font-size: 12.5px;
-    font-weight: 500;
-    transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
-    text-decoration: none;
-}
-
-.royal-mcp-founders-grid-item:hover,
-.royal-mcp-founders-grid-item:focus {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(240, 200, 58, 0.35);
-    transform: translateY(-2px);
-    color: #fff;
-}
-
-.royal-mcp-founders-grid-item .dashicons {
-    color: #f0c83a;
-    font-size: 26px;
-    width: 26px;
-    height: 26px;
-    line-height: 1;
-}
-
-.royal-mcp-founders-grid-item-name {
-    line-height: 1.3;
-}
-
-.royal-mcp-founders-dismiss {
-    position: absolute;
-    top: 12px;
-    right: 14px;
-    color: rgba(255, 255, 255, 0.55);
-    text-decoration: none;
-    padding: 6px;
-    line-height: 1;
-    border-radius: 4px;
-    z-index: 2;
-    display: inline-flex;
-    transition: color 0.15s ease, background 0.15s ease;
-}
-
-.royal-mcp-founders-dismiss:hover,
-.royal-mcp-founders-dismiss:focus {
-    color: #fff;
-    background: rgba(255, 255, 255, 0.1);
-}
-
-.royal-mcp-founders-dismiss .dashicons {
-    font-size: 16px;
-    width: 16px;
-    height: 16px;
-}
-
-@media (max-width: 900px) {
-    .royal-mcp-founders-banner {
-        grid-template-columns: 1fr;
-        padding: 24px;
-    }
-    .royal-mcp-founders-subtitle {
-        max-width: none;
-    }
-}
-
-@media (max-width: 600px) {
-    .royal-mcp-founders-grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
-    .royal-mcp-founders-title {
-        font-size: 20px;
-    }
-}
-
-/* ==========================================
    1.4.25 — New layout elements
    (MCP URL block, Cloudflare warning, Advanced toggle,
-    Setup Guides accordion, Outbound banner)
+    Setup Guides accordion)
    ========================================== */
 
 /* --- MCP Server URL prominent block --- */
@@ -1171,6 +573,40 @@ input:checked + .slider:before {
     font-size: 13px;
     line-height: 1.55;
     font-style: normal;
+}
+
+/* --- General Settings groups --- */
+.royal-mcp-settings .rmcp-settings-group-title {
+    margin: 28px 0 0;
+    padding-top: 20px;
+    border-top: 1px solid #dcdcde;
+    font-size: 14px;
+    font-weight: 600;
+    color: #1d2327;
+}
+
+.royal-mcp-settings .rmcp-settings-group-title.is-first {
+    margin-top: 4px;
+    padding-top: 0;
+    border-top: 0;
+}
+
+.royal-mcp-settings .rmcp-settings-group-intro {
+    margin: 4px 0 0;
+    color: #50575e;
+    font-size: 13px;
+}
+
+.royal-mcp-settings #rmcp-row-writable-options[hidden] {
+    display: none !important;
+}
+
+.royal-mcp-settings .rmcp-danger-row th label {
+    color: #b32d2e;
+}
+
+.royal-mcp-settings .rmcp-danger-row td .description {
+    color: #8a2424;
 }
 
 /* --- Cloudflare / localhost warning callouts --- */
@@ -1453,38 +889,6 @@ input:checked + .slider:before {
     height: 14px;
 }
 
-/* --- Outbound disambiguation banner --- */
-.outbound-banner {
-    background: #f0f6ff;
-    border: 1px solid #c3d4e8;
-    border-radius: 6px;
-    padding: 14px 18px;
-    margin: 4px 0 20px;
-    display: flex;
-    gap: 12px;
-    align-items: flex-start;
-}
-
-.outbound-banner .dashicons {
-    color: #2271b1;
-    font-size: 20px;
-    width: 20px;
-    height: 20px;
-    flex-shrink: 0;
-    margin-top: 1px;
-}
-
-.outbound-banner p {
-    margin: 0;
-    color: #50575e;
-    font-size: 13.5px;
-    line-height: 1.6;
-}
-
-.outbound-banner strong {
-    color: #1d2327;
-}
-
 /* --- Misc 1.4.25 fixes --- */
 .warning-text {
     color: #d63638 !important;
@@ -1509,18 +913,13 @@ input:checked + .slider:before {
     .setup-guide-code-block {
         font-size: 11.5px;
     }
-    .outbound-banner {
-        padding: 12px 14px;
-    }
     .advanced-content {
         padding: 4px 12px 12px;
     }
 }
 
 /* wp.org review-request banner. Lightweight, sits at the top of
-   the settings page above the General Settings postbox. Smaller / less
-   visually loud than the founders banner since the ask is just a review,
-   not a purchase. */
+   the settings page above the General Settings postbox. */
 .royal-mcp-review-banner {
     position: relative;
     display: flex;
@@ -1533,8 +932,7 @@ input:checked + .slider:before {
     /* extra right padding reserves a column for the absolute-positioned X
        so the Leave-a-Review CTA doesn't crowd up against it */
     padding: 16px 40px 16px 20px;
-    /* Width matches the founders banner — flow-natural, no max-width.
-       Both banners share the same horizontal extent for visual consistency. */
+    /* Flow-natural width, no max-width. */
     margin: 16px 0 20px 0;
     color: #3d3522;
 }

@@ -42,19 +42,15 @@ class Elementor_Coexistence {
 	const NOTICE_ACTION = 'royal_mcp_dismiss_elementor_coexistence';
 
 	/**
-	 * True when Elementor's core MCP module is actually registering abilities
-	 * on this site — i.e. an MCP client that discovered the site would see
-	 * Elementor's tools.
+	 * True when Elementor's own MCP server answers on this site — i.e. an MCP
+	 * client that discovered the site would see Elementor's tools.
 	 *
-	 * Delegates to Elementor's own `Module::is_active()` which returns true
-	 * only when BOTH conditions hold: the `WP\MCP\Core\McpAdapter` class is
-	 * present (the WP MCP Adapter Composer package is installed) AND the
-	 * WordPress Abilities API is available (`wp_register_ability` exists).
-	 *
-	 * Class-exists alone is NOT sufficient: Elementor 4.x ships the module
-	 * class in the plugin bundle on every install, so class_exists would fire
-	 * this coexistence layer on millions of sites where the MCP module is
-	 * actually dormant. Their own is_active() gate is the correct signal.
+	 * Two conditions: Elementor's `Module::is_active()` (the MCP Adapter and
+	 * the Abilities API are present, so the module loads) AND the site owner
+	 * switched Elementor MCP on (`elementor_mcp_enabled`; a missing option
+	 * means off). Elementor loads the module on every site that meets the
+	 * first condition, with its server switched off by default, so the module
+	 * alone does not mean a client can reach Elementor's tools.
 	 *
 	 * A filter (`royal_mcp_elementor_native_mcp_active`, default null) allows
 	 * downstream code / tests to force the answer without touching Elementor.
@@ -72,8 +68,27 @@ class Elementor_Coexistence {
 		if ( ! method_exists( '\Elementor\Modules\Mcp\Module', 'is_active' ) ) {
 			return false;
 		}
+		if ( ! \Elementor\Modules\Mcp\Module::is_active() ) {
+			return false;
+		}
 
-		return (bool) \Elementor\Modules\Mcp\Module::is_active();
+		return self::native_mcp_switched_on();
+	}
+
+	/**
+	 * Elementor's own on/off setting for its MCP server. Missing means off.
+	 *
+	 * @return bool
+	 */
+	private static function native_mcp_switched_on() {
+		$value = get_option( 'elementor_mcp_enabled', null );
+		if ( is_bool( $value ) ) {
+			return $value;
+		}
+		if ( null === $value || ! is_scalar( $value ) ) {
+			return false;
+		}
+		return in_array( strtolower( trim( (string) $value ) ), [ '1', 'yes', 'true', 'on' ], true );
 	}
 
 	/**

@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.5.8
+ * Version: 1.5.9
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -41,7 +41,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 }
 
 // Define plugin constants.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.8' );
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.9' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -322,8 +322,6 @@ class Royal_MCP_Plugin {
         $royal_mcp_activation_plaintext = bin2hex( random_bytes( 16 ) );
         add_option( 'royal_mcp_settings', [ // audit:autoload-ok -- read on every request (auth path, chrome, discovery, admin bar)
             'enabled'         => false,
-            'platforms'       => [],
-            'mcp_servers'     => [],
             'api_key'         => '',
             'api_key_hash'    => hash( 'sha256', $royal_mcp_activation_plaintext ),
             'api_key_user_id' => (int) get_current_user_id(),
@@ -375,6 +373,7 @@ class Royal_MCP_Plugin {
         // guard because the hash-at-rest change applies to any install whose
         // settings still hold a plaintext key, not just first-load post-upgrade.
         $this->maybe_migrate_api_key_settings();
+        $this->maybe_remove_provider_settings();
 
         if (get_option('royal_mcp_db_version') === ROYAL_MCP_VERSION
             && $this->required_tables_exist()) {
@@ -464,6 +463,20 @@ class Royal_MCP_Plugin {
         if ( $dirty ) {
             update_option( 'royal_mcp_settings', $settings );
         }
+    }
+
+    /**
+     * Drop the AI provider and outbound server entries from settings,
+     * API keys included; nothing reads them. Gated on the data, so it is
+     * a no-op once they are gone.
+     */
+    private function maybe_remove_provider_settings() {
+        $settings = get_option( 'royal_mcp_settings', [] );
+        if ( ! is_array( $settings ) || ( ! array_key_exists( 'platforms', $settings ) && ! array_key_exists( 'mcp_servers', $settings ) ) ) {
+            return;
+        }
+        unset( $settings['platforms'], $settings['mcp_servers'] );
+        update_option( 'royal_mcp_settings', $settings );
     }
 
     /** Verify core OAuth + session tables physically exist; backstop for maybe_upgrade_db(). */
@@ -860,6 +873,7 @@ class Royal_MCP_Plugin {
         if (is_admin()) {
             new Royal_MCP\Admin\Settings_Page();
             new Royal_MCP\Admin\Connected_Clients_Page();
+            new Royal_MCP\Admin\Changes_Page();
             new Royal_MCP\Admin\Pro_Notice();
             new Royal_MCP\Admin\Well_Known_Notice();
             new Royal_MCP\Admin\Authorization_Header_Notice();

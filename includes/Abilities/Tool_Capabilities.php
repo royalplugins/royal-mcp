@@ -78,6 +78,7 @@ class Tool_Capabilities {
 			// ==================== Core: media ====================
 			'wp_get_media'             => 'upload_files',
 			'wp_get_media_item'        => 'upload_files',
+			'wp_find_media'            => 'upload_files',
 			'wp_count_media'           => 'upload_files',
 			'wp_upload_media_from_url' => 'upload_files',
 			'wp_upload_media'          => 'upload_files',
@@ -102,6 +103,23 @@ class Tool_Capabilities {
 
 			// ==================== Core: connection health — any authenticated caller ====================
 			'royal_mcp_connection_health' => 'read',
+
+			// ==================== Core: blocks — per-post checks run in the handler ====================
+			'wp_validate_blocks'         => 'edit_posts',
+			'wp_list_block_types'        => 'edit_posts',
+			'wp_insert_blocks'           => 'edit_posts',
+			'wp_replace_block'           => 'edit_posts',
+			'wp_move_block'              => 'edit_posts',
+			'wp_replace_text_in_blocks'  => 'edit_posts',
+			'wp_list_synced_patterns'    => 'edit_posts',
+			'wp_get_synced_pattern'      => 'edit_posts',
+			'wp_get_global_styles'       => 'edit_theme_options',
+			'wp_list_block_templates'    => 'edit_theme_options',
+			'wp_get_block_template'      => 'edit_theme_options',
+
+			// ==================== Core: change history — each change is checked against its own capability ====================
+			'mcp_list_recent_changes' => 'read',
+			'mcp_get_change'          => 'read',
 
 			// ==================== ForgeCache: admin ops ====================
 			'fc_clear_cache'     => 'manage_options',

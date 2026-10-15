@@ -39,6 +39,7 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
             <form method="get">
                 <input type="hidden" name="page" value="royal-mcp-logs">
                 <button type="submit" class="button"><?php esc_html_e('Refresh', 'royal-mcp'); ?></button>
+                <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=' . \Royal_MCP\Admin\Changes_Page::MENU_SLUG)); ?>"><?php esc_html_e('Recent changes (72 hours)', 'royal-mcp'); ?></a>
             </form>
         </div>
         <?php if ($royal_mcp_total_pages > 1) : ?>
@@ -119,6 +120,13 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
                                 data-response="<?php echo esc_attr($royal_mcp_log->response_data); ?>">
                             <?php esc_html_e('View Details', 'royal-mcp'); ?>
                         </button>
+                        <?php
+                        $royal_mcp_response = json_decode((string) $royal_mcp_log->response_data, true);
+                        $royal_mcp_change   = is_array($royal_mcp_response) ? (string) ($royal_mcp_response['change_id'] ?? '') : '';
+                        if (preg_match('/^[a-f0-9]{20}$/', $royal_mcp_change)) :
+                        ?>
+                        <a class="button button-small" href="<?php echo esc_url(\Royal_MCP\Admin\Changes_Page::change_url($royal_mcp_change)); ?>"><?php esc_html_e('View change', 'royal-mcp'); ?></a>
+                        <?php endif; ?>
                     </td>
                 </tr>
                 <?php endforeach; ?>
