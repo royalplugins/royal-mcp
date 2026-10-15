@@ -53,6 +53,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                     <h2><?php esc_html_e('General Settings', 'royal-mcp'); ?></h2>
                 </div>
                 <div class="inside">
+                    <h3 class="rmcp-settings-group-title is-first"><?php esc_html_e('Connection', 'royal-mcp'); ?></h3>
                     <table class="form-table">
                         <tr>
                             <th scope="row">
@@ -68,278 +69,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                     <span class="slider"></span>
                                 </label>
                                 <p class="description">
-                                    <?php esc_html_e('When enabled, AI clients can connect to your WordPress site via the MCP Server URL below.', 'royal-mcp'); ?>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="read_only_mode"><?php esc_html_e('Read-only mode', 'royal-mcp'); ?></label>
-                            </th>
-                            <td>
-                                <label class="switch">
-                                    <input type="checkbox"
-                                           name="royal_mcp_settings[read_only_mode]"
-                                           id="read_only_mode"
-                                           value="1"
-                                           <?php checked(!empty($royal_mcp_settings['read_only_mode'])); ?>>
-                                    <span class="slider"></span>
-                                </label>
-                                <p class="description">
-                                    <?php esc_html_e('When ON, AI clients can read your site but not change it: every tool that creates, updates or deletes anything is refused, for every client and every user, including administrators. The tools stay in clients\' tool lists, marked as switched off. Turn ON to let AI work with your content safely while you decide what it may change.', 'royal-mcp'); ?>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="drafts_only_mode"><?php esc_html_e('Drafts only', 'royal-mcp'); ?></label>
-                            </th>
-                            <td>
-                                <label class="switch">
-                                    <input type="checkbox"
-                                           name="royal_mcp_settings[drafts_only_mode]"
-                                           id="drafts_only_mode"
-                                           value="1"
-                                           <?php checked(!empty($royal_mcp_settings['drafts_only_mode'])); ?>>
-                                    <span class="slider"></span>
-                                </label>
-                                <p class="description">
-                                    <?php esc_html_e('When ON, AI clients can create drafts and edit posts and pages that are still drafts or pending, and nothing else: they cannot publish, change published content, or change settings, menus, comments or other plugins. Images and files can still be uploaded for the drafts. Read-only mode, when also on, wins.', 'royal-mcp'); ?>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="api_key_access"><?php esc_html_e('Access level: API key', 'royal-mcp'); ?></label>
-                            </th>
-                            <td>
-                                <select name="royal_mcp_settings[api_key_access]" id="api_key_access">
-                                    <?php foreach (['full', 'read-only', 'drafts-only'] as $royal_mcp_level) : ?>
-                                        <option value="<?php echo esc_attr($royal_mcp_level); ?>" <?php selected(\Royal_MCP\MCP\Support\Access_Levels::normalize($royal_mcp_settings['api_key_access'] ?? '') ?: 'full', $royal_mcp_level); ?>><?php echo esc_html(\Royal_MCP\MCP\Support\Access_Levels::label($royal_mcp_level)); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <p class="description">
-                                    <?php esc_html_e('What AI clients that connect with the WordPress API key may do. Read-only: read the site only. Drafts only: create drafts and edit drafts and pending posts. Each OAuth client gets its own level on the Connected Clients screen.', 'royal-mcp'); ?>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="other_routes_access"><?php esc_html_e('Access level: other MCP servers and browser agents', 'royal-mcp'); ?></label>
-                            </th>
-                            <td>
-                                <select name="royal_mcp_settings[other_routes_access]" id="other_routes_access">
-                                    <?php foreach (['full', 'read-only', 'drafts-only'] as $royal_mcp_level) : ?>
-                                        <option value="<?php echo esc_attr($royal_mcp_level); ?>" <?php selected(\Royal_MCP\MCP\Support\Access_Levels::normalize($royal_mcp_settings['other_routes_access'] ?? '') ?: 'full', $royal_mcp_level); ?>><?php echo esc_html(\Royal_MCP\MCP\Support\Access_Levels::label($royal_mcp_level)); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <p class="description">
-                                    <?php esc_html_e('What calls that reach Royal MCP tools another way may do: through other MCP servers on this site (the WordPress MCP Adapter, Elementor) or through browser agents. Read-only mode and Drafts only above still apply to every connection.', 'royal-mcp'); ?>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="delete_data_on_uninstall"><?php esc_html_e('Delete all data when the plugin is deleted', 'royal-mcp'); ?></label>
-                            </th>
-                            <td>
-                                <label class="switch">
-                                    <input type="checkbox"
-                                           name="royal_mcp_settings[delete_data_on_uninstall]"
-                                           id="delete_data_on_uninstall"
-                                           value="1"
-                                           <?php checked(!empty($royal_mcp_settings['delete_data_on_uninstall'])); ?>>
-                                    <span class="slider"></span>
-                                </label>
-                                <p class="description">
-                                    <?php esc_html_e('When OFF (the default), deleting the plugin keeps your settings, API key, activity log, undo history and connected clients, so a reinstall picks up where you left off. Turn ON only if you want deleting the plugin to remove all of that permanently. It cannot be recovered.', 'royal-mcp'); ?>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="allow_option_writes"><?php esc_html_e('Allow AI to write WordPress options', 'royal-mcp'); ?></label>
-                            </th>
-                            <td>
-                                <label class="switch">
-                                    <input type="checkbox"
-                                           name="royal_mcp_settings[allow_option_writes]"
-                                           id="allow_option_writes"
-                                           value="1"
-                                           <?php checked(!empty($royal_mcp_settings['allow_option_writes'])); ?>>
-                                    <span class="slider"></span>
-                                </label>
-                                <p class="description">
-                                    <?php esc_html_e('When enabled, AI agents can write to allowlisted WordPress options via the wp_update_option tool. Sensitive options (siteurl, secret keys, license keys, etc.) are permanently denylisted regardless of this setting. Plugin authors opt their settings in via the royal_mcp_writable_options filter.', 'royal-mcp'); ?>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="writable_options_admin"><?php esc_html_e('Allowlisted plugin options', 'royal-mcp'); ?></label>
-                            </th>
-                            <td>
-                                <?php
-                                $wo_admin_arr = isset($royal_mcp_settings['writable_options_admin']) && is_array($royal_mcp_settings['writable_options_admin'])
-                                    ? $royal_mcp_settings['writable_options_admin']
-                                    : [];
-                                $wo_admin_str = implode("\n", $wo_admin_arr);
-                                ?>
-                                <textarea name="royal_mcp_settings[writable_options_admin]"
-                                          id="writable_options_admin"
-                                          rows="5"
-                                          class="large-text code"
-                                          placeholder="my_plugin_settings&#10;another_option_key&#10;rank-math-options-general"><?php echo esc_textarea($wo_admin_str); ?></textarea>
-                                <p class="description">
-                                    <?php esc_html_e('One option name per line. Options listed here become readable by wp_get_option AND writable by wp_update_option. Requires the master toggle above to be on. Each line is normalized via sanitize_key() and merged with the defaults + the royal_mcp_readable_options / royal_mcp_writable_options filters. Sensitive keys (siteurl, credentials, license keys, etc.) remain permanently denylisted regardless of what appears here.', 'royal-mcp'); ?>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="allow_theme_writes"><?php esc_html_e('Allow AI to modify theme appearance', 'royal-mcp'); ?></label>
-                            </th>
-                            <td>
-                                <label class="switch">
-                                    <input type="checkbox"
-                                           name="royal_mcp_settings[allow_theme_writes]"
-                                           id="allow_theme_writes"
-                                           value="1"
-                                           <?php checked(!empty($royal_mcp_settings['allow_theme_writes'])); ?>>
-                                    <span class="slider"></span>
-                                </label>
-                                <p class="description">
-                                    <?php esc_html_e('When enabled, AI agents can update theme customizer settings (theme_mods) and the active theme\'s custom CSS. Theme mod writes also require the mod name to be in the allowlist (extend via the royal_mcp_writable_theme_mods filter — default allowlist is empty, opt-in only). Custom CSS is filtered through wp_kses so script tags are stripped.', 'royal-mcp'); ?>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="webmcp_enabled"><?php esc_html_e('Enable browser agents (WebMCP)', 'royal-mcp'); ?></label>
-                            </th>
-                            <td>
-                                <label class="switch">
-                                    <input type="checkbox"
-                                           name="royal_mcp_settings[webmcp_enabled]"
-                                           id="webmcp_enabled"
-                                           value="1"
-                                           <?php checked(!empty($royal_mcp_settings['webmcp_enabled'])); ?>>
-                                    <span class="slider"></span>
-                                </label>
-                                <?php
-                                // Render the bridge-detected pill only when the probe positively
-                                // confirms a WebMCP bridge on this domain. The not_detected +
-                                // unknown states are noise for the ~99% of admins who don't run
-                                // one; the toggle description below already explains what WebMCP
-                                // is and where to enable it. Probe path is the W3C WebMCP spec
-                                // location (`/.webmcp/bridge.js`), so any conforming bridge
-                                // implementation is detected here, not just Cloudflare's.
-                                $webmcp_status = \Royal_MCP\Admin\Settings_Page::detect_webmcp_bridge();
-                                if ( 'detected' === $webmcp_status ) : ?>
-                                <p class="description" style="margin-top:6px;">
-                                    <span style="display:inline-block;padding:2px 8px;border-radius:10px;background:#008a20;color:#fff;font-size:11px;font-weight:600;">
-                                        <?php esc_html_e('WebMCP bridge detected on this domain.', 'royal-mcp'); ?>
-                                    </span>
-                                </p>
-                                <?php endif; ?>
-                                <p class="description">
-                                    <?php esc_html_e('When ON, browser-based AI agents (via any WebMCP-compatible bridge) can call Royal MCP tools using the visitor\'s existing WordPress login session. Every request must carry a WordPress nonce that Royal MCP mints for logged-in users — the same-origin security gate keeps this from being reachable by third-party pages your admin visits. External clients (Claude Desktop, ChatGPT, Cursor) continue to use OAuth Bearer tokens regardless of this setting.', 'royal-mcp'); ?>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="require_client_approval"><?php esc_html_e('Require approval before new AI clients can connect', 'royal-mcp'); ?></label>
-                            </th>
-                            <td>
-                                <label class="switch">
-                                    <input type="checkbox"
-                                           name="royal_mcp_settings[require_client_approval]"
-                                           id="require_client_approval"
-                                           value="1"
-                                           <?php checked(!empty($royal_mcp_settings['require_client_approval'])); ?>>
-                                    <span class="slider"></span>
-                                </label>
-                                <p class="description">
-                                    <?php esc_html_e('When ON, dynamic OAuth client registrations are saved as pending and cannot connect until you approve them from Royal MCP > Pending Clients. Default OFF preserves the standard dynamic-registration behavior. Turn ON for high-security postures where every AI-client connection should be reviewed by an admin.', 'royal-mcp'); ?>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="abilities_registration_enabled"><?php esc_html_e('Register tools with the WordPress Abilities API', 'royal-mcp'); ?></label>
-                            </th>
-                            <td>
-                                <label class="switch">
-                                    <input type="checkbox"
-                                           name="royal_mcp_settings[abilities_registration_enabled]"
-                                           id="abilities_registration_enabled"
-                                           value="1"
-                                           <?php checked($royal_mcp_abilities_registration_enabled); ?>>
-                                    <span class="slider"></span>
-                                </label>
-                                <p class="description">
-                                    <?php esc_html_e('When ON (default), Royal MCP tools are registered with the WordPress Abilities API so other MCP endpoints on this site (for example a page-builder module that ships its own MCP server) can auto-discover them. Turn this OFF if you run a separate MCP endpoint alongside Royal MCP and want to keep each server\'s tool list scoped to that server. Requires WordPress 6.9 or later.', 'royal-mcp'); ?>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="api_key"><?php esc_html_e('WordPress API Key', 'royal-mcp'); ?></label>
-                            </th>
-                            <td>
-                                <input type="text"
-                                       name="royal_mcp_settings[api_key]"
-                                       id="api_key"
-                                       value="<?php echo esc_attr( $royal_mcp_api_key_field ); ?>"
-                                       placeholder="<?php echo $royal_mcp_api_key_masked
-                                           ? esc_attr__( 'Key is stored hashed — regenerate to view a new one', 'royal-mcp' )
-                                           : esc_attr__( 'No API key set — regenerate to create one', 'royal-mcp' ); ?>"
-                                       class="regular-text code"
-                                       readonly>
-                                <button type="button" class="button" id="copy-api-key"<?php echo $royal_mcp_api_key_masked ? ' disabled aria-disabled="true"' : ''; ?>>
-                                    <span class="dashicons dashicons-clipboard"></span>
-                                    <?php esc_html_e('Copy', 'royal-mcp'); ?>
-                                </button>
-                                <button type="submit"
-                                        name="royal_mcp_settings[regenerate_api_key]"
-                                        value="1"
-                                        class="button"
-                                        id="rmcp-regenerate-key">
-                                    <span class="dashicons dashicons-update"></span>
-                                    <?php esc_html_e('Regenerate', 'royal-mcp'); ?>
-                                </button>
-                                <?php if ( '' !== $royal_mcp_reveal_key ) : ?>
-                                <div class="notice notice-warning inline" style="margin-top:10px;">
-                                    <p style="margin:6px 0;">
-                                        <strong><?php esc_html_e( 'Copy your API key now.', 'royal-mcp' ); ?></strong>
-                                        <?php esc_html_e( 'The full key is shown once. After you leave this page, only a masked value will be visible — you\'ll need to regenerate to see a new one.', 'royal-mcp' ); ?>
-                                    </p>
-                                </div>
-                                <?php endif; ?>
-                                <?php
-                                $royal_mcp_bound_uid = (int) ( $royal_mcp_settings['api_key_user_id'] ?? 0 );
-                                if ( $royal_mcp_bound_uid > 0 ) {
-                                    $royal_mcp_bound_user = get_userdata( $royal_mcp_bound_uid );
-                                    if ( $royal_mcp_bound_user ) {
-                                        printf(
-                                            '<p class="description"><span class="dashicons dashicons-admin-users" aria-hidden="true"></span> %s</p>',
-                                            esc_html( sprintf(
-                                                /* translators: %s: WordPress username */
-                                                __( 'API key attributed to: %s', 'royal-mcp' ),
-                                                $royal_mcp_bound_user->user_login
-                                            ) )
-                                        );
-                                    }
-                                } elseif ( ! empty( $royal_mcp_settings['api_key'] ) ) {
-                                    printf(
-                                        '<p class="description" style="color:#b32d2e;"><span class="dashicons dashicons-warning" aria-hidden="true"></span> %s</p>',
-                                        esc_html__( 'API key is not bound to a user. Regenerate to attribute tool calls to your account.', 'royal-mcp' )
-                                    );
-                                }
-                                ?>
-                                <p class="description">
-                                    <?php esc_html_e('Use this key in MCP clients that don\'t support OAuth (e.g., Claude Desktop config, raw REST calls). Most modern MCP clients negotiate auth automatically via OAuth.', 'royal-mcp'); ?>
+                                    <?php esc_html_e('When on, AI clients can connect to this site with the MCP Server URL below.', 'royal-mcp'); ?>
                                 </p>
                             </td>
                         </tr>
@@ -395,6 +125,27 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                             </p>
                         </div>
                     </div>
+
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">
+                                <label for="require_client_approval"><?php esc_html_e('Require approval before new AI clients can connect', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[require_client_approval]"
+                                           id="require_client_approval"
+                                           value="1"
+                                           <?php checked(!empty($royal_mcp_settings['require_client_approval'])); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When on, a new AI client that registers itself waits under Royal MCP > Pending Clients until you approve it.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
 
                     <!-- Advanced (manual OAuth credentials) -->
                     <button type="button" class="advanced-toggle" id="general-advanced-toggle" aria-expanded="false">
@@ -464,6 +215,289 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                             </tr>
                         </table>
                     </div>
+
+                    <h3 class="rmcp-settings-group-title"><?php esc_html_e('What AI clients may do', 'royal-mcp'); ?></h3>
+                    <p class="rmcp-settings-group-intro"><?php esc_html_e('Applies to every connection. Each OAuth client can also get its own level on the Connected Clients screen.', 'royal-mcp'); ?></p>
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">
+                                <label for="read_only_mode"><?php esc_html_e('Read-only mode', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[read_only_mode]"
+                                           id="read_only_mode"
+                                           value="1"
+                                           <?php checked(!empty($royal_mcp_settings['read_only_mode'])); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When on, AI clients can read the site but not change it: every tool that creates, updates or deletes is refused for every client and every user, administrators included.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="drafts_only_mode"><?php esc_html_e('Drafts only', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[drafts_only_mode]"
+                                           id="drafts_only_mode"
+                                           value="1"
+                                           <?php checked(!empty($royal_mcp_settings['drafts_only_mode'])); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When on, AI clients can create drafts, edit drafts and pending posts, and upload media for them. They cannot publish or change anything else. If Read-only mode is also on, Read-only mode wins.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="other_routes_access"><?php esc_html_e('Access level: other MCP servers and browser agents', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <select name="royal_mcp_settings[other_routes_access]" id="other_routes_access">
+                                    <?php foreach (['full', 'read-only', 'drafts-only'] as $royal_mcp_level) : ?>
+                                        <option value="<?php echo esc_attr($royal_mcp_level); ?>" <?php selected(\Royal_MCP\MCP\Support\Access_Levels::normalize($royal_mcp_settings['other_routes_access'] ?? '') ?: 'full', $royal_mcp_level); ?>><?php echo esc_html(\Royal_MCP\MCP\Support\Access_Levels::label($royal_mcp_level)); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <p class="description">
+                                    <?php esc_html_e('For tools reached through other MCP servers on this site (such as the WordPress MCP Adapter or Elementor) or through browser agents. Read-only mode and Drafts only still apply on top.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <h3 class="rmcp-settings-group-title"><?php esc_html_e('API key', 'royal-mcp'); ?></h3>
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">
+                                <label for="api_key"><?php esc_html_e('WordPress API Key', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <input type="text"
+                                       name="royal_mcp_settings[api_key]"
+                                       id="api_key"
+                                       value="<?php echo esc_attr( $royal_mcp_api_key_field ); ?>"
+                                       placeholder="<?php echo $royal_mcp_api_key_masked
+                                           ? esc_attr__( 'Key is stored hashed — regenerate to view a new one', 'royal-mcp' )
+                                           : esc_attr__( 'No API key set — regenerate to create one', 'royal-mcp' ); ?>"
+                                       class="regular-text code"
+                                       readonly>
+                                <?php
+                                $royal_mcp_btn_style = 'display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;vertical-align:middle;';
+                                $royal_mcp_svg_style = 'width:14px;height:14px;flex-shrink:0;';
+                                ?>
+                                <button type="button" class="button" id="copy-api-key" style="<?php echo esc_attr( $royal_mcp_btn_style ); ?>"<?php echo $royal_mcp_api_key_masked ? ' disabled aria-disabled="true"' : ''; ?>>
+                                    <svg style="<?php echo esc_attr( $royal_mcp_svg_style ); ?>" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                                        <rect x="8" y="2" width="8" height="4" rx="1"/>
+                                    </svg>
+                                    <?php esc_html_e('Copy', 'royal-mcp'); ?>
+                                </button>
+                                <button type="submit"
+                                        name="royal_mcp_settings[regenerate_api_key]"
+                                        value="1"
+                                        class="button"
+                                        id="rmcp-regenerate-key"
+                                        style="<?php echo esc_attr( $royal_mcp_btn_style ); ?>">
+                                    <svg style="<?php echo esc_attr( $royal_mcp_svg_style ); ?>" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <polyline points="23 4 23 10 17 10"/>
+                                        <polyline points="1 20 1 14 7 14"/>
+                                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                                    </svg>
+                                    <?php esc_html_e('Regenerate', 'royal-mcp'); ?>
+                                </button>
+                                <?php if ( '' !== $royal_mcp_reveal_key ) : ?>
+                                <div class="notice notice-warning inline" style="margin-top:10px;">
+                                    <p style="margin:6px 0;">
+                                        <strong><?php esc_html_e( 'Copy your API key now.', 'royal-mcp' ); ?></strong>
+                                        <?php esc_html_e( 'The full key is shown once. After you leave this page, only a masked value will be visible — you\'ll need to regenerate to see a new one.', 'royal-mcp' ); ?>
+                                    </p>
+                                </div>
+                                <?php endif; ?>
+                                <?php
+                                $royal_mcp_bound_uid = (int) ( $royal_mcp_settings['api_key_user_id'] ?? 0 );
+                                if ( $royal_mcp_bound_uid > 0 ) {
+                                    $royal_mcp_bound_user = get_userdata( $royal_mcp_bound_uid );
+                                    if ( $royal_mcp_bound_user ) {
+                                        printf(
+                                            '<p class="description"><span class="dashicons dashicons-admin-users" aria-hidden="true"></span> %s</p>',
+                                            esc_html( sprintf(
+                                                /* translators: %s: WordPress username */
+                                                __( 'API key attributed to: %s', 'royal-mcp' ),
+                                                $royal_mcp_bound_user->user_login
+                                            ) )
+                                        );
+                                    }
+                                } elseif ( ! empty( $royal_mcp_settings['api_key'] ) ) {
+                                    printf(
+                                        '<p class="description" style="color:#b32d2e;"><span class="dashicons dashicons-warning" aria-hidden="true"></span> %s</p>',
+                                        esc_html__( 'API key is not bound to a user. Regenerate to attribute tool calls to your account.', 'royal-mcp' )
+                                    );
+                                }
+                                ?>
+                                <p class="description">
+                                    <?php esc_html_e('For MCP clients that cannot sign in with OAuth, such as a Claude Desktop config file or direct REST calls. Most clients sign in with OAuth and do not need it.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="api_key_access"><?php esc_html_e('Access level: API key', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <select name="royal_mcp_settings[api_key_access]" id="api_key_access">
+                                    <?php foreach (['full', 'read-only', 'drafts-only'] as $royal_mcp_level) : ?>
+                                        <option value="<?php echo esc_attr($royal_mcp_level); ?>" <?php selected(\Royal_MCP\MCP\Support\Access_Levels::normalize($royal_mcp_settings['api_key_access'] ?? '') ?: 'full', $royal_mcp_level); ?>><?php echo esc_html(\Royal_MCP\MCP\Support\Access_Levels::label($royal_mcp_level)); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <p class="description">
+                                    <?php esc_html_e('What clients using the API key may do. Each OAuth client gets its own level on the Connected Clients screen.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <h3 class="rmcp-settings-group-title"><?php esc_html_e('Extra write permissions', 'royal-mcp'); ?></h3>
+                    <p class="rmcp-settings-group-intro"><?php esc_html_e('Off by default. Turn on only what your AI clients need.', 'royal-mcp'); ?></p>
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">
+                                <label for="allow_option_writes"><?php esc_html_e('Allow AI to write WordPress options', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[allow_option_writes]"
+                                           id="allow_option_writes"
+                                           value="1"
+                                           <?php checked(!empty($royal_mcp_settings['allow_option_writes'])); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When on, AI clients can change WordPress options that are allowlisted. Sensitive options, such as the site address, secret keys and license keys, can never be changed.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr id="rmcp-row-writable-options">
+                            <th scope="row">
+                                <label for="writable_options_admin"><?php esc_html_e('Allowlisted plugin options', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <?php
+                                $wo_admin_arr = isset($royal_mcp_settings['writable_options_admin']) && is_array($royal_mcp_settings['writable_options_admin'])
+                                    ? $royal_mcp_settings['writable_options_admin']
+                                    : [];
+                                $wo_admin_str = implode("\n", $wo_admin_arr);
+                                ?>
+                                <textarea name="royal_mcp_settings[writable_options_admin]"
+                                          id="writable_options_admin"
+                                          rows="5"
+                                          class="large-text code"
+                                          placeholder="my_plugin_settings&#10;another_option_key&#10;rank-math-options-general"><?php echo esc_textarea($wo_admin_str); ?></textarea>
+                                <p class="description">
+                                    <?php esc_html_e('One option name per line. AI clients can read and change the options listed here. Sensitive options stay blocked whatever is listed.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="allow_theme_writes"><?php esc_html_e('Allow AI to modify theme appearance', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[allow_theme_writes]"
+                                           id="allow_theme_writes"
+                                           value="1"
+                                           <?php checked(!empty($royal_mcp_settings['allow_theme_writes'])); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When on, AI clients can edit the theme\'s custom CSS, with scripts stripped. Customizer settings can be changed only once a developer allowlists them with the royal_mcp_writable_theme_mods filter.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <h3 class="rmcp-settings-group-title"><?php esc_html_e('Advanced', 'royal-mcp'); ?></h3>
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">
+                                <label for="webmcp_enabled"><?php esc_html_e('Enable browser agents (WebMCP)', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[webmcp_enabled]"
+                                           id="webmcp_enabled"
+                                           value="1"
+                                           <?php checked(!empty($royal_mcp_settings['webmcp_enabled'])); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <?php
+                                // Render the bridge-detected pill only when the probe positively
+                                // confirms a WebMCP bridge on this domain. The not_detected +
+                                // unknown states are noise for the ~99% of admins who don't run
+                                // one; the toggle description below already explains what WebMCP
+                                // is and where to enable it. Probe path is the W3C WebMCP spec
+                                // location (`/.webmcp/bridge.js`), so any conforming bridge
+                                // implementation is detected here, not just Cloudflare's.
+                                $webmcp_status = \Royal_MCP\Admin\Settings_Page::detect_webmcp_bridge();
+                                if ( 'detected' === $webmcp_status ) : ?>
+                                <p class="description" style="margin-top:6px;">
+                                    <span style="display:inline-block;padding:2px 8px;border-radius:10px;background:#008a20;color:#fff;font-size:11px;font-weight:600;">
+                                        <?php esc_html_e('WebMCP bridge detected on this domain.', 'royal-mcp'); ?>
+                                    </span>
+                                </p>
+                                <?php endif; ?>
+                                <p class="description">
+                                    <?php esc_html_e('When on, browser-based AI agents that use a WebMCP bridge can call Royal MCP tools as the signed-in WordPress user. Each call must carry a WordPress security token, so other websites cannot use it. Clients such as Claude, ChatGPT and Cursor sign in with OAuth either way.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="abilities_registration_enabled"><?php esc_html_e('Register tools with the WordPress Abilities API', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[abilities_registration_enabled]"
+                                           id="abilities_registration_enabled"
+                                           value="1"
+                                           <?php checked($royal_mcp_abilities_registration_enabled); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When on (the default), other MCP servers on this site, such as a page builder\'s, can find Royal MCP tools through the WordPress Abilities API. Turn off to keep each server\'s tools separate. Needs WordPress 6.9 or later.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr class="rmcp-danger-row">
+                            <th scope="row">
+                                <label for="delete_data_on_uninstall"><?php esc_html_e('Delete all data when the plugin is deleted', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[delete_data_on_uninstall]"
+                                           id="delete_data_on_uninstall"
+                                           value="1"
+                                           <?php checked(!empty($royal_mcp_settings['delete_data_on_uninstall'])); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When off (the default), deleting the plugin keeps your settings, API key, activity log and connected clients, so a reinstall picks up where you left off. Turn on only if deleting the plugin should remove all of that permanently. It cannot be recovered.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
                 </div>
             </div>
 

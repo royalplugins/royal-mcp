@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.5.8
+Stable tag: 1.5.9
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -294,6 +294,23 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 10. Royal MCP tool list in ChatGPT after connection
 
 == Changelog ==
+
+= 1.5.9 =
+* New: Drafts only setting lets AI clients create and edit drafts while refusing publishing, live pages and site settings.
+* New: each connected AI client and the API key can be given its own access level: Full, Read-only or Drafts only.
+* New: Recent Changes screen and two tools show what AI clients changed in the last 72 hours, with the values before, after and now.
+* New: block editor tools read a page's blocks and insert, replace, move or delete single blocks, and read synced patterns, global styles and templates.
+* New: a media tool finds files already in the library by address or content, and uploads can reuse them instead of adding a copy.
+* New: the settings page has ready-to-copy commands that connect Claude Code or Codex.
+* New: a setting to delete all plugin data when the plugin is deleted, off by default so settings, the activity log and connected clients are kept.
+* Enhancement: publish-and-promote creates a draft unless asked to publish.
+* Enhancement: media details include file size, dimensions and a content fingerprint.
+* Enhancement: media downloads that fail say why, such as a missing file, an expired link or the size limit.
+* Enhancement: SEO fields for Yoast, Rank Math and SEObolt are written through the SEO tool and read back after saving.
+* Enhancement: the Elementor notices only appear when Elementor's own MCP server is switched on.
+* Enhancement: deleting the plugin clears expired sessions, tokens and undo history on every site of a network.
+* Fix: write and undo tools keep backslashes in content, meta and term values exactly.
+* Housekeeping: the Outbound AI Provider settings section is removed.
 
 = 1.5.8 =
 * New: ChatGPT can hand a file from the conversation straight to the media upload tool.

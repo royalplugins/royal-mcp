@@ -2,7 +2,7 @@
 /**
  * Royal MCP — What's New modal template.
  *
- * Whats-New-For-Version: 1.5.8
+ * Whats-New-For-Version: 1.5.9
  *
  * Rendered from Whats_New::render_modal() on admin_footer (Royal MCP pages
  * only). JS (assets/js/whats-new.js) handles show/hide + AJAX dismissal.
@@ -17,11 +17,10 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-$rmcp_wn_img_base   = ROYAL_MCP_PLUGIN_URL . 'assets/img/whats-new/';
-$rmcp_wn_review_url = 'https://wordpress.org/support/plugin/royal-mcp/reviews/?rate=5#new-post';
-$rmcp_wn_help_url   = admin_url( 'admin.php?page=royal-mcp-help&view=troubleshooting' );
-$rmcp_wn_pro_url    = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_8&utm_content=footer_cta';
-$rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_8&utm_content=slide_1_cta';
+$rmcp_wn_img_base      = ROYAL_MCP_PLUGIN_URL . 'assets/img/whats-new/';
+$rmcp_wn_pro_url       = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_9&utm_content=footer_cta';
+$rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_9&utm_content=slide_1_cta';
+$rmcp_wn_offer_open    = current_datetime()->format( 'Y-m-d' ) <= \Royal_MCP\Admin\Pro_Notice::OFFER_ENDS;
 ?>
 <div class="rmcp-wn-backdrop" data-royal-mcp-wn-backdrop hidden>
     <div class="rmcp-wn-modal" role="dialog" aria-modal="true" aria-labelledby="rmcp-wn-title">
@@ -29,7 +28,7 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
             <img class="rmcp-wn-header-logo" src="<?php echo esc_url( $rmcp_wn_img_base . 'royal-shield.png' ); ?>" alt="">
             <div class="rmcp-wn-header-titles">
                 <h2 id="rmcp-wn-title"><?php esc_html_e( "What's New in Royal MCP", 'royal-mcp' ); ?></h2>
-                <p><?php esc_html_e( '1.5.7 – 1.5.8: AI image and PDF uploads, read-only mode and more.', 'royal-mcp' ); ?></p>
+                <p><?php esc_html_e( '1.5.9: drafts only, change history, block tools.', 'royal-mcp' ); ?></p>
             </div>
             <button type="button" class="rmcp-wn-close" data-royal-mcp-wn-close aria-label="<?php esc_attr_e( 'Close', 'royal-mcp' ); ?>">&times;</button>
         </div>
@@ -45,160 +44,104 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                 </div>
                 <div class="rmcp-wn-slide-body">
                     <span class="rmcp-wn-tag"><?php esc_html_e( 'Royal MCP Pro', 'royal-mcp' ); ?></span>
-                    <p class="rmcp-wn-big-number"><?php esc_html_e( 'Supercharge your workflow', 'royal-mcp' ); ?></p>
-                    <h3><?php esc_html_e( '300+ MCP tools, bulk operations, undo tokens. Agency ready.', 'royal-mcp' ); ?></h3>
-                    <p><?php esc_html_e( "Bulk-edit thousands of WooCommerce products or Elementor pages in a single tool call. Manage ACF field groups programmatically. Scope MCP endpoints per project so your AI's write access can't cross client boundaries.", 'royal-mcp' ); ?></p>
-                    <p><?php esc_html_e( "Every destructive Pro tool returns an undo token good for 3\xE2\x80\x937 days. A 90-day activity log lets clients audit what your AI actually touched. Priority support, no data sharing, no token pricing.", 'royal-mcp' ); ?></p>
+                    <p class="rmcp-wn-big-number"><?php esc_html_e( 'Let your AI do more, safely', 'royal-mcp' ); ?></p>
+                    <h3><?php esc_html_e( 'Previews, 7-day undo and bulk edits', 'royal-mcp' ); ?></h3>
+                    <p><?php esc_html_e( 'See every destructive change before it runs and undo it for up to 7 days. Bulk-edit WooCommerce catalogs and Elementor or Divi sites with layouts that stay editable in the builder, and hand clients a 90-day log of everything the AI did.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'Royally, one dashboard for every client site, is in beta and coming soon to Royal MCP Pro members.', 'royal-mcp' ); ?></p>
                     <a href="<?php echo esc_url( $rmcp_wn_pro_slide_url ); ?>" target="_blank" rel="noopener noreferrer" class="rmcp-wn-btn">
                         <?php esc_html_e( 'See Pro features →', 'royal-mcp' ); ?>
                     </a>
                 </div>
             </div>
 
-            <!-- SLIDE 2 — IMAGE AND PDF UPLOADS (the 1.5.8 headline) -->
+            <!-- SLIDE 2 — DRAFTS-ONLY MODE + ACCESS LEVELS (the 1.5.9 headline) -->
             <div class="rmcp-wn-slide is-reversed">
                 <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v1.5.8', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'AI agents can upload images and PDFs, compressed on the way in', 'royal-mcp' ); ?></h3>
-                    <p><?php esc_html_e( 'Ask ChatGPT, Claude or any AI agent to put an image or a PDF in your media library and it lands there directly. Files you attach to the chat, and images ChatGPT generates, are handed straight to WordPress.', 'royal-mcp' ); ?></p>
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v1.5.9', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'Drafts only: AI writes the drafts, a person publishes', 'royal-mcp' ); ?></h3>
+                    <p><?php esc_html_e( 'Turn on Drafts only in Royal MCP settings and AI clients can create posts and pages as drafts and edit drafts and pending posts, but cannot publish, change a live page, or touch settings, menus, users or plugins. To change a live page, the AI clones it as a draft and you publish the copy when it looks right.', 'royal-mcp' ); ?></p>
                     <p>
                         <?php
                         echo wp_kses(
-                            __( '<strong>Compression on upload.</strong> Ask for a JPEG under 400 KB, or an image 1200 pixels wide, and Royal MCP converts, resizes and compresses it itself, so the AI never has to edit the file first. PDFs and any other file type your media library allows upload the same way.', 'royal-mcp' ),
+                            __( '<strong>An access level for each connection.</strong> Give each AI client its own level, Full, Read-only or Drafts only, on the Connected Clients page, and set one for the WordPress API key in settings.', 'royal-mcp' ),
                             [ 'strong' => [] ]
                         );
                         ?>
                     </p>
                 </div>
                 <div class="rmcp-wn-slide-visual">
-                    <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone"><span class="c"><?php esc_html_e( '// "Generate a red bicycle,', 'royal-mcp' ); ?></span>
-<span class="c"><?php esc_html_e( '//  upload it as a JPEG', 'royal-mcp' ); ?></span>
-<span class="c"><?php esc_html_e( '//  under 400 KB"', 'royal-mcp' ); ?></span>
+                    <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone"><span class="c"><?php esc_html_e( '// Drafts only is on', 'royal-mcp' ); ?></span>
+<span class="k">wp_update_post</span>  <span class="c">id 42</span>
 
-<span class="k">wp_upload_media</span>
-  <span class="s">file</span>        <span class="c">red-bicycle.png</span>
-  <span class="s">convert_to</span>  <span class="c">jpeg</span>
-  <span class="s">max_kb</span>      <span class="c">400</span>
+<span class="s hl"><?php esc_html_e( 'post 42 is published.', 'royal-mcp' ); ?></span>
+<span class="s hl"><?php esc_html_e( 'Clone it as a draft', 'royal-mcp' ); ?></span>
+<span class="s hl"><?php esc_html_e( 'and edit the copy.', 'royal-mcp' ); ?></span>
 
-<span class="k">&rarr;</span> <span class="s hl">red-bicycle.jpg</span>  <span class="c">184 KB &#10003;</span></div>
+<span class="k">elementor_clone_page</span>
+  <span class="s">source_post_id</span> <span class="c">42</span>
+  <span class="s">new_status</span>     <span class="c">draft</span>
+<span class="k">&rarr;</span> <span class="c"><?php esc_html_e( 'draft 57 ready to edit', 'royal-mcp' ); ?> &#10003;</span></div>
                 </div>
             </div>
 
-            <!-- SLIDE 3 — READ-ONLY MODE (the 1.5.7 headline) -->
+            <!-- SLIDE 3 — RECENT CHANGES -->
             <div class="rmcp-wn-slide">
                 <div class="rmcp-wn-slide-visual">
-                    <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone">
-<span class="c">// wp_update_post, read-only mode on</span>
-<span class="k">{</span>
-  <span class="s hl">"isError"</span>: <span class="k">true</span>,
-  <span class="s">"content"</span>: <span class="k">[{</span>
-    <span class="s">"type"</span>: <span class="s">"text"</span>,
-    <span class="s">"text"</span>: <span class="s">"This site is in read-only
-      mode: tools that change the
-      site are switched off."</span>
-  <span class="k">}]</span>
-<span class="k">}</span>
-                    </div>
+                    <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone"><span class="c"><?php esc_html_e( '// Recent Changes', 'royal-mcp' ); ?></span>
+<span class="k">wp_update_post</span>  <span class="c"><?php esc_html_e( 'Claude, 10:42', 'royal-mcp' ); ?></span>
+<span class="s"><?php esc_html_e( 'Pricing page', 'royal-mcp' ); ?></span>
+
+<span class="c">@@ before line 12 @@</span>
+<span class="s">- <?php esc_html_e( 'Plans start at $19', 'royal-mcp' ); ?></span>
+<span class="k">+ <?php esc_html_e( 'Plans start at $29', 'royal-mcp' ); ?></span>
+
+<span class="c"><?php esc_html_e( 'Undo restores: content', 'royal-mcp' ); ?></span>
+<span class="c"><?php esc_html_e( 'Status: can be undone', 'royal-mcp' ); ?></span></div>
                 </div>
                 <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Read-only mode', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'Let AI read everything and change nothing', 'royal-mcp' ); ?></h3>
-                    <p><?php esc_html_e( 'One switch in Royal MCP settings. When it is on, every tool that creates, updates or deletes is refused for every client and every user, administrators included, while every read keeps working.', 'royal-mcp' ); ?></p>
-                    <p><?php esc_html_e( "The tools stay in your clients' tool lists, marked as switched off, so an assistant knows what it can and cannot do before it tries. Turn it on while you decide what AI may change, or leave it on for sites that should only ever be read.", 'royal-mcp' ); ?></p>
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Recent Changes', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'See exactly what AI changed, and who made the change', 'royal-mcp' ); ?></h3>
+                    <p><?php esc_html_e( 'Royal MCP > Recent Changes lists every change AI clients made in the last 72 hours that can be undone: when, which tool, what it changed and which connection made it. Open one to see each value before the change, what the change wrote and what it is now, with a line diff for post content, CSS and page builder data.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'AI clients get the same view through two new tools, so an assistant can check its own work and undo a change that went wrong.', 'royal-mcp' ); ?></p>
                 </div>
             </div>
 
-            <!-- SLIDE 4 — CONNECTED CLIENTS, SITE HEALTH, WP-CLI -->
+            <!-- SLIDE 4 — BLOCK EDITOR TOOLS -->
             <div class="rmcp-wn-slide is-reversed">
-                <div class="rmcp-wn-slide-visual">
-                    <div class="rmcp-wn-circle" role="img" aria-label="<?php esc_attr_e( 'A list of connected AI clients with a revoke button', 'royal-mcp' ); ?>">
-                        <svg viewBox="0 0 200 200" width="170" height="170" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-                            <rect x="20" y="40" width="160" height="30" rx="5" fill="#FEFCF7" stroke="#C9A227" stroke-width="1.5"/>
-                            <text x="30" y="59" font-family="Inter, sans-serif" font-size="8" font-weight="700" fill="#2C2C2C">Claude</text>
-                            <text x="78" y="59" font-family="Inter, sans-serif" font-size="7" fill="#787c82">as jamie</text>
-                            <rect x="20" y="85" width="160" height="30" rx="5" fill="#FEFCF7" stroke="#C9A227" stroke-width="1.5"/>
-                            <text x="30" y="104" font-family="Inter, sans-serif" font-size="8" font-weight="700" fill="#2C2C2C">ChatGPT</text>
-                            <text x="78" y="104" font-family="Inter, sans-serif" font-size="7" fill="#787c82">as jamie</text>
-                            <rect x="128" y="91" width="44" height="18" rx="9" fill="#FEFCF7" stroke="#b32d2e" stroke-width="1.5"/>
-                            <text x="150" y="103" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" font-weight="700" fill="#b32d2e">Revoke</text>
-                            <rect x="20" y="130" width="160" height="30" rx="5" fill="#FEFCF7" stroke="#C9A227" stroke-width="1.5"/>
-                            <text x="30" y="149" font-family="Inter, sans-serif" font-size="8" font-weight="700" fill="#2C2C2C">Cursor</text>
-                            <text x="78" y="149" font-family="Inter, sans-serif" font-size="7" fill="#787c82">as sam</text>
-                        </svg>
-                    </div>
-                </div>
                 <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( "Who's connected", 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'See every connected AI client, and revoke one at a time', 'royal-mcp' ); ?></h3>
-                    <p><?php esc_html_e( 'Royal MCP > Connected Clients lists each AI client signed in through OAuth, which WordPress user it acts as, when it registered and when it last signed in. One button ends that client\'s access without touching anyone else; the client can reconnect from its side.', 'royal-mcp' ); ?></p>
-                    <p><?php esc_html_e( 'Tools > Site Health now checks the four things AI clients need from your server: pretty permalinks, the discovery document, the Authorization header reaching WordPress, and the sign-in addresses, each with a link to the fix when it fails.', 'royal-mcp' ); ?></p>
-                    <p>
-                        <?php
-                        echo wp_kses(
-                            __( 'For agencies: <code>wp royal-mcp connection-health</code>, <code>list-clients</code> and <code>rotate-api-key</code> do the same from the command line.', 'royal-mcp' ),
-                            [ 'code' => [] ]
-                        );
-                        ?>
-                    </p>
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Block editor', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'Edit block pages one block at a time', 'royal-mcp' ); ?></h3>
+                    <p><?php esc_html_e( 'AI clients can now read a page as its block tree and insert, replace, move or delete single blocks, change a block\'s settings, or replace text across blocks, without rewriting the whole page. Synced patterns, global styles and Site Editor templates can be read too, and synced patterns edited.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'Every block change is checked before it is saved, so the page still opens cleanly in the editor, and each one can be undone for 72 hours.', 'royal-mcp' ); ?></p>
+                </div>
+                <div class="rmcp-wn-slide-visual">
+                    <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone"><span class="k">wp_get_block_outline</span>  <span class="c">id 42</span>
+
+  <span class="s">0</span>    <span class="c">core/cover</span>
+  <span class="s">0.0</span>  <span class="c">core/heading</span>
+  <span class="s">1</span>    <span class="c">core/columns</span>
+  <span class="s hl">1.0</span>  <span class="c">core/paragraph</span>
+
+<span class="k">wp_replace_block</span>
+  <span class="s">path</span>  <span class="c">1.0</span>
+<span class="k">&rarr;</span> <span class="c"><?php esc_html_e( 'saved, undo available', 'royal-mcp' ); ?> &#10003;</span></div>
                 </div>
             </div>
 
-            <!-- SLIDE 5 — WORDFENCE + LITESPEED CACHE INTEGRATIONS -->
+            <!-- SLIDE 5 — ALSO NEW -->
             <div class="rmcp-wn-slide">
-                <div class="rmcp-wn-slide-visual">
-                    <div class="rmcp-wn-circle" role="img" aria-label="<?php esc_attr_e( 'Wordfence and LiteSpeed Cache linked to Royal MCP', 'royal-mcp' ); ?>">
-                        <svg viewBox="0 0 200 200" width="170" height="170" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="100" cy="100" r="30" fill="#2C2C2C" stroke="#C9A227" stroke-width="2.5"/>
-                            <text x="100" y="97" text-anchor="middle" font-family="Inter, sans-serif" font-size="8" font-weight="700" fill="#C9A227">Royal MCP</text>
-                            <text x="100" y="108" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" fill="#FAF8F5">136 tools</text>
-                            <circle cx="100" cy="32" r="22" fill="#FEFCF7" stroke="#C9A227" stroke-width="2"/>
-                            <text x="100" y="30" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" font-weight="700" fill="#2C2C2C">Wordfence</text>
-                            <text x="100" y="40" text-anchor="middle" font-family="Inter, sans-serif" font-size="6.5" fill="#787c82">8 tools</text>
-                            <circle cx="100" cy="168" r="22" fill="#FEFCF7" stroke="#C9A227" stroke-width="2"/>
-                            <text x="100" y="166" text-anchor="middle" font-family="Inter, sans-serif" font-size="7" font-weight="700" fill="#2C2C2C">LiteSpeed</text>
-                            <text x="100" y="176" text-anchor="middle" font-family="Inter, sans-serif" font-size="6.5" fill="#787c82">4 tools</text>
-                            <line x1="100" y1="54" x2="100" y2="70" stroke="#C9A227" stroke-width="1.5"/>
-                            <line x1="100" y1="146" x2="100" y2="130" stroke="#C9A227" stroke-width="1.5"/>
-                        </svg>
-                    </div>
-                </div>
-                <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Two new integrations', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'Wordfence and LiteSpeed Cache: twelve new tools', 'royal-mcp' ); ?></h3>
-                    <p>
-                        <?php
-                        echo wp_kses(
-                            __( '<strong>Wordfence.</strong> Read the security status, firewall mode and scan findings, list blocked IPs, block or unblock an address, read failed logins and blocked requests, and start a scan.', 'royal-mcp' ),
-                            [ 'strong' => [] ]
-                        );
-                        ?>
-                    </p>
-                    <p>
-                        <?php
-                        echo wp_kses(
-                            __( '<strong>LiteSpeed Cache.</strong> Read the cache status and the settings that shape caching, purge everything, or purge specific pages by URL or post.', 'royal-mcp' ),
-                            [ 'strong' => [] ]
-                        );
-                        ?>
-                    </p>
-                    <p><?php esc_html_e( 'Both follow the rules every integration follows: administrators only, every change confirmed against what the plugin actually stored, and text from logs handed to the AI as text, never as instructions.', 'royal-mcp' ); ?></p>
-                </div>
-            </div>
-
-            <!-- SLIDE 6 — CLEARER SIGNALS FOR CLIENTS -->
-            <div class="rmcp-wn-slide is-reversed">
                 <div class="rmcp-wn-slide-visual">
                     <div class="rmcp-wn-mark" role="img" aria-label="Royal Plugins">
                         <span>R</span>
                     </div>
                 </div>
                 <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Under the hood', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'Clearer signals for AI clients, smoother sign-in', 'royal-mcp' ); ?></h3>
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Also new', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'Coding agents, media without duplicates, safer uninstall', 'royal-mcp' ); ?></h3>
                     <p>
                         <?php
                         echo wp_kses(
-                            __( '<strong>Read or change, declared up front.</strong> Every tool now tells clients whether it only reads or can change the site, so assistants can run reads freely and ask before a write.', 'royal-mcp' ),
+                            __( '<strong>Connect a coding agent.</strong> The settings page has ready-to-copy commands that connect Claude Code or Codex to this site, with sign-in in the browser or the API key.', 'royal-mcp' ),
                             [ 'strong' => [] ]
                         );
                         ?>
@@ -206,7 +149,7 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                     <p>
                         <?php
                         echo wp_kses(
-                            __( '<strong>Resources.</strong> Site info, the active theme, the tool catalog and connection health can be loaded by clients as context, without a tool call.', 'royal-mcp' ),
+                            __( '<strong>Media without duplicates.</strong> AI clients can find a file already in your media library by its address or its content, and reuse it instead of uploading a second copy. Media details now include file size and dimensions.', 'royal-mcp' ),
                             [ 'strong' => [] ]
                         );
                         ?>
@@ -214,8 +157,16 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                     <p>
                         <?php
                         echo wp_kses(
-                            __( '<strong>Sign-in.</strong> Clients can revoke their own access when you disconnect them, and a page you publish at <code>/register</code> or <code>/token</code> is shown to your visitors as usual.', 'royal-mcp' ),
-                            [ 'strong' => [], 'code' => [] ]
+                            __( '<strong>SEO fields that stick.</strong> Titles and descriptions for Yoast, Rank Math and SEObolt go through the SEO tool and are read back after saving.', 'royal-mcp' ),
+                            [ 'strong' => [] ]
+                        );
+                        ?>
+                    </p>
+                    <p>
+                        <?php
+                        echo wp_kses(
+                            __( '<strong>Keep your data on uninstall.</strong> Deleting the plugin now keeps your settings, activity log and connected clients unless you turn on "Delete all data when the plugin is deleted".', 'royal-mcp' ),
+                            [ 'strong' => [] ]
                         );
                         ?>
                     </p>
@@ -227,14 +178,12 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
         <!-- PRO UPSELL FOOTER -->
         <div class="rmcp-wn-upsell">
             <div class="rmcp-wn-upsell-copy">
-                <h4><?php esc_html_e( 'Ready to scale MCP across every client site?', 'royal-mcp' ); ?></h4>
+                <h4><?php esc_html_e( 'Ready to let AI do more on every client site?', 'royal-mcp' ); ?></h4>
                 <p>
-                    <?php
-                    echo wp_kses(
-                        __( 'Royal MCP Pro includes 300+ MCP tools with bulk operations, per-project endpoint scoping, advanced integrations for WooCommerce and Elementor, undo tokens on destructive actions, and a 90-day Activity Log clients can inspect. <strong>30-50% off launch price.</strong>', 'royal-mcp' ),
-                        [ 'strong' => [] ]
-                    );
-                    ?>
+                    <?php esc_html_e( 'Royal MCP Pro adds change previews, 7-day undo, bulk edits for WooCommerce, Elementor and Divi with layouts that stay editable, and a 90-day activity log your clients can inspect. Royally, one dashboard for every client site, is in beta and coming soon to Pro members.', 'royal-mcp' ); ?>
+                    <?php if ( $rmcp_wn_offer_open ) : ?>
+                        <strong><?php esc_html_e( '30-50% off ends Oct 31st.', 'royal-mcp' ); ?></strong>
+                    <?php endif; ?>
                 </p>
             </div>
             <a href="<?php echo esc_url( $rmcp_wn_pro_url ); ?>" target="_blank" rel="noopener noreferrer" class="rmcp-wn-upsell-btn">

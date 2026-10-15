@@ -71,6 +71,15 @@ jQuery(document).ready(function($) {
         }
     });
 
+    // The option allowlist only applies while "Allow AI to write WordPress
+    // options" is on, so its row is shown only then. A hidden row still
+    // submits its value, so the saved list is kept either way.
+    function syncOptionAllowlist() {
+        $('#rmcp-row-writable-options').prop('hidden', !$('#allow_option_writes').is(':checked'));
+    }
+    $('#allow_option_writes').on('change', syncOptionAllowlist);
+    syncOptionAllowlist();
+
     // Generate OAuth credentials
     $(document).on('click', '.generate-oauth', function(e) {
         e.preventDefault();

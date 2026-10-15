@@ -575,6 +575,40 @@ input:checked + .slider:before {
     font-style: normal;
 }
 
+/* --- General Settings groups --- */
+.royal-mcp-settings .rmcp-settings-group-title {
+    margin: 28px 0 0;
+    padding-top: 20px;
+    border-top: 1px solid #dcdcde;
+    font-size: 14px;
+    font-weight: 600;
+    color: #1d2327;
+}
+
+.royal-mcp-settings .rmcp-settings-group-title.is-first {
+    margin-top: 4px;
+    padding-top: 0;
+    border-top: 0;
+}
+
+.royal-mcp-settings .rmcp-settings-group-intro {
+    margin: 4px 0 0;
+    color: #50575e;
+    font-size: 13px;
+}
+
+.royal-mcp-settings #rmcp-row-writable-options[hidden] {
+    display: none !important;
+}
+
+.royal-mcp-settings .rmcp-danger-row th label {
+    color: #b32d2e;
+}
+
+.royal-mcp-settings .rmcp-danger-row td .description {
+    color: #8a2424;
+}
+
 /* --- Cloudflare / localhost warning callouts --- */
 .cloudflare-warning {
     background: #fff8e1;
