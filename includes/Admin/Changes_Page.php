@@ -169,8 +169,15 @@ class Changes_Page {
                 ?>
             </h2>
             <?php
-            $table = wp_text_diff( $diff['before_text'], $diff['current_text'], [ 'title_left' => __( 'Before', 'royal-mcp' ), 'title_right' => __( 'Now', 'royal-mcp' ) ] );
-            echo $table ? wp_kses_post( $table ) : '<p>' . esc_html__( 'No line differences.', 'royal-mcp' ) . '</p>';
+            if ( strlen( $diff['before_text'] ) + strlen( $diff['current_text'] ) > 400000 ) {
+                echo '<pre style="white-space:pre-wrap;max-height:480px;overflow:auto;">' . esc_html( $diff['unified'] ) . '</pre>';
+                if ( ! empty( $diff['truncated'] ) ) {
+                    echo '<p><em>' . esc_html__( 'Shortened: the text is too large to show in full here.', 'royal-mcp' ) . '</em></p>';
+                }
+            } else {
+                $table = wp_text_diff( $diff['before_text'], $diff['current_text'], [ 'title_left' => __( 'Before', 'royal-mcp' ), 'title_right' => __( 'Now', 'royal-mcp' ) ] );
+                echo $table ? wp_kses_post( $table ) : '<p>' . esc_html__( 'No line differences.', 'royal-mcp' ) . '</p>';
+            }
             ?>
         <?php endforeach; ?>
         <?php

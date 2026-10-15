@@ -17,6 +17,8 @@ class Pro_Notice {
 
     const DISMISSED_META = 'royal_mcp_pro_launch_notice_dismissed';
     const DISMISS_ACTION = 'royal_mcp_dismiss_pro_notice';
+    /** Last day of the launch offer, site time. */
+    const OFFER_ENDS     = '2026-10-31';
 
     public function __construct() {
         add_action( 'admin_post_' . self::DISMISS_ACTION, [ $this, 'handle_dismiss' ] );
@@ -60,7 +62,7 @@ class Pro_Notice {
                 <strong><?php esc_html_e( 'Let your AI do more, safely. Royal MCP Pro adds previews, 7-day undo and bulk edits.', 'royal-mcp' ); ?></strong>
             </p>
             <p style="margin: 0 0 12px;">
-                <?php esc_html_e( 'See every destructive change before it runs and undo it for up to 7 days. Bulk-edit WooCommerce catalogs and Elementor or Divi sites with layouts that stay editable in the builder, and hand clients a 90-day log of everything the AI did. Royally, one dashboard for every client site, is in beta and coming soon to Royal MCP Pro members. 30-50% off ends Oct 31st.', 'royal-mcp' ); ?>
+                <?php esc_html_e( 'See every destructive change before it runs and undo it for up to 7 days. Bulk-edit WooCommerce catalogs and Elementor or Divi sites with layouts that stay editable in the builder, and hand clients a 90-day log of everything the AI did. Royally, one dashboard for every client site, is in beta and coming soon to Royal MCP Pro members.', 'royal-mcp' ); ?><?php if ( current_datetime()->format( 'Y-m-d' ) <= self::OFFER_ENDS ) : ?> <?php esc_html_e( '30-50% off ends Oct 31st.', 'royal-mcp' ); ?><?php endif; ?>
             </p>
             <p style="margin: 0;">
                 <a href="<?php echo esc_url( $pro_url ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary"><?php esc_html_e( 'Get Royal MCP Pro &rarr;', 'royal-mcp' ); ?></a>

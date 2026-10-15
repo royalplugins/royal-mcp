@@ -21,6 +21,10 @@ class Undo_Store {
 
     const OPTION_PREFIX = 'royal_mcp_undo_';
     const DEFAULT_TTL   = 259200; // 72 * 3600 seconds (avoid HOUR_IN_SECONDS eval order in const context)
+    /** Most changes a change list returns. */
+    const CHANGES_LIMIT = 500;
+    /** Snapshot rows decoded per database read while building a change list. */
+    const CHANGES_BATCH = 200;
 
     /**
      * The connection making the current tool call, recorded on every
@@ -156,8 +160,10 @@ class Undo_Store {
     }
 
     /**
-     * Every snapshot still inside its window, undone ones included, newest
-     * first. Owner and capability checks are the caller's job.
+     * Snapshots still inside their window, undone ones included, newest
+     * first, at most CHANGES_LIMIT of them. Rows are read in batches so a
+     * busy site never holds every snapshot in memory at once. Owner and
+     * capability checks are the caller's job.
      *
      * @param int|null $user_id         Only this user's snapshots, or every user's when null.
      * @param bool     $include_expired Also return expired rows the daily sweep hasn't removed yet.
@@ -166,25 +172,34 @@ class Undo_Store {
     public static function all_changes( ?int $user_id = null, bool $include_expired = false ): array {
         global $wpdb;
         $prefix = $wpdb->esc_like( self::OPTION_PREFIX ) . '%';
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $rows = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE %s",
-                $prefix
-            )
-        );
-        $out = [];
-        $now = time();
-        foreach ( (array) $rows as $row ) {
-            $data = self::decode( isset( $row->option_value ) ? (string) $row->option_value : '' );
-            if ( null === $data || empty( $data['token'] ) || ( ! $include_expired && (int) ( $data['expires_at'] ?? 0 ) <= $now ) ) {
-                continue;
+        $out    = [];
+        $before = PHP_INT_MAX;
+        while ( count( $out ) < self::CHANGES_LIMIT ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT option_id, option_value FROM {$wpdb->options} WHERE option_name LIKE %s AND option_id < %d ORDER BY option_id DESC LIMIT %d",
+                    $prefix,
+                    $before,
+                    self::CHANGES_BATCH
+                )
+            );
+            if ( empty( $rows ) ) {
+                break;
             }
-            if ( null !== $user_id && (int) ( $data['user_id'] ?? 0 ) !== $user_id ) {
-                continue;
+            foreach ( $rows as $row ) {
+                $before = (int) $row->option_id;
+                $data   = self::visible( self::decode( isset( $row->option_value ) ? (string) $row->option_value : '' ), $user_id, $include_expired );
+                if ( null !== $data ) {
+                    $out[] = $data;
+                    if ( count( $out ) >= self::CHANGES_LIMIT ) {
+                        break;
+                    }
+                }
             }
-            $data['change_id'] = self::change_id( (string) $data['token'] );
-            $out[]             = $data;
+            if ( count( $rows ) < self::CHANGES_BATCH ) {
+                break;
+            }
         }
         usort( $out, static function ( $a, $b ) {
             if ( (int) $a['created_at'] === (int) $b['created_at'] ) {
@@ -195,17 +210,44 @@ class Undo_Store {
         return $out;
     }
 
-    /** One change by its change_id, or null. Same visibility rules as all_changes(). */
+    /**
+     * One change by its change_id, or null. Same visibility rules as
+     * all_changes(). The token is part of the option name, so only the
+     * matching row is decoded.
+     */
     public static function find_change( string $change_id, ?int $user_id = null, bool $include_expired = false ): ?array {
         if ( ! preg_match( '/^[a-f0-9]{20}$/', $change_id ) ) {
             return null;
         }
-        foreach ( self::all_changes( $user_id, $include_expired ) as $change ) {
-            if ( hash_equals( (string) $change['change_id'], $change_id ) ) {
-                return $change;
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $names = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s",
+                $wpdb->esc_like( self::OPTION_PREFIX ) . '%'
+            )
+        );
+        foreach ( (array) $names as $name ) {
+            $token = substr( (string) $name, strlen( self::OPTION_PREFIX ) );
+            if ( ! preg_match( '/^[a-f0-9]{32}$/', $token ) || ! hash_equals( self::change_id( $token ), $change_id ) ) {
+                continue;
             }
+            $data = self::visible( self::decode_row( $token ), $user_id, $include_expired );
+            return ( null !== $data && hash_equals( (string) $data['token'], $token ) ) ? $data : null;
         }
         return null;
+    }
+
+    /** A decoded snapshot with its change_id, or null when it is not shown. */
+    private static function visible( ?array $data, ?int $user_id, bool $include_expired ): ?array {
+        if ( null === $data || empty( $data['token'] ) || ( ! $include_expired && (int) ( $data['expires_at'] ?? 0 ) <= time() ) ) {
+            return null;
+        }
+        if ( null !== $user_id && (int) ( $data['user_id'] ?? 0 ) !== $user_id ) {
+            return null;
+        }
+        $data['change_id'] = self::change_id( (string) $data['token'] );
+        return $data;
     }
 
     /** Decode one stored row by token, with no expiry or owner checks. */

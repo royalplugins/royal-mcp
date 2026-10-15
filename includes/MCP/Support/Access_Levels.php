@@ -96,8 +96,12 @@ class Access_Levels {
 		} else {
 			$clients[ $client_id ] = $level;
 		}
+		global $wpdb;
 		foreach ( array_keys( $clients ) as $id ) {
-			if ( ! \Royal_MCP\OAuth\Token_Store::get_client( (string) $id ) ) {
+			$wpdb->last_error = '';
+			$found            = \Royal_MCP\OAuth\Token_Store::get_client( (string) $id );
+			// Drop a level only when the lookup worked and found no client.
+			if ( ! $found && '' === $wpdb->last_error ) {
 				unset( $clients[ $id ] );
 			}
 		}

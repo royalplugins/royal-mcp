@@ -128,12 +128,21 @@ class Drafts_Policy {
 		if ( array_key_exists( $name, self::CREATE_TOOLS ) ) {
 			$status_arg = self::CREATE_TOOLS[ $name ];
 			if ( '' !== $status_arg && array_key_exists( $status_arg, $args ) ) {
-				return self::status_refusal( $name, $args[ $status_arg ] );
+				$why = self::status_refusal( $name, $args[ $status_arg ] );
+				if ( null !== $why ) {
+					return $why;
+				}
+			}
+			if ( 'wp_publish_and_promote' === $name ) {
+				return self::new_terms_refusal( $args );
 			}
 			return null;
 		}
 
 		if ( array_key_exists( $name, self::EDIT_TOOLS ) ) {
+			if ( 'elementor_replace_text' === $name && ! empty( $args['sync_attachment_meta'] ) ) {
+				return 'sync_attachment_meta changes the alt text of media files on every page that uses them. Leave it off; the draft\'s own text still changes.';
+			}
 			foreach ( self::EDIT_STATUS_ARGS as $status_arg ) {
 				if ( array_key_exists( $status_arg, $args ) ) {
 					$why = self::status_refusal( $name, $args[ $status_arg ] );
@@ -205,6 +214,31 @@ class Drafts_Policy {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * New categories and tags are site-wide, so publish-and-promote may only use
+	 * existing ones while drafts-only applies.
+	 *
+	 * @param array $args Tool arguments.
+	 * @return string|null
+	 */
+	private static function new_terms_refusal( array $args ) {
+		$missing = [];
+		if ( isset( $args['category'] ) && ! is_scalar( $args['category'] ) ) {
+			return 'wp_publish_and_promote takes the category as a single name.';
+		}
+		$category = isset( $args['category'] ) ? sanitize_text_field( (string) $args['category'] ) : '';
+		if ( '' !== $category && ! term_exists( $category, 'category' ) ) {
+			$missing[] = 'category "' . $category . '"';
+		}
+		foreach ( ( isset( $args['tags'] ) && is_array( $args['tags'] ) ) ? $args['tags'] : [] as $tag ) {
+			$tag = is_scalar( $tag ) ? sanitize_text_field( (string) $tag ) : '';
+			if ( '' !== $tag && ! term_exists( $tag, 'post_tag' ) ) {
+				$missing[] = 'tag "' . $tag . '"';
+			}
+		}
+		return $missing ? sprintf( 'wp_publish_and_promote would create %s, which changes more than a draft. Use existing categories and tags.', implode( ', ', $missing ) ) : null;
 	}
 
 	/**

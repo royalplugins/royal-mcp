@@ -246,6 +246,62 @@ class Core {
 					),
 				),
 			),
+			// ==================== BLOCKS (reads) ====================
+			'wp_get_block_outline' => array(
+				'type'       => 'object',
+				'properties' => array(
+					'id'        => array( 'type' => 'integer' ),
+					'post_type' => array( 'type' => 'string' ),
+					'blocks'    => array( 'type' => 'array', 'items' => array( 'type' => 'object', 'properties' => array( 'path' => array( 'type' => 'string' ), 'name' => array( 'type' => 'string' ), 'attributes' => array( 'type' => 'object' ), 'text' => array( 'type' => 'string' ), 'inner' => array( 'type' => 'integer' ), 'edit' => array( 'type' => 'string' ) ) ) ),
+					'stats'     => array( 'type' => 'object', 'properties' => array( 'blocks' => array( 'type' => 'integer' ), 'by_namespace' => array( 'type' => 'object' ), 'core_html_blocks' => array( 'type' => 'integer' ), 'freeform_chars' => array( 'type' => 'integer' ) ) ),
+					'truncated' => array( 'type' => 'boolean' ),
+					'note'      => array( 'type' => 'string' ),
+				),
+			),
+			'wp_list_block_types' => array(
+				'type'       => 'object',
+				'properties' => array(
+					'count'       => array( 'type' => 'integer' ),
+					'block_types' => array( 'type' => 'array', 'items' => array( 'type' => 'object', 'properties' => array( 'name' => array( 'type' => 'string' ), 'title' => array( 'type' => 'string' ), 'category' => array( 'type' => 'string' ), 'parent' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ), 'server_rendered' => array( 'type' => 'boolean' ), 'attributes' => array( 'type' => 'object' ) ) ) ),
+					'note'        => array( 'type' => 'string' ),
+				),
+			),
+			'wp_validate_blocks' => array(
+				'type'       => 'object',
+				'properties' => array(
+					'ok'                => array( 'type' => 'boolean' ),
+					'blocks'            => array( 'type' => 'integer' ),
+					'block_names'       => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+					'unknown'           => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+					'editor_only'       => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+					'core_html_blocks'  => array( 'type' => 'integer' ),
+					'freeform_chars'    => array( 'type' => 'integer' ),
+					'broken_delimiters' => array( 'type' => 'boolean' ),
+					'stable'            => array( 'type' => 'boolean' ),
+					'problems'          => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+					'note'              => array( 'type' => 'string' ),
+				),
+			),
+			'wp_list_synced_patterns' => array(
+				'type'       => 'object',
+				'properties' => array( 'count' => array( 'type' => 'integer' ), 'patterns' => array( 'type' => 'array', 'items' => array( 'type' => 'object', 'properties' => array( 'id' => array( 'type' => 'integer' ), 'title' => array( 'type' => 'string' ), 'status' => array( 'type' => 'string' ), 'synced' => array( 'type' => 'boolean' ), 'categories' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ), 'content_length' => array( 'type' => 'integer' ) ) ) ) ),
+			),
+			'wp_get_synced_pattern' => array(
+				'type'       => 'object',
+				'properties' => array( 'id' => array( 'type' => 'integer' ), 'title' => array( 'type' => 'string' ), 'status' => array( 'type' => 'string' ), 'synced' => array( 'type' => 'boolean' ), 'categories' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ), 'content_length' => array( 'type' => 'integer' ), 'content' => array( 'type' => 'string' ), 'stats' => array( 'type' => 'object', 'properties' => array( 'blocks' => array( 'type' => 'integer' ), 'by_namespace' => array( 'type' => 'object' ), 'core_html_blocks' => array( 'type' => 'integer' ), 'freeform_chars' => array( 'type' => 'integer' ) ) ) ),
+			),
+			'wp_get_global_styles' => array(
+				'type'       => 'object',
+				'properties' => array( 'block_theme' => array( 'type' => 'boolean' ), 'theme' => array( 'type' => 'string' ), 'settings' => array( 'type' => 'object' ), 'styles' => array( 'type' => 'object' ) ),
+			),
+			'wp_list_block_templates' => array(
+				'type'       => 'object',
+				'properties' => array( 'count' => array( 'type' => 'integer' ), 'templates' => array( 'type' => 'array', 'items' => array( 'type' => 'object', 'properties' => array( 'id' => array( 'type' => 'string' ), 'type' => array( 'type' => 'string' ), 'slug' => array( 'type' => 'string' ), 'title' => array( 'type' => 'string' ), 'area' => array( 'type' => 'string' ), 'source' => array( 'type' => 'string' ), 'customized' => array( 'type' => 'boolean' ), 'has_theme_file' => array( 'type' => 'boolean' ) ) ) ) ),
+			),
+			'wp_get_block_template' => array(
+				'type'       => 'object',
+				'properties' => array( 'id' => array( 'type' => 'string' ), 'type' => array( 'type' => 'string' ), 'slug' => array( 'type' => 'string' ), 'source' => array( 'type' => 'string' ), 'content' => array( 'type' => 'string' ), 'stats' => array( 'type' => 'object', 'properties' => array( 'blocks' => array( 'type' => 'integer' ), 'by_namespace' => array( 'type' => 'object' ), 'core_html_blocks' => array( 'type' => 'integer' ), 'freeform_chars' => array( 'type' => 'integer' ) ) ) ),
+			),
 			'mcp_list_recent_changes' => array(
 				'type'       => 'object',
 				'properties' => array(

@@ -22,6 +22,7 @@ class Change_View {
 	const WINDOW_HOURS    = 72;
 	const MAX_VALUE_CHARS = 4000;
 	const MAX_DIFF_LINES  = 400;
+	const MAX_DIFF_BYTES  = 65536;
 	const MAX_DIFF_INPUT  = 5000;
 	const DIFF_CONTEXT    = 3;
 	const MAX_ROWS        = 100;
@@ -68,11 +69,36 @@ class Change_View {
 		$t   = (array) ( $change['target'] ?? [] );
 		$pre = (array) ( $change['pre_op_state'] ?? [] );
 		foreach ( self::cap_rules( $op, $t, $pre ) as $rule ) {
+			if ( count( $rule ) > 1 && ! self::object_exists( $rule[0], (int) $rule[1] ) ) {
+				// The object is gone, so there is nothing to check a per-object
+				// capability against; administrators can still review the change.
+				if ( current_user_can( 'manage_options' ) ) {
+					return true;
+				}
+				continue;
+			}
 			if ( count( $rule ) > 1 ? current_user_can( $rule[0], $rule[1] ) : current_user_can( $rule[0] ) ) {
 				return true;
 			}
 		}
 		return false;
+	}
+
+	/** Whether the object a per-object capability refers to still exists. */
+	private static function object_exists( $cap, $id ) {
+		if ( $id <= 0 ) {
+			return false;
+		}
+		if ( false !== strpos( $cap, 'comment' ) ) {
+			return (bool) get_comment( $id );
+		}
+		if ( false !== strpos( $cap, 'term' ) ) {
+			return get_term( $id ) instanceof \WP_Term;
+		}
+		if ( false !== strpos( $cap, 'shop_order' ) && function_exists( 'wc_get_order' ) ) {
+			return (bool) wc_get_order( $id );
+		}
+		return (bool) get_post( $id );
 	}
 
 	/**
@@ -858,13 +884,31 @@ class Change_View {
 		return null === $v ? '' : (string) $v;
 	}
 
+	/** The first $bytes bytes of $text, never ending inside a UTF-8 character. */
+	private static function cut( $text, $bytes ) {
+		$text = substr( (string) $text, 0, $bytes );
+		$len  = strlen( $text );
+		$back = 0;
+		while ( $back < 3 && $back < $len && 0x80 === ( ord( $text[ $len - 1 - $back ] ) & 0xC0 ) ) {
+			$back++;
+		}
+		if ( $back < $len ) {
+			$lead = ord( $text[ $len - 1 - $back ] );
+			$need = $lead >= 0xF0 ? 3 : ( $lead >= 0xE0 ? 2 : ( $lead >= 0xC0 ? 1 : 0 ) );
+			if ( $need > $back ) {
+				$text = substr( $text, 0, $len - 1 - $back );
+			}
+		}
+		return $text;
+	}
+
 	/** Cap a value's size for the response. */
 	private static function clip( $value, &$truncated ) {
 		$truncated = false;
 		if ( is_string( $value ) ) {
 			if ( strlen( $value ) > self::MAX_VALUE_CHARS ) {
 				$truncated = true;
-				return substr( $value, 0, self::MAX_VALUE_CHARS );
+				return self::cut( $value, self::MAX_VALUE_CHARS );
 			}
 			return $value;
 		}
@@ -872,7 +916,7 @@ class Change_View {
 			$json = (string) wp_json_encode( $value );
 			if ( strlen( $json ) > self::MAX_VALUE_CHARS ) {
 				$truncated = true;
-				return substr( $json, 0, self::MAX_VALUE_CHARS );
+				return self::cut( $json, self::MAX_VALUE_CHARS );
 			}
 		}
 		return $value;
@@ -942,6 +986,11 @@ class Change_View {
 			$out[] = $line[0] . ' ' . $line[1];
 			$last  = $i;
 		}
-		return [ 'unified' => implode( "\n", $out ), 'added' => $added, 'removed' => $removed, 'truncated' => $truncated ];
+		$unified = implode( "\n", $out );
+		if ( strlen( $unified ) > self::MAX_DIFF_BYTES ) {
+			$unified   = self::cut( $unified, self::MAX_DIFF_BYTES );
+			$truncated = true;
+		}
+		return [ 'unified' => $unified, 'added' => $added, 'removed' => $removed, 'truncated' => $truncated ];
 	}
 }
