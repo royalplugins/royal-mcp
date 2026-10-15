@@ -19,11 +19,12 @@ Agents can read and write posts, pages, media, users, menus, WooCommerce orders,
 
 ## Capabilities
 
-### WordPress core (90 tools, always available)
+### WordPress core (109 tools, always available)
 
 - **Content** — Posts, pages, custom post types (full CRUD + revisions + featured images)
 - **Taxonomies** — Categories, tags, custom taxonomies, term meta, post-term linking
-- **Media** — Browse, upload images, PDFs and other allowed files (URL, base64, or a file handed over by ChatGPT), convert / resize / compress images on upload, update metadata, delete
+- **Media** — Browse, upload images, PDFs and other allowed files (URL, base64, or a file handed over by ChatGPT), convert / resize / compress images on upload, find a file already in the library by address or content and reuse it instead of uploading a copy, update metadata, delete
+- **Blocks** — Read a post's block tree; insert, replace, move or delete single blocks; replace text across blocks; read and edit synced patterns; read global styles and Site Editor templates
 - **Comments** — Create, moderate (approve / spam / trash)
 - **Users** — Read display names + roles (emails and usernames are not exposed)
 - **Menus** — Read, create items, reorder, update with destructive-write guardrails
@@ -31,6 +32,7 @@ Agents can read and write posts, pages, media, users, menus, WooCommerce orders,
 - **Site** — Permalink structure, options (allowlisted), site info
 - **Search** — Cross-content search by query
 - **SEO** — Yoast / Rank Math / AIOSEO meta read/write where the plugin is active
+- **Safety** — Read-only mode, drafts-only mode, an access level per connection (Full / Read-only / Drafts only), and a Recent Changes view with before / after / now values and 72-hour undo
 - **Diagnostics** — Site status (WP/PHP/MySQL/plugins/themes/cron in one call), PHP error-log tail, WP cron schedule, and MCP `royal_mcp_connection_health` (returns route, auth method, session ID, plugin version, and active page-builder versions for Divi + Elementor + Gutenberg)
 
 ### Plugin integrations (136 tools, conditional)
