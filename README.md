@@ -35,20 +35,22 @@ Agents can read and write posts, pages, media, users, menus, WooCommerce orders,
 - **Safety** — Read-only mode, drafts-only mode, an access level per connection (Full / Read-only / Drafts only), and a Recent Changes view with before / after / now values and 72-hour undo
 - **Diagnostics** — Site status (WP/PHP/MySQL/plugins/themes/cron in one call), PHP error-log tail, WP cron schedule, and MCP `royal_mcp_connection_health` (returns route, auth method, session ID, plugin version, and active page-builder versions for Divi + Elementor + Gutenberg)
 
-### Plugin integrations (136 tools, conditional)
+### Plugin integrations (150 tools, conditional)
 
 Auto-register only when the integrated plugin is active.
 
 | Plugin | Tools | What's covered |
 |---|---|---|
-| WooCommerce | 29 | Products, variations, attributes, coupons, orders (create/update/notes), customers, store stats |
+| WooCommerce | 29 | Products, variations, attributes, coupons, orders (create/update/notes), customers, store stats; product, customer and variation lists page with totals, and products filter by IDs, SKU and stock status |
 | Elementor | 14 | Clone pages, replace text, swap images, get outline (with optional include-styles), read single element, list templates, import templates, add widget, rebuild post_content, widget-schema discovery, widget-list discovery, dynamic-tag discovery |
 | Divi | 9 | Format detection (D4 shortcode vs D5 block), page outline, layout validation, library list + get, find/replace with builder-format awareness, clone, image swap, library apply |
 | Wordfence | 8 | Security status, firewall mode and scan findings, blocked IPs, block / unblock an IP, failed logins, blocked requests, start a scan |
 | GuardPress | 7 | Security score, failed logins, blocked IPs, vulnerability scans, audit log |
 | SiteVault | 6 | Trigger backups, monitor progress, list schedules |
 | Royal AI Firewall | 6 | Dashboard stats, recent bot hits, per-bot policies (allow / block / challenge), daily rollups |
+| TablePress | 6 | List, read, create, copy and export tables, change cells, with undo |
 | Yoast SEO | 5 | Read/write Yoast meta (raw + resolved), capture JSON-LD schema graph, list indexed internal links, list Premium redirects |
+| Code Snippets | 5 | List and read snippets (credentials in code are masked), recent deactivations, deactivate a snippet, change its name, description and tags |
 | Redirection | 4 | List redirects with group + URL-substring filters, create + update redirects (301 / 302 / 307 / regex / groups), list redirect groups |
 | Royal Ledger | 4 | Software costs, renewal dates, license keys (values never exposed) |
 | Advanced Custom Fields | 4 | Read/write ACF fields with each field's Return Format respected (hydrated post objects, parsed repeater rows, image arrays); enumerate field groups |
@@ -61,6 +63,7 @@ Auto-register only when the integrated plugin is active.
 | Contact Form 7 | 3 | List forms, read a single form's parsed field schema, list submissions (via Flamingo add-on) |
 | W3 Total Cache | 3 | Read cache configuration across every module, purge cache (all / by URL / by post), read usage statistics |
 | Duplicator | 3 | List migration packages, read per-package status, get the installer URL for a completed package |
+| WPCode | 3 | Read only: list snippets, read one snippet (credentials in code are masked), read its status and last error |
 | Royal Links | 3 | Branded short links, click stats |
 | ForgeCache | 4 | Cache stats, clear cache, purge URL, real-user Core Web Vitals (INP/LCP/CLS/TTFB) |
 
