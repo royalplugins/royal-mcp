@@ -307,6 +307,7 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Enhancement: credential settings with one-word names and credential ACF fields are hidden from AI clients.
 * Enhancement: the Allowlisted plugin options setting shows which listed names are blocked.
 * Enhancement: every tool checks the signed-in user's rights on each post, comment, term and template it reads or changes.
+* Fix: Divi 4 pages whose Code modules contain line breaks can be cloned, rewritten and validated.
 * Security: search returns only content the signed-in user may read; thanks to Vincent Cassiau (CyberVanguard).
 * Security: cloning an Elementor page checks the right to read the source and to publish the copy; thanks to Usama Arshad.
 
