@@ -189,9 +189,11 @@ class Divi {
 		// Case-sensitive: Divi emits lowercase tags, and uppercase authored
 		// tags would not render as Divi modules — treat them as literal
 		// text rather than validating them as if they were Divi content.
+		// Tags inside HTML comments are not modules (Divi's line-break
+		// markers in Code modules are such comments), so they are skipped.
 		if ( ! preg_match_all(
 			'/\[(\/?)(et_pb_[a-z0-9_]+)([^\]]*)\]/',
-			$content,
+			self::blank_html_comments( $content ),
 			$tag_matches,
 			PREG_SET_ORDER | PREG_OFFSET_CAPTURE
 		) ) {
@@ -273,6 +275,36 @@ class Divi {
 		}
 
 		return self::check_dynamic_content_tokens( $content, $errors );
+	}
+
+	/**
+	 * The content with every complete HTML comment replaced by spaces of the
+	 * same length, so offsets still point into the original. An unterminated
+	 * `<!--` is left as is and the rest of the content is still checked.
+	 *
+	 * @param string $content Post content.
+	 * @return string
+	 */
+	private static function blank_html_comments( $content ) {
+		$parts  = [];
+		$offset = 0;
+		$length = strlen( $content );
+		while ( $offset < $length ) {
+			$start = strpos( $content, '<!--', $offset );
+			if ( false === $start ) {
+				break;
+			}
+			$end = strpos( $content, '-->', $start + 4 );
+			if ( false === $end ) {
+				break;
+			}
+			$end    += 3;
+			$parts[] = substr( $content, $offset, $start - $offset );
+			$parts[] = str_repeat( ' ', $end - $start );
+			$offset  = $end;
+		}
+		$parts[] = (string) substr( $content, $offset );
+		return implode( '', $parts );
 	}
 
 	/**
