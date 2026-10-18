@@ -60,7 +60,7 @@ class Duplicator {
 	}
 
 	public static function execute_tool( $name, $args ) {
-		if ( ! current_user_can( 'manage_options' ) ) {
+		if ( ! current_user_can( is_multisite() ? 'manage_network_options' : 'manage_options' ) ) {
 			throw new \Exception( 'You do not have permission to use Duplicator tools.' );
 		}
 		if ( ! self::is_available() ) {

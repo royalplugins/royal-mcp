@@ -23,7 +23,7 @@ class WooCommerce {
 	private static function map(): array {
 		return array(
 			// Products
-			'wc_get_products'   => array( 'type' => 'array', 'items' => self::product_summary_schema() ),
+			'wc_get_products'   => self::list_or_page( 'products', self::product_summary_schema() ),
 			'wc_get_product'    => self::product_full_schema(),
 			'wc_create_product' => self::id_message_schema( array( 'url' => array( 'type' => 'string' ) ) ),
 			'wc_update_product' => self::id_message_schema(),
@@ -47,9 +47,9 @@ class WooCommerce {
 			),
 
 			// Customers + stats
-			'wc_get_customers'     => array(
-				'type'  => 'array',
-				'items' => array(
+			'wc_get_customers'     => self::list_or_page(
+				'customers',
+				array(
 					'type'                 => 'object',
 					'additionalProperties' => true,
 					'properties'           => array(
@@ -59,7 +59,7 @@ class WooCommerce {
 						'order_count' => array( 'type' => 'integer' ),
 						'total_spent' => array( 'type' => array( 'number', 'string' ) ),
 					),
-				),
+				)
 			),
 			'wc_get_store_stats'   => array(
 				'type'                 => 'object',
@@ -73,7 +73,7 @@ class WooCommerce {
 			),
 
 			// Variations
-			'wc_get_product_variations'   => array( 'type' => 'array', 'items' => self::variation_schema() ),
+			'wc_get_product_variations'   => self::list_or_page( 'variations', self::variation_schema() ),
 			'wc_get_variation'            => self::variation_schema(),
 			'wc_create_variation'         => self::id_message_schema(),
 			'wc_update_variation'         => self::id_message_schema(),
@@ -161,6 +161,24 @@ class WooCommerce {
 	}
 
 	// ============ Partials ============
+
+	/** A plain list (no page argument) or the paged reply holding that list under $key. */
+	private static function list_or_page( string $key, array $item ): array {
+		return array(
+			'type'                 => array( 'array', 'object' ),
+			'items'                => $item,
+			'additionalProperties' => true,
+			'properties'           => array(
+				$key           => array( 'type' => 'array', 'items' => $item ),
+				'page'         => array( 'type' => 'integer' ),
+				'per_page'     => array( 'type' => 'integer' ),
+				'total'        => array( 'type' => 'integer' ),
+				'total_count'  => array( 'type' => 'integer' ),
+				'total_pages'  => array( 'type' => 'integer' ),
+				'ignored_args' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+			),
+		);
+	}
 
 	private static function product_summary_schema(): array {
 		return array(

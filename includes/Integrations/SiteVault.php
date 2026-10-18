@@ -120,7 +120,7 @@ class SiteVault {
 		// admin-tier — backups can contain the entire site (DB + uploads +
 		// plugins) and even read-only listings expose backup contents,
 		// schedules, and storage destinations.
-		if ( ! current_user_can( 'manage_options' ) ) {
+		if ( ! current_user_can( is_multisite() ? 'manage_network_options' : 'manage_options' ) ) {
 			throw new \Exception( 'You do not have permission to use SiteVault tools.' );
 		}
 

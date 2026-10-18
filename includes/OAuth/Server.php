@@ -680,6 +680,12 @@ class Server {
             exit;
         }
 
+        // Only users the site owner allows may connect AI clients (Settings, default administrators).
+        if ( ! \Royal_MCP\MCP\Support\Route_Roles::connect_allowed() ) {
+            $this->log_event( 'connect_role_refused', 'Authorize request from a user who may not connect AI clients.', 403 );
+            wp_die( esc_html__( 'Your account is not allowed to connect AI clients to this site. Ask a site administrator.', 'royal-mcp' ), '', [ 'response' => 403 ] );
+        }
+
         // User is logged in — render consent screen.
         $current_user = wp_get_current_user();
         $site_name    = get_bloginfo( 'name' );
@@ -771,6 +777,10 @@ class Server {
         if ( ! is_user_logged_in() ) {
             $this->log_event( 'unauthorized', 'Authorize POST received without an authenticated WP user session.', 401 );
             wp_die( esc_html__( 'Not authenticated.', 'royal-mcp' ), '', [ 'response' => 401 ] );
+        }
+        if ( ! \Royal_MCP\MCP\Support\Route_Roles::connect_allowed() ) {
+            $this->log_event( 'connect_role_refused', 'Authorize POST from a user who may not connect AI clients.', 403 );
+            wp_die( esc_html__( 'Your account is not allowed to connect AI clients to this site. Ask a site administrator.', 'royal-mcp' ), '', [ 'response' => 403 ] );
         }
 
         // Generate authorization code.

@@ -46,6 +46,11 @@ class Changes_Page {
         return add_query_arg( [ 'page' => self::MENU_SLUG, 'change' => $change_id ], admin_url( 'admin.php' ) );
     }
 
+    /** Link to the change an undo token belongs to. */
+    public static function token_url( $token ) {
+        return self::change_url( Undo_Store::change_id( (string) $token ) );
+    }
+
     public function render() {
         if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- per-site undo snapshots in this site's options table only
             wp_die( esc_html__( 'You do not have permission to access this page.', 'royal-mcp' ), '', [ 'response' => 403 ] );

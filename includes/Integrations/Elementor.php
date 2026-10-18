@@ -348,8 +348,16 @@ class Elementor {
 			throw new \Exception( 'source_post_id and new_title are required.' );
 		}
 		$source = get_post( $source_id );
-		if ( ! $source ) {
+		// One answer for a missing post and one the caller may not read.
+		if ( ! $source || 'revision' === $source->post_type || ! \Royal_MCP\MCP\Support\Post_Access::can_read( $source ) ) {
 			throw new \Exception( 'Source post not found.' );
+		}
+		if ( \Royal_MCP\MCP\Support\Post_Access::content_withheld( $source ) ) {
+			throw new \Exception( 'This post is password protected; only users who can edit it may copy it.' );
+		}
+		$create_refusal = \Royal_MCP\MCP\Support\Post_Access::create_refusal( $source->post_type, $new_status );
+		if ( '' !== $create_refusal ) {
+			throw new \Exception( esc_html( $create_refusal ) );
 		}
 		$elementor_data = get_post_meta( $source_id, '_elementor_data', true );
 		if ( empty( $elementor_data ) ) {
@@ -513,18 +521,13 @@ class Elementor {
 		// Existence checks first so callers get friendly envelope errors instead
 		// of thrown cap-check exceptions on non-existent IDs.
 		$template_post = get_post( $template_id );
-		if ( ! $template_post ) {
+		// One answer for a missing template, one the caller may not read, and
+		// a post that is not a library template.
+		if ( ! $template_post || $template_post->post_type !== 'elementor_library' || ! \Royal_MCP\MCP\Support\Post_Access::can_read_content( $template_post ) ) {
 			return \Royal_MCP\MCP\Support\Envelope::error(
 				'template_not_found',
-				sprintf( 'No template found with id %d.', $template_id ),
+				sprintf( 'No Elementor library template found with id %d.', $template_id ),
 				[ 'template_id' => $template_id ]
-			);
-		}
-		if ( $template_post->post_type !== 'elementor_library' ) {
-			return \Royal_MCP\MCP\Support\Envelope::error(
-				'template_not_found',
-				sprintf( 'Post %d is not an Elementor library template (post_type=%s).', $template_id, $template_post->post_type ),
-				[ 'template_id' => $template_id, 'actual_post_type' => $template_post->post_type ]
 			);
 		}
 		$target_post = get_post( $target_post_id );
@@ -541,7 +544,7 @@ class Elementor {
 		if ( ! current_user_can( 'edit_post', $target_post_id ) ) {
 			throw new \Exception( 'edit_post capability required on target post.' );
 		}
-		if ( ! current_user_can( 'read_post', $template_id ) ) {
+		if ( ! \Royal_MCP\MCP\Support\Post_Access::can_read_content( $template_id ) ) {
 			throw new \Exception( 'read_post capability required on template.' );
 		}
 
@@ -616,7 +619,7 @@ class Elementor {
 			$merged = array_merge( $target_elements, $template_elements );
 		}
 
-		update_post_meta( $target_post_id, '_elementor_data', wp_slash( wp_json_encode( $merged ) ) );
+		update_post_meta( $target_post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $merged ) ) ) );
 
 		// Seed edit_mode = builder if the target didn't have it — makes the
 		// editor open cleanly on the freshly-populated page.
@@ -865,6 +868,10 @@ class Elementor {
 
 		$prepared = $wpdb->prepare( $sql, $params );
 		$candidate_ids = array_map( 'intval', (array) $wpdb->get_col( $prepared ) );
+		// Only posts the caller could repair, in the preview and in the results.
+		$candidate_ids = array_values( array_filter( $candidate_ids, static function ( $pid ) {
+			return current_user_can( 'edit_post', $pid );
+		} ) );
 
 		if ( $dry_run ) {
 			$sample = array_slice( $candidate_ids, 0, 20 );
@@ -947,6 +954,34 @@ class Elementor {
 	 * @param array $elements
 	 * @return array
 	 */
+	/**
+	 * Builder data written for a user without unfiltered_html gets the same
+	 * filtering WordPress applies to that user's post content: HTML through
+	 * wp_kses_post, link URLs through esc_url_raw.
+	 *
+	 * @param mixed  $value Element tree or any value inside it.
+	 * @param string $key   Key the value is stored under.
+	 * @return mixed
+	 */
+	private static function sanitize_tree_for_user( $value, $key = '' ) {
+		if ( current_user_can( 'unfiltered_html' ) ) {
+			return $value;
+		}
+		if ( is_array( $value ) ) {
+			foreach ( $value as $k => $v ) {
+				$value[ $k ] = self::sanitize_tree_for_user( $v, (string) $k );
+			}
+			return $value;
+		}
+		if ( ! is_string( $value ) ) {
+			return $value;
+		}
+		if ( 'url' === $key || '_url' === substr( $key, -4 ) ) {
+			return esc_url_raw( $value );
+		}
+		return wp_strip_all_tags( $value ) !== $value ? wp_kses_post( $value ) : $value;
+	}
+
 	private static function regenerate_element_ids( $elements ) {
 		if ( ! is_array( $elements ) ) {
 			return $elements;
@@ -1052,7 +1087,7 @@ class Elementor {
 			);
 		}
 
-		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( $updated ) ) );
+		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $updated ) ) ) );
 
 		// Sync attachment postmeta only when the caller explicitly opted in.
 		// Blast-radius awareness: a single attachment used across many pages
@@ -1373,7 +1408,7 @@ class Elementor {
 		$counter = [ 'count' => 0 ];
 		$updated = self::walk_widgets_image( $tree, $old_url, $new_url, $old_id, $new_id, $counter );
 
-		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( $updated ) ) );
+		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $updated ) ) ) );
 
 		$undo_envelope = self::build_elementor_data_undo(
 			'elementor_replace_image',
@@ -1468,7 +1503,7 @@ class Elementor {
 		if ( $post_id <= 0 ) {
 			throw new \Exception( 'post_id is required.' );
 		}
-		if ( ! current_user_can( 'read_post', $post_id ) ) {
+		if ( ! \Royal_MCP\MCP\Support\Post_Access::can_read_content( $post_id ) ) {
 			throw new \Exception( 'read_post capability required.' );
 		}
 		$elementor_data = get_post_meta( $post_id, '_elementor_data', true );
@@ -1505,7 +1540,7 @@ class Elementor {
 		if ( '' === $element_id ) {
 			throw new \Exception( 'element_id is required.' );
 		}
-		if ( ! current_user_can( 'read_post', $post_id ) ) {
+		if ( ! \Royal_MCP\MCP\Support\Post_Access::can_read_content( $post_id ) ) {
 			throw new \Exception( 'read_post capability required.' );
 		}
 
@@ -1796,6 +1831,12 @@ class Elementor {
 		if ( $title === '' || $template_json === '' ) {
 			throw new \Exception( 'title and template_json are required.' );
 		}
+		// Imported templates are saved published, so the caller needs the
+		// library post type's publish capability.
+		$create_refusal = \Royal_MCP\MCP\Support\Post_Access::create_refusal( 'elementor_library', 'publish' );
+		if ( '' !== $create_refusal ) {
+			throw new \Exception( esc_html( $create_refusal ) );
+		}
 
 		$decoded = json_decode( $template_json, true );
 		if ( ! is_array( $decoded ) ) {
@@ -1827,7 +1868,7 @@ class Elementor {
 		wp_set_object_terms( $new_id, $template_type, 'elementor_library_type' );
 
 		// Set Elementor meta.
-		update_post_meta( $new_id, '_elementor_data', wp_slash( wp_json_encode( $elements ) ) );
+		update_post_meta( $new_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $elements ) ) ) );
 		update_post_meta( $new_id, '_elementor_edit_mode', 'builder' );
 		update_post_meta( $new_id, '_elementor_template_type', $template_type );
 
@@ -1913,7 +1954,7 @@ class Elementor {
 		$tree = self::insert_into_tree( $tree, $parent_id, $position, $new_element );
 
 		// Save.
-		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( $tree ) ) );
+		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $tree ) ) ) );
 
 		$notice = ! empty( $args['settings'] ) && in_array( $widget_type, self::$curated_widget_types, true )
 			? 'Raw settings supplied for a curated widget_type — curated params were ignored. To use curated, omit the settings parameter.'

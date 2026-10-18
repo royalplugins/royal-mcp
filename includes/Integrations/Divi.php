@@ -616,7 +616,7 @@ class Divi {
 			);
 		}
 
-		if ( ! current_user_can( 'read_post', $post_id ) ) {
+		if ( ! \Royal_MCP\MCP\Support\Post_Access::can_read( $post_id ) ) {
 			return Envelope::error(
 				'insufficient_caps',
 				sprintf( 'read_post capability required on post %d.', $post_id ),
@@ -792,7 +792,7 @@ class Divi {
 					[ 'post_id' => $post_id ]
 				);
 			}
-			if ( ! current_user_can( 'read_post', $post_id ) ) {
+			if ( ! \Royal_MCP\MCP\Support\Post_Access::can_read_content( $post_id ) ) {
 				return Envelope::error(
 					'insufficient_caps',
 					sprintf( 'read_post capability required on post %d.', $post_id ),
@@ -1017,7 +1017,7 @@ class Divi {
 			);
 		}
 
-		if ( ! current_user_can( 'read_post', $post_id ) ) {
+		if ( ! \Royal_MCP\MCP\Support\Post_Access::can_read_content( $post_id ) ) {
 			return Envelope::error(
 				'insufficient_caps',
 				sprintf( 'read_post capability required on post %d.', $post_id ),
@@ -1817,11 +1817,16 @@ class Divi {
 			return Envelope::error( 'invalid_args', 'source_post_id and new_title are required.' );
 		}
 		$source = get_post( $source_id );
-		if ( ! $source ) {
+		// One answer for a missing post and one the caller may not read.
+		if ( ! $source || 'revision' === $source->post_type || ! \Royal_MCP\MCP\Support\Post_Access::can_read( $source ) ) {
 			return Envelope::error( 'source_not_found', 'Source post not found.' );
 		}
-		if ( ! current_user_can( 'read_post', $source_id ) ) {
-			return Envelope::error( 'insufficient_caps', 'read_post on source_post_id required.' );
+		if ( \Royal_MCP\MCP\Support\Post_Access::content_withheld( $source ) ) {
+			return Envelope::error( 'insufficient_caps', 'This post is password protected; only users who can edit it may copy it.' );
+		}
+		$create_refusal = \Royal_MCP\MCP\Support\Post_Access::create_refusal( $source->post_type, $new_status );
+		if ( '' !== $create_refusal ) {
+			return Envelope::error( 'insufficient_caps', $create_refusal );
 		}
 
 		$format = self::detect_format( $source_id );
@@ -1999,7 +2004,9 @@ class Divi {
 		$target = get_post( $target_id );
 		if ( ! $target ) return Envelope::error( 'target_not_found', 'Target post not found.' );
 		$template = get_post( $template_id );
-		if ( ! $template || $template->post_type !== 'et_pb_layout' ) {
+		// Only layouts the caller may read: another user's draft, private or
+		// trashed layout gets the same answer as a missing one.
+		if ( ! $template || $template->post_type !== 'et_pb_layout' || ! \Royal_MCP\MCP\Support\Post_Access::can_read( $template ) ) {
 			return Envelope::error( 'template_not_found', 'Template not found in et_pb_layout.' );
 		}
 		if ( ! current_user_can( 'edit_post', $target_id ) ) {

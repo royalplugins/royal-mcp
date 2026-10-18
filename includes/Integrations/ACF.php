@@ -122,7 +122,7 @@ class ACF {
 				}
 				// ACF field values live in post meta; gate behind the
 				// parent post's read cap (private posts' ACF data is not public).
-				if ( ! current_user_can( 'read_post', $post_id ) ) {
+				if ( ! \Royal_MCP\MCP\Support\Post_Access::can_read_content( $post_id ) ) {
 					throw new \Exception( 'You do not have permission to read ACF fields on this post.' );
 				}
 				$field_object = get_field_object( $field_name, $post_id, true, true );
@@ -141,7 +141,7 @@ class ACF {
 					'field_key'  => $field_object['key'] ?? '',
 					'label'      => $field_object['label'] ?? '',
 					'type'       => $field_object['type'] ?? '',
-					'value'      => self::flatten_value( $field_object['value'] ?? null ),
+					'value'      => self::redact_field( $field_object, self::flatten_value( $field_object['value'] ?? null ) ),
 					'exists'     => true,
 				];
 
@@ -153,7 +153,7 @@ class ACF {
 				if ( ! get_post( $post_id ) ) {
 					throw new \Exception( 'Post not found for ID ' . esc_html( (string) $post_id ) );
 				}
-				if ( ! current_user_can( 'read_post', $post_id ) ) {
+				if ( ! \Royal_MCP\MCP\Support\Post_Access::can_read_content( $post_id ) ) {
 					throw new \Exception( 'You do not have permission to read ACF fields on this post.' );
 				}
 				$objects = get_field_objects( $post_id, true, true );
@@ -171,7 +171,7 @@ class ACF {
 						'key'   => $object['key'] ?? '',
 						'label' => $object['label'] ?? '',
 						'type'  => $object['type'] ?? '',
-						'value' => self::flatten_value( $object['value'] ?? null ),
+						'value' => self::redact_field( $object, self::flatten_value( $object['value'] ?? null ) ),
 					];
 				}
 				return [
@@ -195,6 +195,19 @@ class ACF {
 				}
 				if ( ! array_key_exists( 'value', $args ) ) {
 					throw new \Exception( 'value is required (pass null to clear the field)' );
+				}
+				// Only fields ACF knows: an unknown name would make update_field()
+				// write raw post meta under that name.
+				// Resolved the way update_field() resolves it (field name, key, or sub-field path).
+				$acf_field = function_exists( 'acf_maybe_get_field' ) ? acf_maybe_get_field( $field_name, $post_id, false ) : false;
+				if ( ! $acf_field ) {
+					throw new \Exception( 'Unknown ACF field "' . esc_html( $field_name ) . '". Use acf_get_fields to list the fields on this post.' );
+				}
+				$meta_key = ! empty( $acf_field['name'] ) ? (string) $acf_field['name'] : $field_name;
+				$path_key = 0 === strpos( $field_name, 'field_' ) ? $meta_key : $field_name;
+				if ( ( is_protected_meta( $meta_key, 'post' ) || is_protected_meta( $path_key, 'post' ) )
+					&& ! current_user_can( 'edit_post_meta', $post_id, $meta_key ) ) {
+					throw new \Exception( 'You do not have permission to write that field.' );
 				}
 				$result = update_field( $field_name, $args['value'], $post_id );
 				if ( false === $result ) {
@@ -260,11 +273,31 @@ class ACF {
 	 * small array the LLM can reason about, while passing scalars and plain
 	 * arrays through untouched.
 	 */
+	/**
+	 * Field value with the credential redaction post meta reads get; a
+	 * password-type field is always withheld.
+	 */
+	private static function redact_field( array $field, $value ) {
+		$empty = ( '' === $value || null === $value || [] === $value || '0' === $value || false === $value );
+		if ( 'password' === ( $field['type'] ?? '' ) ) {
+			return $empty ? $value : '[REDACTED]';
+		}
+		static $server = null;
+		if ( null === $server ) {
+			$server = new \Royal_MCP\MCP\Server();
+		}
+		return $server->redact_for_display( $value, (string) ( $field['name'] ?? '' ) );
+	}
+
 	private static function flatten_value( $value ) {
 		if ( is_null( $value ) || is_scalar( $value ) ) {
 			return $value;
 		}
 		if ( $value instanceof \WP_Post ) {
+			// A linked post the caller may not read comes back as its ID only.
+			if ( ! \Royal_MCP\MCP\Support\Post_Access::can_read( $value ) ) {
+				return [ 'id' => (int) $value->ID, 'readable' => false ];
+			}
 			return [
 				'id'         => (int) $value->ID,
 				'title'      => $value->post_title,
@@ -274,11 +307,15 @@ class ACF {
 			];
 		}
 		if ( $value instanceof \WP_User ) {
-			return [
+			$user = [
 				'id'           => (int) $value->ID,
 				'display_name' => $value->display_name,
-				'user_email'   => $value->user_email,
 			];
+			// Email addresses only for users who can list users.
+			if ( current_user_can( 'list_users' ) ) {
+				$user['user_email'] = $value->user_email;
+			}
+			return $user;
 		}
 		if ( $value instanceof \WP_Term ) {
 			return [
@@ -289,6 +326,10 @@ class ACF {
 			];
 		}
 		if ( is_array( $value ) ) {
+			// A user field in "array" return format carries the email too.
+			if ( isset( $value['user_email'] ) && ! current_user_can( 'list_users' ) ) {
+				unset( $value['user_email'] );
+			}
 			$flat = [];
 			foreach ( $value as $k => $v ) {
 				$flat[ $k ] = self::flatten_value( $v );

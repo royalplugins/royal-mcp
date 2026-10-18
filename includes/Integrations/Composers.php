@@ -111,7 +111,10 @@ class Composers {
 
 		// Step 1: sideload featured image (best-effort)
 		$attachment_id = 0;
-		if ( '' !== $featured_url ) {
+		if ( '' !== $featured_url && ! current_user_can( 'upload_files' ) ) {
+			$steps[]    = [ 'name' => 'upload_featured_image', 'status' => 'skipped', 'message' => 'You do not have permission to upload files.' ];
+			$warnings[] = [ 'step' => 'upload_featured_image', 'message' => 'You do not have permission to upload files.' ];
+		} elseif ( '' !== $featured_url ) {
 			$sideload = self::sideload_media( $featured_url );
 			if ( is_wp_error( $sideload ) ) {
 				$msg = $sideload->get_error_message();
@@ -170,7 +173,10 @@ class Composers {
 		if ( '' !== $category ) {
 			$term = term_exists( $category, 'category' );
 			if ( ! $term ) {
-				$term = wp_insert_term( $category, 'category' );
+				$cat_tax = get_taxonomy( 'category' );
+				$term    = ( $cat_tax && current_user_can( $cat_tax->cap->edit_terms ) )
+					? wp_insert_term( $category, 'category' )
+					: new \WP_Error( 'insufficient_caps', sprintf( 'Category "%s" does not exist and you do not have permission to create categories.', $category ) );
 			}
 			if ( is_wp_error( $term ) ) {
 				$msg = $term->get_error_message();

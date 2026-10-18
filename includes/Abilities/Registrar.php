@@ -41,6 +41,9 @@ class Registrar {
 			'acf_'       => 'acf',
 			'raif_'      => 'raif',
 			'redirection_' => 'redirection',
+			'tablepress_'  => 'tablepress',
+			'snippets_'    => 'code-snippets',
+			'wpcode_'      => 'wpcode',
 		);
 	}
 
@@ -52,6 +55,7 @@ class Registrar {
 		if ( ! function_exists( 'wp_register_ability' ) ) {
 			return;
 		}
+		add_filter( 'wp_ability_normalize_input', array( self::class, 'empty_input_for_no_argument_tools' ), 10, 3 );
 		$server = new Server();
 		$tools  = $server->get_all_tools();
 		foreach ( $tools as $tool ) {
@@ -60,6 +64,23 @@ class Registrar {
 			}
 			self::register_one( $tool );
 		}
+	}
+
+	/**
+	 * A call with no input to one of our tools that takes no arguments runs with
+	 * an empty object, so it does not fail the object schema.
+	 *
+	 * @param mixed       $input        Input after core's defaults.
+	 * @param string      $ability_name Ability name.
+	 * @param \WP_Ability $ability      Ability, when core passes it.
+	 * @return mixed
+	 */
+	public static function empty_input_for_no_argument_tools( $input, $ability_name = '', $ability = null ) {
+		if ( null !== $input || 0 !== strpos( (string) $ability_name, 'royal-mcp/' ) || ! $ability instanceof \WP_Ability ) {
+			return $input;
+		}
+		$schema = $ability->get_input_schema();
+		return is_array( $schema ) && empty( $schema['properties'] ) ? array() : $input;
 	}
 
 	private static function register_one( array $tool ): void {
@@ -79,12 +100,13 @@ class Registrar {
 			'meta'                => Meta_Config::ability_meta(),
 		);
 
-		// input_schema is optional in WP core; only pass if non-empty. Empty schemas
-		// throw at validate_input() time because the ability treats the presence of
-		// the schema as "input is expected".
-		if ( ! empty( $input_schema['properties'] ) ) {
-			$args['input_schema'] = $input_schema;
+		// A tool without arguments is registered as a plain object schema: clients
+		// see {"type":"object"}, any object input validates, and core's validator
+		// never meets an empty properties object.
+		if ( empty( (array) ( $input_schema['properties'] ?? array() ) ) ) {
+			$input_schema = array( 'type' => 'object' );
 		}
+		$args['input_schema'] = $input_schema;
 
 		// output_schema is also optional — Registry returns null for tools without
 		// a mapped schema, and WP core skips validate_output() when unset.
@@ -174,7 +196,10 @@ class Registrar {
 	private static function build_permission_callback( string $tool_name ): callable {
 		$cap = Tool_Capabilities::for_tool( $tool_name );
 		return static function () use ( $cap ): bool {
-			return current_user_can( $cap );
+			// Who may use tools outside the Royal MCP endpoint is the site owner's
+			// choice (Settings, default administrators); the tool's own
+			// capability applies on top.
+			return \Royal_MCP\MCP\Support\Route_Roles::outside_allowed() && current_user_can( $cap );
 		};
 	}
 }

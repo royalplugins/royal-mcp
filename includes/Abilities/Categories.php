@@ -68,6 +68,18 @@ class Categories {
 				'label'       => __( 'Royal MCP: Redirection', 'royal-mcp' ),
 				'description' => __( 'Redirection plugin: list/create/update redirects, list groups.', 'royal-mcp' ),
 			),
+			'tablepress'    => array(
+				'label'       => __( 'Royal MCP: TablePress', 'royal-mcp' ),
+				'description' => __( 'TablePress tables: list, read, create, copy, export and change cells.', 'royal-mcp' ),
+			),
+			'code-snippets' => array(
+				'label'       => __( 'Royal MCP: Code Snippets', 'royal-mcp' ),
+				'description' => __( 'Code Snippets: list and read snippets, recent deactivations, deactivate a snippet, change name, description and tags.', 'royal-mcp' ),
+			),
+			'wpcode'        => array(
+				'label'       => __( 'Royal MCP: WPCode', 'royal-mcp' ),
+				'description' => __( 'WPCode snippets, read only: list, read one snippet, read its status and last error.', 'royal-mcp' ),
+			),
 		);
 	}
 
