@@ -132,6 +132,15 @@ class Preview_Link {
 			);
 		}
 
+		// The link works only while its owner can still edit the post.
+		if ( ! user_can( (int) $user_id, 'edit_post', (int) $post_id ) ) {
+			wp_die(
+				esc_html__( 'Preview link is invalid or has expired.', 'royal-mcp' ),
+				esc_html__( 'Preview Link', 'royal-mcp' ),
+				[ 'response' => 410 ]
+			);
+		}
+
 		// Impersonate the token owner FIRST so wp_create_nonce below binds
 		// to the impersonated user — the same user context WP will be in
 		// when _show_post_preview runs on init@10 and calls wp_verify_nonce.

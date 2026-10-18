@@ -261,6 +261,15 @@ class Settings_Page {
             }
         }
 
+        // Who may use tools outside the Royal MCP endpoint, and who may connect AI clients.
+        foreach ( [ \Royal_MCP\MCP\Support\Route_Roles::OUTSIDE_KEY, \Royal_MCP\MCP\Support\Route_Roles::CONNECT_KEY ] as $role_key ) {
+            $prior_role = \Royal_MCP\MCP\Support\Route_Roles::normalize( $role_key, $settings[ $role_key ] ?? '' );
+            $sanitized[ $role_key ] = \Royal_MCP\MCP\Support\Route_Roles::normalize( $role_key, isset( $input[ $role_key ] ) ? wp_unslash( (string) $input[ $role_key ] ) : '' );
+            if ( $prior_role !== $sanitized[ $role_key ] ) {
+                $this->log_toggle_change( 'settings:' . $role_key, $prior_role, $sanitized[ $role_key ] );
+            }
+        }
+
         // Delete all data when the plugin is deleted — off by default, so a
         // delete-and-reinstall keeps settings, logs and undo history.
         $prior_delete_data = ! empty( $settings['delete_data_on_uninstall'] );

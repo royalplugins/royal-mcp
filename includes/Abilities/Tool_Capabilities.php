@@ -95,11 +95,25 @@ class Tool_Capabilities {
 			'wp_replace_in_page' => 'edit_pages',
 
 			// ==================== Core: revisions ====================
-			// wp_get_revision_content needs no entry (wp_get_* infers 'read');
-			// wp_diff_revisions has no verb infer_cap() knows and would fall
-			// through to manage_options. Object-level read_post is enforced
-			// inside the handler, matching wp_get_post_revisions.
-			'wp_diff_revisions' => 'read',
+			// Revisions need edit_post on the parent, checked in the handler.
+			'wp_diff_revisions' => 'edit_posts',
+
+			// ==================== Core: site information any signed-in user may see ====================
+			'wp_get_site_info'   => 'read',
+			'wp_get_post_types'  => 'read',
+			'wp_get_taxonomies'  => 'read',
+
+			// ==================== Core: tool discovery and dispatch ====================
+			// execute_tool runs the named tool through the same checks.
+			'discover_tools' => 'read',
+			'get_tool_info'  => 'read',
+			'execute_tool'   => 'read',
+
+			// ==================== Core: composed and page-check tools ====================
+			'wp_publish_and_promote'  => 'publish_posts',
+			'wp_verify_rendered_page' => 'edit_posts',
+			'seo_audit_meta_tags'     => 'edit_posts',
+			'yoast_get_redirects'     => 'manage_options',
 
 			// ==================== Core: connection health — any authenticated caller ====================
 			'royal_mcp_connection_health' => 'read',
@@ -144,9 +158,9 @@ class Tool_Capabilities {
 	 * Order matters: match longest / most-specific prefix first.
 	 */
 	private static function infer_cap( string $tool_name ): string {
-		// Read-heavy verbs on core namespace default to WP's read cap.
+		// Content reads need edit_posts; each handler then checks the object.
 		if ( preg_match( '/^(wp|royal_mcp)_(get|count|list|search)/', $tool_name ) ) {
-			return 'read';
+			return 'edit_posts';
 		}
 		// Core write verbs default to edit_posts (loosest content-write cap).
 		if ( preg_match( '/^wp_(create|update|delete|add|set|restore)_/', $tool_name ) ) {
@@ -162,7 +176,25 @@ class Tool_Capabilities {
 		if ( strpos( $tool_name, 'raif_' ) === 0 )      return 'manage_options';
 		if ( strpos( $tool_name, 'rlinks_' ) === 0 )    return 'edit_posts';
 		if ( strpos( $tool_name, 'acf_' ) === 0 )       return 'edit_posts';
+		if ( strpos( $tool_name, 'divi_' ) === 0 )      return 'edit_posts';
+		if ( strpos( $tool_name, 'yoast_' ) === 0 )     return 'edit_posts';
 		if ( strpos( $tool_name, 'redirection_' ) === 0 ) return 'manage_options';
+		// TablePress's own capabilities, which exist only while TablePress is active;
+		// each handler then checks the table.
+		if ( strpos( $tool_name, 'tablepress_' ) === 0 && ! \Royal_MCP\Integrations\TablePress::is_available() ) return 'manage_options';
+		if ( 'tablepress_create_table' === $tool_name ) return 'tablepress_add_tables';
+		if ( 'tablepress_copy_table' === $tool_name )   return 'tablepress_copy_tables';
+		if ( 'tablepress_update_cells' === $tool_name ) return 'tablepress_edit_tables';
+		if ( 'tablepress_export_table' === $tool_name ) return 'tablepress_export_tables';
+		if ( 'tablepress_get_table' === $tool_name )    return 'tablepress_edit_tables';
+		if ( strpos( $tool_name, 'tablepress_' ) === 0 ) return 'tablepress_list_tables';
+		if ( strpos( $tool_name, 'wpcode_' ) === 0 )     return \Royal_MCP\Integrations\WPCode::is_available() ? 'wpcode_edit_snippets' : 'manage_options';
+		if ( strpos( $tool_name, 'snippets_' ) === 0 ) {
+			if ( function_exists( '\Code_Snippets\code_snippets' ) ) {
+				return \Code_Snippets\code_snippets()->get_cap();
+			}
+			return is_multisite() ? 'manage_network_options' : 'manage_options';
+		}
 
 		// Unknown prefix — conservative default.
 		return 'manage_options';

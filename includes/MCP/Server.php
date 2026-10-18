@@ -24,6 +24,9 @@ use Royal_MCP\Integrations\MonsterInsights as MonsterInsightsIntegration;
 use Royal_MCP\Integrations\W3TotalCache as W3TCIntegration;
 use Royal_MCP\Integrations\Duplicator as DuplicatorIntegration;
 use Royal_MCP\Integrations\BuddyPress as BuddyPressIntegration;
+use Royal_MCP\Integrations\TablePress as TablePressIntegration;
+use Royal_MCP\Integrations\CodeSnippets as CodeSnippetsIntegration;
+use Royal_MCP\Integrations\WPCode as WPCodeIntegration;
 use Royal_MCP\Integrations\Elementor_Coexistence;
 
 if (!defined('ABSPATH')) {
@@ -204,6 +207,8 @@ class Server {
         'elementor_export_theme_builder_template',
         'wp_monthly_maintenance_report',
         'wp_find_media',
+        'tablepress_export_table',
+        'snippets_recently_active',
         '_active_profile_notice',
     ];
 
@@ -797,6 +802,19 @@ class Server {
             return $response;
         }
 
+        // A token whose user may no longer connect AI clients (Settings) stops working.
+        if (!\Royal_MCP\MCP\Support\Route_Roles::connect_allowed((int) $token_data['user_id'])) {
+            $response = new \WP_REST_Response([
+                'jsonrpc' => '2.0',
+                'error' => [
+                    'code' => -32600,
+                    'message' => 'This account is not allowed to connect AI clients to this site.',
+                ],
+            ], 403);
+            $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+            return $response;
+        }
+
         // Set the WordPress user context so downstream permission checks work.
         wp_set_current_user((int) $token_data['user_id']);
 
@@ -1380,7 +1398,7 @@ class Server {
 
             // Comments
             ['name' => 'wp_get_comments', 'description' => 'List comments on the site or a specific post. Returns id, post_id, author, content, date, and status. Requires moderate_comments to list any status other than "approve".', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer', 'description' => 'Limit to comments on this post ID'], 'per_page' => ['type' => 'integer', 'description' => 'Number of comments (default 10, max 100)'], 'status' => ['type' => 'string', 'enum' => ['approve', 'hold', 'spam', 'trash', 'all'], 'description' => 'Comment status filter. "approve" is public; other values require moderate_comments.']]]],
-            ['name' => 'wp_create_comment', 'description' => 'Create a comment. Content may contain WordPress\'s standard comment HTML tags (<a>, <strong>, <em>, <blockquote>, <code>, <cite>, <abbr>, <acronym>) — matches what the WP comment form permits. Other tags are stripped.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'content' => ['type' => 'string'], 'author' => ['type' => 'string'], 'author_email' => ['type' => 'string']], 'required' => ['post_id', 'content']]],
+            ['name' => 'wp_create_comment', 'description' => 'Create a comment. Content may contain WordPress\'s standard comment HTML tags (<a>, <strong>, <em>, <blockquote>, <code>, <cite>, <abbr>, <acronym>) — matches what the WP comment form permits. Other tags are stripped.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'content' => ['type' => 'string'], 'author' => ['type' => 'string', 'description' => 'Author name to record. Only users who can moderate comments may set it; otherwise the comment is posted as the signed-in user.'], 'author_email' => ['type' => 'string', 'description' => 'Author email to record. Only users who can moderate comments may set it.']], 'required' => ['post_id', 'content']]],
             ['name' => 'wp_delete_comment', 'description' => 'Delete a comment', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean']], 'required' => ['id']]],
             ['name' => 'wp_get_pending_comments', 'description' => 'Get comments awaiting moderation (status=hold). Requires moderate_comments capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'limit' => ['type' => 'integer', 'description' => 'Max comments to return (default 20, max 100)']]]],
             ['name' => 'wp_approve_comment', 'description' => 'Approve a pending comment. Requires moderate_comments capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['comment_id' => ['type' => 'integer']], 'required' => ['comment_id']]],
@@ -1497,6 +1515,9 @@ class Server {
         $tools = array_merge( $tools, LiteSpeedIntegration::get_tools() );
         $tools = array_merge( $tools, CF7Integration::get_tools() );
         $tools = array_merge( $tools, MonsterInsightsIntegration::get_tools() );
+        $tools = array_merge( $tools, TablePressIntegration::get_tools() );
+        $tools = array_merge( $tools, CodeSnippetsIntegration::get_tools() );
+        $tools = array_merge( $tools, WPCodeIntegration::get_tools() );
         $tools = array_merge( $tools, W3TCIntegration::get_tools() );
         $tools = array_merge( $tools, DuplicatorIntegration::get_tools() );
         $tools = array_merge( $tools, BuddyPressIntegration::get_tools() );
@@ -2468,6 +2489,9 @@ class Server {
             'w3tc_'                => [ 'W3 Total Cache', [ W3TCIntegration::class, 'is_available' ] ],
             'duplicator_'          => [ 'Duplicator', [ DuplicatorIntegration::class, 'is_available' ] ],
             'bp_'                  => [ 'BuddyPress', [ BuddyPressIntegration::class, 'is_available' ] ],
+            'tablepress_'          => [ 'TablePress', [ TablePressIntegration::class, 'is_available' ] ],
+            'snippets_'            => [ 'Code Snippets', [ CodeSnippetsIntegration::class, 'is_available' ] ],
+            'wpcode_'              => [ 'WPCode', [ WPCodeIntegration::class, 'is_available' ] ],
         ];
 
         /**
@@ -2798,6 +2822,26 @@ class Server {
                     'structuredContent' => [
                         'error'   => 'exception',
                         'message' => $e->getMessage(),
+                    ],
+                ] ),
+            ];
+        } catch (\Throwable $e) {
+            // PHP errors (bad data in another plugin's storage, type errors) become a
+            // plain tool error instead of a failed request; the details stay in the log.
+            $this->log_tool_call($name, $args, 'error', $e->getMessage(), $start, null, $e);
+            return [
+                'jsonrpc' => '2.0',
+                'id' => $id,
+                'result' => self::ensure_structured_content( [
+                    'resultType' => 'complete',
+                    'content' => [[
+                        'type' => 'text',
+                        'text' => 'Error: The tool could not be run.',
+                    ]],
+                    'isError' => true,
+                    'structuredContent' => [
+                        'error'   => 'exception',
+                        'message' => 'The tool could not be run.',
                     ],
                 ] ),
             ];
@@ -3159,6 +3203,20 @@ class Server {
     }
 
     private function execute_tool($name, $args) {
+        // Calls through other MCP servers and browser agents: only the users the
+        // site owner allows (Settings, default administrators).
+        if ( ( 'abilities' === $this->request_route || 'cookie-session' === $this->request_auth_method )
+            && ! \Royal_MCP\MCP\Support\Route_Roles::outside_allowed() ) {
+            throw new \Exception( 'Royal MCP tools are not available to your account through other MCP servers or browser agents on this site.' );
+        }
+        // On every connection, Royal MCP's own tools need their mapped capability
+        // before the handler's object checks run. Calls from this site's own
+        // code (WP-CLI, other plugins) have no connection and are not gated here.
+        if ( ( null !== $this->request_auth_method || 'abilities' === $this->request_route )
+            && $this->is_builtin_tool_name( $name )
+            && ! current_user_can( \Royal_MCP\Abilities\Tool_Capabilities::for_tool( (string) $name ) ) ) {
+            throw new \Exception( 'You do not have permission to use ' . esc_html( (string) $name ) . '.' );
+        }
         if ( self::read_only_mode() && ! $this->allowed_in_read_only_mode( $name ) ) {
             throw new \Exception( 'This site is in read-only mode: tools that change the site are switched off.' );
         }
@@ -3306,9 +3364,8 @@ class Server {
             case 'wp_get_post':
                 $post = get_post(self::resolve_post_id_arg($args));
                 if (!$post) throw new \Exception('Post not found');
-                // per-post read check. read_post via map_meta_cap
-                // resolves to read_private_posts for non-public statuses.
-                if (!current_user_can('read_post', $post->ID)) {
+                // Post type, revision and per-post read rules (Post_Access).
+                if (!\Royal_MCP\MCP\Support\Post_Access::can_read($post)) {
                     throw new \Exception('You do not have permission to read this post.');
                 }
                 $thumb_id = (int) get_post_thumbnail_id( $post );
@@ -3349,17 +3406,10 @@ class Server {
                 // Subscriber-level OAuth token could create-as-self at
                 // status=publish. The per-PT cap object maps `edit_posts` to
                 // the correct cap for custom post types (e.g. `edit_pages`).
-                $create_cap = !empty($pto->cap->edit_posts) ? $pto->cap->edit_posts : 'edit_posts';
-                if (!current_user_can($create_cap)) {
-                    throw new \Exception('You do not have permission to create ' . esc_html($post_type) . ' posts.');
-                }
                 $requested_status = isset($args['status']) ? sanitize_text_field($args['status']) : 'draft';
-                // publish_posts cap gates publish/future/private; pending stays uncapped.
-                if (in_array($requested_status, ['publish', 'future', 'private'], true)) {
-                    $publish_cap = !empty($pto->cap->publish_posts) ? $pto->cap->publish_posts : 'publish_posts';
-                    if (!current_user_can($publish_cap)) {
-                        throw new \Exception('You do not have permission to publish ' . esc_html($post_type) . ' posts.');
-                    }
+                $cp_refusal = \Royal_MCP\MCP\Support\Post_Access::create_refusal($post_type, $requested_status);
+                if ('' !== $cp_refusal) {
+                    throw new \Exception(esc_html($cp_refusal));
                 }
                 // Pre-validate featured_media so we don't create an orphan post if the ID is bad.
                 if (isset($args['featured_media']) && intval($args['featured_media']) > 0) {
@@ -3370,6 +3420,10 @@ class Server {
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     if (!get_userdata(intval($args['post_author']))) {
                         throw new \Exception('post_author user ID not found.');
+                    }
+                    $cp_author_refusal = \Royal_MCP\MCP\Support\Post_Access::author_refusal($post_type, intval($args['post_author']));
+                    if ('' !== $cp_author_refusal) {
+                        throw new \Exception(esc_html($cp_author_refusal));
                     }
                 }
                 // Two-part shape required for Gutenberg block JSON round-trip.
@@ -3455,12 +3509,9 @@ class Server {
                 // caller with edit_post on their own draft can't silently
                 // flip it to publish/future/private. Matches WP REST behavior.
                 if (isset($args['status'])) {
-                    $up_target_status = sanitize_text_field((string) $args['status']);
-                    $up_prior_status  = (string) $up_existing_post->post_status;
-                    if ($up_prior_status !== $up_target_status
-                        && in_array($up_target_status, ['publish', 'future', 'private'], true)
-                        && !current_user_can('publish_posts')) {
-                        throw new \Exception('You do not have permission to change this post to that status.');
+                    $up_status_refusal = \Royal_MCP\MCP\Support\Post_Access::status_change_refusal($up_existing_post, sanitize_key((string) $args['status']));
+                    if ('' !== $up_status_refusal) {
+                        throw new \Exception(esc_html($up_status_refusal));
                     }
                 }
                 // Pre-validate featured_media before mutating the post.
@@ -3468,21 +3519,21 @@ class Server {
                     $fm = get_post(intval($args['featured_media']));
                     if (!$fm || $fm->post_type !== 'attachment') throw new \Exception('featured_media attachment not found.');
                 }
-                // Pre-validate post_author and gate reassignment on
-                // edit_others_posts so authorship can't be silently transferred.
+                // Pre-validate post_author; crediting another user needs the
+                // type's edit_others_posts.
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     if (!get_userdata(intval($args['post_author']))) {
                         throw new \Exception('post_author user ID not found.');
                     }
-                    if (intval($args['post_author']) !== (int) $up_existing_post->post_author
-                        && !current_user_can('edit_others_posts')) {
-                        throw new \Exception('You do not have permission to reassign post authorship.');
+                    $up_author_refusal = \Royal_MCP\MCP\Support\Post_Access::author_refusal($up_existing_post->post_type, intval($args['post_author']), (int) $up_existing_post->post_author);
+                    if ('' !== $up_author_refusal) {
+                        throw new \Exception(esc_html($up_author_refusal));
                     }
                 }
                 // Pre-validate post_parent: fail loudly on unknown parent rather
                 // than let WP silently coerce to 0.
                 if (isset($args['post_parent']) && intval($args['post_parent']) > 0) {
-                    if (!get_post(intval($args['post_parent']))) {
+                    if (!get_post(intval($args['post_parent'])) || !\Royal_MCP\MCP\Support\Post_Access::can_read(intval($args['post_parent']))) {
                         throw new \Exception('post_parent post ID not found.');
                     }
                 }
@@ -3538,7 +3589,7 @@ class Server {
                 if (isset($args['title']) && $args['title'] !== '') $data['post_title'] = \Royal_MCP\MCP\Support\SafeText::field($args['title']);
                 // See wp_create_post above for the wp_slash + no-wp_kses_post rationale.
                 if (isset($args['content']) && $args['content'] !== '') $data['post_content'] = wp_slash($args['content']);
-                if (isset($args['status'])) $data['post_status'] = sanitize_text_field($args['status']);
+                if (isset($args['status'])) $data['post_status'] = sanitize_key((string) $args['status']);
                 // see wp_create_post above: preserve safe HTML in excerpts.
                 if (isset($args['excerpt']) && $args['excerpt'] !== '') $data['post_excerpt'] = wp_kses_post($args['excerpt']);
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
@@ -3753,8 +3804,15 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to view post counts.');
                 }
-                $type = sanitize_text_field($args['post_type'] ?? 'post');
-                $counts = (array) wp_count_posts($type);
+                $type = sanitize_key($args['post_type'] ?? 'post');
+                if (!\Royal_MCP\MCP\Support\Post_Access::can_query_type($type)) {
+                    throw new \Exception('Invalid or non-accessible post type: ' . esc_html($type));
+                }
+                $counts = (array) wp_count_posts($type, 'readable');
+                // Draft, scheduled, pending and trash counts are for users who can edit the type.
+                if (!current_user_can(get_post_type_object($type)->cap->edit_posts)) {
+                    $counts = ['publish' => $counts['publish'] ?? 0];
+                }
                 // wp_count_posts hydrates filled statuses as ints but leaves
                 // empty statuses as string "0" — normalize every value.
                 return array_map('intval', $counts);
@@ -3894,28 +3952,25 @@ class Server {
                 // Gate elevated status transitions on publish_posts. Same
                 // rule as wp_update_post — mirrors WP REST behavior.
                 if (isset($args['status'])) {
-                    $upg_target_status = sanitize_text_field((string) $args['status']);
-                    $upg_prior_status  = (string) $existing_page->post_status;
-                    if ($upg_prior_status !== $upg_target_status
-                        && in_array($upg_target_status, ['publish', 'future', 'private'], true)
-                        && !current_user_can('publish_posts')) {
-                        throw new \Exception('You do not have permission to change this page to that status.');
+                    $upg_status_refusal = \Royal_MCP\MCP\Support\Post_Access::status_change_refusal($existing_page, sanitize_key((string) $args['status']));
+                    if ('' !== $upg_status_refusal) {
+                        throw new \Exception(esc_html($upg_status_refusal));
                     }
                 }
-                // pre-validate post_author (new field) + gate reassignment
-                // on edit_others_posts.
+                // pre-validate post_author; crediting another user needs
+                // edit_others_pages.
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     if (!get_userdata(intval($args['post_author']))) {
                         throw new \Exception('post_author user ID not found.');
                     }
-                    if (intval($args['post_author']) !== (int) $existing_page->post_author
-                        && !current_user_can('edit_others_posts')) {
-                        throw new \Exception('You do not have permission to reassign page authorship.');
+                    $upg_author_refusal = \Royal_MCP\MCP\Support\Post_Access::author_refusal('page', intval($args['post_author']), (int) $existing_page->post_author);
+                    if ('' !== $upg_author_refusal) {
+                        throw new \Exception(esc_html($upg_author_refusal));
                     }
                 }
                 // pre-validate post_parent (new field).
                 if (isset($args['post_parent']) && intval($args['post_parent']) > 0) {
-                    if (!get_post(intval($args['post_parent']))) {
+                    if (!get_post(intval($args['post_parent'])) || !\Royal_MCP\MCP\Support\Post_Access::can_read(intval($args['post_parent']))) {
                         throw new \Exception('post_parent page ID not found.');
                     }
                 }
@@ -3924,7 +3979,7 @@ class Server {
                 if (isset($args['title']) && $args['title'] !== '') $data['post_title'] = \Royal_MCP\MCP\Support\SafeText::field($args['title']);
                 // See wp_create_post above for the wp_slash + no-wp_kses_post rationale.
                 if (isset($args['content']) && $args['content'] !== '') $data['post_content'] = wp_slash($args['content']);
-                if (isset($args['status'])) $data['post_status'] = sanitize_text_field($args['status']);
+                if (isset($args['status'])) $data['post_status'] = sanitize_key((string) $args['status']);
                 if (isset($args['excerpt']) && $args['excerpt'] !== '') $data['post_excerpt'] = wp_kses_post($args['excerpt']);
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     $data['post_author'] = intval($args['post_author']);
@@ -4231,6 +4286,10 @@ class Server {
                 } else {
                     $media_id = isset($args['media_id']) ? intval($args['media_id']) : -1;
                     if ($media_id < 0) throw new \Exception('Provide either media_id or image_url.');
+                    // Alt text is a write to the attachment itself.
+                    if ($media_id > 0 && isset($args['alt_text']) && $args['alt_text'] !== '' && !current_user_can('edit_post', $media_id)) {
+                        throw new \Exception('You do not have permission to change the alt text of that image.');
+                    }
                 }
                 $this->apply_featured_media($post_id, $media_id);
 
@@ -4608,7 +4667,9 @@ class Server {
                 }
                 $taxonomy = sanitize_text_field($args['taxonomy'] ?? '');
                 if ($taxonomy === '') throw new \Exception('A taxonomy slug is required.');
-                if (!taxonomy_exists($taxonomy)) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
+                $gt_tax = get_taxonomy($taxonomy);
+                // Non-public taxonomies only for users who can manage their terms.
+                if (!$gt_tax || (!$gt_tax->public && empty($gt_tax->show_in_rest) && !current_user_can($gt_tax->cap->manage_terms))) throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
                 $per_page = isset($args['per_page']) ? max(1, min(intval($args['per_page']), 500)) : 100;
                 $page     = isset($args['page']) ? max(1, intval($args['page'])) : 1;
                 $offset   = ($page - 1) * $per_page;
@@ -4697,7 +4758,11 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to count terms.');
                 }
-                $taxonomy = sanitize_text_field($args['taxonomy'] ?? 'category');
+                $taxonomy = sanitize_key($args['taxonomy'] ?? 'category');
+                $ct_tax = get_taxonomy($taxonomy);
+                if (!$ct_tax || (!$ct_tax->public && empty($ct_tax->show_in_rest) && !current_user_can($ct_tax->cap->manage_terms))) {
+                    throw new \Exception('Unknown taxonomy: ' . esc_html($taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
+                }
                 $count = wp_count_terms(['taxonomy' => $taxonomy, 'hide_empty' => false]);
                 if (is_wp_error($count)) {
                     throw new \Exception(esc_html($count->get_error_message()));
@@ -4812,8 +4877,13 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to list comments.');
                 }
-                $comment_args = ['number' => min(intval($args['per_page'] ?? 10), 100)];
-                if (!empty($args['post_id'])) $comment_args['post_id'] = intval($args['post_id']);
+                $comment_args = ['number' => min(intval($args['per_page'] ?? 10), 100), 'status' => 'approve'];
+                if (!empty($args['post_id'])) {
+                    $comment_args['post_id'] = intval($args['post_id']);
+                    if (!\Royal_MCP\MCP\Support\Post_Access::can_read($comment_args['post_id'])) {
+                        throw new \Exception('Post not found.');
+                    }
+                }
                 if (!empty($args['status'])) {
                     $requested_comment_status = sanitize_text_field($args['status']);
                     // Only 'approve' is public. Anything else ('all', 'hold',
@@ -4827,7 +4897,13 @@ class Server {
                     }
                     $comment_args['status'] = $requested_comment_status;
                 }
-                $comments = get_comments($comment_args);
+                // Only comments on posts the caller may read; moderators see
+                // held comments through status, but never on unreadable posts.
+                $comments = array_values(array_filter(get_comments($comment_args), static function ($c) {
+                    $parent = (int) $c->comment_post_ID;
+                    return $parent > 0 && \Royal_MCP\MCP\Support\Post_Access::can_read($parent)
+                        && !\Royal_MCP\MCP\Support\Post_Access::content_withheld(get_post($parent));
+                }));
                 return array_map(function($c) {
                     return [
                         'id' => $c->comment_ID,
@@ -4845,7 +4921,11 @@ class Server {
                 }
                 $comment_post_id = intval($args['post_id']);
                 $comment_target_post = $comment_post_id > 0 ? get_post($comment_post_id) : null;
-                if (!$comment_target_post) throw new \Exception('Post not found.');
+                // One answer for a missing post and one the caller may not read.
+                if (!$comment_target_post || !\Royal_MCP\MCP\Support\Post_Access::can_read($comment_target_post)) throw new \Exception('Post not found.');
+                if (\Royal_MCP\MCP\Support\Post_Access::content_withheld($comment_target_post)) {
+                    throw new \Exception('This post is password protected.');
+                }
                 // block commenting on closed/private posts unless the
                 // user has the relevant edit cap on the target post.
                 if ('open' !== $comment_target_post->comment_status
@@ -4856,11 +4936,23 @@ class Server {
                 // (<a>, <strong>, <em>, <blockquote>, <code>, <cite>, <abbr>, <acronym>).
                 // Matches what a user gets when submitting a comment through the standard
                 // WP form; sanitize_text_field stripped all tags including the standard <a>.
+                // The comment is the signed-in user's. Only comment moderators
+                // may record a different author name or email (as in the REST API).
+                $cc_user = wp_get_current_user();
+                $cc_moderator = current_user_can('moderate_comments');
                 $comment_data = [
                     'comment_post_ID' => $comment_post_id,
                     'comment_content' => wp_filter_kses($args['content']),
-                    'comment_author' => \Royal_MCP\MCP\Support\SafeText::field($args['author'] ?? 'Anonymous'),
-                    'comment_author_email' => sanitize_email($args['author_email'] ?? ''),
+                    'comment_author' => ($cc_moderator && !empty($args['author'])) ? \Royal_MCP\MCP\Support\SafeText::field($args['author']) : (string) $cc_user->display_name,
+                    'comment_author_email' => ($cc_moderator && !empty($args['author_email'])) ? sanitize_email($args['author_email']) : (string) $cc_user->user_email,
+                    'comment_author_url' => '',
+                    'comment_type' => 'comment',
+                    'comment_parent' => 0,
+                    'comment_author_IP' => '',
+                    'comment_agent' => 'Royal MCP',
+                    'comment_date' => current_time('mysql'),
+                    'comment_date_gmt' => current_time('mysql', 1),
+                    'user_id' => (int) $cc_user->ID,
                 ];
                 // Respect WordPress comment moderation settings
                 $comment_data['comment_approved'] = wp_allow_comment($comment_data);
@@ -5135,7 +5227,7 @@ class Server {
                 $post_id = self::resolve_post_id_arg($args);
                 $post    = $post_id > 0 ? get_post($post_id) : null;
                 if (!$post) throw new \Exception('Post not found.');
-                if (!current_user_can('read_post', $post->ID)) {
+                if (!\Royal_MCP\MCP\Support\Post_Access::can_read($post)) {
                     throw new \Exception('You do not have permission to read this post.');
                 }
                 $only = !empty($args['taxonomy']) ? sanitize_key($args['taxonomy']) : '';
@@ -5167,8 +5259,8 @@ class Server {
                 // Subscriber-level OAuth token cannot read meta on private
                 // admin-owned posts.
                 $needs_edit_cap = ($key === '' || strpos($key, '_') === 0);
-                $cap = $needs_edit_cap ? 'edit_post' : 'read_post';
-                if (!current_user_can($cap, $post_id)) {
+                $meta_allowed = $needs_edit_cap ? current_user_can('edit_post', $post_id) : \Royal_MCP\MCP\Support\Post_Access::can_read_content($post_id);
+                if (!$meta_allowed) {
                     throw new \Exception('You do not have permission to read meta on this post.');
                 }
                 if ($key !== '') {
@@ -5196,6 +5288,11 @@ class Server {
                     // An SEO plugin's own keys: name the tool and field that write them.
                     $seo_route = \Royal_MCP\MCP\Support\Seo_Plugin::protected_meta_message($meta_key, 'edit');
                     throw new \Exception($seo_route ?? 'You do not have permission to edit this protected meta key.');
+                }
+                // Elementor's page data holds HTML; without unfiltered_html it is
+                // written only through the Elementor tools, which filter it.
+                if (0 === strpos($meta_key, '_elementor_') && !current_user_can('unfiltered_html')) {
+                    throw new \Exception('Use the Elementor tools to change Elementor page data.');
                 }
                 $meta_value = self::filter_meta_value($args['value'], $meta_key, $post_id, 'wp_update_post_meta');
 
@@ -5291,6 +5388,9 @@ class Server {
                     // An SEO plugin's own keys: name the tool and field that write them.
                     $seo_route = \Royal_MCP\MCP\Support\Seo_Plugin::protected_meta_message($add_key, 'add');
                     throw new \Exception($seo_route ?? 'You do not have permission to add this protected meta key.');
+                }
+                if (0 === strpos($add_key, '_elementor_') && !current_user_can('unfiltered_html')) {
+                    throw new \Exception('Use the Elementor tools to change Elementor page data.');
                 }
                 $add_value  = self::filter_meta_value($args['value'], $add_key, $post_id, 'wp_add_post_meta');
                 $add_unique = !empty($args['unique']);
@@ -5530,6 +5630,9 @@ class Server {
                         'wc_create_variation', 'wc_update_variation', 'wc_delete_variation', 'wc_batch_update_variations',
                         'wc_create_product_attribute', 'wc_set_product_attributes',
                         'wc_create_coupon', 'wc_update_coupon', 'wc_delete_coupon', 'wc_empty_coupon_trash',
+                        // TablePress and Code Snippets reversible writes
+                        'tablepress_create_table', 'tablepress_copy_table', 'tablepress_update_cells',
+                        'snippets_update_metadata',
                         // Elementor reversible writes
                         'elementor_replace_text', 'elementor_replace_image',
                         'elementor_add_widget', 'elementor_delete_widget',
@@ -5612,7 +5715,7 @@ class Server {
                 return $this->execute_tool( $et_name, $et_args );
 
             case 'wp_verify_rendered_page':
-                if ( ! current_user_can( 'read' ) ) {
+                if ( ! current_user_can( 'edit_posts' ) ) {
                     throw new \Exception( 'You do not have permission to fetch site pages.' );
                 }
                 $vrp_url_raw = isset( $args['url'] ) ? (string) $args['url'] : '';
@@ -5637,6 +5740,30 @@ class Server {
                 };
                 if ( ! $vrp_on_site( $vrp_url ) ) {
                     throw new \Exception( 'url must belong to this WordPress site.' );
+                }
+                // The server fetches the URL from its own address, so the
+                // caller must be entitled to it: a post they can read, the home
+                // page for anyone who edits posts, anything else for admins.
+                $vrp_norm    = static function ( $u ) {
+                    $u = (string) strtok( (string) $u, '#' );
+                    return untrailingslashit( preg_replace( '#^https?://#i', '', $u ) );
+                };
+                $vrp_post_id = (int) url_to_postid( $vrp_url );
+                // url_to_postid() also honours ?p= / ?page_id= on any path, so
+                // the URL has to be the post's own link, not just resolve to it.
+                if ( $vrp_post_id > 0 && $vrp_norm( $vrp_url ) !== $vrp_norm( get_permalink( $vrp_post_id ) ) ) {
+                    $vrp_post_id = 0;
+                }
+                $vrp_is_home = false === strpos( $vrp_url, '?' ) && $vrp_norm( $vrp_url ) === $vrp_norm( home_url() );
+                if ( $vrp_post_id > 0 ) {
+                    $vrp_allowed = \Royal_MCP\MCP\Support\Post_Access::can_read( $vrp_post_id );
+                } elseif ( $vrp_is_home ) {
+                    $vrp_allowed = current_user_can( 'edit_posts' );
+                } else {
+                    $vrp_allowed = current_user_can( 'manage_options' );
+                }
+                if ( ! $vrp_allowed ) {
+                    throw new \Exception( 'You do not have permission to fetch that page.' );
                 }
                 // Per-(site,url) rate limit: 10 fetches / 60 sec window. Keeps
                 // an agent from turning the site into its own load-tester and
@@ -6029,14 +6156,39 @@ class Server {
                 $query = \Royal_MCP\MCP\Support\SafeText::field($args['query']);
                 $per_page = isset($args['per_page']) ? max(1, min(intval($args['per_page']), 100)) : 20;
                 $snippet_len = isset($args['snippet']) ? max(0, min(intval($args['snippet']), 1000)) : 0;
+                if (!empty($args['post_type'])) {
+                    $search_type = sanitize_key($args['post_type']);
+                    if (!\Royal_MCP\MCP\Support\Post_Access::can_query_type($search_type)) {
+                        throw new \Exception('Invalid or non-accessible post type: ' . esc_html($search_type));
+                    }
+                    $search_types = [$search_type];
+                } else {
+                    // "Any" type: the types search normally covers, limited to
+                    // the ones this user may query.
+                    $search_types = array_values(array_intersect(
+                        get_post_types(['exclude_from_search' => false], 'names'),
+                        \Royal_MCP\MCP\Support\Post_Access::queryable_types()
+                    ));
+                }
+                if (!$search_types) {
+                    return [];
+                }
                 $search_args = [
                     's' => $query,
-                    'post_type' => !empty($args['post_type']) ? sanitize_text_field($args['post_type']) : 'any',
+                    // One type as a string: get_posts() only looks at inherit
+                    // status (attachments) when post_type is exactly 'attachment'.
+                    'post_type' => 1 === count($search_types) ? $search_types[0] : $search_types,
                     'numberposts' => $per_page,
                 ];
-                $posts = get_posts($search_args);
+                $posts = array_values(array_filter(get_posts($search_args), static function ($p) use ($query) {
+                    if (!\Royal_MCP\MCP\Support\Post_Access::can_read($p)) {
+                        return false;
+                    }
+                    // A body the caller cannot read must not decide whether the post matches.
+                    return !\Royal_MCP\MCP\Support\Post_Access::content_withheld($p) || false !== mb_stripos((string) $p->post_title, (string) $query);
+                }));
                 return array_map(function($p) use ($query, $snippet_len) {
-                    $row = ['id' => $p->ID, 'title' => $p->post_title, 'type' => $p->post_type, 'url' => get_permalink($p), 'content_length' => strlen((string) $p->post_content), 'protected' => '' !== (string) $p->post_password];
+                    $row = ['id' => $p->ID, 'title' => $p->post_title, 'type' => $p->post_type, 'url' => get_permalink($p), 'content_length' => $this->content_withheld($p) ? 0 : strlen((string) $p->post_content), 'protected' => '' !== (string) $p->post_password];
                     if ($snippet_len > 0) {
                         $row['slug'] = $p->post_name;
                         $row['snippet'] = $this->content_withheld($p) ? '' : $this->extract_snippet($p->post_content, $query, $snippet_len);
@@ -6052,9 +6204,19 @@ class Server {
                 $name = \Royal_MCP\MCP\Support\SafeText::field($args['name']);
                 $allowed = $this->get_readable_options_allowlist();
                 if (!in_array($name, $allowed, true)) {
+                    $rmcp_listed = get_option('royal_mcp_settings', []);
+                    $rmcp_listed = is_array($rmcp_listed) && is_array($rmcp_listed['writable_options_admin'] ?? null) ? $rmcp_listed['writable_options_admin'] : [];
+                    if (in_array($name, $rmcp_listed, true) && $this->is_denylisted_option($name)) {
+                        throw new \Exception('Option ' . esc_html($name) . ' is not in the readable allowlist and cannot be added: it is permanently denylisted (its name looks like a credential or a protected setting), so listing it under Royal MCP settings, Allowlisted plugin options, has no effect.');
+                    }
                     throw new \Exception('Option not in readable allowlist: ' . esc_html($name) . '. A site administrator can add it under Royal MCP settings, Allowlisted plugin options (while option writes are enabled); plugin authors can opt their settings in via add_filter("royal_mcp_readable_options", ...).');
                 }
-                return ['name' => $name, 'value' => $this->redact_sensitive_keys(get_option($name), $name)];
+                $option_value = get_option($name);
+                if ($this->option_is_credential_partner($name)
+                    && !($option_value === '' || $option_value === null || $option_value === [] || $option_value === '0' || $option_value === false)) {
+                    return ['name' => $name, 'value' => '[REDACTED]'];
+                }
+                return ['name' => $name, 'value' => $this->redact_sensitive_keys($option_value, $name)];
 
             case 'wp_get_plugin_settings':
                 if (!current_user_can('manage_options')) {
@@ -6085,7 +6247,7 @@ class Server {
 
                 // Gate 2: permanent denylist (overrides allowlist)
                 if ($this->is_denylisted_option($name)) {
-                    throw new \Exception('Option is permanently denylisted: ' . esc_html($name));
+                    throw new \Exception('Option is permanently denylisted (its name looks like a credential or a protected setting): ' . esc_html($name));
                 }
 
                 // Gate 3: write ⊆ readable INVARIANT — any option that cannot be
@@ -6508,8 +6670,8 @@ class Server {
 
             // ==================== SEO — served-HTML audit ====================
             case 'seo_audit_meta_tags':
-                if (!current_user_can('read')) {
-                    throw new \Exception('read capability required.');
+                if (!current_user_can('edit_posts')) {
+                    throw new \Exception('edit_posts capability required.');
                 }
                 $seo_post_id = isset($args['post_id']) ? (int) $args['post_id'] : 0;
                 $seo_url     = isset($args['url']) ? esc_url_raw((string) $args['url']) : '';
@@ -9084,6 +9246,18 @@ class Server {
                             ]
                         );
 
+                    case 'tablepress_create_table':
+                    case 'tablepress_copy_table':
+                    case 'tablepress_update_cells':
+                        $tp_undone = TablePressIntegration::undo( $undo_snapshot );
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return $tp_undone;
+
+                    case 'snippets_update_metadata':
+                        $cs_undone = CodeSnippetsIntegration::undo( $undo_snapshot );
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return $cs_undone;
+
                     default:
                         return \Royal_MCP\MCP\Support\Envelope::error(
                             'unsupported_op',
@@ -9266,6 +9440,9 @@ class Server {
                     throw new \Exception('You do not have permission to read custom CSS.');
                 }
                 $theme_slug = isset($args['theme_slug']) ? sanitize_key($args['theme_slug']) : get_stylesheet();
+                if ($theme_slug !== get_stylesheet() && !current_user_can('edit_theme_options')) {
+                    throw new \Exception('You do not have permission to read another theme\'s custom CSS.');
+                }
                 $css = wp_get_custom_css($theme_slug);
                 $post = wp_get_custom_css_post($theme_slug);
                 return [
@@ -9490,7 +9667,7 @@ class Server {
                 if (!get_post($post_id)) throw new \Exception('Post not found: ' . esc_html((string) $post_id));
                 // read_post on the parent gates SEO-meta reads
                 // (private/draft posts' SEO meta is not public).
-                if (!current_user_can('read_post', $post_id)) {
+                if (!\Royal_MCP\MCP\Support\Post_Access::can_read($post_id)) {
                     throw new \Exception('You do not have permission to read SEO meta on this post.');
                 }
                 // Slug is a WordPress-native field (post_name column) — always
@@ -9941,9 +10118,9 @@ class Server {
                 $post_id = self::resolve_post_id_arg($args);
                 if ($post_id <= 0) throw new \Exception('post_id (or id) is required.');
                 if (!get_post($post_id)) throw new \Exception('Post not found.');
-                // revisions can contain past versions of admin-owned
-                // content; gate behind the parent post's read cap.
-                if (!current_user_can('read_post', $post_id)) {
+                // Revisions hold earlier and unsaved (autosave) versions, so
+                // they need edit rights on the post, as in the REST API.
+                if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('You do not have permission to read revisions on this post.');
                 }
                 $limit = min(intval($args['limit'] ?? 20), 100);
@@ -10005,10 +10182,8 @@ class Server {
                 if ($revision_id <= 0) throw new \Exception('revision_id is required.');
                 $revision = wp_get_post_revision($revision_id);
                 if (!$revision) throw new \Exception('Revision not found.');
-                // Gate on the PARENT post's read cap, not the revision's own
-                // ID — a revision inherits the sensitivity of the post it
-                // belongs to. Same gate as wp_get_post_revisions above.
-                if (!current_user_can('read_post', (int) $revision->post_parent)) {
+                // Edit rights on the PARENT post, as for wp_get_post_revisions.
+                if (!current_user_can('edit_post', (int) $revision->post_parent)) {
                     throw new \Exception('You do not have permission to read revisions on this post.');
                 }
                 $rev_parent   = get_post((int) $revision->post_parent);
@@ -10026,11 +10201,14 @@ class Server {
                 ];
 
             case 'wp_diff_revisions':
+                if (!current_user_can('edit_posts')) {
+                    throw new \Exception('You do not have permission to read revisions.');
+                }
                 $post_id = self::resolve_post_id_arg($args);
                 if ($post_id <= 0) throw new \Exception('post_id (or id) is required.');
                 $parent = get_post($post_id);
                 if (!$parent) throw new \Exception('Post not found.');
-                if (!current_user_can('read_post', $post_id)) {
+                if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('You do not have permission to read revisions on this post.');
                 }
                 $max_lines = min(max(intval($args['max_lines'] ?? 500), 1), 5000);
@@ -10229,6 +10407,15 @@ class Server {
                 }
                 if ( strpos( $name, 'monsterinsights_' ) === 0 ) {
                     return MonsterInsightsIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'tablepress_' ) === 0 ) {
+                    return TablePressIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'snippets_' ) === 0 ) {
+                    return CodeSnippetsIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'wpcode_' ) === 0 ) {
+                    return WPCodeIntegration::execute_tool( $name, $args );
                 }
                 if ( strpos( $name, 'w3tc_' ) === 0 ) {
                     return W3TCIntegration::execute_tool( $name, $args );
@@ -10834,12 +11021,20 @@ class Server {
         );
         if (empty($rows)) return [];
 
+        $pair_prefixes = $this->pair_secret_prefixes(array_column($rows, 'option_name'), false);
+
         $result = [];
         foreach ($rows as $row) {
             if ($this->is_denylisted_option($row->option_name)) {
                 continue;
             }
             $value = maybe_unserialize($row->option_value);
+            // A login name stored as its own option next to its password option.
+            if ([] !== $pair_prefixes && $this->is_credential_partner($row->option_name, $pair_prefixes)
+                && !($value === '' || $value === null || $value === [] || $value === '0' || $value === false)) {
+                $result[$row->option_name] = '[REDACTED]';
+                continue;
+            }
             $result[$row->option_name] = $this->redact_sensitive_keys($value, $row->option_name);
         }
         return $result;
@@ -10970,11 +11165,91 @@ class Server {
             $value = $filtered;
         }
 
+        $pair_prefixes = $this->pair_secret_prefixes(array_keys($value), true);
+
         $out = [];
         foreach ($value as $k => $v) {
+            if ([] !== $pair_prefixes && is_string($k) && $this->is_credential_partner($k, $pair_prefixes)
+                && !($v === '' || $v === null || $v === [] || $v === '0' || $v === false)) {
+                $out[$k] = '[REDACTED]';
+                continue;
+            }
             $out[$k] = $this->redact_sensitive_keys($v, (string) $k);
         }
         return $out;
+    }
+
+    /**
+     * Lower-case name with a PHP object-property marker removed, camelCase
+     * split and spaces turned into underscores: "\0*\0smtpUser Name" -> "smtp_user_name".
+     */
+    private function normalize_key_name($key) {
+        $key = preg_replace('/^\x00.*\x00/s', '', (string) $key);
+        $key = preg_replace('/([a-z0-9])([A-Z])/', '$1_$2', $key);
+        return strtolower(preg_replace('/\s+/', '_', trim($key)));
+    }
+
+    /**
+     * Prefixes of the names in $keys that hold the secret half of a login
+     * pair (password, private or transaction key, API key, signature), as a
+     * set: "wsc_client_secret" gives "", "wsc_" and "wsc_client_". Licence
+     * keys, public keys, nonces, salts and hashes are not pair secrets.
+     *
+     * @param bool $with_empty Include "" so an unprefixed username pairs with any secret.
+     * @return array<string,bool>
+     */
+    private function pair_secret_prefixes(array $keys, $with_empty) {
+        $set = [];
+        foreach ($keys as $k) {
+            if (!is_string($k) || !$this->is_sensitive_key($k)) continue;
+            $name = $this->normalize_key_name($k);
+            $flat = str_replace(['_', '-', '.'], '', $name);
+            if (preg_match('/licen[cs]e|nonce|salt|hash|public|(?<!api)signature/', $flat)) continue;
+            if ($with_empty) $set[''] = true;
+            $len = strlen($name);
+            for ($i = 0; $i < $len; $i++) {
+                if ('_' === $name[$i] || '-' === $name[$i] || '.' === $name[$i]) $set[substr($name, 0, $i + 1)] = true;
+            }
+        }
+        return $set;
+    }
+
+    /**
+     * The login half of a credential pair (merchant ID, login ID, username,
+     * user, account, partner, vendor, account email) stored next to a pair
+     * secret with the same prefix: `username` beside `password`,
+     * `wsc_email` beside `wsc_client_secret`. The same names elsewhere stay readable.
+     *
+     * @param array<string,bool> $pair_prefixes From pair_secret_prefixes().
+     */
+    private function is_credential_partner($key, array $pair_prefixes) {
+        $prefix = $this->credential_partner_prefix($key);
+        return null !== $prefix && isset($pair_prefixes[$prefix]);
+    }
+
+    /** Prefix of a login-half name ("smtp_" for "smtp_user_name"), or null when the name is not one. */
+    private function credential_partner_prefix($key) {
+        if (!preg_match('/^(|.*[_\-.])(merchant[_\-.]?id|merchant|login[_\-.]?id|login|user[_\-.]?name|user|email|account[_\-.]?(?:id|sid|number)|account|partner[_\-.]?id|partner|vendor|seller[_\-.]?id)$/', $this->normalize_key_name($key), $m)) {
+            return null;
+        }
+        return $m[1];
+    }
+
+    /**
+     * Whether a single option is the login half of a pair stored as separate
+     * options (`myplugin_smtp_user` next to `myplugin_smtp_password`).
+     */
+    private function option_is_credential_partner($name) {
+        $prefix = $this->credential_partner_prefix($name);
+        if (null === $prefix || '' === $prefix) return false;
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $names = $wpdb->get_col($wpdb->prepare(
+            "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s LIMIT 500",
+            $wpdb->esc_like($prefix) . '%'
+        ));
+        $prefixes = $this->pair_secret_prefixes((array) $names, false);
+        return [] !== $prefixes && $this->is_credential_partner($name, $prefixes);
     }
 
     /**
@@ -11109,7 +11384,10 @@ class Server {
      */
     private function is_sensitive_key($key) {
         if (!is_string($key) || $key === '') return false;
-        $key_lc = strtolower($key);
+        $key_lc = $this->normalize_key_name($key);
+        // The same name with separators removed: "Transaction Key",
+        // "api-login" and "smtpPassword" all reduce to one word.
+        $flat = str_replace(['_', '-', '.'], '', $key_lc);
 
         // Compound-substring needles — match anywhere in the key.
         $needles = [
@@ -11121,7 +11399,25 @@ class Server {
             'webhook_secret', 'session_key', 'credentials',
         ];
         foreach ($needles as $needle) {
-            if (strpos($key_lc, $needle) !== false) return true;
+            if (strpos($key_lc, $needle) !== false || strpos($flat, str_replace('_', '', $needle)) !== false) return true;
+        }
+
+        // Credential names written as one word (privatekey, transactionkey,
+        // securitykey, apisignature, secretword, smtppass) and gateway login
+        // names that are half of a key pair. "keyword" and "monkey" carry no
+        // such prefix; "masterkeywords" is a keyword list, not a key.
+        if (preg_match('/(private|secret|security|encryption|transaction|signing|merchant|master|shared|account|secure|consumer|webhook|storage|access|auth|app)key(?!word)/', $flat)) {
+            return true;
+        }
+        if (preg_match('/(smtp|mail|db|ftp|sftp|ssh|proxy|user|admin)(pass|pwd)/', $flat)) {
+            return true;
+        }
+        foreach ([
+            'signature', 'secretword', 'passphrase', 'apiuser', 'apilogin', 'loginname',
+            'purchasecode', 'authcode', 'recoverycodes', 'backupcodes', 'otpseed', 'totpseed',
+            'connectionstring', 'databaseurl',
+        ] as $needle) {
+            if (strpos($flat, $needle) !== false) return true;
         }
 
         // Boundary-anchored generic suffix patterns — catches
@@ -11129,7 +11425,7 @@ class Server {
         // admin_pwd, third-party.conf.secret, dot-notation keys, etc.
         // Boundary chars _-. and start/end of string prevent word-inside-
         // word matches (donkey, keyword, passageway all pass through).
-        if (preg_match('/(^|[_\-.])(key|pass|pwd|secret|token)([_\-.]|$)/i', $key_lc)) {
+        if (preg_match('/(^|[_\-.])(key|pass|pwd|secret|token|dsn)([_\-.]|$)/i', $key_lc)) {
             return true;
         }
 
@@ -11196,6 +11492,31 @@ class Server {
         $default = array_values(array_unique(array_merge($default, $this->get_admin_allowlisted_options())));
         $allowed = apply_filters('royal_mcp_readable_options', $default);
         return is_array($allowed) ? $allowed : $default;
+    }
+
+    /**
+     * The option names in $names that MCP never reads or writes through the
+     * admin allowlist (credential-shaped or protected), for the settings screen.
+     *
+     * @param string[] $names
+     * @return string[]
+     */
+    public function blocked_option_names(array $names) {
+        $blocked = [];
+        foreach ($names as $name) {
+            if (is_string($name) && '' !== $name && $this->is_denylisted_option($name)) $blocked[] = $name;
+        }
+        return $blocked;
+    }
+
+    /** Whether a setting, key or variable name looks like a credential (the rule tool replies use). */
+    public function is_credential_name($key) {
+        return $this->is_sensitive_key($key);
+    }
+
+    /** Whether a value looks like a credential by its shape alone. */
+    public function is_credential_value($value) {
+        return $this->is_credential_shaped_value($value);
     }
 
     /** Credential-shaped values masked the same way tool responses mask them. */

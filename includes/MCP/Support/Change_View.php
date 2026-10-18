@@ -49,6 +49,7 @@ class Change_View {
 		'wp_update_media', 'wp_update_term', 'wp_update_menu_item', 'wp_update_seo_meta',
 		'wc_update_product', 'wc_update_order', 'wc_update_variation', 'wc_update_coupon',
 		'wc_update_order_status', 'wp_set_comment_status',
+		'tablepress_update_cells', 'tablepress_create_table', 'tablepress_copy_table', 'snippets_update_metadata',
 	];
 
 	/** The tool that made a change. */
@@ -127,7 +128,10 @@ class Change_View {
 			case 'wp_update_media':
 				return [ [ 'edit_post', $id( 'media_id' ) ] ];
 			case 'wp_delete_post_force':
-				return [ [ 'delete_posts' ] ];
+				// The post is gone; changes are only ever listed to the user who
+				// made them, who needs delete rights for that post type.
+				$fd_type = get_post_type_object( (string) ( $t['post_type'] ?? 'post' ) );
+				return [ [ $fd_type ? $fd_type->cap->delete_posts : 'delete_posts' ] ];
 			case 'wp_delete_post_trash':
 				return [ [ 'delete_post', $id( 'post_id' ) ] ];
 			case 'wp_update_term':
@@ -186,6 +190,11 @@ class Change_View {
 				return [ [ 'delete_post', (int) ( $pre['created_post_id'] ?? 0 ) ] ];
 			case 'divi_clone_page':
 				return [ [ 'delete_post', $id( 'created_post_id' ) ] ];
+			case 'tablepress_update_cells':
+				return [ [ 'tablepress_edit_tables' ] ];
+			case 'tablepress_create_table':
+			case 'tablepress_copy_table':
+				return [ [ 'tablepress_delete_tables' ] ];
 		}
 		return [ [ 'manage_options' ] ];
 	}
@@ -756,6 +765,7 @@ class Change_View {
 		'original_menu_item_id' => 'menu item', 'menu_id' => 'menu', 'widget_id' => 'widget',
 		'option_name' => 'option', 'mod_name' => 'theme mod', 'theme_slug' => 'custom CSS of theme',
 		'meta_key' => 'meta key', 'adapter' => 'SEO plugin', 'code' => 'code',
+		'table_id' => 'TablePress table', 'snippet_id' => 'snippet',
 	];
 
 	/** Short name of what a change touched, for example: post 12 "Hello", meta key price. */

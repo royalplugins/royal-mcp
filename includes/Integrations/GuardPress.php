@@ -86,7 +86,7 @@ class GuardPress {
 		// are admin-tier (security state — failed-login lists, blocked IPs,
 		// audit logs, vulnerability scan results — is sensitive); manage_options
 		// matches GuardPress's own admin-screen gating.
-		if ( ! current_user_can( 'manage_options' ) ) {
+		if ( ! current_user_can( is_multisite() ? 'manage_network_options' : 'manage_options' ) ) {
 			throw new \Exception( 'You do not have permission to use GuardPress security tools.' );
 		}
 
@@ -107,7 +107,8 @@ class GuardPress {
 				if ( ! method_exists( 'GuardPress_Logger', 'get_security_stats' ) ) {
 					throw new \Exception( 'Security stats not available' );
 				}
-				$period = in_array( $args['period'] ?? 'week', [ 'day', 'week', 'month' ] ) ? $args['period'] : 'week';
+				$period = $args['period'] ?? 'week';
+				$period = in_array( $period, [ 'day', 'week', 'month' ], true ) ? $period : 'week';
 				return \GuardPress_Logger::get_security_stats( $period );
 
 			case 'gp_run_vulnerability_scan':
@@ -141,7 +142,8 @@ class GuardPress {
 				if ( ! $brute_force || ! method_exists( $brute_force, 'get_statistics' ) ) {
 					throw new \Exception( 'Brute force module not available' );
 				}
-				$period = in_array( $args['period'] ?? 'week', [ 'day', 'week', 'month' ] ) ? $args['period'] : 'week';
+				$period = $args['period'] ?? 'week';
+				$period = in_array( $period, [ 'day', 'week', 'month' ], true ) ? $period : 'week';
 				return $brute_force->get_statistics( $period );
 
 			case 'gp_get_blocked_ips':

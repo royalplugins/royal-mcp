@@ -1218,7 +1218,7 @@ class Block_Tools {
 
 	private static function readable_post( array $args ) {
 		$post = self::post_arg( $args );
-		if ( ! current_user_can( 'read_post', $post->ID ) ) {
+		if ( ! \Royal_MCP\MCP\Support\Post_Access::can_read( $post ) ) {
 			throw new \Exception( 'You do not have permission to read this post.' );
 		}
 		if ( '' !== (string) $post->post_password && ! current_user_can( 'edit_post', $post->ID ) ) {

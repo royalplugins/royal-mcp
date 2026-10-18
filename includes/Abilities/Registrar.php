@@ -41,6 +41,9 @@ class Registrar {
 			'acf_'       => 'acf',
 			'raif_'      => 'raif',
 			'redirection_' => 'redirection',
+			'tablepress_'  => 'tablepress',
+			'snippets_'    => 'code-snippets',
+			'wpcode_'      => 'wpcode',
 		);
 	}
 
@@ -82,7 +85,7 @@ class Registrar {
 		// input_schema is optional in WP core; only pass if non-empty. Empty schemas
 		// throw at validate_input() time because the ability treats the presence of
 		// the schema as "input is expected".
-		if ( ! empty( $input_schema['properties'] ) ) {
+		if ( ! empty( (array) ( $input_schema['properties'] ?? array() ) ) ) {
 			$args['input_schema'] = $input_schema;
 		}
 
@@ -174,7 +177,10 @@ class Registrar {
 	private static function build_permission_callback( string $tool_name ): callable {
 		$cap = Tool_Capabilities::for_tool( $tool_name );
 		return static function () use ( $cap ): bool {
-			return current_user_can( $cap );
+			// Who may use tools outside the Royal MCP endpoint is the site owner's
+			// choice (Settings, default administrators); the tool's own
+			// capability applies on top.
+			return \Royal_MCP\MCP\Support\Route_Roles::outside_allowed() && current_user_can( $cap );
 		};
 	}
 }

@@ -270,6 +270,37 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                 </p>
                             </td>
                         </tr>
+                        <?php $royal_mcp_roles = \Royal_MCP\MCP\Support\Route_Roles::class; ?>
+                        <tr>
+                            <th scope="row">
+                                <label for="connect_role"><?php esc_html_e('Who can connect AI clients', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <select name="royal_mcp_settings[connect_role]" id="connect_role">
+                                    <?php foreach ($royal_mcp_roles::CONNECT_CHOICES as $royal_mcp_choice) : ?>
+                                        <option value="<?php echo esc_attr($royal_mcp_choice); ?>" <?php selected($royal_mcp_roles::setting($royal_mcp_roles::CONNECT_KEY), $royal_mcp_choice); ?>><?php echo esc_html($royal_mcp_roles::label($royal_mcp_choice)); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <p class="description">
+                                    <?php esc_html_e('Which users may sign an AI client in to this site (OAuth). An AI client signed in by a user who no longer qualifies stops working.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="outside_endpoint_role"><?php esc_html_e('Who can use tools through other MCP servers and browser agents', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <select name="royal_mcp_settings[outside_endpoint_role]" id="outside_endpoint_role">
+                                    <?php foreach ($royal_mcp_roles::OUTSIDE_CHOICES as $royal_mcp_choice) : ?>
+                                        <option value="<?php echo esc_attr($royal_mcp_choice); ?>" <?php selected($royal_mcp_roles::setting($royal_mcp_roles::OUTSIDE_KEY), $royal_mcp_choice); ?>><?php echo esc_html($royal_mcp_roles::label($royal_mcp_choice)); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <p class="description">
+                                    <?php esc_html_e('Royal MCP tools are also available through the WordPress Abilities API, which other MCP servers on this site (WordPress MCP Adapter, Elementor) and browser agents use. Each tool still checks the user\'s own permissions.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
                     </table>
 
                     <h3 class="rmcp-settings-group-title"><?php esc_html_e('API key', 'royal-mcp'); ?></h3>
@@ -391,7 +422,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                             <td>
                                 <?php
                                 $wo_admin_arr = isset($royal_mcp_settings['writable_options_admin']) && is_array($royal_mcp_settings['writable_options_admin'])
-                                    ? $royal_mcp_settings['writable_options_admin']
+                                    ? array_values(array_filter($royal_mcp_settings['writable_options_admin'], 'is_string'))
                                     : [];
                                 $wo_admin_str = implode("\n", $wo_admin_arr);
                                 ?>
@@ -403,6 +434,22 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                 <p class="description">
                                     <?php esc_html_e('One option name per line. AI clients can read and change the options listed here. Sensitive options stay blocked whatever is listed.', 'royal-mcp'); ?>
                                 </p>
+                                <?php
+                                $wo_blocked = $wo_admin_arr ? ( new \Royal_MCP\MCP\Server() )->blocked_option_names( $wo_admin_arr ) : [];
+                                if ( $wo_blocked ) :
+                                    ?>
+                                    <p class="description" id="rmcp-writable-options-blocked" style="color:#b32d2e;">
+                                        <?php
+                                        echo esc_html(
+                                            sprintf(
+                                                /* translators: %s: comma-separated option names */
+                                                __( 'Blocked, so AI clients cannot read or change them: %s. These names look like credentials or protected settings.', 'royal-mcp' ),
+                                                implode( ', ', $wo_blocked )
+                                            )
+                                        );
+                                        ?>
+                                    </p>
+                                <?php endif; ?>
                             </td>
                         </tr>
                         <tr>

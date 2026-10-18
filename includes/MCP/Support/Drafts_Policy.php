@@ -68,6 +68,9 @@ class Drafts_Policy {
 		// Library templates and new patterns stay inert until used on a page.
 		'elementor_import_template' => '',
 		'wp_create_synced_pattern'  => '',
+		// A new table shows nowhere until its shortcode is placed on a page.
+		'tablepress_create_table'   => '',
+		'tablepress_copy_table'     => '',
 	];
 
 	/** Tools that change one existing post, and the arguments that name it. */
@@ -255,6 +258,10 @@ class Drafts_Policy {
 			return null; // The undo tool gives its usual answer for unknown tokens.
 		}
 		$op = (string) ( $snapshot['op'] ?? '' );
+		// Deleting a new table again; the undo itself refuses once the table is changed or placed on a page.
+		if ( in_array( $op, [ 'tablepress_create_table', 'tablepress_copy_table' ], true ) ) {
+			return null;
+		}
 		if ( ! isset( self::UNDO_CONTENT_OPS[ $op ] ) ) {
 			return sprintf( 'undoing %s changes more than a draft\'s content, so it is not allowed while drafts-only applies.', $op );
 		}

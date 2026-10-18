@@ -18,6 +18,9 @@ class WooCommerce {
 	/**
 	 * Check if WooCommerce is available.
 	 */
+	/** Tools whose reply is a key => count map; ignored_args would read as data there. */
+	const MAP_REPLIES = [ 'wc_get_coupon_count' ];
+
 	public static function is_available() {
 		return class_exists( 'WooCommerce' );
 	}
@@ -35,11 +38,16 @@ class WooCommerce {
 		return [
 			[
 				'name'        => 'wc_get_products',
-				'description' => 'Get WooCommerce products',
+				'description' => 'Get WooCommerce products. Without page: an array of up to per_page products (default 10, max 100). With page: {products, page, per_page, total, total_count, total_pages, ignored_args}; iterate page until page >= total_pages to list a whole catalog. Each row carries stock_quantity, stock_status and manage_stock.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
-						'per_page'       => [ 'type' => 'integer', 'description' => 'Number of products (max 100)' ],
+						'per_page'       => [ 'type' => 'integer', 'description' => 'Products per call (default 10, min 1, max 100)' ],
+						'page'           => [ 'type' => 'integer', 'description' => 'Page number, 1-indexed. When given, the reply includes total and total_pages.' ],
+						'include'        => [ 'type' => 'array', 'items' => [ 'type' => 'integer' ], 'description' => 'Only these product IDs' ],
+						'exclude'        => [ 'type' => 'array', 'items' => [ 'type' => 'integer' ], 'description' => 'Leave out these product IDs' ],
+						'sku'            => [ 'type' => 'string', 'description' => 'SKU to match (WooCommerce matches partial SKUs)' ],
+						'stock_status'   => [ 'type' => 'string', 'enum' => [ 'instock', 'outofstock', 'onbackorder' ], 'description' => 'Stock status' ],
 						'status'         => [ 'type' => 'string', 'description' => 'Product status (publish, draft, etc)' ],
 						'category'       => [ 'type' => 'string', 'description' => 'Category slug to filter by' ],
 						'search'         => [ 'type' => 'string', 'description' => 'Search term' ],
@@ -255,11 +263,12 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_get_customers',
-				'description' => 'Get WooCommerce customers',
+				'description' => 'Get WooCommerce customers. Without page: an array of up to per_page customers (default 10, max 100). With page: {customers, page, per_page, total, total_count, total_pages, ignored_args}.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
-						'per_page' => [ 'type' => 'integer', 'description' => 'Number of customers (max 100)' ],
+						'per_page' => [ 'type' => 'integer', 'description' => 'Customers per call (default 10, min 1, max 100)' ],
+						'page'     => [ 'type' => 'integer', 'description' => 'Page number, 1-indexed. When given, the reply includes total and total_pages.' ],
 						'search'   => [ 'type' => 'string', 'description' => 'Search by name or email' ],
 					],
 				],
@@ -276,12 +285,13 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_get_product_variations',
-				'description' => 'Get all variations for a variable WooCommerce product',
+				'description' => 'Get the variations of a variable WooCommerce product. Without page: an array of up to per_page variations (default 100, max 100). With page: {variations, page, per_page, total, total_count, total_pages, ignored_args}.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
 						'product_id' => [ 'type' => 'integer', 'description' => 'Parent variable product ID' ],
-						'per_page'   => [ 'type' => 'integer', 'description' => 'Number of variations to return (max 100)' ],
+						'per_page'   => [ 'type' => 'integer', 'description' => 'Variations per call (default 100, min 1, max 100)' ],
+						'page'       => [ 'type' => 'integer', 'description' => 'Page number, 1-indexed. When given, the reply includes total and total_pages.' ],
 					],
 					'required'   => [ 'product_id' ],
 				],
@@ -600,6 +610,61 @@ class WooCommerce {
 	 * @throws \Exception If tool fails.
 	 */
 	public static function execute_tool( $name, $args ) {
+		$result  = self::run_tool( $name, $args );
+		$ignored = self::ignored_args( $name, $args );
+		if ( null === $ignored || ! is_array( $result ) ) {
+			return $result;
+		}
+		if ( in_array( $name, self::MAP_REPLIES, true ) ) {
+			return $result;
+		}
+		if ( isset( $result['resultType'], $result['structuredContent'] ) && is_array( $result['structuredContent'] ) ) {
+			if ( [] !== $ignored ) {
+				$result['structuredContent']['ignored_args'] = $ignored;
+				if ( isset( $result['content'][0]['text'] ) ) {
+					$result['content'][0]['text'] .= ' Ignored arguments: ' . implode( ', ', $ignored ) . '.';
+				}
+			}
+			return $result;
+		}
+		// A plain list reply keeps its shape; tools that page report ignored_args when called with page.
+		if ( self::is_list( $result ) ) {
+			return $result;
+		}
+		if ( [] !== $ignored || array_key_exists( 'ignored_args', $result ) ) {
+			$result['ignored_args'] = $ignored;
+		}
+		return $result;
+	}
+
+	/**
+	 * Arguments the caller sent that the tool's schema does not define.
+	 *
+	 * @return string[]|null Null when the tool has no schema here.
+	 */
+	private static function ignored_args( $name, $args ) {
+		static $known = null;
+		if ( null === $known ) {
+			$known = [];
+			foreach ( self::get_tools() as $tool ) {
+				$known[ $tool['name'] ] = array_map( 'strval', array_keys( (array) ( $tool['inputSchema']['properties'] ?? [] ) ) );
+			}
+		}
+		if ( ! isset( $known[ $name ] ) ) {
+			return null;
+		}
+		return array_values( array_diff( array_map( 'strval', array_keys( (array) $args ) ), $known[ $name ] ) );
+	}
+
+	/**
+	 * Runs one WooCommerce tool.
+	 *
+	 * @param string $name Tool name.
+	 * @param array  $args Tool arguments.
+	 * @return mixed Result data.
+	 * @throws \Exception If tool fails.
+	 */
+	private static function run_tool( $name, $args ) {
 		// Cap check runs BEFORE is_available for anti-fingerprint: unprivileged callers
 		// get "no permission" not "WooCommerce is not active", so plugin presence is not
 		// leaked to callers who couldn't use the tool anyway. Every WC tool gates behind
@@ -617,11 +682,37 @@ class WooCommerce {
 
 		switch ( $name ) {
 			case 'wc_get_products':
-				$query_args = [
-					'limit'  => min( intval( $args['per_page'] ?? 10 ), 100 ),
+				$gp_paged    = isset( $args['page'] );
+				$gp_per_page = self::clamp_per_page( $args['per_page'] ?? 10 );
+				$gp_page     = self::clamp_page( $args['page'] ?? 1 );
+				$query_args  = [
+					'limit'  => $gp_per_page,
+					'page'   => $gp_page,
 					'status' => sanitize_text_field( $args['status'] ?? 'publish' ),
 					'return' => 'objects',
+					'orderby' => [ 'date' => 'DESC', 'ID' => 'DESC' ],
 				];
+				if ( $gp_paged ) {
+					$query_args['paginate'] = true;
+				}
+				foreach ( [ 'include', 'exclude' ] as $gp_id_arg ) {
+					$gp_ids = self::parse_id_list( $args[ $gp_id_arg ] ?? null, $gp_id_arg );
+					if ( [] !== $gp_ids ) {
+						$query_args[ $gp_id_arg ] = $gp_ids;
+					}
+				}
+				if ( isset( $args['sku'] ) && '' !== $args['sku'] ) {
+					if ( ! is_string( $args['sku'] ) && ! is_int( $args['sku'] ) ) {
+						throw new \Exception( 'sku must be a string.' );
+					}
+					$query_args['sku'] = sanitize_text_field( (string) $args['sku'] );
+				}
+				if ( isset( $args['stock_status'] ) && '' !== $args['stock_status'] ) {
+					if ( ! is_string( $args['stock_status'] ) || ! in_array( $args['stock_status'], [ 'instock', 'outofstock', 'onbackorder' ], true ) ) {
+						throw new \Exception( 'stock_status must be instock, outofstock or onbackorder.' );
+					}
+					$query_args['stock_status'] = $args['stock_status'];
+				}
 				if ( ! empty( $args['search'] ) ) {
 					$query_args['s'] = sanitize_text_field( $args['search'] );
 				}
@@ -651,7 +742,21 @@ class WooCommerce {
 					];
 				}
 				$products = wc_get_products( $query_args );
-				return array_map( [ __CLASS__, 'format_product_summary' ], $products );
+				if ( ! $gp_paged ) {
+					return array_map( [ __CLASS__, 'format_product_summary' ], $products );
+				}
+				$gp_total = (int) $products->total;
+				if ( empty( $products->products ) && $gp_page > 1 ) {
+					// WP_Query skips the row count when the requested page is empty.
+					$gp_total = (int) wc_get_products( array_merge( $query_args, [ 'page' => 1, 'limit' => 1, 'return' => 'ids' ] ) )->total;
+				}
+				return self::paged_reply(
+					'products',
+					array_map( [ __CLASS__, 'format_product_summary' ], (array) $products->products ),
+					$gp_page,
+					$gp_per_page,
+					$gp_total
+				);
 
 			case 'wc_get_product':
 				$product = wc_get_product( intval( $args['id'] ) );
@@ -960,6 +1065,30 @@ class WooCommerce {
 				if ( empty( $line_items ) ) {
 					throw new \Exception( 'line_items is required and must be a non-empty array.' );
 				}
+				// Every line item is checked before the order exists, so a refusal leaves nothing behind.
+				foreach ( $line_items as $co_item ) {
+					if ( ! is_array( $co_item ) ) {
+						throw new \Exception( 'Each line_items entry must be an object with product_id.' );
+					}
+					$co_product_id   = isset( $co_item['product_id'] ) ? (int) $co_item['product_id'] : 0;
+					$co_variation_id = isset( $co_item['variation_id'] ) ? (int) $co_item['variation_id'] : 0;
+					if ( $co_product_id <= 0 ) {
+						throw new \Exception( 'line_items entry missing product_id.' );
+					}
+					$co_product = wc_get_product( $co_variation_id > 0 ? $co_variation_id : $co_product_id );
+					if ( ! $co_product ) {
+						throw new \Exception( 'Product not found: ' . esc_html( (string) ( $co_variation_id > 0 ? $co_variation_id : $co_product_id ) ) );
+					}
+					if ( $co_variation_id > 0 && (int) $co_product->get_parent_id() !== $co_product_id ) {
+						throw new \Exception( 'variation_id ' . esc_html( (string) $co_variation_id ) . ' does not belong to product_id ' . esc_html( (string) $co_product_id ) . '.' );
+					}
+				}
+				// Refuse protected meta keys before the order exists, so a refusal leaves nothing behind.
+				foreach ( ( ! empty( $args['meta_data'] ) && is_array( $args['meta_data'] ) ) ? $args['meta_data'] : [] as $co_meta ) {
+					if ( isset( $co_meta['key'] ) && is_protected_meta( sanitize_text_field( (string) $co_meta['key'] ), 'post' ) ) {
+						throw new \Exception( 'Order meta key ' . esc_html( sanitize_text_field( (string) $co_meta['key'] ) ) . ' is protected and cannot be written.' );
+					}
+				}
 				$new_order = wc_create_order();
 				if ( is_wp_error( $new_order ) ) {
 					throw new \Exception( 'wc_create_order failed: ' . esc_html( $new_order->get_error_message() ) );
@@ -1015,7 +1144,12 @@ class WooCommerce {
 				if ( ! empty( $args['meta_data'] ) && is_array( $args['meta_data'] ) ) {
 					foreach ( $args['meta_data'] as $meta ) {
 						if ( isset( $meta['key'] ) ) {
-							$new_order->update_meta_data( sanitize_text_field( (string) $meta['key'] ), $meta['value'] ?? '' );
+							$order_meta_key = sanitize_text_field( (string) $meta['key'] );
+							// Protected keys (_order_stock_reduced, _order_total ...) are WooCommerce's own state.
+							if ( is_protected_meta( $order_meta_key, 'post' ) ) {
+								throw new \Exception( 'Order meta key ' . esc_html( $order_meta_key ) . ' is protected and cannot be written.' );
+							}
+							$new_order->update_meta_data( $order_meta_key, $meta['value'] ?? '' );
 						}
 					}
 				}
@@ -1073,6 +1207,29 @@ class WooCommerce {
 				}
 				if ( ! current_user_can( 'edit_shop_order', $uo_order_id ) ) {
 					throw new \Exception( 'edit_shop_order capability required on this order.' );
+				}
+				// Every line item id must belong to this order. Validated up front so a refusal writes nothing.
+				if ( ! empty( $args['line_items'] ) && is_array( $args['line_items'] ) ) {
+					foreach ( $args['line_items'] as $uo_check_item ) {
+						if ( ! is_array( $uo_check_item ) ) {
+							throw new \Exception( 'Each line_items entry must be an object.' );
+						}
+						$uo_check_id = isset( $uo_check_item['id'] ) ? (int) $uo_check_item['id'] : 0;
+						if ( $uo_check_id > 0 ) {
+							$uo_own_item = \WC_Order_Factory::get_order_item( $uo_check_id );
+							if ( ! $uo_own_item || (int) $uo_own_item->get_order_id() !== (int) $uo_order->get_id() ) {
+								throw new \Exception( 'Line item ' . esc_html( (string) $uo_check_id ) . ' does not belong to this order.' );
+							}
+							continue;
+						}
+						// New items: the product must exist and a variation must belong to it.
+						$uo_check_pid = isset( $uo_check_item['product_id'] ) ? (int) $uo_check_item['product_id'] : 0;
+						$uo_check_vid = isset( $uo_check_item['variation_id'] ) ? (int) $uo_check_item['variation_id'] : 0;
+						$uo_check_product = $uo_check_pid > 0 ? wc_get_product( $uo_check_vid > 0 ? $uo_check_vid : $uo_check_pid ) : null;
+						if ( ! $uo_check_product || ( $uo_check_vid > 0 && (int) $uo_check_product->get_parent_id() !== $uo_check_pid ) ) {
+							throw new \Exception( 'line_items entry has a missing or unknown product_id / variation_id.' );
+						}
+					}
 				}
 
 				// Reversibility gate. billing / shipping / customer_note / status
@@ -1145,7 +1302,12 @@ class WooCommerce {
 				if ( ! empty( $args['meta_data'] ) && is_array( $args['meta_data'] ) ) {
 					foreach ( $args['meta_data'] as $meta ) {
 						if ( isset( $meta['key'] ) ) {
-							$uo_order->update_meta_data( sanitize_text_field( (string) $meta['key'] ), $meta['value'] ?? '' );
+							$order_meta_key = sanitize_text_field( (string) $meta['key'] );
+							// Protected keys (_order_stock_reduced, _order_total ...) are WooCommerce's own state.
+							if ( is_protected_meta( $order_meta_key, 'post' ) ) {
+								throw new \Exception( 'Order meta key ' . esc_html( $order_meta_key ) . ' is protected and cannot be written.' );
+							}
+							$uo_order->update_meta_data( $order_meta_key, $meta['value'] ?? '' );
 						}
 					}
 				}
@@ -1301,17 +1463,22 @@ class WooCommerce {
 				);
 
 			case 'wc_get_customers':
-				$limit = min( intval( $args['per_page'] ?? 10 ), 100 );
+				$gc_paged      = isset( $args['page'] );
+				$limit         = self::clamp_per_page( $args['per_page'] ?? 10 );
+				$gc_page       = self::clamp_page( $args['page'] ?? 1 );
 				$customer_args = [
-					'number' => $limit,
-					'role'   => 'customer',
+					'number'      => $limit,
+					'paged'       => $gc_page,
+					'role'        => 'customer',
+					'count_total' => $gc_paged,
 				];
 				if ( ! empty( $args['search'] ) ) {
 					$customer_args['search']         = '*' . sanitize_text_field( $args['search'] ) . '*';
 					$customer_args['search_columns']  = [ 'user_login', 'user_email', 'display_name' ];
 				}
-				$customers = get_users( $customer_args );
-				return array_map( function( $user ) {
+				$gc_query  = new \WP_User_Query( $customer_args );
+				$customers = (array) $gc_query->get_results();
+				$gc_rows   = array_map( function( $user ) {
 					$customer = new \WC_Customer( $user->ID );
 					return [
 						'id'           => $user->ID,
@@ -1322,6 +1489,10 @@ class WooCommerce {
 						'country'      => $customer->get_billing_country(),
 					];
 				}, $customers );
+				if ( ! $gc_paged ) {
+					return $gc_rows;
+				}
+				return self::paged_reply( 'customers', $gc_rows, $gc_page, $limit, (int) $gc_query->get_total() );
 
 			case 'wc_get_store_stats':
 				return self::get_store_stats( $args['period'] ?? 'month' );
@@ -1335,10 +1506,17 @@ class WooCommerce {
 				if ( ! $product->is_type( 'variable' ) ) {
 					throw new \Exception( 'Product is not a variable product' );
 				}
-				$limit         = min( intval( $args['per_page'] ?? 100 ), 100 );
-				$variation_ids = array_slice( $product->get_children(), 0, $limit );
+				$gv_paged      = isset( $args['page'] );
+				$limit         = self::clamp_per_page( $args['per_page'] ?? 100 );
+				$gv_page       = self::clamp_page( $args['page'] ?? 1 );
+				$gv_children   = array_values( array_map( 'intval', (array) $product->get_children() ) );
+				$variation_ids = array_slice( $gv_children, ( $gv_page - 1 ) * $limit, $limit );
 				$variations    = array_filter( array_map( 'wc_get_product', $variation_ids ) );
-				return array_values( array_map( [ __CLASS__, 'format_variation' ], $variations ) );
+				$gv_rows       = array_values( array_map( [ __CLASS__, 'format_variation' ], $variations ) );
+				if ( ! $gv_paged ) {
+					return $gv_rows;
+				}
+				return self::paged_reply( 'variations', $gv_rows, $gv_page, $limit, count( $gv_children ) );
 
 			case 'wc_get_variation':
 				$variation = wc_get_product( intval( $args['variation_id'] ) );
@@ -2389,7 +2567,61 @@ class WooCommerce {
 			'sale_price'    => $product->get_sale_price(),
 			'sku'           => $product->get_sku(),
 			'stock_status'  => $product->get_stock_status(),
+			'stock_quantity' => $product->get_stock_quantity(),
+			'manage_stock'  => (bool) $product->get_manage_stock(),
 			'url'           => get_permalink( $product->get_id() ),
+		];
+	}
+
+	/** per_page for list tools: 1 to 100 whatever the caller sends. */
+	private static function clamp_per_page( $value ) {
+		return (int) max( 1, min( is_scalar( $value ) ? (float) $value : 1, 100 ) );
+	}
+
+	/** page for list tools: 1 to 1,000,000, compared as a float so huge values cannot wrap. */
+	private static function clamp_page( $value ) {
+		return (int) max( 1, min( is_scalar( $value ) ? (float) $value : 1, 1000000 ) );
+	}
+
+	/**
+	 * Product ID list from include / exclude. Empty means no filter; any entry
+	 * that is not a positive ID is refused, so a bad list never widens the query.
+	 */
+	private static function parse_id_list( $value, $arg ) {
+		if ( null === $value || '' === $value || [] === $value ) {
+			return [];
+		}
+		$ids = [];
+		foreach ( (array) $value as $entry ) {
+			if ( ! is_int( $entry ) && ! ( is_string( $entry ) && ctype_digit( $entry ) ) ) {
+				throw new \Exception( $arg . ' must be a list of product IDs.' );
+			}
+			if ( (int) $entry < 1 ) {
+				throw new \Exception( $arg . ' must be a list of product IDs.' );
+			}
+			$ids[] = (int) $entry;
+		}
+		return array_values( array_unique( $ids ) );
+	}
+
+	/** True for a 0-indexed sequential array (array_is_list arrived in WordPress 6.5). */
+	private static function is_list( array $value ) {
+		return [] === $value || array_keys( $value ) === range( 0, count( $value ) - 1 );
+	}
+
+	/**
+	 * Paged reply for a list tool, same keys as wc_get_orders. execute_tool()
+	 * fills ignored_args.
+	 */
+	private static function paged_reply( $key, array $rows, $page, $per_page, $total ) {
+		return [
+			$key           => array_values( $rows ),
+			'page'         => (int) $page,
+			'per_page'     => (int) $per_page,
+			'total'        => (int) $total,
+			'total_count'  => (int) $total,
+			'total_pages'  => (int) max( 1, (int) ceil( $total / max( 1, $per_page ) ) ),
+			'ignored_args' => [],
 		];
 	}
 

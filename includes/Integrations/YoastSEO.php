@@ -163,7 +163,7 @@ class YoastSEO {
 	}
 
 	private static function ensure_can_read( $post_id ) {
-		if ( ! current_user_can( 'read_post', $post_id ) ) {
+		if ( ! \Royal_MCP\MCP\Support\Post_Access::can_read( $post_id ) ) {
 			throw new \Exception( 'You do not have permission to read Yoast SEO data on this post.' );
 		}
 	}
@@ -750,6 +750,12 @@ class YoastSEO {
 			}
 		}
 
+		// Links from posts the caller may not read (drafts, private posts,
+		// non-public types) are left out of "linked from".
+		$to_links = array_values( array_filter( $to_links, static function ( $link ) {
+			return $link['post_id'] <= 0 || \Royal_MCP\MCP\Support\Post_Access::can_read( $link['post_id'] );
+		} ) );
+
 		$count_from = count( $from_links );
 		$count_to   = count( $to_links );
 
@@ -832,6 +838,10 @@ class YoastSEO {
 	 * untested pending a Premium install for verification.
 	 */
 	private static function handle_get_redirects( $args ) {
+		// The site-wide redirect table is an administrator's view in Yoast.
+		if ( ! current_user_can( 'manage_options' ) ) {
+			throw new \Exception( 'manage_options capability required to read redirects.' );
+		}
 		$limit = isset( $args['limit'] ) ? intval( $args['limit'] ) : 100;
 		if ( $limit <= 0 ) {
 			$limit = 100;

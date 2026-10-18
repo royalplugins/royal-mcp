@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.5.9
+Stable tag: 1.5.10
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -16,7 +16,7 @@ Preview-On-WordPress-Playground: yes
 
 **The most complete WordPress MCP server — 200+ tools, OAuth 2.0, WebMCP-ready, and nothing leaves your site.**
 
-Royal MCP gives Claude, ChatGPT, Google Gemini, Perplexity, DeepSeek, Mistral, and every other MCP-compatible AI structured access to your WordPress site: 109 WordPress core tools, 136 integration tools that auto-load for WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Wordfence, Contact Form 7, MonsterInsights, W3 Total Cache, LiteSpeed Cache, Duplicator, BuddyPress, and more, plus 4 tool-discovery and page-verification helpers.
+Royal MCP gives Claude, ChatGPT, Google Gemini, Perplexity, DeepSeek, Mistral, and every other MCP-compatible AI structured access to your WordPress site: 109 WordPress core tools (including tool discovery and page verification) and 150 integration tools that auto-load for WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Wordfence, Contact Form 7, MonsterInsights, W3 Total Cache, LiteSpeed Cache, Duplicator, BuddyPress, TablePress, Code Snippets, WPCode, and more.
 
 = Connect Claude to WordPress =
 
@@ -38,7 +38,7 @@ ChatGPT on the web, desktop, and iOS supports MCP servers natively. Add Royal MC
 
 = Plugins with dedicated MCP tools =
 
-WooCommerce, Elementor, Divi, Advanced Custom Fields, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Wordfence, Contact Form 7, MonsterInsights, W3 Total Cache, LiteSpeed Cache, Duplicator, BuddyPress, Redirection — plus every Royal Plugin (Royal AI Firewall, GuardPress, SiteVault, ForgeCache, Royal Ledger, Royal Links).
+WooCommerce, Elementor, Divi, Advanced Custom Fields, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Wordfence, Contact Form 7, MonsterInsights, W3 Total Cache, LiteSpeed Cache, Duplicator, BuddyPress, Redirection, TablePress, Code Snippets, WPCode — plus every Royal Plugin (Royal AI Firewall, GuardPress, SiteVault, ForgeCache, Royal Ledger, Royal Links).
 
 **Not seeing yours?** MCP still works. WordPress core operations (posts, pages, media, users, taxonomies, custom fields, menus, options) cover most day-to-day AI workflows for any plugin — read/write ACF via `wp_get_post_meta` even without ACF-specific tools, edit posts on any custom post type, moderate any plugin's comments. Shared SEO meta tools automatically work with Rank Math, AIOSEO, SEOPress, and SEObolt. A dedicated integration layers specialized tools on top when that plugin exposes its own data model, request features/plugins support [here on the wp.org support forum](https://wordpress.org/support/plugin/royal-mcp/).
 
@@ -64,7 +64,7 @@ Yes. Every MCP client (Claude Desktop, ChatGPT, and the rest) asks you to approv
 
 = Does Royal MCP work with the WordPress Abilities API? =
 
-Yes. Royal MCP surfaces every AI-callable operation through one endpoint, from three sources: the 109 native tools Royal MCP ships, the 136 integration tools that auto-load when WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Wordfence, Contact Form 7, MonsterInsights, W3 Total Cache, LiteSpeed Cache, Duplicator, BuddyPress, and other supported plugins activate, and every ability any plugin registers through WordPress 6.9's Abilities API. Your AI sees them all as MCP tools — one connector, no per-plugin setup, no per-vendor rewrite.
+Yes. Royal MCP surfaces every AI-callable operation through one endpoint, from three sources: the 109 native tools Royal MCP ships, the 150 integration tools that auto-load when WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Wordfence, Contact Form 7, MonsterInsights, W3 Total Cache, LiteSpeed Cache, Duplicator, BuddyPress, TablePress, Code Snippets, WPCode, and other supported plugins activate, and every ability any plugin registers through WordPress 6.9's Abilities API. Your AI sees them all as MCP tools — one connector, no per-plugin setup, no per-vendor rewrite.
 
 = See what AI agents do to your site =
 
@@ -74,7 +74,7 @@ The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) c
 
 Royal MCP publishes machine-readable MCP Server Card, Skills Index, and OAuth Protected Resource metadata at the standard well-known locations. Cloudflare's Agent Readiness scanner, Vercel's is-agentic, and Chrome Lighthouse's Agentic Browsing audit all recognize your site as agent-ready with zero configuration. Every request to your MCP endpoint carries a Link header pointing agent runtimes at these discovery documents.
 
-= 109 Core Tools + 136 Integration Tools =
+= 109 Core Tools + 150 Integration Tools =
 
 **WordPress Core (109 tools):**
 
@@ -126,6 +126,9 @@ If the plugin is active on your Wordpress site, it's tools auto-register with no
 * **Duplicator (3 tools)** — list migration packages, read per-package status, get the installer URL for any completed package
 * **BuddyPress (4 tools)** — list community members, read a single member profile, list groups, read the activity feed
 * **Redirection (4 tools)** — list/create/update 301/302/307 redirects (with regex + group + status), list redirect groups
+* **TablePress (6 tools)** — list and read tables, create a table from rows, change cells (dry run + undo), copy a table, export as CSV, JSON or HTML
+* **Code Snippets (5 tools)** — list and read snippets (credential values hidden in returned code), see recently deactivated snippets, deactivate a snippet that breaks the site, change a snippet's name, description or tags; never creates, edits, activates or runs code
+* **WPCode (3 tools, Lite + Pro)** — list snippets, read one snippet's settings and code (credential values hidden), read its status and last recorded error; read only
 
 = Royal Plugins Integrations (auto-detected) =
 
@@ -200,7 +203,7 @@ Security. Most MCP plugins (and 41% of all public MCP servers) have no authentic
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
-No. WordPress 6.9 added the Abilities API (a primitive for registering AI-callable functions), and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 109 ready-to-use WordPress core tools, and 136 integration tools for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Redirection, Solid Security, Wordfence, Contact Form 7, MonsterInsights, W3 Total Cache, LiteSpeed Cache, Duplicator, and BuddyPress.
+No. WordPress 6.9 added the Abilities API (a primitive for registering AI-callable functions), and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 109 ready-to-use WordPress core tools, and 150 integration tools for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Redirection, Solid Security, Wordfence, Contact Form 7, MonsterInsights, W3 Total Cache, LiteSpeed Cache, Duplicator, BuddyPress, TablePress, Code Snippets, and WPCode.
 
 = Does Royal MCP work with WooCommerce? =
 
@@ -294,6 +297,18 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 10. Royal MCP tool list in ChatGPT after connection
 
 == Changelog ==
+
+= 1.5.10 =
+* New: TablePress integration with six tools to list, read, create, copy and export tables and change cells, with undo.
+* New: Code Snippets integration with five tools to list, read, deactivate and rename snippets.
+* New: WPCode integration with three read-only tools for snippets, their code and their last error.
+* New: settings for who can connect AI clients and who can use tools from other MCP servers; both default to Administrators only, so sites where editors connect should choose Editors and above.
+* Enhancement: WooCommerce product, customer and variation lists page with totals, and products filter by IDs, SKU and stock status.
+* Enhancement: credential settings with one-word names and credential ACF fields are hidden from AI clients.
+* Enhancement: the Allowlisted plugin options setting shows which listed names are blocked.
+* Enhancement: every tool checks the signed-in user's rights on each post, comment, term and template it reads or changes.
+* Security: search returns only content the signed-in user may read; thanks to Vincent Cassiau (CyberVanguard).
+* Security: cloning an Elementor page checks the right to read the source and to publish the copy; thanks to Usama Arshad.
 
 = 1.5.9 =
 * New: Drafts only setting lets AI clients create and edit drafts while refusing publishing, live pages and site settings.
