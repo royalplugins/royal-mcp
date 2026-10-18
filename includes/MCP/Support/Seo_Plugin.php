@@ -216,6 +216,49 @@ class Seo_Plugin {
 	}
 
 	/**
+	 * Whether any active SEO plugin marks the post noindex.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return bool
+	 */
+	public static function is_noindex( $post_id ) {
+		$post_id = (int) $post_id;
+		foreach ( self::NOINDEX_KEYS as $plugin => $key ) {
+			if ( ! self::is_active( $plugin ) ) {
+				continue;
+			}
+			$value = get_post_meta( $post_id, $key, true );
+			if ( 'rankmath' === $plugin ? in_array( 'noindex', (array) $value, true ) : ( 'seopress' === $plugin ? 'yes' === $value : ( 'yoast' === $plugin ? '1' === (string) $value : (bool) $value ) ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Whether one SEO plugin is active, whichever plugin detect() picks as the
+	 * primary one when several are active.
+	 *
+	 * @param string $key seobolt | yoast | rankmath | seopress | aioseo.
+	 * @return bool
+	 */
+	public static function is_active( $key ) {
+		switch ( (string) $key ) {
+			case 'seobolt':
+				return self::seobolt_active();
+			case 'yoast':
+				return self::plugin_active( 'yoast', defined( 'WPSEO_VERSION' ) || class_exists( 'WPSEO_Options' ) );
+			case 'rankmath':
+				return self::plugin_active( 'rankmath', defined( 'RANK_MATH_VERSION' ) || class_exists( 'RankMath' ) );
+			case 'seopress':
+				return self::plugin_active( 'seopress', defined( 'SEOPRESS_VERSION' ) || function_exists( 'seopress_get_service' ) );
+			case 'aioseo':
+				return self::plugin_active( 'aioseo', defined( 'AIOSEO_VERSION' ) || defined( 'AIOSEO_FILE' ) || function_exists( 'aioseo' ) );
+		}
+		return false;
+	}
+
+	/**
 	 * Active by the plugin list first. A constant or class alone counts only
 	 * when the plugin is not installed under its usual folder (must-use or
 	 * renamed install): a constant can linger from a plugin deactivated
