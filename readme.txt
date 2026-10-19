@@ -10,11 +10,11 @@ License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Preview-On-WordPress-Playground: yes
 
-200+ MCP tools. OAuth 2.0 + WebMCP. Connect Claude, ChatGPT, Perplexity, Gemini or any MCP agent to your WordPress site. 100% self-hosted.
+250+ MCP tools. OAuth 2.0 + WebMCP. Connect Claude, ChatGPT, Perplexity, Gemini or any MCP agent to your WordPress site. 100% self-hosted.
 
 == Description ==
 
-**The most complete WordPress MCP server — 200+ tools, OAuth 2.0, WebMCP-ready, and nothing leaves your site.**
+**The most complete WordPress MCP server — 250+ tools, OAuth 2.0, WebMCP-ready, and nothing leaves your site.**
 
 Royal MCP gives Claude, ChatGPT, Google Gemini, Perplexity, DeepSeek, Mistral, and every other MCP-compatible AI structured access to your WordPress site: 109 WordPress core tools (including tool discovery and page verification) and 150 integration tools that auto-load for WooCommerce, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Solid Security, Wordfence, Contact Form 7, MonsterInsights, W3 Total Cache, LiteSpeed Cache, Duplicator, BuddyPress, TablePress, Code Snippets, WPCode, and more.
 
