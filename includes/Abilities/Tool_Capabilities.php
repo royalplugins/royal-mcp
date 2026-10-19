@@ -134,6 +134,8 @@ class Tool_Capabilities {
 			// ==================== Core: change history — each change is checked against its own capability ====================
 			'mcp_list_recent_changes' => 'read',
 			'mcp_get_change'          => 'read',
+			// Undo only finds the caller's own changes and re-checks each operation's capability.
+			'mcp_undo_last_operation' => 'read',
 
 			// ==================== ForgeCache: admin ops ====================
 			'fc_clear_cache'     => 'manage_options',

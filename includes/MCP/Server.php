@@ -3267,7 +3267,7 @@ class Server {
                     // (matches block editor + REST API listability logic — how
                     // Divi Theme Builder, ACF field groups, and similar
                     // non-public-but-editable types show up in admin lists).
-                    if (!$pto || (!is_post_type_viewable($pto) && !current_user_can($pto->cap->edit_posts))) {
+                    if (!$pto || !\Royal_MCP\MCP\Support\Post_Access::can_query_type($pt)) {
                         throw new \Exception('Invalid or non-accessible post type: ' . esc_html($pt));
                     }
                     $query_args['post_type'] = $pt;
@@ -3313,17 +3313,18 @@ class Server {
                     ];
                 }
                 $posts = get_posts($query_args);
-                if ($gp_include) {
-                    // Same post type rule as a normal listing, then the
-                    // per-post read check.
-                    $posts = array_values(array_filter($posts, static function ($p) {
-                        $gp_type = get_post_type_object($p->post_type);
-                        if (!$gp_type || (!is_post_type_viewable($gp_type) && !current_user_can($gp_type->cap->edit_posts))) {
-                            return false;
-                        }
-                        return current_user_can('read_post', $p->ID);
-                    }));
-                }
+                // The shared read rule on every row (post type, revisions and
+                // autosaves, per-post read), and a body the caller cannot read
+                // must not decide whether a post matches the search.
+                $gp_search = $gp_include ? '' : (string) ($query_args['s'] ?? '');
+                $posts = array_values(array_filter($posts, static function ($p) use ($gp_search) {
+                    if (!\Royal_MCP\MCP\Support\Post_Access::can_read($p)) {
+                        return false;
+                    }
+                    return '' === $gp_search
+                        || !\Royal_MCP\MCP\Support\Post_Access::content_withheld($p)
+                        || false !== mb_stripos((string) $p->post_title, $gp_search);
+                }));
                 $gp_with_content = !empty($args['with_content']);
                 return array_map(function($p) use ($gp_with_content) {
                     // Surface featured_media symmetrically with the write
@@ -3342,7 +3343,7 @@ class Server {
                         'type' => $p->post_type,
                         'url' => get_permalink($p),
                         'date' => $p->post_date,
-                        'content_length' => strlen((string) $p->post_content),
+                        'content_length' => $gp_withheld ? 0 : strlen((string) $p->post_content),
                         'featured_media' => $thumb_id,
                         'featured_media_url' => $thumb_id > 0 ? ( wp_get_attachment_url( $thumb_id ) ?: null ) : null,
                     ];
@@ -3395,11 +3396,11 @@ class Server {
             case 'wp_create_post':
                 $post_type = sanitize_text_field($args['post_type'] ?? 'post');
                 $pto = get_post_type_object($post_type);
-                // Same relaxation as wp_get_posts — accept viewable types OR
-                // non-public types the caller can edit. The per-PT edit cap
-                // check on the next block still enforces the actual create
-                // permission (edit_posts / edit_pages / custom).
-                if (!$pto || (!is_post_type_viewable($pto) && !current_user_can($pto->cap->edit_posts))) {
+                // Same type rule as wp_get_posts (internal types without an
+                // admin screen or REST endpoint are for administrators). The
+                // per-PT create check on the next block still enforces the
+                // actual create permission (edit_posts / edit_pages / custom).
+                if (!$pto || !\Royal_MCP\MCP\Support\Post_Access::can_query_type($post_type)) {
                     throw new \Exception('Invalid or non-accessible post type: ' . esc_html($post_type));
                 }
                 // Per-post-type edit + publish capability gate. Without it, a
@@ -3508,6 +3509,9 @@ class Server {
                 // Gate elevated status transitions on publish_posts so a
                 // caller with edit_post on their own draft can't silently
                 // flip it to publish/future/private. Matches WP REST behavior.
+                if (isset($args['status']) && !is_string($args['status'])) {
+                    throw new \Exception('status must be a string.');
+                }
                 if (isset($args['status'])) {
                     $up_status_refusal = \Royal_MCP\MCP\Support\Post_Access::status_change_refusal($up_existing_post, sanitize_key((string) $args['status']));
                     if ('' !== $up_status_refusal) {
@@ -3872,7 +3876,7 @@ class Server {
                         'url' => get_permalink($p),
                         'status' => $p->post_status,
                         'parent' => $p->post_parent,
-                        'content_length' => strlen((string) $p->post_content),
+                        'content_length' => $this->content_withheld($p) ? 0 : strlen((string) $p->post_content),
                         'featured_media' => $thumb_id,
                         'featured_media_url' => $thumb_id > 0 ? ( wp_get_attachment_url( $thumb_id ) ?: null ) : null,
                     ];
@@ -3951,6 +3955,9 @@ class Server {
                 }
                 // Gate elevated status transitions on publish_posts. Same
                 // rule as wp_update_post — mirrors WP REST behavior.
+                if (isset($args['status']) && !is_string($args['status'])) {
+                    throw new \Exception('status must be a string.');
+                }
                 if (isset($args['status'])) {
                     $upg_status_refusal = \Royal_MCP\MCP\Support\Post_Access::status_change_refusal($existing_page, sanitize_key((string) $args['status']));
                     if ('' !== $upg_status_refusal) {
@@ -6679,7 +6686,7 @@ class Server {
                     throw new \Exception('Either post_id or url is required.');
                 }
                 if ($seo_post_id > 0) {
-                    if (!get_post($seo_post_id)) {
+                    if (!get_post($seo_post_id) || !\Royal_MCP\MCP\Support\Post_Access::can_read($seo_post_id)) {
                         throw new \Exception('Post not found: ' . esc_html((string) $seo_post_id));
                     }
                     $seo_url = get_permalink($seo_post_id);
@@ -6706,7 +6713,28 @@ class Server {
                 $safe_path  = isset($seo_parts['path'])  ? $seo_parts['path']         : '/';
                 $safe_query = isset($seo_parts['query']) ? '?' . $seo_parts['query']  : '';
                 $seo_url    = rtrim(home_url(), '/') . $safe_path . $safe_query;
-                $seo_response = wp_remote_get($seo_url, [
+                // The server fetches the page from its own address, so the
+                // caller must be entitled to it: a post they can read, the home
+                // page for anyone who edits posts, anything else for admins.
+                $seo_norm = static function ($u) {
+                    $u = (string) strtok((string) $u, '#');
+                    return untrailingslashit(preg_replace('#^https?://#i', '', $u));
+                };
+                $seo_target = $seo_post_id > 0 ? $seo_post_id : (int) url_to_postid($seo_url);
+                if ($seo_target > 0 && $seo_post_id <= 0 && $seo_norm($seo_url) !== $seo_norm(get_permalink($seo_target))) {
+                    $seo_target = 0;
+                }
+                if ($seo_target > 0) {
+                    $seo_allowed = \Royal_MCP\MCP\Support\Post_Access::can_read($seo_target);
+                } elseif ('' === $safe_query && $seo_norm($seo_url) === $seo_norm(home_url())) {
+                    $seo_allowed = current_user_can('edit_posts');
+                } else {
+                    $seo_allowed = current_user_can('manage_options');
+                }
+                if (!$seo_allowed) {
+                    throw new \Exception('You do not have permission to audit that page.');
+                }
+                $seo_response = wp_safe_remote_get($seo_url, [
                     'timeout'     => 10,
                     'redirection' => 3,
                     'user-agent'  => 'Royal MCP SEO Audit',
@@ -6754,12 +6782,12 @@ class Server {
                         $meta_desc_values[] = $content;
                     } elseif ($name === 'viewport') {
                         $viewport_content = $content;
-                    } elseif (str_starts_with($property, 'og:')) {
+                    } elseif (0 === strpos($property, 'og:')) {
                         $og_key = substr($property, 3);
                         if (array_key_exists($og_key, $og_fields) && $og_fields[$og_key] === '') {
                             $og_fields[$og_key] = $content;
                         }
-                    } elseif (str_starts_with($name, 'twitter:')) {
+                    } elseif (0 === strpos($name, 'twitter:')) {
                         $tw_key = substr($name, 8);
                         if (array_key_exists($tw_key, $tw_fields) && $tw_fields[$tw_key] === '') {
                             $tw_fields[$tw_key] = $content;
@@ -11396,7 +11424,7 @@ class Server {
             'private_key', 'public_key',
             'client_secret', 'client_id', 'auth_key', 'auth_token',
             'bearer', 'license_key', 'consumer_secret', 'consumer_key',
-            'webhook_secret', 'session_key', 'credentials',
+            'webhook_secret', 'session_key', 'credential', 'passcode', 'authorization',
         ];
         foreach ($needles as $needle) {
             if (strpos($key_lc, $needle) !== false || strpos($flat, str_replace('_', '', $needle)) !== false) return true;
@@ -11425,7 +11453,7 @@ class Server {
         // admin_pwd, third-party.conf.secret, dot-notation keys, etc.
         // Boundary chars _-. and start/end of string prevent word-inside-
         // word matches (donkey, keyword, passageway all pass through).
-        if (preg_match('/(^|[_\-.])(key|pass|pwd|secret|token|dsn)([_\-.]|$)/i', $key_lc)) {
+        if (preg_match('/(^|[_\-.])(key|pass|pwd|pw|secret|token|dsn)([_\-.]|$)/i', $key_lc)) {
             return true;
         }
 

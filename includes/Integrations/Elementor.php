@@ -388,7 +388,7 @@ class Elementor {
 		// Copy Elementor meta. _elementor_data is stored as a slashed JSON string;
 		// re-encoding from our parsed array gives the same shape.
 		// Important: wp_slash before update_post_meta because WP unslashes on read.
-		update_post_meta( $new_id, '_elementor_data', wp_slash( wp_json_encode( $regenerated ) ) );
+		update_post_meta( $new_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $regenerated ) ) ) );
 
 		// Copy structural Elementor meta to make the editor open cleanly.
 		$meta_keys_to_copy = [
@@ -1540,8 +1540,11 @@ class Elementor {
 		if ( '' === $element_id ) {
 			throw new \Exception( 'element_id is required.' );
 		}
-		if ( ! \Royal_MCP\MCP\Support\Post_Access::can_read_content( $post_id ) ) {
-			throw new \Exception( 'read_post capability required.' );
+		// Raw widget settings hold values the page never shows (form
+		// recipients, webhook URLs, integration keys): editors of the page only,
+		// as in Elementor's own editor.
+		if ( ! \Royal_MCP\MCP\Support\Post_Access::can_read_content( $post_id ) || ! current_user_can( 'edit_post', $post_id ) ) {
+			throw new \Exception( 'edit_post capability required to read widget settings.' );
 		}
 
 		$elementor_data = get_post_meta( $post_id, '_elementor_data', true );
