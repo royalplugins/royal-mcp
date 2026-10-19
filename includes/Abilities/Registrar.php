@@ -105,6 +105,11 @@ class Registrar {
 		// never meets an empty properties object.
 		if ( empty( (array) ( $input_schema['properties'] ?? array() ) ) ) {
 			$input_schema = array( 'type' => 'object' );
+			// WordPress before 7.1 has no input filter; a schema default gives a
+			// call with no input the same empty object there.
+			if ( version_compare( (string) get_bloginfo( 'version' ), '7.1', '<' ) ) {
+				$input_schema['default'] = new \stdClass();
+			}
 		}
 		$args['input_schema'] = $input_schema;
 
