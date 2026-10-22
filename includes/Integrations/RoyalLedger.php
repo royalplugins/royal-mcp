@@ -120,7 +120,7 @@ class RoyalLedger {
 					throw new \Exception( 'You do not have permission to view Royal Ledger cost data.' );
 				}
 				$query = [
-					'limit'  => min( intval( $args['limit'] ?? 50 ), 200 ),
+					'limit'  => max(1, min( intval( $args['limit'] ?? 50 ), 200 )),
 					'status' => sanitize_text_field( $args['status'] ?? 'active' ),
 				];
 				if ( ! empty( $args['category'] ) ) {
@@ -170,7 +170,7 @@ class RoyalLedger {
 				if ( ! current_user_can( 'manage_options' ) ) {
 					throw new \Exception( 'You do not have permission to view Royal Ledger renewal data.' );
 				}
-				$limit  = min( intval( $args['limit'] ?? 10 ), 100 );
+				$limit  = max(1, min( intval( $args['limit'] ?? 10 ), 100 ));
 				$items  = \RLEDGER_Items::get_upcoming_renewals( $limit );
 				return array_map(
 					function ( $item ) {
@@ -200,7 +200,7 @@ class RoyalLedger {
 				if ( ! class_exists( 'RLEDGER_Keys' ) ) {
 					throw new \Exception( 'RLEDGER_Keys class not loaded' );
 				}
-				$query = [ 'limit' => min( intval( $args['limit'] ?? 50 ), 200 ) ];
+				$query = [ 'limit' => max(1, min( intval( $args['limit'] ?? 50 ), 200 )) ];
 				if ( ! empty( $args['item_id'] ) ) {
 					$query['item_id'] = intval( $args['item_id'] );
 				}

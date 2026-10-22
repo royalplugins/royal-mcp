@@ -44,6 +44,7 @@ class Registrar {
 			'tablepress_'  => 'tablepress',
 			'snippets_'    => 'code-snippets',
 			'wpcode_'      => 'wpcode',
+			'complianz_'   => 'complianz',
 		);
 	}
 

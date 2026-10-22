@@ -20,10 +20,11 @@ class Meta_Config {
 	// WP core meta: auto-seeded from PUBLIC_META_KEY when unset. Do not set explicitly.
 	const SHOW_IN_REST_META_KEY = 'show_in_rest';
 
-	// MCP Adapter default-server enrollment path is intentionally not set. We register our
-	// own named server with an explicit ability list; default-server enrollment is not needed.
-	// If future scope wants auto-enrollment, uncomment:
-	// const MCP_PUBLIC_META_PATH = [ 'mcp', 'public' ];
+	// MCP Adapter meta. Its default server lists every ability whose meta.mcp.public is
+	// true, and falls back to meta.public when meta.mcp.public is absent. Royal MCP tools
+	// are reached through Royal MCP's own named server (explicit ability list), so they
+	// set meta.mcp.public = false to stay off the default server.
+	const MCP_META_KEY = 'mcp';
 
 	/**
 	 * Baseline meta payload attached to every Royal MCP ability.
@@ -36,11 +37,13 @@ class Meta_Config {
 	 *     abilities registered on 7.0.x get show_in_rest=false and become
 	 *     unreachable via /wp-json/wp-abilities/v1/*.
 	 * Setting both makes the ability REST-visible on every supported WP version.
+	 * meta.mcp.public = false keeps it off the MCP Adapter's default server.
 	 */
 	public static function ability_meta(): array {
 		return array(
 			self::PUBLIC_META_KEY       => true,
 			self::SHOW_IN_REST_META_KEY => true,
+			self::MCP_META_KEY          => array( 'public' => false ),
 		);
 	}
 }

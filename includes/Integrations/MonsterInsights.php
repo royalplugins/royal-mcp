@@ -93,9 +93,10 @@ class MonsterInsights {
 	}
 
 	private static function normalize_date_args( $args ) {
-		$out = [];
+		$out  = [];
+		$args = is_array( $args ) ? $args : [];
 		foreach ( [ 'start', 'end' ] as $k ) {
-			if ( ! empty( $args[ $k ] ) && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $args[ $k ] ) ) {
+			if ( ! empty( $args[ $k ] ) && is_string( $args[ $k ] ) && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $args[ $k ] ) ) {
 				$out[ $k ] = $args[ $k ];
 			}
 		}
@@ -109,8 +110,83 @@ class MonsterInsights {
 		if ( ! function_exists( 'MonsterInsights' ) ) {
 			return null;
 		}
+		// auth is a protected property that MonsterInsights loads on first
+		// read, so it is read directly; isset() on it is always false.
+		try {
+			$auth = \MonsterInsights()->auth;
+		} catch ( \Throwable $e ) {
+			return null;
+		}
+		return ( is_object( $auth ) && method_exists( $auth, 'is_authed' ) ) ? $auth : null;
+	}
+
+	/**
+	 * MonsterInsights' report registry. Outside wp-admin it is not built, so
+	 * the same report classes are loaded and registered for this call.
+	 *
+	 * @return object|null
+	 */
+	private static function get_reporting() {
 		$mi = \MonsterInsights();
-		return ( $mi && isset( $mi->auth ) ) ? $mi->auth : null;
+		if ( isset( $mi->reporting ) && is_object( $mi->reporting ) && method_exists( $mi->reporting, 'get_report' ) ) {
+			return $mi->reporting;
+		}
+		static $built = false;
+		if ( false !== $built ) {
+			return $built;
+		}
+		$built = null;
+		if ( ! defined( 'MONSTERINSIGHTS_PLUGIN_DIR' ) ) {
+			return null;
+		}
+		$dir  = trailingslashit( (string) MONSTERINSIGHTS_PLUGIN_DIR );
+		$tier = ( function_exists( 'monsterinsights_is_pro_version' ) && monsterinsights_is_pro_version() ) ? 'pro' : 'lite';
+		$core = [
+			'includes/api/class-monsterinsights-api-error.php',
+			'includes/api/class-monsterinsights-api.php',
+			'includes/api/class-monsterinsights-api-reports.php',
+			'includes/admin/reports/abstract-report.php',
+			'includes/admin/reports/overview.php',
+			'includes/admin/reporting.php',
+		];
+		try {
+			foreach ( $core as $file ) {
+				if ( ! file_exists( $dir . $file ) ) {
+					return null;
+				}
+				require_once $dir . $file;
+			}
+			if ( ! class_exists( 'MonsterInsights_Reporting' ) || ! class_exists( 'MonsterInsights_Report' ) ) {
+				return null;
+			}
+			$before = get_declared_classes();
+			foreach ( [ 'dimensions', 'queries' ] as $slug ) {
+				$file = $dir . $tier . '/includes/admin/reports/report-' . $slug . '.php';
+				if ( file_exists( $file ) ) {
+					require_once $file;
+				}
+			}
+			$reporting = new \MonsterInsights_Reporting();
+			$classes   = array_merge( [ 'MonsterInsights_Report_Overview' ], array_diff( get_declared_classes(), $before ) );
+			foreach ( $classes as $class ) {
+				if ( ! class_exists( $class ) || ! is_subclass_of( $class, 'MonsterInsights_Report' ) ) {
+					continue;
+				}
+				$ref = new \ReflectionClass( $class );
+				if ( $ref->isAbstract() ) {
+					continue;
+				}
+				$ctor = $ref->getConstructor();
+				if ( $ctor && $ctor->getNumberOfRequiredParameters() > 0 ) {
+					continue;
+				}
+				$reporting->add_report( new $class() );
+			}
+			$built = $reporting;
+		} catch ( \Throwable $e ) {
+			$built = null;
+		}
+		return $built;
 	}
 
 	private static function is_authed() {
@@ -127,8 +203,8 @@ class MonsterInsights {
 			];
 		}
 
-		$mi = \MonsterInsights();
-		if ( ! isset( $mi->reporting ) || ! method_exists( $mi->reporting, 'get_report' ) ) {
+		$reporting = self::get_reporting();
+		if ( ! $reporting ) {
 			return [
 				'state'   => 'unavailable',
 				'reason'  => 'reporting_unavailable',
@@ -136,7 +212,7 @@ class MonsterInsights {
 			];
 		}
 
-		$report = $mi->reporting->get_report( $report_name );
+		$report = $reporting->get_report( $report_name );
 		if ( ! $report ) {
 			return [
 				'state'   => 'unavailable',

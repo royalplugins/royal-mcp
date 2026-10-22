@@ -174,9 +174,11 @@ class Core {
 				'items' => array(
 					'type'       => 'object',
 					'properties' => array(
-						'id'           => array( 'type' => 'integer' ),
-						'display_name' => array( 'type' => 'string' ),
-						'roles'        => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+						'id'              => array( 'type' => 'integer' ),
+						'display_name'    => array( 'type' => 'string' ),
+						'roles'           => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+						'user_registered' => array( 'type' => 'string' ),
+						'extra_caps'      => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
 					),
 				),
 			),
@@ -185,8 +187,10 @@ class Core {
 				'properties' => array(
 					'id'           => array( 'type' => 'integer' ),
 					'display_name' => array( 'type' => 'string' ),
-					'roles'        => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
-					'registered'   => array( 'type' => 'string' ),
+					'roles'           => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+					'registered'      => array( 'type' => 'string' ),
+					'user_registered' => array( 'type' => 'string' ),
+					'extra_caps'      => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
 				),
 			),
 
@@ -506,10 +510,12 @@ class Core {
 				'items' => array(
 					'type'       => 'object',
 					'properties' => array(
+						'type'           => array( 'type' => 'string', 'enum' => array( 'regular', 'must_use', 'dropin' ) ),
 						'name'           => array( 'type' => 'string' ),
 						'version'        => array( 'type' => 'string' ),
 						'active'         => array( 'type' => 'boolean' ),
 						'network_active' => array( 'type' => 'boolean' ),
+						'modified_at'    => array( 'type' => array( 'string', 'null' ) ),
 						'author'         => array( 'type' => 'string' ),
 						'requires_wp'    => array( 'type' => array( 'string', 'null' ) ),
 						'requires_php'   => array( 'type' => array( 'string', 'null' ) ),

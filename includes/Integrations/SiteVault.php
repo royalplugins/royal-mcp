@@ -134,7 +134,7 @@ class SiteVault {
 		switch ( $name ) {
 			case 'sv_get_backups':
 				$query_args = [
-					'limit' => min( intval( $args['limit'] ?? 20 ), 50 ),
+					'limit' => max(1, min( intval( $args['limit'] ?? 20 ), 50 )),
 				];
 				if ( ! empty( $args['status'] ) ) {
 					$query_args['status'] = sanitize_text_field( $args['status'] );

@@ -199,12 +199,15 @@ class Royal_MCP_Chrome {
                     <?php
                     printf(
                         wp_kses(
-                            /* translators: %s: link to Royal MCP Pro upgrade */
-                            __( "You're using Royal MCP Free. Upgrade to %s for 30-50%% off — bulk ops, scoped endpoints, 90-day audit log.", 'royal-mcp' ),
+                            /* translators: %s: link to Royal MCP Pro */
+                            __( "You're using Royal MCP Free. %s adds 350+ tools, bulk edits and a 90-day audit trail for client work.", 'royal-mcp' ),
                             [ 'a' => [ 'href' => [], 'class' => [], 'target' => [], 'rel' => [] ] ]
                         ),
                         '<a class="royal-mcp-chrome-upgrade-bar-cta" href="' . esc_url( $cta_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Royal MCP Pro', 'royal-mcp' ) . '</a>'
                     );
+                    if ( current_datetime()->format( 'Y-m-d' ) <= \Royal_MCP\Admin\Pro_Notice::OFFER_ENDS ) {
+                        echo ' <strong>' . esc_html__( '30-50% off ends Oct 31st.', 'royal-mcp' ) . '</strong>';
+                    }
                     ?>
                 </span>
             </div>

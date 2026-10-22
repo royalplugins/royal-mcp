@@ -26,6 +26,7 @@ use Royal_MCP\Integrations\Duplicator as DuplicatorIntegration;
 use Royal_MCP\Integrations\BuddyPress as BuddyPressIntegration;
 use Royal_MCP\Integrations\TablePress as TablePressIntegration;
 use Royal_MCP\Integrations\CodeSnippets as CodeSnippetsIntegration;
+use Royal_MCP\Integrations\Complianz as ComplianzIntegration;
 use Royal_MCP\Integrations\WPCode as WPCodeIntegration;
 use Royal_MCP\Integrations\Elementor_Coexistence;
 
@@ -209,6 +210,7 @@ class Server {
         'wp_find_media',
         'tablepress_export_table',
         'snippets_recently_active',
+        'complianz_status',
         '_active_profile_notice',
     ];
 
@@ -267,21 +269,38 @@ class Server {
         if ( 'execute_tool' === $name ) {
             return true;
         }
+        // Royal MCP's own tools are classed by name, whatever the tool list says.
+        if ( $this->is_builtin_tool_name( $name ) ) {
+            return ! empty( self::annotations_for( $name )['readOnlyHint'] );
+        }
         if ( null === $this->read_only_allowed ) {
             $this->read_only_allowed = [];
             foreach ( $this->get_tools() as $tool ) {
                 if ( is_array( $tool ) && ! empty( $tool['name'] ) ) {
-                    $this->read_only_allowed[ (string) $tool['name'] ] = ! empty( $tool['annotations']['readOnlyHint'] );
+                    $this->read_only_allowed[ (string) $tool['name'] ] = true === ( $tool['annotations']['readOnlyHint'] ?? null );
                 }
             }
         }
-        if ( isset( $this->read_only_allowed[ $name ] ) ) {
-            return $this->read_only_allowed[ $name ];
-        }
-        return ! empty( self::annotations_for( $name )['readOnlyHint'] );
+        return ! empty( $this->read_only_allowed[ $name ] );
     }
 
-    /** Stamp annotations on every tool in the list; hints a tool declares itself win. */
+    /** Whether drafts-only checks may treat the tool as read-only. */
+    private function tool_is_read_only( $name ) {
+        if ( $this->is_builtin_tool_name( $name ) ) {
+            return ! empty( self::annotations_for( $name )['readOnlyHint'] );
+        }
+        return 'execute_tool' !== (string) $name && $this->allowed_in_read_only_mode( $name );
+    }
+
+    /** Names of the tools Royal MCP itself defines, recorded by get_tools(). */
+    private static $builtin_names = null;
+
+    /**
+     * Stamp annotations on every tool in the list; hints a tool declares itself
+     * win. A tool another plugin adds is read-only only when it declares
+     * readOnlyHint as boolean true: its name says nothing reliable about
+     * what it does.
+     */
     public static function stamp_annotations( $tools ) {
         if ( ! is_array( $tools ) ) {
             return $tools;
@@ -291,9 +310,22 @@ class Server {
                 continue;
             }
             $declared = isset( $tool['annotations'] ) && is_array( $tool['annotations'] ) ? $tool['annotations'] : [];
-            $tools[ $i ]['annotations'] = array_merge( self::annotations_for( $tool['name'] ), $declared );
+            if ( self::is_known_builtin( $tool['name'] ) ) {
+                $inferred = self::annotations_for( $tool['name'] );
+            } elseif ( true === ( $declared['readOnlyHint'] ?? null ) ) {
+                $inferred = [ 'readOnlyHint' => true, 'destructiveHint' => false ];
+            } else {
+                $inferred = [ 'readOnlyHint' => false, 'destructiveHint' => true ];
+                unset( $declared['readOnlyHint'] );
+            }
+            $tools[ $i ]['annotations'] = array_merge( $inferred, $declared );
         }
         return $tools;
+    }
+
+    /** Whether the name is a Royal MCP tool; true for every name until get_tools() has run. */
+    private static function is_known_builtin( $name ) {
+        return null === self::$builtin_names || isset( self::$builtin_names[ (string) $name ] );
     }
 
     /**
@@ -607,12 +639,35 @@ class Server {
         if (!empty($api_key)) {
             $result = $this->validate_api_key_value($api_key, $settings);
             if (true === $result) {
+                self::note_legacy_api_key_header();
                 return $this->build_caller_context('bearer');
             }
             return $result;
         }
 
         return null;
+    }
+
+    /** Transient holding the last time a connection authenticated with the deprecated header. */
+    const LEGACY_KEY_HEADER_SEEN = 'royal_mcp_legacy_key_header_seen';
+
+    /**
+     * The X-Royal-MCP-API-Key header still authenticates but is deprecated in
+     * favour of Authorization: Bearer. Marks the response with a Deprecation
+     * header and remembers the last use for the admin notice (written at most
+     * once an hour, forgotten 14 days after the last use).
+     */
+    private static function note_legacy_api_key_header() {
+        $seen = (int) get_transient( self::LEGACY_KEY_HEADER_SEEN );
+        if ( $seen < time() - HOUR_IN_SECONDS ) {
+            set_transient( self::LEGACY_KEY_HEADER_SEEN, time(), 14 * DAY_IN_SECONDS ); // audit:transient-ttl-only -- last-use signal, meant to expire 14 days after the header stops being sent
+        }
+        add_filter( 'rest_post_dispatch', static function ( $response ) {
+            if ( $response instanceof \WP_HTTP_Response ) {
+                $response->header( 'Deprecation', 'true' );
+            }
+            return $response;
+        } );
     }
 
     /**
@@ -667,7 +722,7 @@ class Server {
             'jsonrpc' => '2.0',
             'error' => [
                 'code' => -32600,
-                'message' => 'Authentication required. Use Authorization: Bearer <token> or X-Royal-MCP-API-Key header.',
+                'message' => 'Authentication required. Use Authorization: Bearer <token>.',
             ],
         ], 401);
         // Exactly ONE challenge. WP_HTTP_Response::header( ..., false ) does not
@@ -1406,8 +1461,8 @@ class Server {
             ['name' => 'wp_trash_comment', 'description' => 'Move a comment to trash. Requires moderate_comments capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['comment_id' => ['type' => 'integer']], 'required' => ['comment_id']]],
 
             // Users
-            ['name' => 'wp_get_users', 'description' => 'List site users. Returns id, display_name, role, and post_count. Emails and usernames are NOT exposed. Filter by role slug (administrator / editor / author / contributor / subscriber, or any custom role).', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of users (default 10, max 100)'], 'role' => ['type' => 'string', 'description' => 'Filter by role slug — use wp_get_user on a specific ID for full profile data.']]]],
-            ['name' => 'wp_get_user', 'description' => 'Get user by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer']], 'required' => ['id']]],
+            ['name' => 'wp_get_users', 'description' => 'List site users. Returns id, display_name, roles, user_registered (UTC) and extra_caps (capabilities granted to the user beyond their roles, empty for most users). Emails and usernames are NOT exposed. Filter by role slug (administrator / editor / author / contributor / subscriber, or any custom role).', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of users (default 10, max 100)'], 'role' => ['type' => 'string', 'description' => 'Filter by role slug. Use wp_get_user for a single user by ID.']]]],
+            ['name' => 'wp_get_user', 'description' => 'Get one user by ID: id, display_name, roles, user_registered (UTC) and extra_caps (capabilities granted beyond their roles). Emails and usernames are NOT exposed.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer']], 'required' => ['id']]],
 
             // Post Meta
             ['name' => 'wp_get_post_meta', 'description' => 'Get post meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['post_id']]],
@@ -1446,7 +1501,7 @@ class Server {
             ['name' => 'wp_reorder_menu_items', 'description' => 'Reorder menu items by passing an array of menu_item_ids in the desired order. Existing titles, URLs, parents, and other fields are preserved on every item touched. Every response includes an "undo" envelope with a token that mcp_undo_last_operation can consume for 72 hours to restore the pre-op menu order. If the response includes a "skipped" array, those items could not be safely reordered (e.g. missing or recently deleted) — the rest were reordered correctly. Requires edit_theme_options capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_id' => ['type' => 'integer'], 'item_order' => ['type' => 'array', 'items' => ['type' => 'integer'], 'description' => 'Array of menu_item_ids in the desired order']], 'required' => ['menu_id', 'item_order']]],
 
             // Plugins & Themes
-            ['name' => 'wp_get_plugins', 'description' => 'List all installed plugins. Returns plugin file path, name, version, description, author, active status (network_active on multisite), requires_wp, requires_php and tested_up_to (from the WordPress update check; null when unknown) for each. Useful for diagnosing plugin conflicts and building a compatibility picture at the start of a debugging conversation.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'wp_get_plugins', 'description' => 'List all installed plugins, including must-use plugins and drop-ins. Returns type (regular, must_use or dropin), plugin file path, name, version, description, author, active status (network_active on multisite), modified_at (last change to the plugin main file, UTC), requires_wp, requires_php and tested_up_to (from the WordPress update check; null when unknown) for each. Must-use plugins always run; a drop-in is active when WordPress is using it. Useful for diagnosing plugin conflicts and building a compatibility picture at the start of a debugging conversation.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_get_themes', 'description' => 'List all installed themes. Returns theme slug, name, version, author, and active flag for each. Use wp_get_active_theme for details on the currently-active theme only.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
 
             // Theme & Appearance
@@ -1517,6 +1572,7 @@ class Server {
         $tools = array_merge( $tools, MonsterInsightsIntegration::get_tools() );
         $tools = array_merge( $tools, TablePressIntegration::get_tools() );
         $tools = array_merge( $tools, CodeSnippetsIntegration::get_tools() );
+        $tools = array_merge( $tools, ComplianzIntegration::get_tools() );
         $tools = array_merge( $tools, WPCodeIntegration::get_tools() );
         $tools = array_merge( $tools, W3TCIntegration::get_tools() );
         $tools = array_merge( $tools, DuplicatorIntegration::get_tools() );
@@ -1535,7 +1591,27 @@ class Server {
          *
          * @param array $tools Tool definitions with name, description, inputSchema.
          */
-        return apply_filters( 'royal_mcp_tools', $this->get_builtin_tools() );
+        $builtin = $this->get_builtin_tools();
+        if ( null === self::$builtin_names ) {
+            self::$builtin_names = array_fill_keys( array_column( $builtin, 'name' ), true );
+        }
+        return apply_filters( 'royal_mcp_tools', $builtin );
+    }
+
+    /**
+     * Capabilities granted to the user directly, beyond what their roles give.
+     *
+     * @return string[]
+     */
+    private static function user_extra_caps( \WP_User $user ) {
+        $extra = [];
+        foreach ( (array) $user->caps as $cap => $granted ) {
+            if ( $granted && ! wp_roles()->is_role( (string) $cap ) ) {
+                $extra[] = (string) $cap;
+            }
+        }
+        sort( $extra );
+        return $extra;
     }
 
     /**
@@ -2491,6 +2567,7 @@ class Server {
             'bp_'                  => [ 'BuddyPress', [ BuddyPressIntegration::class, 'is_available' ] ],
             'tablepress_'          => [ 'TablePress', [ TablePressIntegration::class, 'is_available' ] ],
             'snippets_'            => [ 'Code Snippets', [ CodeSnippetsIntegration::class, 'is_available' ] ],
+            'complianz_'           => [ 'Complianz', [ ComplianzIntegration::class, 'is_available' ] ],
             'wpcode_'              => [ 'WPCode', [ WPCodeIntegration::class, 'is_available' ] ],
         ];
 
@@ -2838,7 +2915,7 @@ class Server {
                         'type' => 'text',
                         'text' => 'Error: The tool could not be run.',
                     ]],
-                    'isError' => true,
+                    'isError' => true, // audit:helper-bypass-safe -- tools/call error reply, completed by ensure_structured_content like the Exception branch above
                     'structuredContent' => [
                         'error'   => 'exception',
                         'message' => 'The tool could not be run.',
@@ -3175,8 +3252,27 @@ class Server {
     public function invoke( string $name, array $args, string $route = 'native' ) {
         $previous_route      = $this->request_route;
         $this->request_route = 'abilities' === $route ? 'abilities' : 'native';
+        // The abilities route (WP Abilities REST, MCP Adapter servers) answers to the
+        // same on/off switch and activity log as the native endpoint.
+        $log   = 'abilities' === $this->request_route;
+        $start = microtime( true );
         try {
-            return $this->execute_tool( $name, $args );
+            if ( $log ) {
+                $settings = get_option( 'royal_mcp_settings', [] );
+                if ( ! is_array( $settings ) || empty( $settings['enabled'] ) ) {
+                    throw new \Exception( 'Royal MCP is currently disabled.' );
+                }
+            }
+            $result = $this->execute_tool( $name, $args );
+            if ( $log ) {
+                $this->log_tool_call( $name, $args, 'success', '', $start, $result );
+            }
+            return $result;
+        } catch ( \Throwable $e ) {
+            if ( $log ) {
+                $this->log_tool_call( $name, $args, 'error', $e->getMessage(), $start, null, $e );
+            }
+            throw $e;
         } finally {
             $this->request_route = $previous_route;
         }
@@ -3221,7 +3317,7 @@ class Server {
             throw new \Exception( 'This site is in read-only mode: tools that change the site are switched off.' );
         }
         if ( self::drafts_only_mode() ) {
-            $drafts_refusal = \Royal_MCP\MCP\Support\Drafts_Policy::refusal( $name, is_array( $args ) ? $args : [], ! empty( self::annotations_for( $name )['readOnlyHint'] ) );
+            $drafts_refusal = \Royal_MCP\MCP\Support\Drafts_Policy::refusal( $name, is_array( $args ) ? $args : [], $this->tool_is_read_only( $name ) );
             if ( null !== $drafts_refusal ) {
                 throw new \Exception( 'Drafts-only mode is on: ' . $drafts_refusal );
             }
@@ -3232,7 +3328,7 @@ class Server {
             throw new \Exception( $conn_who . ' limited to read-only access in Royal MCP: tools that change the site are switched off for it.' );
         }
         if ( 'drafts-only' === $conn_level ) {
-            $conn_refusal = \Royal_MCP\MCP\Support\Drafts_Policy::refusal( $name, is_array( $args ) ? $args : [], ! empty( self::annotations_for( $name )['readOnlyHint'] ) );
+            $conn_refusal = \Royal_MCP\MCP\Support\Drafts_Policy::refusal( $name, is_array( $args ) ? $args : [], $this->tool_is_read_only( $name ) );
             if ( null !== $conn_refusal ) {
                 throw new \Exception( $conn_who . ' limited to drafts in Royal MCP: ' . $conn_refusal );
             }
@@ -3257,7 +3353,7 @@ class Server {
                     throw new \Exception('You do not have permission to list posts.');
                 }
                 $query_args = [
-                    'numberposts' => min(intval($args['per_page'] ?? 10), 100),
+                    'numberposts' => max(1, min(intval($args['per_page'] ?? 10), 100)),
                     's' => \Royal_MCP\MCP\Support\SafeText::field($args['search'] ?? ''),
                 ];
                 if (!empty($args['post_type'])) {
@@ -3865,7 +3961,7 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to list pages.');
                 }
-                $page_args = ['number' => min(intval($args['per_page'] ?? 10), 100)];
+                $page_args = ['number' => max(1, min(intval($args['per_page'] ?? 10), 100))];
                 if (!empty($args['parent'])) $page_args['parent'] = intval($args['parent']);
                 $pages = get_pages($page_args);
                 return array_map(function($p) {
@@ -4043,7 +4139,7 @@ class Server {
                 }
                 $media_args = [
                     'post_type' => 'attachment',
-                    'numberposts' => min(intval($args['per_page'] ?? 10), 100),
+                    'numberposts' => max(1, min(intval($args['per_page'] ?? 10), 100)),
                     'offset' => max(0, intval($args['offset'] ?? 0)),
                     'post_status' => 'inherit',
                 ];
@@ -4450,7 +4546,7 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to list categories.');
                 }
-                $cats = get_categories(['number' => min(intval($args['per_page'] ?? 100), 100), 'hide_empty' => false]);
+                $cats = get_categories(['number' => max(1, min(intval($args['per_page'] ?? 100), 100)), 'hide_empty' => false]);
                 return array_map(function($c) {
                     return ['id' => $c->term_id, 'name' => $c->name, 'slug' => $c->slug, 'count' => $c->count, 'parent' => $c->parent];
                 }, $cats);
@@ -4459,7 +4555,7 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to list tags.');
                 }
-                $tags = get_tags(['number' => min(intval($args['per_page'] ?? 100), 100), 'hide_empty' => false]);
+                $tags = get_tags(['number' => max(1, min(intval($args['per_page'] ?? 100), 100)), 'hide_empty' => false]);
                 return array_map(function($t) {
                     return ['id' => $t->term_id, 'name' => $t->name, 'slug' => $t->slug, 'count' => $t->count];
                 }, $tags ?: []);
@@ -4884,7 +4980,7 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to list comments.');
                 }
-                $comment_args = ['number' => min(intval($args['per_page'] ?? 10), 100), 'status' => 'approve'];
+                $comment_args = ['number' => max(1, min(intval($args['per_page'] ?? 10), 100)), 'status' => 'approve'];
                 if (!empty($args['post_id'])) {
                     $comment_args['post_id'] = intval($args['post_id']);
                     if (!\Royal_MCP\MCP\Support\Post_Access::can_read($comment_args['post_id'])) {
@@ -5083,7 +5179,7 @@ class Server {
                 if (!current_user_can('moderate_comments')) {
                     throw new \Exception('moderate_comments capability required.');
                 }
-                $limit = min(intval($args['limit'] ?? 20), 100);
+                $limit = max(1, min(intval($args['limit'] ?? 20), 100));
                 $get_args = ['status' => 'hold', 'number' => $limit];
                 if (!empty($args['post_id'])) {
                     $get_args['post_id'] = intval($args['post_id']);
@@ -5205,15 +5301,28 @@ class Server {
                 if (!current_user_can('list_users')) {
                     throw new \Exception('You do not have permission to list users.');
                 }
-                $user_args = ['number' => min(intval($args['per_page'] ?? 10), 100)];
+                // WP_User_Query treats a number of 0 or less as no limit.
+                $user_args = ['number' => max(1, min(intval($args['per_page'] ?? 10), 100))];
                 if (!empty($args['role'])) $user_args['role'] = sanitize_text_field($args['role']);
                 $users = get_users($user_args);
                 return array_map(function($u) {
-                    return [
+                    $fields = [
                         'id' => $u->ID,
                         'display_name' => $u->display_name,
                         'roles' => $u->roles,
+                        'user_registered' => (string) $u->user_registered,
+                        'extra_caps' => self::user_extra_caps($u),
                     ];
+                    /**
+                     * Lets a site add fields to user rows (after the list_users check).
+                     * A non-array return leaves the row as built.
+                     *
+                     * @param array    $fields  Row as built.
+                     * @param \WP_User $u       The user.
+                     * @param string   $context 'list' (wp_get_users) or 'single' (wp_get_user).
+                     */
+                    $filtered = apply_filters('royal_mcp_user_fields', $fields, $u, 'list');
+                    return is_array($filtered) ? $filtered : $fields;
                 }, $users);
 
             case 'wp_get_user':
@@ -5222,12 +5331,17 @@ class Server {
                 }
                 $user = get_user_by('ID', intval($args['id']));
                 if (!$user) throw new \Exception('User not found');
-                return [
+                $fields = [
                     'id' => $user->ID,
                     'display_name' => $user->display_name,
                     'roles' => $user->roles,
                     'registered' => $user->user_registered,
+                    'user_registered' => (string) $user->user_registered,
+                    'extra_caps' => self::user_extra_caps($user),
                 ];
+                /** This filter is documented in the wp_get_users case above. */
+                $filtered = apply_filters('royal_mcp_user_fields', $fields, $user, 'single');
+                return is_array($filtered) ? $filtered : $fields;
 
             // ==================== POST META ====================
             case 'wp_get_post_terms':
@@ -5610,57 +5724,10 @@ class Server {
                     // reverse. Explicit list mirrors the mcp_undo_last_operation
                     // description; keep the two in sync when adding a new
                     // reversible write.
-                    static $rmcp_undo_tools = [
-                        // WP core reversible writes
-                        'wp_update_post',
-                        'wp_delete_post',
-                        'wp_update_post_meta', 'wp_add_post_meta',
-                        'wp_update_term', 'wp_delete_term',
-                        'wp_update_term_meta',
-                        'wp_update_media',
-                        'wp_update_menu_item', 'wp_delete_menu_item',
-                        'wp_reorder_menu_items',
-                        // Block tools
-                        'wp_insert_blocks', 'wp_replace_block', 'wp_move_block', 'wp_delete_block',
-                        'wp_replace_text_in_blocks', 'wp_update_block_attributes', 'wp_update_synced_pattern',
-                        'wp_update_option',
-                        'wp_update_theme_mod',
-                        'wp_update_custom_css',
-                        'wp_update_permalink_structure',
-                        'wp_update_seo_meta', 'yoast_update_meta',
-                        'wp_update_widget',
-                        'wp_delete_comment', 'wp_create_comment',
-                        'wp_approve_comment', 'wp_spam_comment', 'wp_trash_comment',
-                        // WooCommerce reversible writes
-                        'wc_create_product', 'wc_update_product',
-                        'wc_create_order', 'wc_update_order', 'wc_update_order_status', 'wc_add_order_note',
-                        'wc_create_variation', 'wc_update_variation', 'wc_delete_variation', 'wc_batch_update_variations',
-                        'wc_create_product_attribute', 'wc_set_product_attributes',
-                        'wc_create_coupon', 'wc_update_coupon', 'wc_delete_coupon', 'wc_empty_coupon_trash',
-                        // TablePress and Code Snippets reversible writes
-                        'tablepress_create_table', 'tablepress_copy_table', 'tablepress_update_cells',
-                        'snippets_update_metadata',
-                        // Elementor reversible writes
-                        'elementor_replace_text', 'elementor_replace_image',
-                        'elementor_add_widget', 'elementor_delete_widget',
-                        'elementor_update_widget', 'elementor_update_widget_setting',
-                        'elementor_bulk_replace_widget_setting',
-                        'elementor_clone_page', 'elementor_clone_template',
-                        'elementor_import_template', 'elementor_apply_template_to_page',
-                        'elementor_apply_template_advanced',
-                        'elementor_rebuild_post_content', 'elementor_rebuild_post_content_bulk',
-                        'elementor_manage_elements', 'elementor_manage_global_classes',
-                        'elementor_manage_global_variable',
-                        'elementor_save_template_with_conditions',
-                        'elementor_apply_theme_builder_conditions',
-                        'elementor_build_composition',
-                        // Divi reversible writes
-                        'divi_replace_image',
-                        'divi_clone_page', 'divi_import_template',
-                        'divi_apply_global_preset',
-                        'divi_library_create', 'divi_library_update', 'divi_library_delete',
-                        'divi_convert_shortcodes_to_blocks',
-                    ];
+                    static $rmcp_undo_tools = null;
+                    if ( null === $rmcp_undo_tools ) {
+                        $rmcp_undo_tools = self::undo_tool_names();
+                    }
                     $dt_undo_supported = in_array( $dt_name, $rmcp_undo_tools, true );
 
                     if ( '' !== $dt_by_cat  && $dt_category !== $dt_by_cat ) { continue; }
@@ -9286,6 +9353,12 @@ class Server {
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
                         return $cs_undone;
 
+                    case 'complianz_update_banner_text':
+                    case 'complianz_update_cookie_description':
+                        $cmplz_undone = ComplianzIntegration::undo( $undo_snapshot );
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return $cmplz_undone;
+
                     default:
                         return \Royal_MCP\MCP\Support\Envelope::error(
                             'unsupported_op',
@@ -9309,6 +9382,10 @@ class Server {
                 // reads through its update check rather than the header.
                 $update_info = get_site_transient( 'update_plugins' );
                 $result = [];
+                $modified_at = static function ( $file ) {
+                    $mtime = is_file( $file ) ? @filemtime( $file ) : false; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- unreadable file reports null
+                    return false === $mtime ? null : gmdate( 'Y-m-d\TH:i:s\Z', (int) $mtime );
+                };
                 foreach ($plugins as $path => $data) {
                     $info = null;
                     if ( is_object( $update_info ) ) {
@@ -9318,6 +9395,7 @@ class Server {
                     }
                     $is_network = in_array( $path, $network_active, true );
                     $result[] = [
+                        'type'           => 'regular',
                         'file'           => (string) $path,
                         'name'           => (string) ( $data['Name'] ?? '' ),
                         'version'        => (string) ( $data['Version'] ?? '' ),
@@ -9327,8 +9405,39 @@ class Server {
                         'author'         => wp_strip_all_tags( (string) ( $data['Author'] ?? '' ) ),
                         'requires_wp'    => ( $data['RequiresWP'] ?? '' ) !== '' ? (string) $data['RequiresWP'] : null,
                         'requires_php'   => ( $data['RequiresPHP'] ?? '' ) !== '' ? (string) $data['RequiresPHP'] : null,
+                        'modified_at'    => $modified_at( WP_PLUGIN_DIR . '/' . $path ),
                         'tested_up_to'   => is_object( $info ) && ! empty( $info->tested ) ? (string) $info->tested : null,
                     ];
+                }
+                $dropin_info = _get_dropins();
+                $extra       = [
+                    'must_use' => [ get_mu_plugins(), WPMU_PLUGIN_DIR ],
+                    'dropin'   => [ get_dropins(), WP_CONTENT_DIR ],
+                ];
+                foreach ( $extra as $type => list( $found, $dir ) ) {
+                    foreach ( $found as $path => $data ) {
+                        $active = true;
+                        if ( 'dropin' === $type ) {
+                            // A drop-in tied to a constant only runs while that constant is true.
+                            $constant = $dropin_info[ $path ][1] ?? true;
+                            $active   = true === $constant || ( is_string( $constant ) && defined( $constant ) && constant( $constant ) );
+                        }
+                        $name     = (string) ( $data['Name'] ?? '' );
+                        $result[] = [
+                            'type'           => $type,
+                            'file'           => (string) $path,
+                            'name'           => '' !== $name ? $name : (string) $path,
+                            'version'        => (string) ( $data['Version'] ?? '' ),
+                            'description'    => (string) ( $data['Description'] ?? '' ),
+                            'active'         => (bool) $active,
+                            'network_active' => false,
+                            'author'         => wp_strip_all_tags( (string) ( $data['Author'] ?? '' ) ),
+                            'requires_wp'    => null,
+                            'requires_php'   => null,
+                            'modified_at'    => $modified_at( $dir . '/' . $path ),
+                            'tested_up_to'   => null,
+                        ];
+                    }
                 }
                 return $result;
 
@@ -10151,7 +10260,7 @@ class Server {
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('You do not have permission to read revisions on this post.');
                 }
-                $limit = min(intval($args['limit'] ?? 20), 100);
+                $limit = max(1, min(intval($args['limit'] ?? 20), 100));
                 $revisions = wp_get_post_revisions($post_id, ['number' => $limit]);
                 return array_map(function($r) {
                     // word_count uses strip_tags → misses text stored inside
@@ -10441,6 +10550,9 @@ class Server {
                 }
                 if ( strpos( $name, 'snippets_' ) === 0 ) {
                     return CodeSnippetsIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'complianz_' ) === 0 ) {
+                    return ComplianzIntegration::execute_tool( $name, $args );
                 }
                 if ( strpos( $name, 'wpcode_' ) === 0 ) {
                     return WPCodeIntegration::execute_tool( $name, $args );
@@ -11545,6 +11657,67 @@ class Server {
     /** Whether a value looks like a credential by its shape alone. */
     public function is_credential_value($value) {
         return $this->is_credential_shaped_value($value);
+    }
+
+    /**
+     * Tools whose writes return an undo token (each stores a reversible
+     * snapshot). Keep in sync with the mcp_undo_last_operation description.
+     *
+     * @return string[]
+     */
+    public static function undo_tool_names() {
+        return [
+            // WP core reversible writes
+            'wp_update_post',
+            'wp_delete_post',
+            'wp_update_post_meta', 'wp_add_post_meta',
+            'wp_update_term', 'wp_delete_term',
+            'wp_update_term_meta',
+            'wp_update_media',
+            'wp_update_menu_item', 'wp_delete_menu_item',
+            'wp_reorder_menu_items',
+            // Block tools
+            'wp_insert_blocks', 'wp_replace_block', 'wp_move_block', 'wp_delete_block',
+            'wp_replace_text_in_blocks', 'wp_update_block_attributes', 'wp_update_synced_pattern',
+            'wp_update_option',
+            'wp_update_theme_mod',
+            'wp_update_custom_css',
+            'wp_update_permalink_structure',
+            'wp_update_seo_meta', 'yoast_update_meta',
+            'wp_update_widget',
+            'wp_delete_comment', 'wp_create_comment',
+            'wp_approve_comment', 'wp_spam_comment', 'wp_trash_comment',
+            // WooCommerce reversible writes
+            'wc_create_product', 'wc_update_product',
+            'wc_create_order', 'wc_update_order', 'wc_update_order_status', 'wc_add_order_note',
+            'wc_create_variation', 'wc_update_variation', 'wc_delete_variation', 'wc_batch_update_variations',
+            'wc_create_product_attribute', 'wc_set_product_attributes',
+            'wc_create_coupon', 'wc_update_coupon', 'wc_delete_coupon', 'wc_empty_coupon_trash',
+            // TablePress and Code Snippets reversible writes
+            'tablepress_create_table', 'tablepress_copy_table', 'tablepress_update_cells',
+            'snippets_update_metadata',
+            'complianz_update_banner_text', 'complianz_update_cookie_description',
+            // Elementor reversible writes
+            'elementor_replace_text', 'elementor_replace_image',
+            'elementor_add_widget', 'elementor_delete_widget',
+            'elementor_update_widget', 'elementor_update_widget_setting',
+            'elementor_bulk_replace_widget_setting',
+            'elementor_clone_page', 'elementor_clone_template',
+            'elementor_import_template', 'elementor_apply_template_to_page',
+            'elementor_apply_template_advanced',
+            'elementor_rebuild_post_content', 'elementor_rebuild_post_content_bulk',
+            'elementor_manage_elements', 'elementor_manage_global_classes',
+            'elementor_manage_global_variable',
+            'elementor_save_template_with_conditions',
+            'elementor_apply_theme_builder_conditions',
+            'elementor_build_composition',
+            // Divi reversible writes
+            'divi_replace_image',
+            'divi_clone_page', 'divi_import_template',
+            'divi_apply_global_preset',
+            'divi_library_create', 'divi_library_update', 'divi_library_delete',
+            'divi_convert_shortcodes_to_blocks',
+        ];
     }
 
     /** Credential-shaped values masked the same way tool responses mask them. */

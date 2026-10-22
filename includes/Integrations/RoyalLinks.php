@@ -102,7 +102,7 @@ class RoyalLinks {
 				$query_args = [
 					'post_type'      => 'royal_link',
 					'post_status'    => 'publish',
-					'posts_per_page' => min( intval( $args['limit'] ?? 25 ), 100 ),
+					'posts_per_page' => max(1, min( intval( $args['limit'] ?? 25 ), 100 )),
 					'orderby'        => 'date',
 					'order'          => 'DESC',
 				];

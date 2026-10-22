@@ -80,6 +80,10 @@ class Categories {
 				'label'       => __( 'Royal MCP: WPCode', 'royal-mcp' ),
 				'description' => __( 'WPCode snippets, read only: list, read one snippet, read its status and last error.', 'royal-mcp' ),
 			),
+			'complianz'     => array(
+				'label'       => __( 'Royal MCP: Complianz', 'royal-mcp' ),
+				'description' => __( 'Complianz consent setup: status, cookies, services, banner texts and legal documents; change banner texts and cookie descriptions.', 'royal-mcp' ),
+			),
 		);
 	}
 

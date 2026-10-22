@@ -5,9 +5,9 @@
  * in addition to our native /wp-json/royal-mcp/mcp endpoint and WP core
  * /wp-json/wp-abilities/v1/* REST.
  *
- * Named-server registration + explicit ability list means our abilities do NOT
- * auto-enroll on MCP Adapter's default server (that path requires
- * meta.mcp.public=true, which we intentionally do not set — see Meta_Config.php).
+ * Named-server registration + explicit ability list. Our abilities set
+ * meta.mcp.public = false (see Meta_Config.php), so the adapter's default server
+ * does not list them; this named server is how adapter clients reach them.
  *
  * Silent no-op if the MCP Adapter plugin isn't installed or hasn't loaded yet.
  */

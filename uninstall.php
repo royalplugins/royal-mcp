@@ -88,6 +88,7 @@ function royal_mcp_uninstall_site() {
     // than swept so unrelated future keys are never matched.
     delete_transient('royal_mcp_webmcp_bridge_status');
     delete_transient('royal_mcp_auth_header_status');
+    delete_transient('royal_mcp_legacy_key_header_seen');
     delete_transient('royal_mcp_well_known_status');
     delete_transient('royal_mcp_foreign_as_endpoint');
     delete_transient('royal_mcp_missing_endpoints_list');

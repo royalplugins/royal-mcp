@@ -191,6 +191,7 @@ class Tool_Capabilities {
 		if ( 'tablepress_get_table' === $tool_name )    return 'tablepress_edit_tables';
 		if ( strpos( $tool_name, 'tablepress_' ) === 0 ) return 'tablepress_list_tables';
 		if ( strpos( $tool_name, 'wpcode_' ) === 0 )     return \Royal_MCP\Integrations\WPCode::is_available() ? 'wpcode_edit_snippets' : 'manage_options';
+		if ( strpos( $tool_name, 'complianz_' ) === 0 )  return \Royal_MCP\Integrations\Complianz::cap();
 		if ( strpos( $tool_name, 'snippets_' ) === 0 ) {
 			if ( function_exists( '\Code_Snippets\code_snippets' ) ) {
 				return \Code_Snippets\code_snippets()->get_cap();

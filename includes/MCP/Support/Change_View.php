@@ -50,6 +50,7 @@ class Change_View {
 		'wc_update_product', 'wc_update_order', 'wc_update_variation', 'wc_update_coupon',
 		'wc_update_order_status', 'wp_set_comment_status',
 		'tablepress_update_cells', 'tablepress_create_table', 'tablepress_copy_table', 'snippets_update_metadata',
+		'complianz_update_banner_text', 'complianz_update_cookie_description',
 	];
 
 	/** The tool that made a change. */
@@ -195,6 +196,9 @@ class Change_View {
 			case 'tablepress_create_table':
 			case 'tablepress_copy_table':
 				return [ [ 'tablepress_delete_tables' ] ];
+			case 'complianz_update_banner_text':
+			case 'complianz_update_cookie_description':
+				return [ [ \Royal_MCP\Integrations\Complianz::cap() ] ];
 		}
 		return [ [ 'manage_options' ] ];
 	}
@@ -766,6 +770,7 @@ class Change_View {
 		'option_name' => 'option', 'mod_name' => 'theme mod', 'theme_slug' => 'custom CSS of theme',
 		'meta_key' => 'meta key', 'adapter' => 'SEO plugin', 'code' => 'code',
 		'table_id' => 'TablePress table', 'snippet_id' => 'snippet',
+		'banner_id' => 'cookie banner', 'cookie_id' => 'cookie',
 	];
 
 	/** Short name of what a change touched, for example: post 12 "Hello", meta key price. */

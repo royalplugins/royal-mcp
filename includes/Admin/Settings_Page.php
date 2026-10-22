@@ -294,12 +294,11 @@ class Settings_Page {
             delete_transient( \Royal_MCP\Discovery\Agent_Skills_Index::CACHE_KEY );
         }
 
-        // Abilities API registration — written to a standalone option key,
-        // NOT nested inside royal_mcp_settings. The bootstrap gate at
-        // royal-mcp.php reads the standalone option directly so it doesn't
-        // depend on the settings array being present or well-formed. This
-        // preserves backwards compatibility with installs that opted out
-        // via WP-CLI or a WPCode snippet before this UI shipped.
+        // Abilities API registration — standalone option key, NOT nested
+        // inside royal_mcp_settings, so the bootstrap gate at royal-mcp.php
+        // can read it without depending on the settings array being
+        // well-formed. Filter and CLI consumers may also set this option
+        // directly.
         // Store as string '1' / '0' — booleans serialize false to empty string,
         // which is indistinguishable from "option missing" and defeats the
         // default-on fallback at read sites.

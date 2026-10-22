@@ -58,6 +58,7 @@ class Redirection {
 						'group_id'    => array( 'type' => 'integer', 'description' => 'Group to file this redirect under. Defaults to Redirection\'s default group.' ),
 						'regex'       => array( 'type' => 'boolean', 'description' => 'Treat source_url as a regex pattern. Default false.' ),
 						'title'       => array( 'type' => 'string', 'description' => 'Optional human-readable title for admin display.' ),
+						'allow_protected_source' => array( 'type' => 'boolean', 'description' => 'Allow a source that matches the home page, wp-login.php, wp-admin, the REST API, xmlrpc.php or wp-cron.php. Redirecting those can lock everyone out of the site. Default false.' ),
 					),
 					'required'   => array( 'source_url', 'target_url' ),
 				),
@@ -72,6 +73,7 @@ class Redirection {
 						'target_url'  => array( 'type' => 'string', 'description' => 'New destination path or full URL' ),
 						'status_code' => array( 'type' => 'integer', 'enum' => array( 301, 302, 307 ) ),
 						'enabled'     => array( 'type' => 'boolean', 'description' => 'Enable (true) or disable (false) the redirect' ),
+						'allow_protected_source' => array( 'type' => 'boolean', 'description' => 'Allow a source that matches the home page, wp-login.php, wp-admin, the REST API, xmlrpc.php or wp-cron.php. Redirecting those can lock everyone out of the site. Default false.' ),
 					),
 					'required'   => array( 'id' ),
 				),
@@ -159,6 +161,8 @@ class Redirection {
 			throw new \Exception( 'Red_Item::create not available in this Redirection version.' );
 		}
 
+		self::refuse_protected_source( sanitize_text_field( $args['source_url'] ), ! empty( $args['regex'] ), $args );
+
 		$data = array(
 			'url'         => sanitize_text_field( $args['source_url'] ),
 			'action_data' => array( 'url' => esc_url_raw( $args['target_url'] ) ),
@@ -214,6 +218,16 @@ class Redirection {
 		if ( empty( $data ) ) {
 			throw new \Exception( 'No updatable fields provided (target_url, status_code, or enabled)' );
 		}
+		// Changing the target of, or switching on, a redirect on a protected source
+		// has the same effect as creating one.
+		if ( ! empty( $args['enabled'] ) || isset( $data['action_data'] ) || isset( $data['action_code'] ) ) {
+			global $wpdb;
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$current = $wpdb->get_row( $wpdb->prepare( "SELECT url, regex FROM {$wpdb->prefix}redirection_items WHERE id = %d", intval( $args['id'] ) ), ARRAY_A );
+			if ( is_array( $current ) ) {
+				self::refuse_protected_source( (string) $current['url'], ! empty( $current['regex'] ), $args );
+			}
+		}
 
 		$result = $item->update( $data );
 		if ( is_wp_error( $result ) ) {
@@ -224,6 +238,59 @@ class Redirection {
 			'updated' => array_keys( $data ),
 			'message' => 'Redirect updated.',
 		);
+	}
+
+	/** Paths whose redirect would lock people out of the site or break WordPress itself. */
+	const PROTECTED_PATHS = array( '/', '/wp-login.php', '/wp-admin', '/wp-admin/', '/wp-admin/admin-ajax.php', '/wp-json', '/wp-json/', '/xmlrpc.php', '/wp-cron.php', '/index.php' );
+
+	/**
+	 * Refuse a redirect source that matches a protected path, unless the call
+	 * passes allow_protected_source: true. Plain sources are compared after
+	 * decoding, lower-casing and dropping the host, query and duplicate slashes;
+	 * regex sources are tested against each protected path.
+	 */
+	private static function refuse_protected_source( $source, $is_regex, array $args ) {
+		if ( ! empty( $args['allow_protected_source'] ) && true === $args['allow_protected_source'] ) {
+			return;
+		}
+		$hit = '';
+		if ( $is_regex ) {
+			$pattern = '@' . str_replace( '@', '\\@', (string) $source ) . '@i';
+			foreach ( self::PROTECTED_PATHS as $path ) {
+				// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- an invalid pattern is refused below
+				$matched = @preg_match( $pattern, $path );
+				if ( false === $matched ) {
+					throw new \Exception( 'source_url is not a valid regular expression.' );
+				}
+				if ( 1 === $matched ) {
+					$hit = $path;
+					break;
+				}
+			}
+		} else {
+			$path = strtolower( rawurldecode( rawurldecode( (string) $source ) ) );
+			// Only a source with a scheme is a full URL; anything else (even "//x") is a path.
+			if ( preg_match( '#^[a-z][a-z0-9+.-]*://#', $path ) ) {
+				$parsed = wp_parse_url( $path );
+				$path   = isset( $parsed['path'] ) ? (string) $parsed['path'] : '/';
+			} else {
+				$path = (string) strtok( $path, '?#' );
+			}
+			$path = '/' . ltrim( (string) preg_replace( '#/+#', '/', $path ), '/' );
+			$path = rtrim( $path, '/' );
+			$path = '' === $path ? '/' : $path;
+			foreach ( self::PROTECTED_PATHS as $protected ) {
+				$protected = rtrim( $protected, '/' );
+				$protected = '' === $protected ? '/' : $protected;
+				if ( $path === $protected || ( '/' !== $protected && 0 === strpos( $path, $protected . '/' ) ) ) {
+					$hit = $protected;
+					break;
+				}
+			}
+		}
+		if ( '' !== $hit ) {
+			throw new \Exception( sprintf( 'Refused: this source matches %s, and redirecting it can lock everyone out of the site. Pass allow_protected_source: true only if the site owner asked for exactly this.', $hit ) );
+		}
 	}
 
 	private static function list_groups() {

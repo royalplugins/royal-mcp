@@ -742,8 +742,11 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
         "-y", "mcp-remote",
         "<?php echo esc_html($royal_mcp_url_https); ?>",
         "--header",
-        "X-Royal-MCP-API-Key:<?php echo esc_html( $royal_mcp_api_key_field !== '' ? $royal_mcp_api_key_field : 'YOUR_API_KEY' ); ?>"
-      ]
+        "Authorization:${AUTH_HEADER}"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer <?php echo esc_html( $royal_mcp_api_key_field !== '' ? $royal_mcp_api_key_field : 'YOUR_API_KEY' ); ?>"
+      }
     }
   }
 }</code></pre>
@@ -774,7 +777,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                     <li><?php echo wp_kses(__('Click <strong>+ Add new MCP server</strong>', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php esc_html_e('Enter a name (e.g., "Royal MCP — My Site")', 'royal-mcp'); ?></li>
                                     <li><?php echo wp_kses(__('Paste the <strong>MCP Server URL</strong> from General Settings above', 'royal-mcp'), ['strong' => []]); ?></li>
-                                    <li><?php echo wp_kses(__('Add an HTTP header: <code>X-Royal-MCP-API-Key</code> with your <strong>WordPress API Key</strong> as the value', 'royal-mcp'), ['strong' => [], 'code' => []]); ?></li>
+                                    <li><?php echo wp_kses(__('Add an HTTP header: <code>Authorization</code> with the value <code>Bearer</code> followed by a space and your <strong>WordPress API Key</strong>', 'royal-mcp'), ['strong' => [], 'code' => []]); ?></li>
                                     <li><?php esc_html_e('Save. Cursor connects automatically and Royal MCP tools become available', 'royal-mcp'); ?></li>
                                 </ol>
                             </div>

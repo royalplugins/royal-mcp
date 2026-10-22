@@ -967,6 +967,14 @@ class Elementor {
 		if ( current_user_can( 'unfiltered_html' ) ) {
 			return $value;
 		}
+		// Object-shaped settings get the same treatment; they are stored as JSON either way.
+		if ( is_object( $value ) ) {
+			$as_array = json_decode( (string) wp_json_encode( $value ), true );
+			if ( ! is_array( $as_array ) ) {
+				return [];
+			}
+			return (object) self::sanitize_tree_for_user( $as_array, $key );
+		}
 		if ( is_array( $value ) ) {
 			foreach ( $value as $k => $v ) {
 				$value[ $k ] = self::sanitize_tree_for_user( $v, (string) $k );
