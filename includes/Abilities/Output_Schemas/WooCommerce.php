@@ -134,7 +134,7 @@ class WooCommerce {
 			),
 
 			// Coupons
-			'wc_get_coupons'         => array( 'type' => 'array', 'items' => self::coupon_schema() ),
+			'wc_get_coupons'         => self::list_or_page( 'coupons', self::coupon_schema() ),
 			'wc_get_coupon'          => self::coupon_schema(),
 			'wc_get_coupon_count'    => array(
 				'type'                 => 'object',

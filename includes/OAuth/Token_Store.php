@@ -38,9 +38,11 @@ class Token_Store {
      * The filter has final say — matches WP convention where filters override
      * options.
      *
+     * @param int    $user_id   User the token is issued to (0 when not known).
+     * @param string $client_id OAuth client the token is issued to ('' when not known).
      * @return int TTL in seconds.
      */
-    public static function get_access_token_ttl() {
+    public static function get_access_token_ttl( $user_id = 0, $client_id = '' ) {
         $settings   = get_option( 'royal_mcp_settings', [] );
         // Guard against a corrupted option value (string, null, object). Any non-array
         // shape falls back to the constant default rather than blowing up on array access.
@@ -55,9 +57,11 @@ class Token_Store {
          *
          * Overrides the site-owner UI selection. Return any positive integer.
          *
-         * @param int $ttl Effective TTL after option lookup + whitelist check.
+         * @param int    $ttl       Effective TTL after option lookup + whitelist check.
+         * @param int    $user_id   User the token is issued to (0 when not known).
+         * @param string $client_id OAuth client the token is issued to ('' when not known).
          */
-        $filtered = (int) apply_filters( 'royal_mcp_access_token_ttl', $ttl );
+        $filtered = (int) apply_filters( 'royal_mcp_access_token_ttl', $ttl, (int) $user_id, (string) $client_id );
 
         return $filtered > 0 ? $filtered : self::ACCESS_TOKEN_TTL;
     }
@@ -279,7 +283,7 @@ class Token_Store {
     public static function create_token_pair( $client_id, $user_id, $scope = '' ) {
         $access_token  = bin2hex( random_bytes( 32 ) );
         $refresh_token = bin2hex( random_bytes( 32 ) );
-        $access_ttl    = self::get_access_token_ttl();
+        $access_ttl    = self::get_access_token_ttl( (int) $user_id, (string) $client_id );
 
         self::store_token( $access_token, 'access', $client_id, $user_id, $scope, $access_ttl );
         self::store_token( $refresh_token, 'refresh', $client_id, $user_id, $scope, self::REFRESH_TOKEN_TTL );

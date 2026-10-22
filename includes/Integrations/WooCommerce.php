@@ -109,13 +109,15 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_get_orders',
-				'description' => 'Get WooCommerce orders. Returns {orders, page, per_page, total, total_pages} — iterate page until page >= total_pages.',
+				'description' => 'Get WooCommerce orders, newest first. Returns {orders, page, per_page, total, total_pages} — iterate page until page >= total_pages. Filter by creation date with after / before (inclusive, site timezone).',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
-						'per_page' => [ 'type' => 'integer', 'description' => 'Number of orders per page (default 10, max 100)' ],
+						'per_page' => [ 'type' => 'integer', 'description' => 'Number of orders per page (default 10, min 1, max 100)' ],
 						'page'     => [ 'type' => 'integer', 'description' => 'Page number, 1-indexed (default 1)' ],
 						'status'   => [ 'type' => 'string', 'description' => 'Order status (processing, completed, on-hold, etc)' ],
+						'after'    => [ 'type' => 'string', 'description' => 'Only orders created on or after this date: YYYY-MM-DD or an ISO 8601 date-time, site timezone' ],
+						'before'   => [ 'type' => 'string', 'description' => 'Only orders created on or before this date: YYYY-MM-DD (the whole day) or an ISO 8601 date-time, site timezone' ],
 					],
 				],
 			],
@@ -491,14 +493,14 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_get_coupons',
-				'description' => 'List WooCommerce coupons with optional code search, status filter, and pagination',
+				'description' => 'List WooCommerce coupons with optional code search and status filter. Without page: an array of up to per_page coupons (default 10, max 100). With page: {coupons, page, per_page, total, total_count, total_pages, ignored_args}.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
 						'search'   => [ 'type' => 'string', 'description' => 'Search by coupon code' ],
 						'status'   => [ 'type' => 'string', 'enum' => [ 'publish', 'draft', 'trash', 'any' ], 'description' => 'Coupon status (default: publish)' ],
-						'per_page' => [ 'type' => 'integer', 'description' => 'Results per page (max 100, default 10)' ],
-						'page'     => [ 'type' => 'integer', 'description' => 'Page number (default 1)' ],
+						'per_page' => [ 'type' => 'integer', 'description' => 'Coupons per call (default 10, min 1, max 100)' ],
+						'page'     => [ 'type' => 'integer', 'description' => 'Page number, 1-indexed. When given, the reply includes total and total_pages.' ],
 					],
 				],
 			],
@@ -953,10 +955,10 @@ class WooCommerce {
 				);
 
 			case 'wc_get_orders':
-				$per_page = max( 1, min( intval( $args['per_page'] ?? 10 ), 100 ) );
-				$page     = max( 1, intval( $args['page'] ?? 1 ) );
+				$per_page = self::clamp_per_page( $args['per_page'] ?? 10 );
+				$page     = self::clamp_page( $args['page'] ?? 1 );
 				$status   = ! empty( $args['status'] ) ? sanitize_text_field( $args['status'] ) : 'any';
-				$result   = wc_get_orders( [
+				$go_query = [
 					'limit'    => $per_page,
 					'paged'    => $page,
 					'status'   => $status,
@@ -964,9 +966,27 @@ class WooCommerce {
 					'orderby'  => 'date',
 					'order'    => 'DESC',
 					'paginate' => true,
-				] );
+				];
+				$go_after  = self::order_date_arg( $args, 'after' );
+				$go_before = self::order_date_arg( $args, 'before' );
+				if ( null !== $go_after && null !== $go_before && $go_after > $go_before ) {
+					throw new \Exception( 'after must not be later than before.' );
+				}
+				if ( null !== $go_after && null !== $go_before ) {
+					$go_query['date_created'] = $go_after . '...' . $go_before;
+				} elseif ( null !== $go_after ) {
+					$go_query['date_created'] = '>=' . $go_after;
+				} elseif ( null !== $go_before ) {
+					$go_query['date_created'] = '<=' . $go_before;
+				}
+				$result = wc_get_orders( $go_query );
 				return [
-					'orders'      => array_map( [ __CLASS__, 'format_order_summary' ], $result->orders ),
+					'orders'      => array_map(
+						static function ( $order ) {
+							return self::with_field_filter( 'royal_mcp_wc_order_fields', self::format_order_summary( $order ), $order, 'summary' );
+						},
+						$result->orders
+					),
 					'page'        => $page,
 					'per_page'    => $per_page,
 					// Return total_count alongside legacy 'total' for forward compatibility.
@@ -982,6 +1002,7 @@ class WooCommerce {
 				}
 				$detail  = self::format_order_detail( $order );
 				$summary = self::summarize_order( $detail );
+				$detail  = self::with_field_filter( 'royal_mcp_wc_order_fields', $detail, $order, 'detail' );
 				return Envelope::success( $summary, $detail );
 
 			case 'wc_update_order_status':
@@ -1480,14 +1501,19 @@ class WooCommerce {
 				$customers = (array) $gc_query->get_results();
 				$gc_rows   = array_map( function( $user ) {
 					$customer = new \WC_Customer( $user->ID );
-					return [
-						'id'           => $user->ID,
-						'display_name' => $user->display_name,
-						'order_count'  => $customer->get_order_count(),
-						'total_spent'  => $customer->get_total_spent(),
-						'city'         => $customer->get_billing_city(),
-						'country'      => $customer->get_billing_country(),
-					];
+					return self::with_field_filter(
+						'royal_mcp_wc_customer_fields',
+						[
+							'id'           => $user->ID,
+							'display_name' => $user->display_name,
+							'order_count'  => $customer->get_order_count(),
+							'total_spent'  => $customer->get_total_spent(),
+							'city'         => $customer->get_billing_city(),
+							'country'      => $customer->get_billing_country(),
+						],
+						$user,
+						$customer
+					);
 				}, $customers );
 				if ( ! $gc_paged ) {
 					return $gc_rows;
@@ -2129,23 +2155,39 @@ class WooCommerce {
 				);
 
 			case 'wc_get_coupons':
-				$per_page        = min( intval( $args['per_page'] ?? 10 ), 100 );
-				$paged           = max( intval( $args['page'] ?? 1 ), 1 );
+				$gcp_paged       = isset( $args['page'] );
+				$per_page        = self::clamp_per_page( $args['per_page'] ?? 10 );
+				$paged           = self::clamp_page( $args['page'] ?? 1 );
 				$allowed_status  = [ 'publish', 'draft', 'trash', 'any' ];
 				$status          = in_array( $args['status'] ?? 'publish', $allowed_status, true ) ? ( $args['status'] ?? 'publish' ) : 'publish';
 				$query_args      = [
-					'post_type'      => 'shop_coupon',
-					'post_status'    => $status,
-					'posts_per_page' => $per_page,
-					'paged'          => $paged,
+					'post_type'           => 'shop_coupon',
+					'post_status'         => $status,
+					'posts_per_page'      => $per_page,
+					'paged'               => $paged,
+					'orderby'             => [ 'date' => 'DESC', 'ID' => 'DESC' ],
+					'ignore_sticky_posts' => true,
+					'suppress_filters'    => true,
+					'no_found_rows'       => ! $gcp_paged,
 				];
 				if ( ! empty( $args['search'] ) ) {
 					$query_args['s'] = sanitize_text_field( $args['search'] );
 				}
-				$posts = get_posts( $query_args );
-				return array_map( function( $post ) {
+				$gcp_query = new \WP_Query( $query_args );
+				$gcp_rows  = array_map( function( $post ) {
 					return self::format_coupon_summary( new \WC_Coupon( $post->ID ) );
-				}, $posts );
+				}, $gcp_query->posts );
+				if ( ! $gcp_paged ) {
+					return $gcp_rows;
+				}
+				$gcp_total = (int) $gcp_query->found_posts;
+				// WordPress leaves found_posts at 0 for an empty page; a page past
+				// the end still reports the real total.
+				if ( [] === $gcp_rows && $paged > 1 ) {
+					$gcp_count = new \WP_Query( array_merge( $query_args, [ 'paged' => 1, 'posts_per_page' => 1, 'fields' => 'ids', 'no_found_rows' => false ] ) );
+					$gcp_total = (int) $gcp_count->found_posts;
+				}
+				return self::paged_reply( 'coupons', $gcp_rows, $paged, $per_page, $gcp_total );
 
 			case 'wc_get_coupon':
 				if ( isset( $args['id'] ) ) {
@@ -2604,6 +2646,48 @@ class WooCommerce {
 		return array_values( array_unique( $ids ) );
 	}
 
+	/**
+	 * An order date filter as a Unix timestamp, or null when not given. Accepts
+	 * YYYY-MM-DD or an ISO 8601 date-time in the site timezone; a bare date in
+	 * 'before' means the end of that day.
+	 *
+	 * @param array  $args Tool arguments.
+	 * @param string $key  after | before.
+	 * @return int|null
+	 * @throws \Exception When the value is not a valid date.
+	 */
+	private static function order_date_arg( array $args, $key ) {
+		if ( ! isset( $args[ $key ] ) || '' === $args[ $key ] ) {
+			return null;
+		}
+		$raw = $args[ $key ];
+		if ( ! is_string( $raw ) ) {
+			throw new \Exception( $key . ' must be a date (YYYY-MM-DD) or an ISO 8601 date-time.' );
+		}
+		$raw = trim( $raw );
+		$tz  = wp_timezone();
+		if ( preg_match( '/^(\d{4})-(\d{2})-(\d{2})$/', $raw, $m ) ) {
+			if ( ! checkdate( (int) $m[2], (int) $m[3], (int) $m[1] ) ) {
+				throw new \Exception( $key . ' is not a valid date.' );
+			}
+			$date = new \DateTimeImmutable( $raw . ( 'before' === $key ? ' 23:59:59' : ' 00:00:00' ), $tz );
+			return $date->getTimestamp();
+		}
+		if ( ! preg_match( '/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(:(\d{2}))?(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/', $raw, $m ) ) {
+			throw new \Exception( $key . ' must be a date (YYYY-MM-DD) or an ISO 8601 date-time.' );
+		}
+		// DateTime rolls an impossible day (February 30) into the next month; refuse it instead.
+		if ( ! checkdate( (int) $m[2], (int) $m[3], (int) $m[1] ) || (int) $m[4] > 23 || (int) $m[5] > 59 || ( isset( $m[7] ) && '' !== $m[7] && (int) $m[7] > 59 ) ) {
+			throw new \Exception( $key . ' is not a valid date.' );
+		}
+		try {
+			$date = new \DateTimeImmutable( $raw, $tz );
+		} catch ( \Exception $e ) {
+			throw new \Exception( $key . ' is not a valid date.' );
+		}
+		return $date->getTimestamp();
+	}
+
 	/** True for a 0-indexed sequential array (array_is_list arrived in WordPress 6.5). */
 	private static function is_list( array $value ) {
 		return [] === $value || array_keys( $value ) === range( 0, count( $value ) - 1 );
@@ -2743,6 +2827,26 @@ class WooCommerce {
 			'email'      => ( $type === 'billing' ) ? $order->get_billing_email() : '',
 			'phone'      => ( $type === 'billing' ) ? $order->get_billing_phone() : '',
 		];
+	}
+
+	/**
+	 * Lets a site add fields to the rows the order and customer read tools return.
+	 * Runs after the tool's capability check, so it only shapes rows the caller
+	 * may already see. A filter that returns anything but an array leaves the row
+	 * as built.
+	 *
+	 * Filters:
+	 *   royal_mcp_wc_order_fields    ( array $fields, WC_Order $order, string 'summary'|'detail' )
+	 *   royal_mcp_wc_customer_fields ( array $fields, WP_User $user, WC_Customer $customer )
+	 *
+	 * @param string $hook       Filter name.
+	 * @param array  $fields     Row as built by the tool.
+	 * @param mixed  ...$context Extra filter arguments.
+	 * @return array
+	 */
+	private static function with_field_filter( $hook, array $fields, ...$context ) {
+		$filtered = apply_filters( $hook, $fields, ...$context );
+		return is_array( $filtered ) ? $filtered : $fields;
 	}
 
 	private static function format_order_summary( $order ) {

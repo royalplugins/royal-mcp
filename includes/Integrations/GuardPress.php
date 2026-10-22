@@ -166,7 +166,7 @@ class GuardPress {
 					throw new \Exception( 'Audit log not available' );
 				}
 				$log_args = [
-					'limit' => min( intval( $args['limit'] ?? 50 ), 100 ),
+					'limit' => max(1, min( intval( $args['limit'] ?? 50 ), 100 )),
 				];
 				if ( ! empty( $args['severity'] ) ) {
 					$log_args['severity'] = sanitize_text_field( $args['severity'] );
