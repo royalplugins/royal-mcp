@@ -121,7 +121,13 @@ class Core {
 					'per_page'    => array( 'type' => 'integer' ),
 				),
 			),
-			'wp_count_terms'    => array( 'type' => 'integer' ),
+			'wp_count_terms'    => array(
+				'type'       => 'object',
+				'properties' => array(
+					'taxonomy' => array( 'type' => 'string' ),
+					'count'    => array( 'type' => 'integer' ),
+				),
+			),
 			'wp_get_taxonomies' => array(
 				'type'  => 'array',
 				'items' => array(
@@ -352,6 +358,30 @@ class Core {
 					'changed_since_change' => array( 'type' => 'boolean' ),
 					'note'                 => array( 'type' => 'string' ),
 				),
+			),
+			'wp_security_triage' => array(
+				'type'                 => 'object',
+				'additionalProperties' => true,
+				'properties'           => array(
+					'summary'        => array( 'type' => 'string' ),
+					'indicators'     => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+					'checks_run'     => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+					'checks_skipped' => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+					'partial'        => array( 'type' => 'boolean' ),
+					'guardpress'     => array( 'type' => 'object' ),
+				),
+			),
+			'wp_get_mcp_coexistence' => array(
+				'type'       => 'object',
+				'properties' => array(
+					'checked_at'        => array( 'type' => 'string' ),
+					'royal_mcp'         => array( 'type' => 'object' ),
+					'other_mcp_servers' => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+					'shared_addresses'  => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+					'abilities'         => array( 'type' => 'object' ),
+					'discovery'         => array( 'type' => 'object' ),
+				),
+				'required'   => array( 'checked_at', 'other_mcp_servers', 'shared_addresses', 'abilities' ),
 			),
 			'wp_get_site_status' => array(
 				'type'       => 'object',

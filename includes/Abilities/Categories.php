@@ -68,6 +68,54 @@ class Categories {
 				'label'       => __( 'Royal MCP: Redirection', 'royal-mcp' ),
 				'description' => __( 'Redirection plugin: list/create/update redirects, list groups.', 'royal-mcp' ),
 			),
+			'divi' => array(
+				'label'       => __( 'Royal MCP: Divi', 'royal-mcp' ),
+				'description' => __( 'Divi page and library operations: outline, find and replace, clone, image swap, templates and presets.', 'royal-mcp' ),
+			),
+			'yoast' => array(
+				'label'       => __( 'Royal MCP: Yoast SEO', 'royal-mcp' ),
+				'description' => __( 'Yoast SEO meta, schema, internal links and redirects.', 'royal-mcp' ),
+			),
+			'wordfence' => array(
+				'label'       => __( 'Royal MCP: Wordfence', 'royal-mcp' ),
+				'description' => __( 'Wordfence security status, scan results, blocked IPs, failed logins and blocked requests.', 'royal-mcp' ),
+			),
+			'litespeed' => array(
+				'label'       => __( 'Royal MCP: LiteSpeed Cache', 'royal-mcp' ),
+				'description' => __( 'LiteSpeed Cache status, settings and purging.', 'royal-mcp' ),
+			),
+			'updraftplus' => array(
+				'label'       => __( 'Royal MCP: UpdraftPlus', 'royal-mcp' ),
+				'description' => __( 'UpdraftPlus backup history, status, schedule and backups on demand.', 'royal-mcp' ),
+			),
+			'wpforms' => array(
+				'label'       => __( 'Royal MCP: WPForms', 'royal-mcp' ),
+				'description' => __( 'WPForms forms and submissions.', 'royal-mcp' ),
+			),
+			'solid-security' => array(
+				'label'       => __( 'Royal MCP: Solid Security', 'royal-mcp' ),
+				'description' => __( 'Solid Security status, lockouts, events and IP bans.', 'royal-mcp' ),
+			),
+			'contact-form-7' => array(
+				'label'       => __( 'Royal MCP: Contact Form 7', 'royal-mcp' ),
+				'description' => __( 'Contact Form 7 forms and submissions.', 'royal-mcp' ),
+			),
+			'monsterinsights' => array(
+				'label'       => __( 'Royal MCP: MonsterInsights', 'royal-mcp' ),
+				'description' => __( 'MonsterInsights analytics overview, top pages, sources and search queries.', 'royal-mcp' ),
+			),
+			'w3-total-cache' => array(
+				'label'       => __( 'Royal MCP: W3 Total Cache', 'royal-mcp' ),
+				'description' => __( 'W3 Total Cache configuration, purging and statistics.', 'royal-mcp' ),
+			),
+			'duplicator' => array(
+				'label'       => __( 'Royal MCP: Duplicator', 'royal-mcp' ),
+				'description' => __( 'Duplicator migration packages and installers.', 'royal-mcp' ),
+			),
+			'buddypress' => array(
+				'label'       => __( 'Royal MCP: BuddyPress', 'royal-mcp' ),
+				'description' => __( 'BuddyPress members, groups and activity.', 'royal-mcp' ),
+			),
 			'tablepress'    => array(
 				'label'       => __( 'Royal MCP: TablePress', 'royal-mcp' ),
 				'description' => __( 'TablePress tables: list, read, create, copy, export and change cells.', 'royal-mcp' ),

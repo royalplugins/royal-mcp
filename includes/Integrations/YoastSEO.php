@@ -833,9 +833,9 @@ class YoastSEO {
 	}
 
 	/**
-	 * Yoast Premium's Redirection module list. Free returns a documented
-	 * no_match envelope; Premium branch is scaffolded but flagged as
-	 * untested pending a Premium install for verification.
+	 * Yoast Premium's Redirection module list. Without Premium the reply is
+	 * `unavailable`; with Premium the list comes from WPSEO_Redirect_Manager,
+	 * whose method names differ between Premium versions.
 	 */
 	private static function handle_get_redirects( $args ) {
 		// The site-wide redirect table is an administrator's view in Yoast.
@@ -869,8 +869,6 @@ class YoastSEO {
 			];
 		}
 
-		// TODO: Premium redirect path is scaffolded — retest against an
-		// activated Premium install and pin the returned row shape.
 		try {
 			if ( ! class_exists( '\WPSEO_Redirect_Manager' ) ) {
 				return [

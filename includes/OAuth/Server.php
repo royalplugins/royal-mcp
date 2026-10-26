@@ -33,6 +33,12 @@ class Server {
      */
     private $query_vars = [];
 
+    /** Client of the authorize request being answered, for the response's iss. */
+    private $authorize_client_id = '';
+
+    /** True while a request arrived at the namespace endpoints (/wp-json/royal-mcp/v1/oauth/*). */
+    public static $via_namespace = false;
+
     /**
      * Dispatch an OAuth request based on the query var value.
      *
@@ -44,7 +50,7 @@ class Server {
         $request_method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'GET';
 
         // Set CORS headers for token and register endpoints (may be called cross-origin).
-        if ( in_array( $action, [ 'token', 'revoke', 'register', 'metadata', 'metadata_mcp', 'metadata_oidc', 'jwks', 'protected_resource', 'protected_resource_endpoint', 'method_not_allowed' ], true ) ) {
+        if ( in_array( $action, [ 'token', 'revoke', 'register', 'metadata', 'metadata_mcp', 'metadata_oidc', 'metadata_scoped', 'metadata_oidc_scoped', 'jwks', 'protected_resource', 'protected_resource_endpoint', 'method_not_allowed' ], true ) ) {
             header( 'Access-Control-Allow-Origin: *' );
             header( 'Access-Control-Allow-Methods: GET, POST, OPTIONS' );
             header( 'Access-Control-Allow-Headers: Content-Type, Authorization' );
@@ -74,6 +80,14 @@ class Server {
 
             case 'metadata_oidc':
                 $this->metadata_oidc();
+                break;
+
+            case 'metadata_scoped':
+                $this->json_response( self::build_authorization_server_metadata( true ), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+                break;
+
+            case 'metadata_oidc_scoped':
+                $this->json_response( self::build_openid_configuration( true ), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
                 break;
 
             case 'jwks':
@@ -163,7 +177,7 @@ class Server {
             : self::canonical_resource_url( self::default_resource_path() );
         return [
             'resource'                 => $resource,
-            'authorization_servers'    => [ $base ],
+            'authorization_servers'    => [ '' !== self::namespace_issuer() ? self::namespace_issuer() : $base ],
             'bearer_methods_supported' => [ 'header' ],
             'scopes_supported'         => [ 'mcp:full' ],
         ];
@@ -365,10 +379,41 @@ class Server {
      *
      * @return array The AS metadata document.
      */
-    public static function build_authorization_server_metadata() {
+    /**
+     * Site-relative path of the authorization server scoped to our REST
+     * namespace, e.g. /wp-json/royal-mcp/v1.
+     */
+    public static function namespace_issuer_path() {
+        return '/' . trim( (string) rest_get_url_prefix(), '/' ) . '/royal-mcp/v1';
+    }
+
+    /**
+     * The issuer clients find from our protected-resource documents: our
+     * REST namespace, so another plugin answering the site-root OAuth
+     * documents cannot take over our connections. Empty when the site uses
+     * plain permalinks (an issuer can't carry a query string) or the
+     * royal_mcp_oauth_issuer_mode filter returns 'root'.
+     *
+     * @return string
+     */
+    public static function namespace_issuer() {
+        if ( '' === (string) get_option( 'permalink_structure' ) || 'root' === apply_filters( 'royal_mcp_oauth_issuer_mode', 'namespace' ) ) {
+            return '';
+        }
+        return self::canonical_resource_url( self::namespace_issuer_path() );
+    }
+
+    /**
+     * @param bool $scoped The document for the namespace issuer: its token,
+     *                     registration and revocation endpoints are under the
+     *                     namespace. The site-root document (false) is kept
+     *                     for clients that read it without discovery.
+     */
+    public static function build_authorization_server_metadata( $scoped = false ) {
         // Same https-aware canonical base as the PRM `resource` — discovery
         // must match the origin the client used to reach the endpoint.
         $base     = self::canonical_resource_url( '/' );
+        $issuer   = $scoped ? self::namespace_issuer() : '';
         $paths    = \Royal_MCP_Plugin::get_oauth_rewrite_paths();
         $slug_for = static function ( array $paths, $action ) {
             $slug = isset( $paths[ $action ] ) ? ltrim( trim( (string) $paths[ $action ] ), '/' ) : $action;
@@ -392,6 +437,17 @@ class Server {
             // dynamic-registration only.
             'client_id_metadata_document_supported' => (bool) apply_filters( 'royal_mcp_cimd_enabled', true ),
         ];
+
+        if ( '' !== $issuer ) {
+            // The sign-in page stays at the site root: it needs the browser's
+            // WordPress session, which the REST API does not use.
+            $metadata['issuer']                                     = $issuer;
+            $metadata['token_endpoint']                             = $issuer . '/oauth/token';
+            $metadata['registration_endpoint']                      = $issuer . '/oauth/register';
+            $metadata['revocation_endpoint']                        = $issuer . '/oauth/revoke';
+            $metadata['revocation_endpoint_auth_methods_supported'] = [ 'none', 'client_secret_post' ];
+            return $metadata;
+        }
 
         // Advertised only when the site can route it: the path has to be in
         // the path list and in the rewrite rules WordPress has stored, which
@@ -439,8 +495,8 @@ class Server {
      * required OIDC fields are present (with an empty JWKS — no ID tokens
      * are issued).
      */
-    public static function build_openid_configuration() {
-        $metadata = self::build_authorization_server_metadata();
+    public static function build_openid_configuration( $scoped = false ) {
+        $metadata = self::build_authorization_server_metadata( $scoped );
         $base     = $metadata['issuer'];
         return $metadata + [
             'jwks_uri'                              => $base . '/.well-known/jwks.json',
@@ -529,6 +585,10 @@ class Server {
             $this->json_error( 'server_error', $client->get_error_message(), 500 );
         }
 
+        if ( self::$via_namespace && ! empty( $client['client_id'] ) ) {
+            Token_Store::mark_namespace_client( (string) $client['client_id'] );
+        }
+
         // If the site owner requires approval, decorate the successful DCR
         // response with a pending flag + throttled admin notification, then
         // fire a cross-plugin action so security-adjacent tools (Royal AI
@@ -603,6 +663,7 @@ class Server {
         // phpcs:disable WordPress.Security.NonceVerification.Recommended
         $response_type         = isset( $_GET['response_type'] ) ? sanitize_text_field( wp_unslash( $_GET['response_type'] ) ) : '';
         $client_id             = isset( $_GET['client_id'] ) ? sanitize_text_field( wp_unslash( $_GET['client_id'] ) ) : '';
+        $this->authorize_client_id = $client_id;
         $redirect_uri          = isset( $_GET['redirect_uri'] ) ? sanitize_text_field( wp_unslash( $_GET['redirect_uri'] ) ) : '';
         $code_challenge        = isset( $_GET['code_challenge'] ) ? sanitize_text_field( wp_unslash( $_GET['code_challenge'] ) ) : '';
         $code_challenge_method = isset( $_GET['code_challenge_method'] ) ? sanitize_text_field( wp_unslash( $_GET['code_challenge_method'] ) ) : '';
@@ -737,6 +798,7 @@ class Server {
 
         $redirect_uri          = isset( $_POST['redirect_uri'] ) ? sanitize_text_field( wp_unslash( $_POST['redirect_uri'] ) ) : '';
         $client_id             = isset( $_POST['client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['client_id'] ) ) : '';
+        $this->authorize_client_id = $client_id;
         $code_challenge        = isset( $_POST['code_challenge'] ) ? sanitize_text_field( wp_unslash( $_POST['code_challenge'] ) ) : '';
         $code_challenge_method = isset( $_POST['code_challenge_method'] ) ? sanitize_text_field( wp_unslash( $_POST['code_challenge_method'] ) ) : '';
         $state                 = isset( $_POST['state'] ) ? sanitize_text_field( wp_unslash( $_POST['state'] ) ) : '';
@@ -801,7 +863,8 @@ class Server {
             [
                 'code'  => $code,
                 'state' => $state,
-            ]
+            ],
+            $client_id
         );
 
         $this->log_event( 'code_issued', 'Authorization code issued; redirecting to client callback.', 302, 'success' );
@@ -1142,7 +1205,8 @@ class Server {
                 'error'             => $error,
                 'error_description' => $description,
                 'state'             => $state,
-            ]
+            ],
+            $this->authorize_client_id
         );
 
         // phpcs:ignore WordPress.Security.SafeRedirect.wp_redirect_wp_redirect -- OAuth error redirect to client's registered callback URI.
@@ -1162,14 +1226,30 @@ class Server {
      * that pinned to the metadata issuer at registration will match the
      * redirect without a separate discovery round-trip.
      *
+     * The issuer is the one the client discovered: the namespace issuer for
+     * clients registered at the namespace endpoints and for clients that
+     * identify by a metadata document URL (they start from the endpoint's
+     * protected-resource document), the site-root issuer otherwise.
+     *
      * @param string $redirect_uri Client callback URI to append to.
      * @param array  $params       Response parameters (code/state, or error/state).
+     * @param string $client_id    Client the response is for.
      * @return string The final redirect URL with iss appended.
      */
-    public static function build_authorize_redirect_url( $redirect_uri, array $params ) {
-        $metadata      = self::build_authorization_server_metadata();
-        $params['iss'] = $metadata['issuer'];
+    public static function build_authorize_redirect_url( $redirect_uri, array $params, $client_id = '' ) {
+        $params['iss'] = self::issuer_for_client( (string) $client_id );
         return add_query_arg( $params, $redirect_uri );
+    }
+
+    /** The issuer a client discovered. */
+    public static function issuer_for_client( $client_id ) {
+        $namespace = self::namespace_issuer();
+        if ( '' !== $namespace && '' !== $client_id
+            && ( Token_Store::is_cimd_client( $client_id ) || Token_Store::is_namespace_client( $client_id ) ) ) {
+            return $namespace;
+        }
+        $metadata = self::build_authorization_server_metadata();
+        return $metadata['issuer'];
     }
 
     /**

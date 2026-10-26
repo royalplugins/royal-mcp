@@ -60,7 +60,7 @@ class Authorization_Header_Notice {
         }
 
         $result = $this->probe_authorization_header();
-        set_transient( self::TRANSIENT_KEY, $result, self::TRANSIENT_TTL );
+        set_transient( self::TRANSIENT_KEY, $result, self::TRANSIENT_TTL ); // audit:transient-ttl-only -- probe result, probed again once it expires
         return $result;
     }
 

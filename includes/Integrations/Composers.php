@@ -150,6 +150,10 @@ class Composers {
 				}
 			}
 		}
+		if ( $attachment_id > 0 ) {
+			// Set with the insert so save_post handlers see the featured image.
+			$insert['meta_input'] = [ '_thumbnail_id' => (int) $attachment_id ];
+		}
 		$post_id = wp_insert_post( wp_slash( $insert ), true );
 		if ( is_wp_error( $post_id ) ) {
 			$steps[] = [ 'name' => 'create_post', 'status' => 'error', 'message' => $post_id->get_error_message() ];

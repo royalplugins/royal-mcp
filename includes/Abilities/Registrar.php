@@ -41,6 +41,18 @@ class Registrar {
 			'acf_'       => 'acf',
 			'raif_'      => 'raif',
 			'redirection_' => 'redirection',
+			'divi_'        => 'divi',
+			'yoast_'       => 'yoast',
+			'wordfence_'   => 'wordfence',
+			'litespeed_'   => 'litespeed',
+			'updraftplus_' => 'updraftplus',
+			'wpforms_'     => 'wpforms',
+			'solid_'       => 'solid-security',
+			'cf7_'         => 'contact-form-7',
+			'monsterinsights_' => 'monsterinsights',
+			'w3tc_'        => 'w3-total-cache',
+			'duplicator_'  => 'duplicator',
+			'bp_'          => 'buddypress',
 			'tablepress_'  => 'tablepress',
 			'snippets_'    => 'code-snippets',
 			'wpcode_'      => 'wpcode',
@@ -63,7 +75,13 @@ class Registrar {
 			if ( ! is_array( $tool ) || empty( $tool['name'] ) || empty( $tool['description'] ) ) {
 				continue;
 			}
-			self::register_one( $tool );
+			// One tool that cannot be registered (a missing class in an
+			// integration, an invalid schema) must not stop the others.
+			try {
+				self::register_one( $tool );
+			} catch ( \Throwable $e ) {
+				continue;
+			}
 		}
 	}
 
@@ -98,7 +116,7 @@ class Registrar {
 			'category'            => $category,
 			'execute_callback'    => self::build_execute_callback( $tool_name ),
 			'permission_callback' => self::build_permission_callback( $tool_name ),
-			'meta'                => Meta_Config::ability_meta(),
+			'meta'                => Meta_Config::ability_meta( Server::annotations_for( $tool_name ) ),
 		);
 
 		// A tool without arguments is registered as a plain object schema: clients
@@ -112,11 +130,19 @@ class Registrar {
 				$input_schema['default'] = new \stdClass();
 			}
 		}
+		// A read is run over GET, often with no input at all; WordPress validates
+		// the input before the permission check, so a tool whose arguments are all
+		// optional gets an empty object as its default input.
+		if ( empty( $input_schema['required'] ) && ! array_key_exists( 'default', $input_schema ) ) {
+			$input_schema['default'] = new \stdClass();
+		}
 		$args['input_schema'] = $input_schema;
 
 		// output_schema is also optional — Registry returns null for tools without
 		// a mapped schema, and WP core skips validate_output() when unset.
-		$output_schema = Output_Schemas_Registry::get_for_tool( $tool_name );
+		// Only for reads: WordPress validates the output after the callback ran, so
+		// a schema mismatch on a write would report an error for a change already made.
+		$output_schema = ! empty( Server::annotations_for( $tool_name )['readOnlyHint'] ) ? Output_Schemas_Registry::get_for_tool( $tool_name ) : null;
 		if ( is_array( $output_schema ) ) {
 			$args['output_schema'] = $output_schema;
 		}
@@ -181,14 +207,48 @@ class Registrar {
 			$args = is_array( $input ) ? $input : array();
 			try {
 				$server = new Server();
-				return $server->invoke( $tool_name, $args, 'abilities' );
+				return self::to_ability_result( $server->invoke( $tool_name, $args, 'abilities' ) );
 			} catch ( \Throwable $e ) {
-				return new \WP_Error(
-					'royal_mcp_ability_exception',
-					esc_html( $e->getMessage() )
-				);
+				// Messages are plain text here; the REST layer encodes them. A refusal or a
+				// missing item is the caller's request (400); a PHP error is the site's (500).
+				if ( $e instanceof \Exception && 429 === $e->getCode() && 0 === strpos( $e->getMessage(), 'Rate limit exceeded.' ) ) {
+					return new \WP_Error( 'royal_mcp_rate_limited', wp_strip_all_tags( $e->getMessage() ), array( 'status' => 429 ) );
+				}
+				return new \WP_Error( 'royal_mcp_ability_exception', wp_strip_all_tags( $e->getMessage() ), array( 'status' => $e instanceof \Exception ? 400 : 500 ) );
 			}
 		};
+	}
+
+	/**
+	 * Shape a tool result for the abilities layer: a tool error becomes a
+	 * WP_Error (callers only treat WP_Error as a failure), a result envelope
+	 * becomes its structured content (undo token and summary included), and
+	 * text that is not valid UTF-8 is cleaned so encoding the answer cannot fail.
+	 *
+	 * @param mixed $result Tool result.
+	 * @return mixed
+	 */
+	public static function to_ability_result( $result ) {
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		$clean = static function ( $value ) {
+			return is_string( $value ) ? wp_check_invalid_utf8( $value, true ) : $value;
+		};
+		if ( is_array( $result ) && isset( $result['content'] ) && is_array( $result['content'] ) && array_key_exists( 'isError', $result ) ) {
+			$text = (string) ( $result['content'][0]['text'] ?? '' );
+			if ( ! empty( $result['isError'] ) ) {
+				// The tool's own fields go under details: a field named status would
+				// otherwise be read as the HTTP status of the reply.
+				return new \WP_Error( 'royal_mcp_tool_error', $clean( '' !== $text ? $text : 'The tool reported an error.' ), array( 'status' => 400, 'details' => map_deep( (array) ( $result['structuredContent'] ?? [] ), $clean ) ) );
+			}
+			$struct = is_array( $result['structuredContent'] ?? null ) ? $result['structuredContent'] : [];
+			if ( ! isset( $struct['summary'] ) && '' !== $text && empty( $struct ) ) {
+				$struct['summary'] = $text;
+			}
+			return map_deep( $struct, $clean );
+		}
+		return is_array( $result ) || is_object( $result ) ? map_deep( $result, $clean ) : $clean( $result );
 	}
 
 	/**

@@ -99,7 +99,8 @@ class RoyalAIFirewall {
 
 	public static function execute_tool( $name, $args ) {
 		// MUST check cap before is_available() — otherwise "not active" leaks presence.
-		if ( ! current_user_can( 'manage_options' ) ) {
+		// On multisite, network administrators only.
+		if ( ! current_user_can( is_multisite() ? 'manage_network_options' : 'manage_options' ) ) {
 			throw new \Exception( 'You do not have permission to use Royal AI Firewall tools.' );
 		}
 

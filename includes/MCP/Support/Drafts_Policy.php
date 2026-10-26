@@ -34,6 +34,7 @@ class Drafts_Policy {
 	 */
 	const UNDO_CONTENT_OPS = [
 		'wp_update_post'                   => 'post_id',
+		'wp_create_post_trash'             => 'post_id',
 		'wp_update_post_meta'              => 'post_id',
 		'wp_add_post_meta'                 => 'post_id',
 		'wp_update_seo_meta'               => 'post_id',
@@ -48,7 +49,7 @@ class Drafts_Policy {
 
 	/**
 	 * Writes that never change what visitors see: uploads (needed to build a
-	 * draft), preview links, and the dispatcher (the tool it calls is checked
+	 * draft), making and ending preview links, and the dispatcher (the tool it calls is checked
 	 * on its own). Undo is checked against its snapshot instead.
 	 */
 	const ALWAYS_ALLOWED = [
@@ -56,12 +57,15 @@ class Drafts_Policy {
 		'wp_upload_media',
 		'wp_upload_media_from_url',
 		'wp_create_preview_link',
+		'wp_revoke_preview_links',
 	];
 
 	/** Tools that create new content, and the argument that sets its status. */
 	const CREATE_TOOLS = [
 		'wp_create_post'            => 'status',
 		'wp_create_page'            => 'status',
+		// Always a draft.
+		'wp_clone_post_as_draft'    => '',
 		'wp_publish_and_promote'    => 'status',
 		'elementor_clone_page'      => 'new_status',
 		'divi_clone_page'           => 'new_status',
@@ -186,7 +190,7 @@ class Drafts_Policy {
 			$status = (string) get_post_status( $post_id );
 			if ( ! in_array( $status, self::DRAFT_STATUSES, true ) ) {
 				return sprintf(
-					'post %1$d is %2$s, and only drafts and pending posts can be changed. Clone it as a draft first (elementor_clone_page or divi_clone_page for builder pages) and edit the copy.',
+					'post %1$d is %2$s, and only drafts and pending posts can be changed. Clone it as a draft first (wp_clone_post_as_draft, or elementor_clone_page / divi_clone_page for builder pages) and edit the copy.',
 					$post_id,
 					'publish' === $status ? 'published' : $status
 				);

@@ -151,7 +151,35 @@ class Settings_Page {
     }
 
     /**
-     * Activity Log row for a setting that changes what AI clients may do.
+     * Record a safety-setting change made outside the settings screen (WP-CLI),
+     * with the values before and after.
+     *
+     * @param string $action Log action, e.g. settings:drafts_only_mode.
+     * @param mixed  $prior  Value before.
+     * @param mixed  $next   Value after.
+     * @param string $via    Where the change came from.
+     */
+    public static function log_setting_change( $action, $prior, $next, $via = 'cli' ) {
+        global $wpdb;
+        $scalar = static function ( $v ) {
+            return is_scalar( $v ) || null === $v ? $v : wp_json_encode( $v );
+        };
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Intentional direct insert to the logs table.
+        $wpdb->insert(
+            $wpdb->prefix . 'royal_mcp_logs',
+            [
+                'mcp_server'    => 'MCP Server',
+                'action'        => (string) $action,
+                'request_data'  => wp_json_encode( [ 'user_id' => get_current_user_id(), 'via' => (string) $via ] ),
+                'response_data' => wp_json_encode( [ 'prior' => $scalar( $prior ), 'next' => $scalar( $next ) ] ),
+                'status'        => 'success',
+            ],
+            [ '%s', '%s', '%s', '%s', '%s' ]
+        );
+    }
+
+    /**
+     * Activity Log row for an on/off setting that changes what AI clients may do.
      */
     private function log_toggle_change( $action, $prior, $next ) {
         global $wpdb;
@@ -257,7 +285,7 @@ class Settings_Page {
             $next_access  = \Royal_MCP\MCP\Support\Access_Levels::normalize( isset( $input[ $access_key ] ) ? sanitize_text_field( wp_unslash( (string) $input[ $access_key ] ) ) : '' );
             $sanitized[ $access_key ] = '' !== $next_access ? $next_access : 'full';
             if ( $prior_access !== $sanitized[ $access_key ] ) {
-                $this->log_toggle_change( 'settings:' . $access_key, $prior_access, $sanitized[ $access_key ] );
+                self::log_setting_change( 'settings:' . $access_key, $prior_access, $sanitized[ $access_key ], 'settings' );
             }
         }
 
@@ -266,7 +294,7 @@ class Settings_Page {
             $prior_role = \Royal_MCP\MCP\Support\Route_Roles::normalize( $role_key, $settings[ $role_key ] ?? '' );
             $sanitized[ $role_key ] = \Royal_MCP\MCP\Support\Route_Roles::normalize( $role_key, isset( $input[ $role_key ] ) ? wp_unslash( (string) $input[ $role_key ] ) : '' );
             if ( $prior_role !== $sanitized[ $role_key ] ) {
-                $this->log_toggle_change( 'settings:' . $role_key, $prior_role, $sanitized[ $role_key ] );
+                self::log_setting_change( 'settings:' . $role_key, $prior_role, $sanitized[ $role_key ], 'settings' );
             }
         }
 
@@ -344,7 +372,7 @@ class Settings_Page {
             $plaintext                   = bin2hex( random_bytes( 16 ) );
             $sanitized['api_key_hash']   = hash( 'sha256', $plaintext );
             $sanitized['api_key']        = '';
-            set_transient(
+            set_transient( // audit:transient-ttl-only -- one-time key reveal, deleted when the settings page shows it
                 'royal_mcp_reveal_api_key_' . (int) get_current_user_id(),
                 $plaintext,
                 15 * MINUTE_IN_SECONDS

@@ -270,8 +270,12 @@ class Commands {
         if ( ! in_array( $state, [ 'on', 'off' ], true ) ) {
             \WP_CLI::error( 'Say on, off or status.' );
         }
+        $prior                        = ! empty( $settings['drafts_only_mode'] );
         $settings['drafts_only_mode'] = 'on' === $state;
         Settings_Page::save_programmatically( $settings );
+        if ( $prior !== $settings['drafts_only_mode'] ) {
+            Settings_Page::log_setting_change( 'settings:drafts_only_mode', $prior, $settings['drafts_only_mode'] );
+        }
         \WP_CLI::success( 'on' === $state ? 'Drafts-only mode is on: AI clients may create and edit drafts only.' : 'Drafts-only mode is off.' );
     }
 
@@ -304,15 +308,24 @@ class Commands {
         if ( in_array( $connection, [ 'api-key', 'other-routes' ], true ) ) {
             $settings = get_option( 'royal_mcp_settings', [] );
             $settings = is_array( $settings ) ? $settings : [];
-            $settings[ 'api-key' === $connection ? 'api_key_access' : 'other_routes_access' ] = $level;
+            $key   = 'api-key' === $connection ? 'api_key_access' : 'other_routes_access';
+            $prior = 'api-key' === $connection ? \Royal_MCP\MCP\Support\Access_Levels::for_api_key() : \Royal_MCP\MCP\Support\Access_Levels::for_other_routes();
+            $settings[ $key ] = $level;
             Settings_Page::save_programmatically( $settings );
+            if ( $prior !== $level ) {
+                Settings_Page::log_setting_change( 'settings:' . $key, $prior, $level );
+            }
             \WP_CLI::success( sprintf( '%s access level: %s.', $connection, $level ) );
             return;
         }
+        $prior = \Royal_MCP\MCP\Support\Access_Levels::for_client( $connection );
         try {
             \Royal_MCP\MCP\Support\Access_Levels::set_client( $connection, $level );
         } catch ( \InvalidArgumentException $e ) {
             \WP_CLI::error( $e->getMessage() );
+        }
+        if ( $prior !== $level ) {
+            Settings_Page::log_setting_change( 'settings:client_access:' . substr( sanitize_key( $connection ), 0, 40 ), $prior, $level );
         }
         \WP_CLI::success( sprintf( 'Client %s access level: %s.', $connection, $level ) );
     }

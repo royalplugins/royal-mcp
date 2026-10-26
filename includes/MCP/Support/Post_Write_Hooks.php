@@ -52,8 +52,12 @@ class Post_Write_Hooks {
 		}
 
 		clean_post_cache( $post_id );
-		do_action( 'save_post', $post_id, $post, true );
+		// The same hooks, in the same order, as a save in WordPress.
 		do_action( 'post_updated', $post_id, $post, $post );
+		do_action( "save_post_{$post->post_type}", $post_id, $post, true );
+		do_action( 'save_post', $post_id, $post, true );
+		do_action( 'wp_insert_post', $post_id, $post, true );
+		do_action( 'wp_after_insert_post', $post_id, $post, true, $post );
 
 		self::bump_modified_timestamp( $post_id );
 		self::rebuild_yoast_indexable( $post_id );

@@ -12,10 +12,13 @@
  * preview flow as the stored user. The link works only as a plain GET of
  * the site's home URL.
  *
- * Ships one tool wrapper — wp_create_preview_link — that builds and returns
- * the token URL. The redirect handler is always registered so an incoming
- * token URL can be honored even when the create-tool wasn't the most
- * recent call.
+ * Ships two tool wrappers: wp_create_preview_link builds and returns the
+ * token URL, wp_revoke_preview_links ends every link issued for a post. The
+ * redirect handler is always registered so an incoming token URL can be
+ * honored even when the create-tool wasn't the most recent call.
+ *
+ * The owner's identity is active only while WordPress checks the preview
+ * nonce and runs the main query; the rest of the request runs as a visitor.
  */
 
 namespace Royal_MCP\MCP\Support;
@@ -30,6 +33,11 @@ class Preview_Link {
 	const QUERY_VAR           = 'rmcp_preview';
 	const DEFAULT_TTL_MINUTES = 15;
 	const MAX_TTL_MINUTES     = 1440; // 24h
+	const GENERATION_META     = '_royal_mcp_preview_gen';
+
+	/** Owner and post of the preview being served in this request. */
+	private static $preview_user = 0;
+	private static $preview_post = 0;
 
 	/**
 	 * Register hooks. Called once from the main plugin bootstrap.
@@ -55,11 +63,28 @@ class Preview_Link {
 	 */
 	public static function create( $post_id, $user_id, $ttl_seconds ) {
 		$token = wp_generate_password( 32, false, false );
-		set_transient( self::TRANSIENT_PREFIX . $token, [
+		set_transient( self::TRANSIENT_PREFIX . $token, [ // audit:transient-ttl-only -- a token lives until it expires; revoke_all() ends it early
 			'post_id' => (int) $post_id,
 			'user_id' => (int) $user_id,
+			'gen'     => self::generation( $post_id ),
 		], (int) $ttl_seconds );
 		return $token;
+	}
+
+	/**
+	 * End every preview link issued for a post. Links carry the post's link
+	 * generation; raising it makes all earlier links invalid.
+	 *
+	 * @return int The new generation.
+	 */
+	public static function revoke_all( $post_id ) {
+		$next = self::generation( $post_id ) + 1;
+		update_post_meta( (int) $post_id, self::GENERATION_META, $next );
+		return $next;
+	}
+
+	private static function generation( $post_id ) {
+		return (int) get_post_meta( (int) $post_id, self::GENERATION_META, true );
 	}
 
 	/**
@@ -74,6 +99,10 @@ class Preview_Link {
 			return null;
 		}
 		if ( empty( $data['post_id'] ) || empty( $data['user_id'] ) ) {
+			return null;
+		}
+		$gen = isset( $data['gen'] ) ? (int) $data['gen'] : 0;
+		if ( $gen !== self::generation( (int) $data['post_id'] ) ) {
 			return null;
 		}
 		return [
@@ -141,12 +170,13 @@ class Preview_Link {
 			);
 		}
 
-		// Impersonate the token owner FIRST so wp_create_nonce below binds
-		// to the impersonated user — the same user context WP will be in
-		// when _show_post_preview runs on init@10 and calls wp_verify_nonce.
-		wp_set_current_user( $user_id );
-
+		// The nonce is made as the token owner, the same user context WP will
+		// be in when _show_post_preview runs on init@10 and verifies it.
+		self::$preview_user = (int) $user_id;
+		self::$preview_post = (int) $post_id;
+		wp_set_current_user( self::$preview_user );
 		$preview_nonce = wp_create_nonce( 'post_preview_' . $post_id );
+		wp_set_current_user( 0 );
 
 		// Transform the request superglobal into a native preview request.
 		// WP's parse_request + _show_post_preview will pick this up and
@@ -178,13 +208,38 @@ class Preview_Link {
 		$_REQUEST = $query;
 
 		add_filter( 'show_admin_bar', '__return_false' );
-		// Once WordPress has resolved the preview, the rest of the page
-		// renders as a visitor would see it.
-		add_action( 'wp', [ __CLASS__, 'end_preview_user' ], PHP_INT_MAX );
+		// The owner's identity covers the nonce check and the main query only;
+		// everything else in the request, and the page render, runs as a visitor.
+		add_action( 'init', [ __CLASS__, 'begin_preview_user' ], 9 );
+		add_action( 'init', [ __CLASS__, 'end_preview_user' ], 11 );
+		add_action( 'pre_get_posts', [ __CLASS__, 'begin_main_query_user' ], PHP_INT_MAX );
+		add_filter( 'the_posts', [ __CLASS__, 'end_main_query_user' ], PHP_INT_MIN, 2 );
+		add_action( 'wp', [ __CLASS__, 'end_preview_user' ], PHP_INT_MIN );
+	}
+
+	public static function begin_preview_user() {
+		if ( self::$preview_user > 0 ) {
+			wp_set_current_user( self::$preview_user );
+		}
 	}
 
 	public static function end_preview_user() {
 		wp_set_current_user( 0 );
+	}
+
+	public static function begin_main_query_user( $query ) {
+		if ( $query instanceof \WP_Query && $query->is_main_query() && $query->is_preview() ) {
+			self::begin_preview_user();
+		}
+	}
+
+	public static function end_main_query_user( $posts, $query = null ) {
+		if ( $query instanceof \WP_Query && $query->is_main_query() ) {
+			self::end_preview_user();
+			// One preview per request: later queries never take the owner's identity.
+			self::$preview_user = 0;
+		}
+		return $posts;
 	}
 
 	/**

@@ -71,6 +71,7 @@ function royal_mcp_uninstall_site() {
     // Preview_Link short-lived preview tokens (rmcp_preview_ prefix).
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_rmcp_preview_%' OR option_name LIKE '_transient_timeout_rmcp_preview_%'");
+    delete_post_meta_by_key( '_royal_mcp_preview_gen' );
 
     // Auth-header probe cache (whether the origin passes Authorization through).
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
@@ -90,6 +91,8 @@ function royal_mcp_uninstall_site() {
     delete_transient('royal_mcp_auth_header_status');
     delete_transient('royal_mcp_legacy_key_header_seen');
     delete_transient('royal_mcp_well_known_status');
+    delete_transient('royal_mcp_well_known_ns_status');
+    delete_transient('royal_mcp_discovery_chain');
     delete_transient('royal_mcp_foreign_as_endpoint');
     delete_transient('royal_mcp_missing_endpoints_list');
     delete_transient('royal_mcp_register_301_status');
@@ -124,6 +127,7 @@ function royal_mcp_uninstall_site() {
         delete_option('royal_mcp_settings');
         delete_option('royal_mcp_abilities_registration_enabled');
         delete_option('royal_mcp_client_access');
+        delete_option('royal_mcp_oauth_namespace_clients');
 
         // Cleared with the tables so a reinstall recreates them.
         delete_option('royal_mcp_db_version');
@@ -164,6 +168,7 @@ if ( is_multisite() ) {
 delete_metadata('user', 0, 'royal_mcp_dismissed_notices', '', true);
 delete_metadata('user', 0, 'royal_mcp_founders_dismissed', '', true);
 delete_metadata('user', 0, 'royal_mcp_foreign_as_dismissed', '', true);
+delete_metadata('user', 0, 'royal_mcp_discovery_chain_dismissed', '', true);
 delete_metadata('user', 0, 'royal_mcp_founders_dismissed_version', '', true);
 delete_metadata('user', 0, 'royal_mcp_review_dismissed_version', '', true);
 delete_metadata('user', 0, 'royal_mcp_pro_launch_notice_dismissed', '', true);

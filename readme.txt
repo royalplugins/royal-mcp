@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.5.11
+Stable tag: 1.5.12
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -76,11 +76,11 @@ The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) c
 
 Royal MCP publishes machine-readable MCP Server Card, Skills Index, and OAuth Protected Resource metadata at the standard well-known locations. Cloudflare's Agent Readiness scanner, Vercel's is-agentic, and Chrome Lighthouse's Agentic Browsing audit all recognize your site as agent-ready with zero configuration. Every request to your MCP endpoint carries a Link header pointing agent runtimes at these discovery documents.
 
-= 109 Core Tools + 157 Integration Tools =
+= 113 Core Tools + 157 Integration Tools =
 
-**WordPress Core (109 tools):**
+**WordPress Core (113 tools):**
 
-* Posts - create, read, update, delete, search, count (any registered public post type, featured images supported)
+* Posts - create, read, update, delete, search, count, clone as a draft (any registered public post type, featured images supported)
 * Pages - full CRUD with parent page support
 * Blocks - read a post's block tree; insert, replace, move and delete blocks by path; replace text inside blocks; change attributes of server-rendered blocks; check markup before writing. Works with core blocks and plugin blocks such as GenerateBlocks, Stackable, Spectra and GreenShift, keeps them valid in the editor, and every write has a revision and an undo token
 * Patterns and Site Editor - list, read, create and update synced patterns; read global styles and block templates
@@ -185,7 +185,7 @@ Security. Most MCP plugins (and 41% of all public MCP servers) have no authentic
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
-No. WordPress 6.9 added the Abilities API (a primitive for registering AI-callable functions), and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 109 ready-to-use WordPress core tools, and 157 integration tools for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Redirection, Solid Security, Wordfence, Contact Form 7, MonsterInsights, W3 Total Cache, LiteSpeed Cache, Duplicator, BuddyPress, TablePress, Code Snippets, and WPCode.
+No. WordPress 6.9 added the Abilities API (a primitive for registering AI-callable functions), and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations the bare primitive does not include: enforced API key auth, OAuth 2.0 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 113 ready-to-use WordPress core tools, and 157 integration tools for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Redirection, Solid Security, Wordfence, Contact Form 7, MonsterInsights, W3 Total Cache, LiteSpeed Cache, Duplicator, BuddyPress, TablePress, Code Snippets, and WPCode.
 
 = Does Royal MCP work with WooCommerce? =
 
@@ -226,7 +226,7 @@ By design, Royal MCP's OAuth endpoints (`/register`, `/token`, `/authorize`) are
 
 = Is my content safe? =
 
-Royal MCP is designed with defense in depth. API key authentication is required for all MCP sessions. Rate limiting prevents abuse (60 requests per minute per IP). Activity logging records every tool call. Sensitive data is filtered — user emails, usernames, admin email, PHP version, and stored credentials inside plugin settings (api keys, secrets, tokens, passwords) are never exposed through MCP. Comment creation respects your WordPress moderation settings. Post meta values are sanitized before storage. Option writes are disabled by default and gated by three independent checks (admin toggle, allowlist, hard denylist) when enabled. The plugin itself starts disabled by default — nothing is accessible until you explicitly enable it.
+Royal MCP is designed with defense in depth. API key authentication is required for all MCP sessions. Rate limiting prevents abuse (60 requests per minute per IP without credentials, 300 with; 300 per minute per user through the Abilities API and other MCP servers). Activity logging records every tool call. Sensitive data is filtered — user emails, usernames, admin email, PHP version, and stored credentials inside plugin settings (api keys, secrets, tokens, passwords) are never exposed through MCP. Comment creation respects your WordPress moderation settings. Post meta values are sanitized before storage. Option writes are disabled by default and gated by three independent checks (admin toggle, allowlist, hard denylist) when enabled. The plugin itself starts disabled by default — nothing is accessible until you explicitly enable it.
 
 = Can I use local AI models instead of cloud services? =
 
@@ -268,7 +268,7 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 == Screenshots ==
 
 1. Main settings page with API key and platform overview
-2. AI platform configuration with connection testing
+2. Settings: Claude Code and Codex connect commands, client setup guides, API endpoints and session length
 3. Activity log showing authenticated MCP requests
 4. Claude Desktop MCP connector setup
 5. Adding a custom Royal MCP connector in Claude Desktop
@@ -279,6 +279,34 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 10. Royal MCP tool list in ChatGPT after connection
 
 == Changelog ==
+
+= 1.5.12 =
+* New: AI clients sign in at Royal MCP's own address, so Claude and ChatGPT connect even when another plugin answers the site's usual sign-in addresses.
+* New: a sign-in self-check names any plugin that answers part of Royal MCP's sign-in and shows how to fix it, including Rank Math's built-in MCP sign-in.
+* New: wp_security_triage, a read-only checklist of must-use plugins, unlisted plugin folders, recent plugin changes and users with extra capabilities.
+* New: wp_clone_post_as_draft copies a post or page into a new draft, so changes to published content can be prepared in drafts-only mode.
+* New: wp_get_mcp_coexistence lists the other MCP servers on the site and which plugin answers each shared sign-in address.
+* New: wp_revoke_preview_links ends every preview link for a post.
+* Enhancement: undo for wp_create_post and wp_create_page moves the new post to the trash.
+* Enhancement: Royal MCP tools carry their own categories, annotations and output schemas on the WordPress Abilities API and the MCP Adapter.
+* Enhancement: calls through the WordPress Abilities API and other MCP servers are rate limited per user, like calls to Royal MCP's own endpoint.
+* Enhancement: wp_get_pages and wp_search can list drafts and other statuses the signed-in user may read, and wp_add_post_terms accepts term names and slugs.
+* Enhancement: wp_create_menu_item links any post type or taxonomy that the Menus screen offers.
+* Enhancement: TablePress CSV exports write cells that start with =, +, -, @ as plain text.
+* Enhancement: WPForms form details include the number of input boxes a visitor sees.
+* Enhancement: Royal MCP keeps its MCP Adapter server off while classes from two different copies of the adapter are loaded.
+* Enhancement: while Royal MCP is switched off, its abilities are not offered to other MCP servers at all.
+* Fix: undo of wp_reorder_menu_items keeps nested menu items under their parents.
+* Fix: WP-CLI changes to drafts-only mode and access levels are recorded in the activity log.
+* Fix: expired undo snapshots, sessions and tokens are cleaned up daily on every site.
+* Fix: WooCommerce and Complianz tools answer that the plugin is not active, instead of a permission error, when it is missing.
+* Fix: WooCommerce product prices and stock values are checked before saving, and order status changes no longer accept refunded.
+* Fix: read abilities with only optional arguments run over a plain GET on the WordPress Abilities API.
+* Fix: wp_count_terms, elementor_list_local_templates and the Royal AI Firewall reads return their data on the Abilities API and the MCP Adapter.
+* Security: WooCommerce, Elementor template, comment moderation, custom CSS and preview link tools check the signed-in user's rights on each item.
+* Security: wp_get_post and wp_get_page return the stored source only to users who can edit the post.
+* Security: Elementor edits that would remove markup the signed-in user may not save are refused.
+* Security: on multisite networks, Royal AI Firewall, LiteSpeed and W3 Total Cache tools need a network administrator.
 
 = 1.5.11 =
 * New: Complianz integration with seven tools for the consent setup, cookies, banner texts and legal documents, with undo for text edits.
@@ -750,6 +778,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release.
 
 == Upgrade Notice ==
+
+= 1.5.12 =
+Claude and ChatGPT now sign in at Royal MCP's own address; existing connections keep working.
 
 = 1.5.11 =
 If a connection sends your API key in the X-Royal-MCP-API-Key header, switch it to Authorization: Bearer; the old header still works in this release.

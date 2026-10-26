@@ -249,7 +249,7 @@ class Redirection {
 	 * decoding, lower-casing and dropping the host, query and duplicate slashes;
 	 * regex sources are tested against each protected path.
 	 */
-	private static function refuse_protected_source( $source, $is_regex, array $args ) {
+	public static function refuse_protected_source( $source, $is_regex, array $args ) {
 		if ( ! empty( $args['allow_protected_source'] ) && true === $args['allow_protected_source'] ) {
 			return;
 		}

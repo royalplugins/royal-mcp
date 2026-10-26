@@ -397,12 +397,29 @@ class TablePress {
 		if ( ! in_array( $delimiter, [ ',', ';', 'tab' ], true ) ) {
 			throw new \Exception( 'csv_delimiter must be ",", ";" or "tab".' );
 		}
+		if ( 'csv' === $format && isset( $table['data'] ) && is_array( $table['data'] ) ) {
+			// A spreadsheet runs a cell that starts with =, +, -, @, tab or CR as a formula.
+			foreach ( $table['data'] as $r => $row ) {
+				foreach ( (array) $row as $c => $cell ) {
+					$table['data'][ $r ][ $c ] = self::csv_cell( $cell );
+				}
+			}
+		}
 		$exporter = \TablePress::load_class( 'TablePress_Export', 'class-export.php', 'classes' );
 		$text     = (string) $exporter->export_table( $table, $format, [ 'csv_delimiter' => $delimiter ] );
 		if ( strlen( $text ) > self::MAX_TABLE_BYTES ) {
 			throw new \Exception( 'The export is larger than 2 MB; export it from TablePress\'s Export screen instead.' );
 		}
 		return [ 'table_id' => $id, 'format' => $format, 'content' => $text, 'bytes' => strlen( $text ) ];
+	}
+
+	/** A CSV cell a spreadsheet will read as text, never as a formula. */
+	private static function csv_cell( $value ) {
+		$value = (string) $value;
+		if ( '' !== $value && false !== strpos( "=+-@\t\r", $value[0] ) ) {
+			return "'" . $value;
+		}
+		return $value;
 	}
 
 	/**
