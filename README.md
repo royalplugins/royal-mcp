@@ -7,7 +7,7 @@
 [![WordPress](https://img.shields.io/badge/WordPress-5.8+-21759B?style=flat-square&logo=wordpress)](https://wordpress.org/plugins/royal-mcp/)
 [![PHP](https://img.shields.io/badge/PHP-7.4+-777BB4?style=flat-square&logo=php)](https://www.php.net/)
 [![License](https://img.shields.io/badge/License-GPLv2-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-2.0.html)
-[![Version](https://img.shields.io/badge/Version-1.5.11-C9A227?style=flat-square)](https://wordpress.org/plugins/royal-mcp/)
+[![Version](https://img.shields.io/badge/Version-1.5.12-C9A227?style=flat-square)](https://wordpress.org/plugins/royal-mcp/)
 
 [Download on WordPress.org](https://wordpress.org/plugins/royal-mcp/) · [Documentation](https://royalplugins.com/support/royal-mcp/) · [Royal MCP Pro](https://royalplugins.com/royal-mcp-pro/) · [Royal Plugins](https://royalplugins.com)
 
@@ -56,11 +56,11 @@ Royal MCP answers on its own endpoint and never switches off another plugin's to
 
 ## Capabilities
 
-266 tools: 109 core tools that are always available, plus 157 integration tools that load only when the matching plugin is active.
+270 tools: 113 core tools that are always available, plus 157 integration tools that load only when the matching plugin is active.
 
-### WordPress core (109 tools)
+### WordPress core (113 tools)
 
-- **Content** - Posts, pages and custom post types (create, read, update, delete, revisions, featured images)
+- **Content** - Posts, pages and custom post types (create, read, update, delete, clone as a draft, revisions, featured images)
 - **Taxonomies** - Categories, tags, custom taxonomies, term meta, post-term linking
 - **Media** - Browse; upload images, PDFs and other allowed files (by URL, base64 or a file handed over by ChatGPT); convert, resize and compress images on upload; find a file already in the library by address or content and reuse it instead of uploading a copy; update metadata; delete
 - **Blocks** - Read a post's block tree; insert, replace, move or delete single blocks; replace text across blocks; read and edit synced patterns; read global styles and Site Editor templates
@@ -191,7 +191,7 @@ The older `X-Royal-MCP-API-Key` header still works in this release but is deprec
 | **API key** | 32 hex characters from a cryptographically secure generator, stored only as a SHA-256 hash and compared in constant time. Sent as `Authorization: Bearer`. Rotate it from wp-admin or with `wp royal-mcp rotate-api-key`. |
 | **OAuth 2.1** | Dynamic Client Registration (RFC 7591), authorization server metadata (RFC 8414), PKCE S256 required, refresh tokens. No implicit grant, no client-credentials grant. |
 | **Capability checks** | Every tool checks the WordPress capability it needs, for example `edit_posts` to create or update content, `edit_post` for a specific post and `manage_options` for site settings. |
-| **Rate limiting** | Per IP, per minute: 60 requests without credentials, 300 with. |
+| **Rate limiting** | Per IP, per minute: 60 requests without credentials, 300 with. Calls through the WordPress Abilities API and other MCP servers: 300 per minute per user. |
 | **Sessions** | Cryptographically random session IDs with a sliding 24-hour lifetime. |
 | **Activity log** | One row per tool call: tool name, argument keys, IP, user agent, errors. Argument values are never stored. |
 | **Connected Clients** | See every signed-in AI app, set its access level, and revoke one or all. A one-click reset clears OAuth clients and tokens without touching your API key or settings. |
@@ -207,7 +207,7 @@ Pro is one plugin that includes everything in Royal MCP. When Pro is active, you
 
 | | Royal MCP (free) | Royal MCP Pro |
 |---|:---:|:---:|
-| **Tools** | 266 | **350+** |
+| **Tools** | 270 | **350+** |
 | Connect Claude, ChatGPT, Cursor and any MCP app (OAuth or API key) | ✅ | ✅ |
 | Read-only and drafts-only modes, per-connection access levels | ✅ | ✅ |
 | Recent Changes and 72-hour undo on destructive writes | ✅ | ✅ Pro tools too |

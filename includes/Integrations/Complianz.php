@@ -57,8 +57,15 @@ class Complianz {
 		return true;
 	}
 
-	/** The capability Complianz itself requires (manage_privacy unless filtered). */
+	/**
+	 * The capability Complianz itself requires (manage_privacy unless filtered).
+	 * That capability only exists while Complianz is active, so without it
+	 * administrators are told Complianz is not active rather than refused.
+	 */
 	public static function cap() {
+		if ( ! self::is_available() ) {
+			return 'manage_options';
+		}
 		$cap = apply_filters( 'cmplz_capability', 'manage_privacy' );
 		return is_string( $cap ) && '' !== $cap ? $cap : 'manage_privacy';
 	}

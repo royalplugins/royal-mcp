@@ -306,6 +306,7 @@ class Token_Store {
             'token_type'    => 'Bearer',
             'expires_in'    => $access_ttl,
             'refresh_token' => $refresh_token,
+            'refresh_token_expires_in' => self::REFRESH_TOKEN_TTL,
             'scope'         => $scope,
         ];
     }
@@ -872,6 +873,26 @@ class Token_Store {
      * @param mixed $client_id Value from the OAuth request; may be non-string.
      * @return bool
      */
+    /** Clients registered at the namespace endpoints, by client_id. */
+    const NAMESPACE_CLIENTS_OPTION = 'royal_mcp_oauth_namespace_clients';
+
+    /** Record that a client registered through the namespace endpoints. */
+    public static function mark_namespace_client( $client_id ) {
+        $map = get_option( self::NAMESPACE_CLIENTS_OPTION, [] );
+        $map = is_array( $map ) ? $map : [];
+        $map[ (string) $client_id ] = time();
+        // Newest first, bounded: clients that never sign in are removed by
+        // gc_stale_clients() and fall out of this list too.
+        arsort( $map );
+        update_option( self::NAMESPACE_CLIENTS_OPTION, array_slice( $map, 0, 2000, true ), false );
+    }
+
+    /** Whether a client registered through the namespace endpoints. */
+    public static function is_namespace_client( $client_id ) {
+        $map = get_option( self::NAMESPACE_CLIENTS_OPTION, [] );
+        return is_array( $map ) && isset( $map[ (string) $client_id ] );
+    }
+
     public static function is_cimd_client( $client_id ) {
         return is_string( $client_id )
             && strlen( $client_id ) > 8
@@ -974,7 +995,7 @@ class Token_Store {
             return null;
         }
 
-        set_transient( $cache_key, $data, $ttl );
+        set_transient( $cache_key, $data, $ttl ); // audit:transient-ttl-only -- client metadata document, fetched again after the cache time
 
         return $data;
     }

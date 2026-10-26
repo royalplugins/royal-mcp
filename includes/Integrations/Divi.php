@@ -1856,6 +1856,10 @@ class Divi {
 		if ( \Royal_MCP\MCP\Support\Post_Access::content_withheld( $source ) ) {
 			return Envelope::error( 'insufficient_caps', 'This post is password protected; only users who can edit it may copy it.' );
 		}
+		// A copy carries every builder setting, so it needs edit rights on the source.
+		if ( ! current_user_can( 'edit_post', (int) $source->ID ) ) {
+			return Envelope::error( 'insufficient_caps', 'Only users who can edit the source page may copy it.' );
+		}
 		$create_refusal = \Royal_MCP\MCP\Support\Post_Access::create_refusal( $source->post_type, $new_status );
 		if ( '' !== $create_refusal ) {
 			return Envelope::error( 'insufficient_caps', $create_refusal );

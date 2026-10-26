@@ -31,6 +31,7 @@ class Change_View {
 	const OP_TOOLS = [
 		'wp_delete_post_force'      => 'wp_delete_post',
 		'wp_delete_post_trash'      => 'wp_delete_post',
+		'wp_create_post_trash'      => 'wp_create_post',
 		'wp_delete_comment_force'   => 'wp_delete_comment',
 		'wp_delete_comment_trash'   => 'wp_delete_comment',
 		'wc_delete_variation_force' => 'wc_delete_variation',
@@ -134,6 +135,7 @@ class Change_View {
 				$fd_type = get_post_type_object( (string) ( $t['post_type'] ?? 'post' ) );
 				return [ [ $fd_type ? $fd_type->cap->delete_posts : 'delete_posts' ] ];
 			case 'wp_delete_post_trash':
+			case 'wp_create_post_trash':
 				return [ [ 'delete_post', $id( 'post_id' ) ] ];
 			case 'wp_update_term':
 			case 'wp_update_term_meta':
@@ -558,6 +560,19 @@ class Change_View {
 				$comment = get_comment( $int( 'comment_id' ) );
 				$after   = 'wp_set_comment_status' === $op ? ( $pre['applied_status'] ?? null ) : 'trash';
 				$rows[]  = self::pair_row( 'status', $pre['prior_status'] ?? null, $after, $comment ? self::comment_status( $comment->comment_approved ) : null, (bool) $comment );
+				break;
+
+			case 'wp_create_post_trash':
+				$post = get_post( $int( 'post_id' ) );
+				$row  = [ 'field' => 'post_status', 'before' => null, 'after' => $post ? $post->post_status : null ];
+				if ( $post ) {
+					$row['current'] = $post->post_status;
+				} else {
+					$row['current'] = null;
+					$row['absent']  = [ 'current' ];
+				}
+				$rows[] = $row;
+				$note   = __( 'Created by this change; undo moves it to the trash.', 'royal-mcp' );
 				break;
 
 			case 'wp_delete_post_trash':

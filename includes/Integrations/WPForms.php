@@ -254,6 +254,47 @@ class WPForms {
 	 * match the numeric-cast invariant. is_active tracks post_status='publish'
 	 * (WPForms stores drafts + trashed forms with different statuses).
 	 */
+	/**
+	 * Input boxes one field shows a visitor: field_count counts field
+	 * definitions, while a first/last name, an address or a date and time
+	 * render several boxes, and layout fields render none.
+	 */
+	private static function rendered_inputs( array $field ) {
+		$type = isset( $field['type'] ) ? (string) $field['type'] : '';
+		switch ( $type ) {
+			case 'html':
+			case 'divider':
+			case 'pagebreak':
+			case 'content':
+			case 'hidden':
+			case 'layout':
+			case 'repeater':
+			case 'captcha':
+				return 0;
+			case 'name':
+				$format = (string) ( $field['format'] ?? 'first-last' );
+				return 'simple' === $format ? 1 : ( 'first-middle-last' === $format ? 3 : 2 );
+			case 'address':
+				$n = 6; // street, street line 2, city, state, postal code, country
+				foreach ( [ 'address2_hide', 'state_hide', 'postal_hide', 'country_hide' ] as $hide ) {
+					if ( ! empty( $field[ $hide ] ) ) {
+						$n--;
+					}
+				}
+				if ( 'us' === (string) ( $field['scheme'] ?? '' ) && empty( $field['country_hide'] ) ) {
+					$n--; // the US scheme has no country box
+				}
+				return max( 1, $n );
+			case 'date-time':
+				return 'date-time' === (string) ( $field['format'] ?? 'date-time' ) ? 2 : 1;
+			case 'email':
+			case 'password':
+				return ! empty( $field['confirmation'] ) ? 2 : 1;
+			default:
+				return 1;
+		}
+	}
+
 	private static function format_form_entry( $post ) {
 		$form_id = isset( $post->ID ) ? (int) $post->ID : 0;
 		$title   = isset( $post->post_title ) ? (string) $post->post_title : '';
@@ -263,9 +304,13 @@ class WPForms {
 		$decoded = function_exists( 'wpforms_decode' ) ? wpforms_decode( $raw ) : null;
 		$decoded = (array) ( $decoded ?? [] );
 
-		$field_count = 0;
+		$field_count  = 0;
+		$input_count  = 0;
 		if ( isset( $decoded['fields'] ) && is_array( $decoded['fields'] ) ) {
 			$field_count = count( $decoded['fields'] );
+			foreach ( $decoded['fields'] as $field ) {
+				$input_count += self::rendered_inputs( is_array( $field ) ? $field : [] );
+			}
 		}
 
 		$created_at  = 0;
@@ -290,6 +335,7 @@ class WPForms {
 			'form_id'         => $form_id,
 			'title'           => $title,
 			'field_count'     => (int) $field_count,
+			'rendered_input_count' => (int) $input_count,
 			'is_active'       => ( $status === 'publish' ),
 			'created_at'      => $created_at,
 			'created_at_iso'  => $created_at ? gmdate( 'c', $created_at ) : '',
@@ -364,7 +410,7 @@ class WPForms {
 	 * List submissions/entries for a form.
 	 *
 	 * Arg validation MUST fire before the tier probe so callers see a consistent error contract.
-	 * Pro entry-handler branch is scaffolded; real enumeration pending.
+	 * WPForms Pro entries are not read yet; the reply says so instead of an empty list.
 	 */
 	private static function handle_list_submissions( $args ) {
 		$form_id = self::resolve_form_id( $args );
@@ -391,9 +437,6 @@ class WPForms {
 			];
 		}
 
-		// TODO: Pro submission path is scaffolded — retest against an
-		// activated Pro install and pin the returned row shape (field
-		// values, submitter IP, timestamps, entry status).
 		try {
 			$entry_handler = wpforms()->obj( 'entry' );
 			if ( ! $entry_handler ) {
@@ -406,13 +449,10 @@ class WPForms {
 			}
 
 			return [
-				'form_id'     => $form_id,
-				'submissions' => [],
-				'count'       => 0,
-				'total'       => 0,
-				'offset'      => $offset,
-				'limit'       => $limit,
-				'note'        => 'Pro branch scaffolded — real field extraction TODO once verified against Pro install',
+				'state'   => 'unavailable',
+				'reason'  => 'not_supported',
+				'tier'    => 'wpforms_pro',
+				'message' => 'Reading WPForms Pro entries is not supported yet. Use the WPForms Entries screen in the dashboard.',
 			];
 		} catch ( \Throwable $e ) {
 			error_log( 'Royal MCP WPForms list_submissions Pro fallback: ' . $e->getMessage() );
@@ -429,7 +469,7 @@ class WPForms {
 	 * Read a single submission with all field values + metadata.
 	 *
 	 * Arg validation MUST fire before the tier probe — see handle_list_submissions.
-	 * Pro entry-handler branch is scaffolded; real field extraction pending.
+	 * WPForms Pro entries are not read yet; the reply says so.
 	 */
 	private static function handle_get_submission( $args ) {
 		$submission_id = self::resolve_submission_id( $args );
@@ -443,8 +483,6 @@ class WPForms {
 			];
 		}
 
-		// TODO: Pro single-submission path is scaffolded — retest against an
-		// activated Pro install and pin the returned row shape.
 		try {
 			$entry_handler = wpforms()->obj( 'entry' );
 			if ( ! $entry_handler ) {
@@ -457,9 +495,10 @@ class WPForms {
 			}
 
 			return [
-				'submission_id' => $submission_id,
-				'submissions'   => null,
-				'note'          => 'Pro branch scaffolded — real field extraction TODO once verified against Pro install',
+				'state'   => 'unavailable',
+				'reason'  => 'not_supported',
+				'tier'    => 'wpforms_pro',
+				'message' => 'Reading WPForms Pro entries is not supported yet. Use the WPForms Entries screen in the dashboard.',
 			];
 		} catch ( \Throwable $e ) {
 			error_log( 'Royal MCP WPForms get_submission Pro fallback: ' . $e->getMessage() );

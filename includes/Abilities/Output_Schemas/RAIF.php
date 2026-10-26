@@ -29,28 +29,41 @@ class RAIF {
 				),
 			),
 			'raif_get_recent_hits' => array(
-				'type'  => 'array',
-				'items' => array(
-					'type'                 => 'object',
-					'additionalProperties' => true,
-					'properties'           => array(
-						'timestamp' => array( 'type' => 'string' ),
-						'bot_name'  => array( 'type' => 'string' ),
-						'path'      => array( 'type' => 'string' ),
-						'action'    => array( 'type' => 'string' ),
+				'type'       => 'object',
+				'properties' => array(
+					'hits'      => array(
+						'type'  => 'array',
+						'items' => array(
+							'type'                 => 'object',
+							'additionalProperties' => true,
+							'properties'           => array(
+								'timestamp'       => array( 'type' => 'string' ),
+								'bot_id'          => array( 'type' => 'string' ),
+								'response_status' => array( 'type' => 'integer' ),
+							),
+						),
 					),
+					'returned'  => array( 'type' => 'integer' ),
+					'truncated' => array( 'type' => 'boolean' ),
 				),
 			),
 			'raif_get_bot_policies' => array(
-				'type'  => 'array',
-				'items' => array(
-					'type'                 => 'object',
-					'additionalProperties' => true,
-					'properties'           => array(
-						'bot_id' => array( 'type' => 'string' ),
-						'name'   => array( 'type' => 'string' ),
-						'policy' => array( 'type' => 'string' ),
+				'type'       => 'object',
+				'properties' => array(
+					'policies'       => array(
+						'type'  => 'array',
+						'items' => array(
+							'type'                 => 'object',
+							'additionalProperties' => true,
+							'properties'           => array(
+								'bot_id' => array( 'type' => 'string' ),
+								'name'   => array( 'type' => 'string' ),
+								'policy' => array( 'type' => 'object' ),
+							),
+						),
 					),
+					'global_default' => array( 'type' => 'string' ),
+					'total_count'    => array( 'type' => 'integer' ),
 				),
 			),
 			'raif_set_bot_policy' => array(

@@ -253,6 +253,18 @@ class SiteVault {
 		}
 	}
 
+	/**
+	 * Cloud copy state of a backup: synced | pending | local_missing (the local
+	 * file was gone when the upload was attempted).
+	 */
+	public static function cloud_sync_state( $backup ) {
+		if ( class_exists( 'RB_Backup_Manager' ) && method_exists( 'RB_Backup_Manager', 'get_cloud_sync_state' ) ) {
+			return (string) \RB_Backup_Manager::get_cloud_sync_state( $backup );
+		}
+		$value = (int) ( is_object( $backup ) ? ( $backup->cloud_synced ?? 0 ) : $backup );
+		return 1 === $value ? 'synced' : ( -1 === $value ? 'local_missing' : 'pending' );
+	}
+
 	private static function format_backup( $backup ) {
 		return [
 			'id'           => (int) $backup->id,
@@ -261,7 +273,8 @@ class SiteVault {
 			'status'       => $backup->status,
 			'size'         => (int) $backup->backup_size,
 			'size_human'   => size_format( $backup->backup_size ),
-			'cloud_synced' => (bool) $backup->cloud_synced,
+			'cloud_synced' => 'synced' === self::cloud_sync_state( $backup ),
+			'cloud_sync_state' => self::cloud_sync_state( $backup ),
 			'created_at'   => $backup->created_at,
 			'completed_at' => $backup->completed_at,
 		];

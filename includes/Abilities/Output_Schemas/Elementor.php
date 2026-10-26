@@ -55,14 +55,21 @@ class Elementor {
 				'additionalProperties' => true,
 			),
 			'elementor_list_local_templates' => array(
-				'type'  => 'array',
-				'items' => array(
-					'type'                 => 'object',
-					'additionalProperties' => true,
-					'properties'           => array(
-						'id'    => array( 'type' => 'integer' ),
-						'title' => array( 'type' => 'string' ),
-						'type'  => array( 'type' => 'string' ),
+				'type'       => 'object',
+				'properties' => array(
+					'count'     => array( 'type' => 'integer' ),
+					'templates' => array(
+						'type'  => 'array',
+						'items' => array(
+							'type'                 => 'object',
+							'additionalProperties' => true,
+							'properties'           => array(
+								'id'            => array( 'type' => 'integer' ),
+								'name'          => array( 'type' => 'string' ),
+								'type'          => array( 'type' => 'string' ),
+								'date_modified' => array( 'type' => 'string' ),
+							),
+						),
 					),
 				),
 			),

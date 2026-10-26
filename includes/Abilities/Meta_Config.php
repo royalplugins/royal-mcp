@@ -39,11 +39,19 @@ class Meta_Config {
 	 * Setting both makes the ability REST-visible on every supported WP version.
 	 * meta.mcp.public = false keeps it off the MCP Adapter's default server.
 	 */
-	public static function ability_meta(): array {
-		return array(
+	public static function ability_meta( array $annotations = array() ): array {
+		$meta = array(
 			self::PUBLIC_META_KEY       => true,
 			self::SHOW_IN_REST_META_KEY => true,
 			self::MCP_META_KEY          => array( 'public' => false ),
 		);
+		if ( $annotations ) {
+			$meta['annotations'] = array(
+				'readonly'    => ! empty( $annotations['readOnlyHint'] ),
+				'destructive' => ! empty( $annotations['destructiveHint'] ),
+				'idempotent'  => ! empty( $annotations['idempotentHint'] ),
+			);
+		}
+		return $meta;
 	}
 }

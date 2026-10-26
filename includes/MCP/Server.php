@@ -211,6 +211,7 @@ class Server {
         'tablepress_export_table',
         'snippets_recently_active',
         'complianz_status',
+        'wp_security_triage',
         '_active_profile_notice',
     ];
 
@@ -223,6 +224,7 @@ class Server {
         'seobolt_bulk_update_meta'      => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
         'royal_mcp_undo_last_operation' => [ 'readOnlyHint' => false, 'destructiveHint' => true ],
         'mcp_undo_last_operation'       => [ 'readOnlyHint' => false, 'destructiveHint' => true ],
+        'wp_clone_post_as_draft'        => [ 'readOnlyHint' => false, 'destructiveHint' => false, 'idempotentHint' => false ],
     ];
 
     /** MCP tool annotations for one tool name. Anything not known to be a read is treated as destructive. */
@@ -342,7 +344,7 @@ class Server {
         $this->register_method_handler('resources/list',            [ $this, 'handle_resources_list' ]);
         $this->register_method_handler('resources/read',            [ $this, 'handle_resources_read' ]);
         $this->register_method_handler('resources/templates/list',  [ $this, 'handle_resource_templates_list' ]);
-        $this->register_method_handler('prompts/list',             [ $this, 'handle_prompts_list' ]);
+        $this->register_method_handler('prompts/list',              [ $this, 'handle_prompts_list' ]);
         $this->register_method_handler('server/discover',           [ $this, 'handle_server_discover' ]);
     }
 
@@ -447,8 +449,13 @@ class Server {
     public static function get_resource_metadata_url() {
         // RFC 9728 §3.1 path-suffixed PRM for the endpoint URL this request
         // actually hit. Strict clients reject a `resource` value that
-        // doesn't byte-match the URL they used to reach the server.
-        $default = home_url( '/.well-known/oauth-protected-resource' . \Royal_MCP\OAuth\Server::current_request_resource_path() );
+        // doesn't byte-match the URL they used to reach the server. With the
+        // namespace issuer the document is the copy under Royal MCP's REST
+        // namespace, an address no other plugin answers.
+        $resource_path = \Royal_MCP\OAuth\Server::current_request_resource_path();
+        $default       = '' !== \Royal_MCP\OAuth\Server::namespace_issuer()
+            ? \Royal_MCP\OAuth\Server::canonical_resource_url( \Royal_MCP\OAuth\Server::namespace_issuer_path() . '/.well-known/oauth-protected-resource' . $resource_path )
+            : home_url( '/.well-known/oauth-protected-resource' . $resource_path );
         $filtered = apply_filters( 'royal_mcp_protected_resource_metadata_url', $default );
         return is_string( $filtered ) && $filtered !== '' ? $filtered : $default;
     }
@@ -953,12 +960,14 @@ class Server {
      * fabricating a default backoff. Both bucket size and window duration
      * filterable at runtime.
      *
-     * @param string $ip   Real client IP (from resolve_client_ip()).
-     * @param string $tier 'anon' | 'authed' — selects ceiling from the two-tier property pair.
+     * @param string $ip   Real client IP (from resolve_client_ip()), or a
+     *                     'user:<id>' bucket for signed-in calls on the abilities route.
+     * @param string $tier 'anon' | 'authed' | 'abilities' — anon gets the anon
+     *                     ceiling, the others the authed one.
      * @return bool|WP_REST_Response True if allowed, 429 error response if limited.
      */
     private function check_rate_limit($ip, $tier = 'anon') {
-        $tier_ceiling = ($tier === 'authed') ? $this->rate_limit_max_authed : $this->rate_limit_max_anon;
+        $tier_ceiling = ($tier === 'anon') ? $this->rate_limit_max_anon : $this->rate_limit_max_authed;
 
         /**
          * Filter the rate-limit ceiling. Runs per request with tier context so
@@ -977,12 +986,12 @@ class Server {
         $now  = time();
 
         if ($data === false || ($now - (int) ($data['start'] ?? 0)) > $window) {
-            set_transient($transient_key, ['count' => 1, 'start' => $now], $window);
+            set_transient($transient_key, ['count' => 1, 'start' => $now], $window); // audit:transient-ttl-only -- rate limit window
             return true;
         }
 
         $data['count'] = (int) ($data['count'] ?? 0) + 1;
-        set_transient($transient_key, $data, $window);
+        set_transient($transient_key, $data, $window); // audit:transient-ttl-only -- rate limit window
 
         if ($data['count'] > $max) {
             $retry_after = max(1, ((int) $data['start'] + $window) - $now);
@@ -1407,9 +1416,10 @@ class Server {
     private function get_builtin_tools() {
         $tools = [
             // Posts (supports custom post types)
-            ['name' => 'wp_get_posts', 'description' => 'Get WordPress posts (supports custom post types). Each item includes content_length (bytes of stored post_content) so you can size-check before fetching — on page-builder sites a short page can still carry a very large body.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of posts (max 100)'], 'search' => ['type' => 'string', 'description' => 'Search term'], 'status' => ['type' => 'string', 'description' => 'Post status (publish, draft, etc)'], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post). Use wp_get_post_types to discover available types'], 'include' => ['type' => 'array', 'items' => ['type' => 'integer'], 'maxItems' => 100, 'description' => 'Up to 100 post IDs. Returns exactly those posts (any status you can read) in this order; per_page and search are ignored.'], 'with_content' => ['type' => 'boolean', 'description' => 'When true, each item adds content_text (content with shortcodes and tags removed, whitespace collapsed, at most 3000 characters) and content_truncated.']]]],
+            ['name' => 'wp_get_posts', 'description' => 'Get WordPress posts (supports custom post types). Each item includes content_length (bytes of stored post_content) so you can size-check before fetching — on page-builder sites a short page can still carry a very large body.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of posts (max 100)'], 'search' => ['type' => 'string', 'description' => 'Search term'], 'status' => ['type' => 'string', 'description' => 'Post status (publish, draft, etc)'], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post). Use wp_get_post_types to discover available types'], 'include' => ['type' => 'array', 'items' => ['type' => 'integer'], 'maxItems' => 100, 'description' => 'Up to 100 post IDs. Returns exactly those posts (any status you can read, trashed posts included) in this order; per_page and search are ignored.'], 'with_content' => ['type' => 'boolean', 'description' => 'When true, each item adds content_text (content with shortcodes and tags removed, whitespace collapsed, at most 3000 characters) and content_truncated.']]]],
             ['name' => 'wp_get_post', 'description' => 'Get single post by ID (any post type)', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID']], 'required' => ['id']]],
             ['name' => 'wp_create_post', 'description' => 'Create new post (supports custom post types). Combine status="future" with date to schedule. Excerpt may contain safe HTML (same allow-list as post content). Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule. Past dates auto-publish with that timestamp.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'categories' => ['type' => 'array', 'items' => ['type' => 'integer']], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post)'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to assign as the post author. Defaults to the authenticated MCP user (admin). Use wp_get_users to discover available author IDs.']], 'required' => ['title', 'content']]],
+            ['name' => 'wp_clone_post_as_draft', 'description' => 'Copy a post, page or other public content item you can edit into a new draft owned by you: title, content, excerpt, parent, order, comment settings, password, page template, featured image, the terms you may assign and custom fields that are not protected. The original is not changed. Use it to prepare changes to published content (required in drafts-only mode), then edit the copy. Builder pages use elementor_clone_page or divi_clone_page, which also copy the layout; products are copied in WooCommerce. Undo moves the copy to the trash.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'ID of the post to copy'], 'title' => ['type' => 'string', 'description' => 'Title for the copy (default: the original title)']], 'required' => ['id']]],
             ['name' => 'wp_update_post', 'description' => 'Update existing post (any post type). Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image (pass 0 to remove)'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as the post author. Use wp_get_users to discover available author IDs.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling posts/pages. Lower = earlier.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent post ID (0 = no parent). Useful for hierarchical CPTs. Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Post password. Empty string removes protection.'], 'comment_status' => ['type' => 'string', 'enum' => ['open', 'closed'], 'description' => 'Allow (open) or disallow (closed) new comments.'], 'ping_status' => ['type' => 'string', 'enum' => ['open', 'closed'], 'description' => 'Allow (open) or disallow (closed) trackbacks / pingbacks.']], 'required' => ['id']]],
             ['name' => 'wp_replace_in_post', 'description' => 'Find/replace a literal string inside a post\'s content (any post type) without resending the full body. Use for surgical edits to large posts (page-builder content, embedded base64 payloads) where wp_update_post\'s full-content replacement is impractical. Case-sensitive literal match, no regex. All occurrences are replaced. Response includes occurrence count and read-after-write verification. Set dry_run=true to preview the match count without writing; set expected_count to abort unless exactly that many matches exist.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'find' => ['type' => 'string', 'minLength' => 1, 'description' => 'Literal text to find in post_content (case-sensitive, no regex).'], 'replace' => ['type' => 'string', 'description' => 'Literal replacement text. Empty string deletes the matched text.'], 'expected_count' => ['type' => 'integer', 'description' => 'Optional guard: abort without writing unless the number of occurrences equals this value.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Report the occurrence count without writing. Default false.']], 'required' => ['id', 'find', 'replace']]],
             ['name' => 'wp_get_post_types', 'description' => 'Get all registered public post types (including custom post types)', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -1417,7 +1427,7 @@ class Server {
             ['name' => 'wp_count_posts', 'description' => 'Get post counts by status', 'inputSchema' => ['type' => 'object', 'properties' => ['post_type' => ['type' => 'string', 'description' => 'Post type (post, page, etc)']]]],
 
             // Pages
-            ['name' => 'wp_get_pages', 'description' => 'List WordPress pages. Returns id, title, status, URL, and content_length (bytes of stored content — size-check before fetching) for each. Filter by parent to walk the page hierarchy.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of pages (default 10, max 100)'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID — returns only direct children of this page']]]],
+            ['name' => 'wp_get_pages', 'description' => 'List WordPress pages. Returns id, title, status, URL, and content_length (bytes of stored content — size-check before fetching) for each. Filter by parent to walk the page hierarchy.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of pages (default 10, max 100)'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID — returns only direct children of this page'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'pending', 'private', 'future', 'any'], 'description' => 'publish (default), one status, or any (every status you can read except trash), so a draft you just created can be found.']]]],
             ['name' => 'wp_get_page', 'description' => 'Get single page by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Page ID']], 'required' => ['id']]],
             ['name' => 'wp_create_page', 'description' => 'Create new page. Combine status="future" with date to schedule. Excerpt (via wp_update_post_meta on _excerpt or via wp_create_post fallback) may contain safe HTML.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule.'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID']], 'required' => ['title', 'content']]],
             ['name' => 'wp_update_page', 'description' => 'Update existing page. Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional page excerpt. May contain safe HTML.'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as page author.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling pages. Lower = earlier in navigation.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent page ID (0 = top-level). Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Page password. Empty string removes protection.']], 'required' => ['id']]],
@@ -1429,7 +1439,7 @@ class Server {
             ['name' => 'wp_get_media_item', 'description' => 'Get one media item by ID: title, URL, MIME type, alt text, caption and description, plus file_size in bytes, width and height (and original_width / original_height when WordPress scaled a large upload down), sha256 of the stored file, and for files uploaded through Royal MCP downloaded_from (public URL uploads) and source_sha256 (the file as uploaded, before any resize or convert).', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer']], 'required' => ['id']]],
             ['name' => 'wp_find_media', 'description' => 'Find media library items by the public URL they were downloaded from (source_url) or by SHA-256 (sha256, of the file as uploaded or of the stored file). Use it before uploading to check whether a file is already in the library. Covers files uploaded through Royal MCP and any item whose details were read with wp_get_media_item. Returns up to 20 matches, newest first.', 'inputSchema' => ['type' => 'object', 'properties' => ['source_url' => ['type' => 'string', 'description' => 'Exact public URL the file was downloaded from.'], 'sha256' => ['type' => 'string', 'description' => 'SHA-256 as 64 hexadecimal characters.']]]],
             ['name' => 'wp_upload_media_from_url', 'description' => 'Download a file from a public HTTPS URL and add it to the WordPress media library. Accepts images and any document type the site allows in its media library (for example PDF). Use this when you have a file URL (Unsplash, Pexels, client asset, an official PDF, etc) that needs to become a library attachment — for example before setting an image as a featured image. Returns the new attachment ID and its MIME type. To convert, resize or compress an image on the way in (for example a JPEG under 400 KB), pass convert_to, max_width / max_height and max_kb. Pass if_exists: reuse to get back the existing attachment when this URL was already uploaded with the same options, so a retry never makes a duplicate.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Public HTTPS URL of the file to download'], 'filename' => ['type' => 'string', 'description' => 'Optional filename (with extension). Derived from URL if omitted.'], 'alt_text' => ['type' => 'string', 'description' => 'Alt text for accessibility and SEO (images only)'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string'], 'if_exists' => self::upload_reuse_property()] + self::image_option_properties(), 'required' => ['url']]],
-            ['name' => 'wp_upload_media', 'description' => 'Upload a file to the media library. Accepts images and any document type the site allows in its media library (for example PDF). Send the file one of two ways: as `file`, a file the user attached or generated in the chat (clients that support file parameters, such as ChatGPT, fill this in), or as `content_base64` with `filename` when you have the raw bytes. For files already hosted at a public link, prefer wp_upload_media_from_url. Only files that are part of the conversation (attached, or made by an image generator) come with a download link: a file created or edited in a code sandbox (a path like /mnt/data/...) has none, so ask the user to attach that file to the chat first, or upload the original instead. To convert, resize or compress an image on the way in (for example a JPEG under 400 KB), pass convert_to, max_width / max_height and max_kb here rather than editing the image in a code sandbox first: the site does the work, and the original generated or attached file keeps its download link. Pass if_exists: reuse to get back the existing attachment when the same file was already uploaded with the same options, so a retry never makes a duplicate.', 'inputSchema' => ['type' => 'object', 'properties' => ['file' => ['type' => 'object', 'description' => 'A file from the conversation. The client supplies a short-lived download link; the site fetches it once.', 'properties' => ['download_url' => ['type' => 'string'], 'file_id' => ['type' => 'string'], 'mime_type' => ['type' => 'string'], 'file_name' => ['type' => 'string']], 'required' => ['download_url', 'file_id'], 'additionalProperties' => false], 'filename' => ['type' => 'string', 'description' => 'Filename with extension (e.g. hero.jpg, report.pdf). Required with content_base64; optional with file.'], 'content_base64' => ['type' => 'string', 'description' => 'Base64-encoded file bytes. Use this or file, not both.'], 'alt_text' => ['type' => 'string', 'description' => 'Alt text (images only)'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string'], 'if_exists' => self::upload_reuse_property()] + self::image_option_properties()], '_meta' => ['openai/fileParams' => ['file']]],
+            ['name' => 'wp_upload_media', 'description' => 'Upload a file to the media library. Accepts images and any document type the site allows in its media library (for example PDF). Send the file one of two ways: as `file`, a file the user attached or generated in the chat (clients that support file parameters, such as ChatGPT, fill this in), or as `content_base64` with `filename` when you have the raw bytes. For files already hosted at a public link, prefer wp_upload_media_from_url. Only files that are part of the conversation (attached, or made by an image generator) come with a download link: a file created or edited in a code sandbox (a path like /mnt/data/...) has none, so ask the user to attach that file to the chat first, or upload the original instead. To convert, resize or compress an image on the way in (for example a JPEG under 400 KB), pass convert_to, max_width / max_height and max_kb here rather than editing the image in a code sandbox first: the site does the work, and the original generated or attached file keeps its download link. Pass if_exists: reuse to get back the existing attachment when the same file was already uploaded with the same options, so a retry never makes a duplicate.', 'inputSchema' => ['type' => 'object', 'properties' => ['file' => ['type' => 'object', 'description' => 'A file from the conversation. The client supplies a short-lived download link; the site fetches it once.', 'properties' => ['download_url' => ['type' => 'string'], 'file_id' => ['type' => 'string'], 'mime_type' => ['type' => 'string'], 'file_name' => ['type' => 'string']], 'required' => ['download_url', 'file_id'], 'additionalProperties' => false], 'filename' => ['type' => 'string', 'description' => 'Filename with extension (e.g. hero.jpg, report.pdf). Required with content_base64; optional with file.'], 'content_base64' => ['type' => 'string', 'description' => 'Base64-encoded file bytes. Use this or file, not both. The bytes travel inside your own reply, so this suits small files only (roughly under 40 KB before encoding); for larger files use file or wp_upload_media_from_url.'], 'alt_text' => ['type' => 'string', 'description' => 'Alt text (images only)'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string'], 'if_exists' => self::upload_reuse_property()] + self::image_option_properties()], '_meta' => ['openai/fileParams' => ['file']]],
             ['name' => 'wp_set_featured_image', 'description' => 'Set or replace the featured image on a post or page. Accepts EITHER an existing media_id from wp_get_media, OR an image_url that will be downloaded into the library first. Pass media_id=0 to remove the featured image.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer', 'description' => 'Post or page ID'], 'media_id' => ['type' => 'integer', 'description' => 'Existing attachment ID (use 0 to remove the featured image)'], 'image_url' => ['type' => 'string', 'description' => 'Public HTTPS image URL to download and use instead of media_id'], 'alt_text' => ['type' => 'string', 'description' => 'Alt text to persist on the attachment. Works for both media_id and image_url input paths.']], 'required' => ['post_id']]],
             ['name' => 'wp_update_media', 'description' => 'Update metadata on an existing media attachment: alt text, caption, title, description. Great for adding SEO-friendly alt text to images already in the library.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'alt_text' => ['type' => 'string'], 'caption' => ['type' => 'string'], 'title' => ['type' => 'string'], 'description' => ['type' => 'string']], 'required' => ['id']]],
             ['name' => 'wp_delete_media', 'description' => 'Delete media item', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean']], 'required' => ['id']]],
@@ -1452,13 +1462,13 @@ class Server {
             ['name' => 'wp_delete_term_meta', 'description' => 'Delete term meta data', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['term_id', 'key']]],
 
             // Comments
-            ['name' => 'wp_get_comments', 'description' => 'List comments on the site or a specific post. Returns id, post_id, author, content, date, and status. Requires moderate_comments to list any status other than "approve".', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer', 'description' => 'Limit to comments on this post ID'], 'per_page' => ['type' => 'integer', 'description' => 'Number of comments (default 10, max 100)'], 'status' => ['type' => 'string', 'enum' => ['approve', 'hold', 'spam', 'trash', 'all'], 'description' => 'Comment status filter. "approve" is public; other values require moderate_comments.']]]],
+            ['name' => 'wp_get_comments', 'description' => 'List comments on the site or a specific post. Returns id, post_id, author, content, date, and status. Lists approved comments unless status is passed, for moderators too; any status other than "approve" requires moderate_comments.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer', 'description' => 'Limit to comments on this post ID'], 'per_page' => ['type' => 'integer', 'description' => 'Number of comments (default 10, max 100)'], 'status' => ['type' => 'string', 'enum' => ['approve', 'hold', 'spam', 'trash', 'all'], 'description' => 'Comment status filter. "approve" is public; other values require moderate_comments.']]]],
             ['name' => 'wp_create_comment', 'description' => 'Create a comment. Content may contain WordPress\'s standard comment HTML tags (<a>, <strong>, <em>, <blockquote>, <code>, <cite>, <abbr>, <acronym>) — matches what the WP comment form permits. Other tags are stripped.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'content' => ['type' => 'string'], 'author' => ['type' => 'string', 'description' => 'Author name to record. Only users who can moderate comments may set it; otherwise the comment is posted as the signed-in user.'], 'author_email' => ['type' => 'string', 'description' => 'Author email to record. Only users who can moderate comments may set it.']], 'required' => ['post_id', 'content']]],
             ['name' => 'wp_delete_comment', 'description' => 'Delete a comment', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean']], 'required' => ['id']]],
             ['name' => 'wp_get_pending_comments', 'description' => 'Get comments awaiting moderation (status=hold). Requires moderate_comments capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'limit' => ['type' => 'integer', 'description' => 'Max comments to return (default 20, max 100)']]]],
-            ['name' => 'wp_approve_comment', 'description' => 'Approve a pending comment. Requires moderate_comments capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['comment_id' => ['type' => 'integer']], 'required' => ['comment_id']]],
-            ['name' => 'wp_spam_comment', 'description' => 'Mark a comment as spam. Requires moderate_comments capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['comment_id' => ['type' => 'integer']], 'required' => ['comment_id']]],
-            ['name' => 'wp_trash_comment', 'description' => 'Move a comment to trash. Requires moderate_comments capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['comment_id' => ['type' => 'integer']], 'required' => ['comment_id']]],
+            ['name' => 'wp_approve_comment', 'description' => 'Approve a pending comment. Requires moderate_comments capability and edit rights on the comment\'s post.', 'inputSchema' => ['type' => 'object', 'properties' => ['comment_id' => ['type' => 'integer']], 'required' => ['comment_id']]],
+            ['name' => 'wp_spam_comment', 'description' => 'Mark a comment as spam. Requires moderate_comments capability and edit rights on the comment\'s post.', 'inputSchema' => ['type' => 'object', 'properties' => ['comment_id' => ['type' => 'integer']], 'required' => ['comment_id']]],
+            ['name' => 'wp_trash_comment', 'description' => 'Move a comment to trash. Requires moderate_comments capability and edit rights on the comment\'s post.', 'inputSchema' => ['type' => 'object', 'properties' => ['comment_id' => ['type' => 'integer']], 'required' => ['comment_id']]],
 
             // Users
             ['name' => 'wp_get_users', 'description' => 'List site users. Returns id, display_name, roles, user_registered (UTC) and extra_caps (capabilities granted to the user beyond their roles, empty for most users). Emails and usernames are NOT exposed. Filter by role slug (administrator / editor / author / contributor / subscriber, or any custom role).', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of users (default 10, max 100)'], 'role' => ['type' => 'string', 'description' => 'Filter by role slug. Use wp_get_user for a single user by ID.']]]],
@@ -1473,6 +1483,8 @@ class Server {
 
             // Site & Search
             ['name' => 'wp_get_site_info', 'description' => 'Get user-facing site metadata (name, description, URL, language, timezone, WP version). For operator-facing environment (PHP/MySQL versions, plugin count, memory limits, disk free), use wp_get_site_status.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'wp_security_triage', 'description' => 'Read-only security check for a site you suspect was compromised. Reports facts only, never secrets: must-use plugins and drop-ins (file, name, version, modified date) and anything else in mu-plugins; plugin folders and loose PHP files in the plugins folder that WordPress does not list as plugins; every plugin with its folder and main-file modified dates; users holding capabilities beyond their role (id, short login hash, role, extra capabilities, registration date; no emails or logins) and the administrator count; whether named options exist (present + count only, never names beyond your pattern or values); leftovers in wp-content/upgrade. Pass since (a date) to flag anything installed, changed or registered after it, plugin_names to look for published indicator plugin slugs, option_patterns for published database indicators. Ends with the indicators found and a summary that never says the site is clean: "No indicators found among the checks run". Filesystem walks stop at 5,000 files or 3 seconds per check and mark results partial. Requires manage_options (network admin on multisite).', 'inputSchema' => ['type' => 'object', 'properties' => ['since' => ['type' => 'string', 'description' => 'Optional date (2026-10-17 or 2026-10-17T00:00:00Z): flag plugins, must-use plugins, drop-ins and upgrade leftovers changed after it, and count administrators registered after it.'], 'option_patterns' => ['type' => 'array', 'maxItems' => 20, 'items' => ['type' => 'string'], 'description' => 'Up to 20 option names or patterns with one * at the start or end (e.g. *_sync_token), at least 6 characters besides the *. Each returns present and count only.'], 'plugin_names' => ['type' => 'array', 'maxItems' => 50, 'items' => ['type' => 'string'], 'description' => 'Up to 50 plugin slugs or folder names from a published advisory; each is looked for among registered, unregistered, must-use and drop-in files.'], 'checks' => ['type' => 'array', 'items' => ['type' => 'string', 'enum' => ['mu_plugins', 'unregistered_plugin_folders', 'plugins', 'users', 'option_patterns', 'upgrade_folder']], 'description' => 'Optional subset of checks to run. Default: all.']]]],
+            ['name' => 'wp_get_mcp_coexistence', 'description' => 'Report what else on this site speaks MCP and who answers the addresses MCP clients and AI crawlers read: other MCP servers and hubs (Elementor MCP and its switch, the WordPress MCP Adapter and which plugin bundles it, Angie, and any active plugin that is an MCP server), the plugin answering /.well-known/oauth-authorization-server, /.well-known/oauth-protected-resource, /.well-known/mcp/server-card.json, /llms.txt and robots.txt (with the AI bots it blocks), whether Royal MCP tools can be reached through another server, and the sign-in path an AI app follows to reach Royal MCP (who answers each step, with a fix when another plugin does). Read-only; loads each address from the site, so it takes a few seconds. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_get_site_status', 'description' => 'One-shot site diagnostic. Returns WordPress version, PHP version, MySQL/MariaDB version, active plugin count, active theme details, memory limit, max upload size, timezone, WP_DEBUG_LOG state, disk free space, install age, and site/home URLs. Use this at the start of a debugging or environment-inspection conversation instead of piecing it together from wp_get_site_info + wp_get_plugins + wp_get_active_theme. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_get_error_log_tail', 'description' => 'Read the tail of wp-content/debug.log. Returns the last N lines (default 100, max 1000), optionally filtered by a case-insensitive substring. Automatically caps file read at last 1MB to prevent memory blowup on huge logs (truncated=true when this happens). Returns status="disabled" with instructions when WP_DEBUG_LOG is not enabled in wp-config.php. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => ['lines' => ['type' => 'integer', 'description' => 'Number of lines to return from the tail (default 100, max 1000).'], 'filter' => ['type' => 'string', 'description' => 'Optional case-insensitive substring filter applied before the last-N slice (e.g. "Fatal error", "Deprecated", a plugin slug).']]]],
             ['name' => 'wp_get_cron_schedule', 'description' => 'Enumerate scheduled wp_cron events. Returns each event with hook name, next run (unix + ISO 8601), seconds until next run, is_overdue flag, recurrence (hourly / twicedaily / daily / custom + interval in seconds), and args. Sorted by next-run ascending so overdue events come first. Useful for diagnosing missed schedules, plugin cron conflicts, or unfired hooks. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -1481,10 +1493,10 @@ class Server {
             ['name' => 'get_tool_info', 'description' => 'Return the full inputSchema (and, when available, an example invocation) for a single tool named in tool_name. Pairs with discover_tools + execute_tool for the compact discovery flow.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name (e.g. "wp_update_post").']], 'required' => ['tool_name']]],
             ['name' => 'execute_tool', 'description' => 'Pass-through dispatcher for the compact discovery flow. Invokes the tool named in tool_name with the arguments in arguments — semantically identical to a direct tools/call for that tool. Useful when the client only advertised the routing tools via X-MCP-Profile: compact but still wants to invoke a specific underlying tool without renegotiating the profile.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name to invoke.'], 'arguments' => ['type' => 'object', 'description' => 'Arguments object forwarded to the underlying tool. Same shape you\'d pass in tools/call.']], 'required' => ['tool_name']]],
             ['name' => 'wp_verify_rendered_page', 'description' => 'Post-write verification tool. Fetches the actual rendered HTML that WordPress serves at a URL via a loopback request and returns the response status, a subset of response headers (content-type, cache-control, x-cache), the page title, meta description, first h1, counts of script and stylesheet link tags, robots_meta (content of <meta name="robots">, null when absent), x_robots_tag (the X-Robots-Tag header, null when absent), redirect_chain ([{url, status}] for each redirect followed, up to 5; [] when none — response_status is the final status), tls_valid (whether the https certificate verifies; null for http), and (when include_body_excerpt is true) a 500-char excerpt of the page body. Optional selector arg reports whether an id/class selector is present in the served HTML. Use after any write that changes content, theme, or options to catch page-builder caches, object caches, or edge caches serving stale HTML even when the DB write returned success. Rate-limited to 10 calls per minute per URL; the redirect hops within one call are not counted separately. Requires read on the target post/page or manage_options. URL must belong to the current WordPress site.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Absolute URL on this site to fetch (must match home_url() origin).'], 'selector' => ['type' => 'string', 'description' => 'Optional #id or .class selector to check for presence in the rendered HTML.'], 'include_body_excerpt' => ['type' => 'boolean', 'description' => 'When true, include a 500-char excerpt of the <body> in the response. Default false.']], 'required' => ['url']]],
-            ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, the block tools (wp_insert_blocks, wp_replace_block, wp_move_block, wp_delete_block, wp_replace_text_in_blocks, wp_update_block_attributes, wp_update_synced_pattern), wp_update_post, wp_update_post_meta, wp_add_post_meta, wp_delete_post, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, yoast_update_meta (aliases wp_update_seo_meta), wp_update_widget, the comment tools (wp_create_comment, wp_delete_comment, wp_approve_comment, wp_spam_comment, wp_trash_comment), the WooCommerce writes (products, variations, orders, order notes, attributes, coupons), the Elementor write tools (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_apply_template_to_page, elementor_rebuild_post_content) and the Divi write tools (divi_replace_image, divi_clone_page, divi_import_template). Tokens live 72 hours and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Restore may be refused with a drift error if the target was modified between the tracked write and this undo call (protects downstream writes from silent clobber). Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).']], 'required' => ['token']]],
+            ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, the block tools (wp_insert_blocks, wp_replace_block, wp_move_block, wp_delete_block, wp_replace_text_in_blocks, wp_update_block_attributes, wp_update_synced_pattern), wp_create_post, wp_create_page and wp_clone_post_as_draft (undo moves the new post to the trash), wp_update_post, wp_update_post_meta, wp_add_post_meta, wp_delete_post, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, yoast_update_meta (aliases wp_update_seo_meta), wp_update_widget, the comment tools (wp_create_comment, wp_delete_comment, wp_approve_comment, wp_spam_comment, wp_trash_comment), the WooCommerce writes (products, variations, orders, order notes, attributes, coupons), the Elementor write tools (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_apply_template_to_page, elementor_rebuild_post_content) and the Divi write tools (divi_replace_image, divi_clone_page, divi_import_template). Tokens live 72 hours and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Restore may be refused with a drift error if the target was modified between the tracked write and this undo call (protects downstream writes from silent clobber). Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).']], 'required' => ['token']]],
             ['name' => 'mcp_list_recent_changes', 'description' => 'List the changes made through Royal MCP that can still be reviewed: every undo-tracked write from the last 72 hours by the same WordPress user, newest first. Each row has the time, the tool, what it changed (target_label), what undo would restore (undo_summary), which connection made it (AI client, API key, another MCP server or a browser agent), whether it was undone, and the undo token while undo is still possible. Pass a change_id to mcp_get_change for the before and after values. Changes older than 72 hours are not kept.', 'inputSchema' => ['type' => 'object', 'properties' => ['limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 100, 'description' => 'Rows to return (default 20, max 100).'], 'tool' => ['type' => 'string', 'description' => 'Only changes made by this tool, for example wp_update_post.'], 'include_undone' => ['type' => 'boolean', 'description' => 'Include changes that were already undone (default true).']]]],
             ['name' => 'mcp_get_change', 'description' => 'Show one change field by field: the value before the change, the value the change wrote, and the value now, plus a line diff for post content, CSS and page-builder data. Flags fields that were changed again since, which undo would refuse. Takes a change_id from mcp_list_recent_changes, or the undo token from the original tool response. A change older than 72 hours reports status "expired".', 'inputSchema' => ['type' => 'object', 'properties' => ['change_id' => ['type' => 'string', 'description' => 'change_id from mcp_list_recent_changes, or the undo token from the tool response that made the change.']], 'required' => ['change_id']]],
-            ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page). Each result includes content_length (bytes of stored content) for size triage.', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.']], 'required' => ['query']]],
+            ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page). Each result includes content_length (bytes of stored content) for size triage.', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'pending', 'private', 'future', 'any'], 'description' => 'publish (default), one status, or any (every status you can read except trash), so a draft you just created can be found.']], 'required' => ['query']]],
 
             // Options
             ['name' => 'wp_get_option', 'description' => 'Get a single WordPress option value. Requires manage_options capability. The option name must be in the readable allowlist — 13 defaults (blogname, blogdescription, siteurl, home, admin_email, posts_per_page, date_format, time_format, timezone_string, googlesitekit_analytics-4_settings, show_on_front, page_on_front, blog_public) plus any keys plugin authors opt in via the royal_mcp_readable_options filter, plus options an admin allowlists under Royal MCP settings (Allowlisted plugin options) while option writes are enabled. Sensitive keys inside the returned value are redacted regardless of what the option contains.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string']], 'required' => ['name']]],
@@ -1495,7 +1507,7 @@ class Server {
             ['name' => 'wp_get_menus', 'description' => 'List all registered navigation menus (nav_menu taxonomy). Returns id, name, slug, and item count for each. Use wp_get_menu_items to enumerate items within a specific menu.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_get_menu_items', 'description' => 'Get menu items', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_id' => ['type' => 'integer']], 'required' => ['menu_id']]],
             ['name' => 'wp_create_menu', 'description' => 'Create a new WordPress navigation menu. Wraps wp_create_nav_menu(). Returns the new menu_id which can then be passed to wp_create_menu_item / wp_reorder_menu_items. Use this on a site that has no menus yet so the menu-item tools have a menu to write into. Requires edit_theme_options capability. Returns WP_Error on duplicate menu name.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string', 'description' => 'Display name for the new menu. Must be unique among existing menus.']], 'required' => ['name']]],
-            ['name' => 'wp_create_menu_item', 'description' => 'Create a menu item in a navigation menu. On a site with no menus, call wp_create_menu first to obtain a menu_id. Requires edit_theme_options capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'url' => ['type' => 'string', 'description' => 'External URL (leave empty if linking to a post/page via object_id)'], 'object_id' => ['type' => 'integer', 'description' => 'WordPress object ID (post, page, or term)'], 'object_type' => ['type' => 'string', 'enum' => ['post', 'page', 'category', 'custom'], 'description' => 'Type of object being linked (default: custom)'], 'parent_id' => ['type' => 'integer', 'description' => 'Parent menu item ID for nested items (0 = top level)'], 'position' => ['type' => 'integer', 'description' => 'Position in menu order (default: end)'], 'target' => ['type' => 'string', 'enum' => ['_self', '_blank'], 'description' => 'Link target']], 'required' => ['menu_id', 'title']]],
+            ['name' => 'wp_create_menu_item', 'description' => 'Create a menu item in a navigation menu. On a site with no menus, call wp_create_menu first to obtain a menu_id. Requires edit_theme_options capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'url' => ['type' => 'string', 'description' => 'External URL (leave empty if linking to a post/page via object_id)'], 'object_id' => ['type' => 'integer', 'description' => 'ID of the post or term the item links to'], 'object_type' => ['type' => 'string', 'description' => 'custom (default, needs url), any post type (post, page, product…) or any taxonomy (category, post_tag, product_cat…)'], 'parent_id' => ['type' => 'integer', 'description' => 'Parent menu item ID for nested items (0 = top level)'], 'position' => ['type' => 'integer', 'description' => 'Position in menu order (default: end)'], 'target' => ['type' => 'string', 'enum' => ['_self', '_blank'], 'description' => 'Link target']], 'required' => ['menu_id', 'title']]],
             ['name' => 'wp_update_menu_item', 'description' => 'Update an existing menu item. Only the fields you pass will change; unspecified fields are preserved from the existing item. The tool will refuse explicit-empty values for title or url that would destroy a non-empty existing value — to intentionally clear those, use wp_delete_menu_item then wp_create_menu_item. Requires edit_theme_options capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_item_id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'url' => ['type' => 'string'], 'parent_id' => ['type' => 'integer'], 'position' => ['type' => 'integer'], 'target' => ['type' => 'string', 'enum' => ['_self', '_blank']]], 'required' => ['menu_item_id']]],
             ['name' => 'wp_delete_menu_item', 'description' => 'Delete a menu item. Requires edit_theme_options capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_item_id' => ['type' => 'integer']], 'required' => ['menu_item_id']]],
             ['name' => 'wp_reorder_menu_items', 'description' => 'Reorder menu items by passing an array of menu_item_ids in the desired order. Existing titles, URLs, parents, and other fields are preserved on every item touched. Every response includes an "undo" envelope with a token that mcp_undo_last_operation can consume for 72 hours to restore the pre-op menu order. If the response includes a "skipped" array, those items could not be safely reordered (e.g. missing or recently deleted) — the rest were reordered correctly. Requires edit_theme_options capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_id' => ['type' => 'integer'], 'item_order' => ['type' => 'array', 'items' => ['type' => 'integer'], 'description' => 'Array of menu_item_ids in the desired order']], 'required' => ['menu_id', 'item_order']]],
@@ -1531,6 +1543,7 @@ class Server {
             ['name' => 'wp_restore_revision', 'description' => 'Restore a post to a specific revision. The current post content becomes the previous revision (so it can still be reverted again). Requires edit_post capability on the parent post.', 'inputSchema' => ['type' => 'object', 'properties' => ['revision_id' => ['type' => 'integer']], 'required' => ['revision_id']]],
 
             // Blocks (block editor content, patterns, templates)
+            ['name' => 'wp_revoke_preview_links', 'description' => 'End every preview link made with wp_create_preview_link for one post/page/CPT, whoever made it. Links made afterwards work as usual. Cap: edit_post on target post_id.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer', 'description' => 'Post/page/CPT ID whose preview links to end.']], 'required' => ['post_id']]],
             ['name' => 'wp_get_block_outline', 'description' => 'Block tree of a post: each block\'s path, name, key attributes, a text preview, inner block count and how it can be edited (text or attributes). Use the paths with the other block tools. Stats show blocks per plugin namespace, Custom HTML blocks and HTML outside blocks. Read-only.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID (any post type that stores block content).'], 'path' => ['type' => 'string', 'description' => 'Optional: outline only the block at this path and its inner blocks.'], 'max_depth' => ['type' => 'integer', 'minimum' => 1, 'description' => 'Optional: how many levels deep to go (default all).']], 'required' => ['id']]],
             ['name' => 'wp_list_block_types', 'description' => 'Block types registered on this site, including plugin blocks (GenerateBlocks, Stackable, Spectra, GreenShift and others). Filter by namespace; include_attributes adds each attribute\'s type, default and allowed values. Read-only.', 'inputSchema' => ['type' => 'object', 'properties' => ['namespace' => ['type' => 'string', 'description' => 'Optional namespace such as core, generateblocks, stackable, uagb or greenshift-blocks.'], 'include_attributes' => ['type' => 'boolean', 'description' => 'Include attribute definitions (default false).']]]],
             ['name' => 'wp_validate_blocks', 'description' => 'Check block markup before writing it: unknown block types, unbalanced block comments, HTML outside blocks, and whether it survives a parse and re-save. A structural check; only the block editor runs each block\'s own save() function. Read-only.', 'inputSchema' => ['type' => 'object', 'properties' => ['markup' => ['type' => 'string', 'description' => 'Serialized block markup, e.g. <!-- wp:paragraph --><p>Text</p><!-- /wp:paragraph -->. Copy existing markup from wp_get_post or wp_get_synced_pattern as a model.']], 'required' => ['markup']]],
@@ -1612,6 +1625,218 @@ class Server {
         }
         sort( $extra );
         return $extra;
+    }
+
+    /**
+     * Flush rewrite rules including the server's rules file. Outside wp-admin
+     * the functions that write .htaccess are not loaded, so a flush would
+     * leave Apache sites on the old rules.
+     *
+     * @return string apache_htaccess_written | apache_htaccess_not_writable | not_apache
+     */
+    private static function flush_rewrites_with_server_rules() {
+        if ( ! function_exists( 'save_mod_rewrite_rules' ) ) {
+            require_once ABSPATH . 'wp-admin/includes/misc.php';
+        }
+        if ( ! function_exists( 'get_home_path' ) ) {
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+        }
+        global $wp_rewrite;
+        $wp_rewrite->flush_rules( true );
+        if ( ! function_exists( 'got_mod_rewrite' ) || ! got_mod_rewrite() ) {
+            return 'not_apache';
+        }
+        $htaccess = get_home_path() . '.htaccess';
+        return ( file_exists( $htaccess ) ? wp_is_writable( $htaccess ) : wp_is_writable( get_home_path() ) ) ? 'apache_htaccess_written' : 'apache_htaccess_not_writable';
+    }
+
+    /** Statuses a listing returns for a status argument: one status, or every non-trash status for any. */
+    private static function listing_statuses( $status ) {
+        $status = sanitize_key( (string) $status );
+        if ( 'any' === $status ) {
+            return [ 'publish', 'draft', 'pending', 'private', 'future' ];
+        }
+        return in_array( $status, [ 'publish', 'draft', 'pending', 'private', 'future' ], true ) ? $status : 'publish';
+    }
+
+    /**
+     * Undo for a create: moving the new post to the trash. The fields are added
+     * to the tool's own result so the response keeps its shape.
+     */
+    /**
+     * A draft copy of a post the caller can edit. Builder pages and products
+     * have their own copy tools, which also carry the layout or the stock and
+     * SKU settings. Custom fields with serialized objects are left out, as are
+     * fields beyond the size limits; both are reported.
+     */
+    private function clone_post_as_draft( array $args ) {
+        $source_id = isset( $args['id'] ) ? (int) $args['id'] : (int) ( $args['post_id'] ?? 0 );
+        if ( $source_id <= 0 ) {
+            throw new \Exception( 'id is required.' );
+        }
+        $source = get_post( $source_id );
+        // One answer for a missing post and one the caller may not read.
+        if ( ! $source || ! \Royal_MCP\MCP\Support\Post_Access::can_read( $source ) ) {
+            throw new \Exception( 'Post not found.' );
+        }
+        $pto = get_post_type_object( $source->post_type );
+        if ( ! $pto || empty( $pto->public ) || empty( $pto->show_ui ) || 'attachment' === $source->post_type ) {
+            throw new \Exception( 'Only posts, pages and other public content types can be cloned.' );
+        }
+        if ( in_array( $source->post_type, [ 'product', 'product_variation' ], true ) ) {
+            throw new \Exception( 'Products carry stock and SKU settings; copy them with Duplicate in WooCommerce > Products.' );
+        }
+        if ( ! current_user_can( 'edit_post', $source_id ) ) {
+            throw new \Exception( 'Only users who can edit this post may clone it.' );
+        }
+        if ( 'builder' === get_post_meta( $source_id, '_elementor_edit_mode', true ) ) {
+            throw new \Exception( 'This page is built with Elementor; use elementor_clone_page so the copy keeps its layout.' );
+        }
+        if ( 'on' === get_post_meta( $source_id, '_et_pb_use_builder', true ) ) {
+            throw new \Exception( 'This page is built with Divi; use divi_clone_page so the copy keeps its layout.' );
+        }
+        $refusal = \Royal_MCP\MCP\Support\Post_Access::create_refusal( $source->post_type, 'draft' );
+        if ( '' !== $refusal ) {
+            throw new \Exception( esc_html( $refusal ) );
+        }
+        $title = isset( $args['title'] ) && '' !== trim( (string) $args['title'] )
+            ? \Royal_MCP\MCP\Support\SafeText::field( (string) $args['title'] )
+            : (string) $source->post_title;
+
+        $meta_input = [];
+        $thumb      = (int) get_post_thumbnail_id( $source );
+        if ( $thumb > 0 && 'attachment' === get_post_type( $thumb ) ) {
+            $meta_input['_thumbnail_id'] = $thumb;
+        }
+        $template = (string) get_post_meta( $source_id, '_wp_page_template', true );
+        if ( '' !== $template && 'default' !== $template ) {
+            $meta_input['_wp_page_template'] = $template;
+        }
+        $postarr = [
+            'post_title'     => wp_slash( $title ),
+            'post_content'   => wp_slash( (string) $source->post_content ),
+            'post_excerpt'   => wp_slash( (string) $source->post_excerpt ),
+            'post_status'    => 'draft',
+            'post_type'      => $source->post_type,
+            'post_author'    => get_current_user_id(),
+            'menu_order'     => (int) $source->menu_order,
+            'comment_status' => $source->comment_status,
+            'ping_status'    => $source->ping_status,
+            'post_password'  => wp_slash( (string) $source->post_password ),
+            'meta_input'     => $meta_input,
+        ];
+        if ( $source->post_parent > 0 && is_post_type_hierarchical( $source->post_type ) && get_post( (int) $source->post_parent ) ) {
+            $postarr['post_parent'] = (int) $source->post_parent;
+        }
+        $new_id = wp_insert_post( $postarr, true );
+        if ( is_wp_error( $new_id ) ) {
+            throw new \Exception( esc_html( $new_id->get_error_message() ) );
+        }
+        if ( ! $new_id ) {
+            throw new \Exception( 'The copy could not be created.' );
+        }
+        // Saving filters markup for accounts without unfiltered_html; a copy
+        // that would lose part of the original is not made.
+        $saved = get_post( $new_id );
+        if ( ! current_user_can( 'unfiltered_html' ) && $saved
+            && ( (string) $saved->post_content !== (string) $source->post_content || (string) $saved->post_excerpt !== (string) $source->post_excerpt ) ) {
+            wp_delete_post( $new_id, true );
+            throw new \Exception( 'The copy would lose markup your account cannot save (such as embeds or scripts), so nothing was created. A user who can save that markup can clone it.' );
+        }
+
+        $skipped    = [];
+        $term_count = 0;
+        foreach ( get_object_taxonomies( $source->post_type, 'objects' ) as $tax ) {
+            $ids = wp_get_object_terms( $source_id, $tax->name, [ 'fields' => 'ids' ] );
+            if ( is_wp_error( $ids ) || empty( $ids ) ) {
+                continue;
+            }
+            if ( ! current_user_can( $tax->cap->assign_terms ) ) {
+                $skipped[] = [ 'taxonomy' => $tax->name, 'reason' => 'you may not assign these terms' ];
+                continue;
+            }
+            $set = wp_set_object_terms( $new_id, array_map( 'intval', $ids ), $tax->name );
+            if ( ! is_wp_error( $set ) ) {
+                $term_count += count( $ids );
+            }
+        }
+
+        $field_count = 0;
+        $bytes       = 0;
+        foreach ( (array) get_post_meta( $source_id ) as $key => $values ) {
+            $key = (string) $key;
+            if ( is_protected_meta( $key, 'post' ) ) {
+                continue;
+            }
+            if ( $field_count >= 200 ) {
+                $skipped[] = [ 'custom_field' => $key, 'reason' => 'more than 200 custom fields' ];
+                continue;
+            }
+            $size = 0;
+            foreach ( (array) $values as $raw ) {
+                $size += strlen( (string) $raw );
+            }
+            if ( $bytes + $size > MB_IN_BYTES ) {
+                $skipped[] = [ 'custom_field' => $key, 'reason' => 'custom fields larger than 1 MB in total' ];
+                continue;
+            }
+            $has_object = false;
+            foreach ( (array) $values as $raw ) {
+                if ( is_serialized( (string) $raw ) && preg_match( '/(^|[;{])[OC]:\d+:"/', (string) $raw ) ) {
+                    $has_object = true;
+                    break;
+                }
+            }
+            if ( $has_object ) {
+                $skipped[] = [ 'custom_field' => $key, 'reason' => 'holds a stored PHP object' ];
+                continue;
+            }
+            foreach ( (array) $values as $raw ) {
+                add_post_meta( $new_id, $key, wp_slash( maybe_unserialize( (string) $raw ) ) );
+            }
+            $bytes += $size;
+            $field_count++;
+        }
+
+        $out = [
+            'id'          => (int) $new_id,
+            'source_id'   => $source_id,
+            'post_type'   => (string) $source->post_type,
+            'status'      => 'draft',
+            'title'       => (string) get_the_title( $new_id ),
+            'edit_url'    => (string) get_edit_post_link( $new_id, 'raw' ),
+            'preview_url' => (string) get_preview_post_link( $new_id ),
+            'copied'      => [
+                'terms'          => $term_count,
+                'custom_fields'  => $field_count,
+                'featured_image' => isset( $meta_input['_thumbnail_id'] ),
+                'page_template'  => isset( $meta_input['_wp_page_template'] ),
+            ],
+            'message'     => 'Draft copy created; the original is unchanged. Edit the copy, then publish it in place of the original or copy the changes back.',
+        ];
+        if ( $skipped ) {
+            $out['skipped'] = $skipped;
+        }
+        return array_merge( $out, self::create_undo_fields( $new_id, (string) $source->post_type ) );
+    }
+
+    private static function create_undo_fields( $post_id, $post_type ) {
+        $post = get_post( (int) $post_id );
+        if ( ! $post ) {
+            return [];
+        }
+        $undo = \Royal_MCP\MCP\Undo_Store::store( [
+            'op'           => 'wp_create_post_trash',
+            'summary'      => sprintf( 'Move the new %s %d to the trash.', $post_type, (int) $post_id ),
+            'target'       => [ 'post_id' => (int) $post_id, 'post_type' => (string) $post_type ],
+            'pre_op_state' => [ 'modified_gmt' => (string) $post->post_modified_gmt ],
+        ] );
+        return [
+            'undo_available'  => true,
+            'undo_token'      => (string) $undo['token'],
+            'undo_expires_at' => (string) $undo['expires_at'],
+            'undo_summary'    => (string) $undo['summary'],
+        ];
     }
 
     /**
@@ -2895,7 +3120,7 @@ class Server {
                         'type' => 'text',
                         'text' => 'Error: ' . $e->getMessage(),
                     ]],
-                    'isError' => true,
+                    'isError' => true, // audit:helper-bypass-safe -- tools/call error reply, completed by ensure_structured_content
                     'structuredContent' => [
                         'error'   => 'exception',
                         'message' => $e->getMessage(),
@@ -3070,6 +3295,7 @@ class Server {
             'tool'            => (string) $tool_name,
             'arg_keys'        => is_array($args) ? array_keys($args) : [],
             'access_level'    => $this->connection_access_level()[0],
+            'route'           => (string) $this->request_route,
             'mcp_method_hint' => $this->request_mcp_method_hint,
             'mcp_name_hint'   => $this->request_mcp_name_hint,
         ];
@@ -3250,6 +3476,16 @@ class Server {
      * gates as MCP + REST calls.
      */
     public function invoke( string $name, array $args, string $route = 'native' ) {
+        // Calls through the WordPress Abilities API and MCP Adapter servers share
+        // the native endpoint's per-minute ceiling, counted per signed-in user.
+        if ( 'abilities' === $route ) {
+            $rate_uid   = (int) get_current_user_id();
+            $rate_check = $this->check_rate_limit( $rate_uid > 0 ? 'user:' . $rate_uid : 'abilities-ip:' . self::resolve_client_ip(), 'abilities' );
+            if ( true !== $rate_check ) {
+                $rate_data = $rate_check instanceof \WP_REST_Response ? (array) $rate_check->get_data() : [];
+                throw new \Exception( (string) ( $rate_data['error']['message'] ?? 'Rate limit exceeded.' ), 429 );
+            }
+        }
         $previous_route      = $this->request_route;
         $this->request_route = 'abilities' === $route ? 'abilities' : 'native';
         // The abilities route (WP Abilities REST, MCP Adapter servers) answers to the
@@ -3405,7 +3641,10 @@ class Server {
                         'orderby'     => 'post__in',
                         'numberposts' => count($gp_include),
                         'post_type'   => $query_args['post_type'] ?? 'any',
-                        'post_status' => 'any',
+                        // Every status, trash included ('any' leaves trash out),
+                        // so a post just trashed is still found by its ID. Revisions
+                        // and attachments (inherit) pass the per-row read rule below.
+                        'post_status' => array_values(array_diff(get_post_stati(), ['auto-draft'])),
                     ];
                 }
                 $posts = get_posts($query_args);
@@ -3433,7 +3672,7 @@ class Server {
                     $item = [
                         'id' => $p->ID,
                         'title' => $p->post_title,
-                        'excerpt' => $gp_withheld ? '' : wp_trim_words($p->post_content, 50),
+                        'excerpt' => $gp_withheld ? '' : wp_trim_words($this->text_source_for_caller($p), 50),
                         'protected' => '' !== (string) $p->post_password,
                         'status' => $p->post_status,
                         'type' => $p->post_type,
@@ -3449,7 +3688,7 @@ class Server {
                     } elseif ($gp_with_content) {
                         // Plain text for drafting: shortcodes and tags removed, whitespace collapsed, at most 3000 characters.
                         // Block-level tags become spaces so adjacent blocks don't run together.
-                        $text = (string) preg_replace('#</?(?:p|div|h[1-6]|li|ul|ol|br|hr|tr|td|th|table|blockquote|section|article|figure|figcaption|pre|header|footer)\b[^>]*>#i', ' ', strip_shortcodes((string) $p->post_content));
+                        $text = (string) preg_replace('#</?(?:p|div|h[1-6]|li|ul|ol|br|hr|tr|td|th|table|blockquote|section|article|figure|figcaption|pre|header|footer)\b[^>]*>#i', ' ', strip_shortcodes($this->text_source_for_caller($p)));
                         $text = trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags($text)));
                         $len  = function_exists('mb_strlen') ? mb_strlen($text) : strlen($text);
                         $item['content_text']      = $len > 3000 ? (function_exists('mb_substr') ? mb_substr($text, 0, 3000) : substr($text, 0, 3000)) : $text;
@@ -3470,7 +3709,8 @@ class Server {
                 return [
                     'id' => $post->ID,
                     'title' => $post->post_title,
-                    'content' => $withheld ? '' : $post->post_content,
+                    'content' => $this->content_for_caller($post),
+                    'content_format' => $this->content_format_for_caller($post),
                     'excerpt' => $withheld ? '' : $post->post_excerpt,
                     'protected' => '' !== (string) $post->post_password,
                     'status' => $post->post_status,
@@ -3488,6 +3728,9 @@ class Server {
                     'tags'       => wp_get_object_terms($post->ID, 'post_tag', ['fields' => 'ids']),
                     'terms'      => (object) $this->get_post_terms_map($post),
                 ];
+
+            case 'wp_clone_post_as_draft':
+                return $this->clone_post_as_draft(is_array($args) ? $args : []);
 
             case 'wp_create_post':
                 $post_type = sanitize_text_field($args['post_type'] ?? 'post');
@@ -3549,7 +3792,13 @@ class Server {
                 // a bare number, wrap it.
                 if (!empty($args['categories'])) {
                     $cats = is_array($args['categories']) ? $args['categories'] : [$args['categories']];
-                    $post_data['post_category'] = array_map('intval', $cats);
+                    if ('post' === $post_type) {
+                        $post_data['post_category'] = array_map('intval', $cats);
+                    } elseif (in_array('category', get_object_taxonomies($post_type, 'names'), true)) {
+                        $post_data['tax_input'] = ['category' => array_map('intval', $cats)];
+                    } else {
+                        throw new \Exception(sprintf('Categories do not apply to %s. Create it without categories, then use wp_add_post_terms with one of its taxonomies: %s.', esc_html($post_type), esc_html(implode(', ', get_object_taxonomies($post_type, 'names')) ?: 'none')));
+                    }
                 }
                 if (isset($args['post_author']) && intval($args['post_author']) > 0) {
                     $post_data['post_author'] = intval($args['post_author']);
@@ -3585,12 +3834,12 @@ class Server {
                     'post_author' => (int)    $cp_saved->post_author,
                     'post_name'   => (string) $cp_saved->post_name,
                 ] : [];
-                return [
+                return array_merge( [
                     'id'           => $post_id,
                     'message'      => ucfirst($post_type) . ' created successfully',
                     'url'          => get_permalink($post_id),
                     'saved_fields' => $cp_saved_fields,
-                ];
+                ], self::create_undo_fields( $post_id, $post_type ) );
 
             case 'wp_update_post':
                 $post_id = self::resolve_post_id_arg($args);
@@ -3961,9 +4210,11 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to list pages.');
                 }
-                $page_args = ['number' => max(1, min(intval($args['per_page'] ?? 10), 100))];
+                $page_args = ['number' => max(1, min(intval($args['per_page'] ?? 10), 100)), 'post_status' => self::listing_statuses($args['status'] ?? 'publish')];
                 if (!empty($args['parent'])) $page_args['parent'] = intval($args['parent']);
-                $pages = get_pages($page_args);
+                $pages = array_values(array_filter((array) get_pages($page_args), static function ($p) {
+                    return 'publish' === $p->post_status || current_user_can('read_post', $p->ID);
+                }));
                 return array_map(function($p) {
                     $thumb_id = (int) get_post_thumbnail_id( $p );
                     return [
@@ -3988,7 +4239,8 @@ class Server {
                 return [
                     'id' => $page->ID,
                     'title' => $page->post_title,
-                    'content' => $this->content_withheld($page) ? '' : $page->post_content,
+                    'content' => $this->content_for_caller($page),
+                    'content_format' => $this->content_format_for_caller($page),
                     'protected' => '' !== (string) $page->post_password,
                     'status' => $page->post_status,
                     'url' => get_permalink($page),
@@ -4035,12 +4287,12 @@ class Server {
                     'post_status' => (string) $cpg_saved->post_status,
                     'post_name'   => (string) $cpg_saved->post_name,
                 ] : [];
-                return [
+                return array_merge( [
                     'id'           => $page_id,
                     'message'      => 'Page created successfully',
                     'url'          => get_permalink($page_id),
                     'saved_fields' => $cpg_saved_fields,
-                ];
+                ], self::create_undo_fields( $page_id, 'page' ) );
 
             case 'wp_update_page':
                 $page_id = self::resolve_post_id_arg($args);
@@ -4853,9 +5105,36 @@ class Server {
                     }
                     return (int) $t;
                 }, $args['terms'] );
+                // Hierarchical taxonomies take term IDs only (WordPress turns any
+                // other value into 0), so slugs and names are looked up first.
+                if ( is_taxonomy_hierarchical( $taxonomy ) ) {
+                    $apt_unknown = [];
+                    foreach ( $normalized_terms as $i => $t ) {
+                        if ( is_int( $t ) ) {
+                            if ( ! term_exists( $t, $taxonomy ) ) {
+                                $apt_unknown[] = (string) $t;
+                            }
+                            continue;
+                        }
+                        $found = get_term_by( 'slug', sanitize_title( $t ), $taxonomy ) ?: get_term_by( 'name', $t, $taxonomy );
+                        if ( $found ) {
+                            $normalized_terms[ $i ] = (int) $found->term_id;
+                        } else {
+                            $apt_unknown[] = $t;
+                        }
+                    }
+                    if ( $apt_unknown ) {
+                        throw new \Exception( sprintf( 'No %s term matches %s. Use wp_get_terms to list them, or wp_create_term to add one.', esc_html( $taxonomy ), esc_html( implode( ', ', $apt_unknown ) ) ) );
+                    }
+                }
                 $result = wp_set_post_terms( $post_id, $normalized_terms, $taxonomy, true );
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
-                return ['message' => 'Terms added to post successfully'];
+                return [
+                    'message'  => 'Terms added to post successfully',
+                    'post_id'  => $post_id,
+                    'taxonomy' => $taxonomy,
+                    'terms'    => array_map(static function ($t) { return ['id' => (int) $t->term_id, 'name' => $t->name, 'slug' => $t->slug]; }, (array) wp_get_post_terms($post_id, $taxonomy)),
+                ];
 
             case 'wp_count_terms':
                 if (!current_user_can('read')) {
@@ -5058,7 +5337,11 @@ class Server {
                     'user_id' => (int) $cc_user->ID,
                 ];
                 // Respect WordPress comment moderation settings
-                $comment_data['comment_approved'] = wp_allow_comment($comment_data);
+                $cc_allowed = wp_allow_comment($comment_data, true);
+                if (is_wp_error($cc_allowed)) {
+                    throw new \Exception(esc_html($cc_allowed->get_error_message()));
+                }
+                $comment_data['comment_approved'] = $cc_allowed;
                 $cc_new_id = wp_insert_comment(wp_slash($comment_data));
                 if (!$cc_new_id) throw new \Exception('Failed to create comment');
                 $cc_new_id     = (int) $cc_new_id;
@@ -5184,7 +5467,9 @@ class Server {
                 if (!empty($args['post_id'])) {
                     $get_args['post_id'] = intval($args['post_id']);
                 }
-                $comments = get_comments($get_args);
+                $comments = array_values(array_filter(get_comments($get_args), static function ($c) {
+                    return current_user_can('edit_comment', (int) $c->comment_ID);
+                }));
                 return array_map(function($c) {
                     return [
                         'id' => (int) $c->comment_ID,
@@ -5214,6 +5499,10 @@ class Server {
                 $comment_id = intval($args['comment_id']);
                 $comment_obj = $comment_id > 0 ? get_comment($comment_id) : null;
                 if (!$comment_obj) throw new \Exception('Comment not found.');
+                // Moderators act on comments of posts they can edit, as in wp-admin.
+                if (!current_user_can('edit_comment', $comment_id)) {
+                    throw new \Exception('You do not have permission to moderate this comment.');
+                }
 
                 // Normalize prior status to the wp_set_comment_status vocabulary
                 // ('approve' / 'hold' / 'spam' / 'trash'). $comment_obj->comment_approved
@@ -5777,12 +6066,29 @@ class Server {
                 throw new \Exception( sprintf( 'Unknown tool: %s', $gti_name ) );
 
             case 'execute_tool':
-                $et_name = isset( $args['tool_name'] ) ? (string) $args['tool_name'] : '';
+                $et_name = isset( $args['tool_name'] ) && is_string( $args['tool_name'] ) ? $args['tool_name'] : '';
                 if ( '' === $et_name ) {
                     throw new \Exception( 'tool_name is required.' );
                 }
                 if ( in_array( $et_name, [ 'discover_tools', 'get_tool_info', 'execute_tool' ], true ) ) {
                     throw new \Exception( 'execute_tool cannot invoke the discovery tools recursively.' );
+                }
+                // Royal MCP's own tools only when this endpoint offers them (endpoint
+                // profiles filter the list). The compact profile hides tools from the
+                // list on purpose so they are reached through this tool, so it is left
+                // out of the check. Other names go on to the dispatcher, as a direct
+                // tools/call would.
+                $et_profile_header = $_SERVER['HTTP_X_MCP_PROFILE'] ?? null; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- read and restored, never output
+                unset( $_SERVER['HTTP_X_MCP_PROFILE'] );
+                try {
+                    $et_offered = array_column( $this->get_all_tools(), 'name' );
+                } finally {
+                    if ( null !== $et_profile_header ) {
+                        $_SERVER['HTTP_X_MCP_PROFILE'] = $et_profile_header;
+                    }
+                }
+                if ( $this->is_builtin_tool_name( $et_name ) && ! in_array( $et_name, $et_offered, true ) ) {
+                    throw new \Exception( sprintf( '%s is not available on this connection.', esc_html( $et_name ) ) );
                 }
                 $et_args = isset( $args['arguments'] ) && is_array( $args['arguments'] ) ? $args['arguments'] : [];
                 // Re-enter the dispatcher with the underlying tool + args.
@@ -5862,7 +6168,7 @@ class Server {
                 } else {
                     $vrp_state = [ 'start' => $vrp_now, 'count' => 1 ];
                 }
-                set_transient( $vrp_bucket, $vrp_state, $vrp_window );
+                set_transient( $vrp_bucket, $vrp_state, $vrp_window ); // audit:transient-ttl-only -- rate limit window
 
                 // Follow redirects one hop at a time (up to 5) so each hop can be reported.
                 $vrp_request = [
@@ -6004,6 +6310,23 @@ class Server {
                     }
                 }
                 return $vrp_out;
+
+            case 'wp_security_triage':
+                if (!current_user_can(is_multisite() ? 'manage_network_options' : 'manage_options')) {
+                    throw new \Exception('You do not have permission to run the security check.');
+                }
+                try {
+                    return \Royal_MCP\MCP\Support\Security_Triage::run($args);
+                } catch (\InvalidArgumentException $e) {
+                    return \Royal_MCP\MCP\Support\Envelope::error('invalid_args', $e->getMessage());
+                }
+
+            case 'wp_get_mcp_coexistence':
+                if (!current_user_can(is_multisite() ? 'manage_network_options' : 'manage_options')) {
+                    throw new \Exception('You do not have permission to read the coexistence report.');
+                }
+                $coex = \Royal_MCP\Integrations\Coexistence_Check::report();
+                return \Royal_MCP\MCP\Support\Envelope::success( \Royal_MCP\Integrations\Coexistence_Check::summary( $coex ), $coex );
 
             case 'wp_get_site_status':
                 if (!current_user_can('manage_options')) {
@@ -6253,7 +6576,12 @@ class Server {
                     // status (attachments) when post_type is exactly 'attachment'.
                     'post_type' => 1 === count($search_types) ? $search_types[0] : $search_types,
                     'numberposts' => $per_page,
+                    'post_status' => self::listing_statuses($args['status'] ?? 'publish'),
                 ];
+                // Attachments are always 'inherit'.
+                if (in_array('attachment', $search_types, true)) {
+                    $search_args['post_status'] = array_values(array_unique(array_merge((array) $search_args['post_status'], ['inherit'])));
+                }
                 $posts = array_values(array_filter(get_posts($search_args), static function ($p) use ($query) {
                     if (!\Royal_MCP\MCP\Support\Post_Access::can_read($p)) {
                         return false;
@@ -6262,7 +6590,7 @@ class Server {
                     return !\Royal_MCP\MCP\Support\Post_Access::content_withheld($p) || false !== mb_stripos((string) $p->post_title, (string) $query);
                 }));
                 return array_map(function($p) use ($query, $snippet_len) {
-                    $row = ['id' => $p->ID, 'title' => $p->post_title, 'type' => $p->post_type, 'url' => get_permalink($p), 'content_length' => $this->content_withheld($p) ? 0 : strlen((string) $p->post_content), 'protected' => '' !== (string) $p->post_password];
+                    $row = ['id' => $p->ID, 'title' => $p->post_title, 'type' => $p->post_type, 'status' => $p->post_status, 'url' => get_permalink($p), 'content_length' => $this->content_withheld($p) ? 0 : strlen((string) $p->post_content), 'protected' => '' !== (string) $p->post_password];
                     if ($snippet_len > 0) {
                         $row['slug'] = $p->post_name;
                         $row['snippet'] = $this->content_withheld($p) ? '' : $this->extract_snippet($p->post_content, $query, $snippet_len);
@@ -6385,6 +6713,9 @@ class Server {
                     ];
                 }
 
+                // A plugin that registers its setting only in wp-admin has no
+                // sanitizer in this request; the result says so.
+                $opt_sanitizer = has_filter("sanitize_option_{$name}") ? 'registered_setting' : (in_array($name, $default_writable, true) && !in_array($name, $this->get_admin_allowlisted_options(), true) ? 'wordpress_core' : 'none');
                 $opt_result   = update_option($name, $opt_value);
                 wp_cache_delete( $name, 'options' );  // core also does this but be defensive
                 $opt_actual   = get_option($name);
@@ -6424,9 +6755,13 @@ class Server {
                         'name'     => $name,
                         'updated'  => (bool) $opt_result,
                         'previous' => $this->redact_sensitive_keys($opt_previous, $name),
+                        'sanitized_by' => $opt_sanitizer,
                     ],
                     \Royal_MCP\MCP\Support\WriteVerifier::response_partial( $opt_diff )
                 );
+                if ( 'none' === $opt_sanitizer ) {
+                    $opt_warnings[] = 'No sanitizer for this option is registered in this request (the plugin that owns it may register it only in wp-admin), so the value was saved as sent. Check it with wp_get_option.';
+                }
                 if ( ! empty( $opt_warnings ) ) {
                     $opt_struct['warnings'] = $opt_warnings;
                 }
@@ -6493,21 +6828,66 @@ class Server {
                 if (!wp_get_nav_menu_object($menu_id)) {
                     throw new \Exception('Menu not found: ' . esc_html((string) $menu_id));
                 }
-                $object_type = sanitize_text_field($args['object_type'] ?? 'custom');
+                $object_type = sanitize_key($args['object_type'] ?? 'custom');
+                $mi_object_id = intval($args['object_id'] ?? 0);
+                // Any post type or taxonomy, checked against the object it names.
+                if ('custom' === $object_type) {
+                    $mi_kind = 'custom';
+                    if ('' === esc_url_raw($args['url'] ?? '')) {
+                        throw new \Exception('url is required for a custom link.');
+                    }
+                } elseif (post_type_exists($object_type)) {
+                    // Only types the Menus screen offers: internal types (orders,
+                    // templates, blocks) never go into a public menu.
+                    if (empty(get_post_type_object($object_type)->show_in_nav_menus)) {
+                        throw new \Exception(sprintf('%s items cannot be added to menus.', esc_html($object_type)));
+                    }
+                    $mi_kind = 'post_type';
+                    $mi_obj  = get_post($mi_object_id);
+                    if (!$mi_obj || $mi_obj->post_type !== $object_type) {
+                        throw new \Exception(sprintf('object_id %d is not a %s.', $mi_object_id, esc_html($object_type)));
+                    }
+                    if (!current_user_can('read_post', $mi_obj->ID)) {
+                        throw new \Exception(sprintf('object_id %d is not a %s.', $mi_object_id, esc_html($object_type)));
+                    }
+                } elseif (taxonomy_exists($object_type)) {
+                    if (empty(get_taxonomy($object_type)->show_in_nav_menus)) {
+                        throw new \Exception(sprintf('%s terms cannot be added to menus.', esc_html($object_type)));
+                    }
+                    $mi_kind = 'taxonomy';
+                    $mi_term = get_term($mi_object_id, $object_type);
+                    if (!$mi_term || is_wp_error($mi_term)) {
+                        throw new \Exception(sprintf('object_id %d is not a %s term.', $mi_object_id, esc_html($object_type)));
+                    }
+                } else {
+                    throw new \Exception(sprintf('Unknown object_type %s: use custom, a post type (post, page, product…) or a taxonomy (category, post_tag, product_cat…).', esc_html($object_type)));
+                }
                 $item_args = [
                     'menu-item-title'     => \Royal_MCP\MCP\Support\SafeText::field($args['title']),
-                    'menu-item-url'       => esc_url_raw($args['url'] ?? ''),
+                    'menu-item-url'       => 'custom' === $mi_kind ? esc_url_raw($args['url'] ?? '') : '',
                     'menu-item-status'    => 'publish',
-                    'menu-item-type'      => $object_type === 'category' ? 'taxonomy' : ($object_type === 'custom' ? 'custom' : 'post_type'),
-                    'menu-item-object'    => $object_type === 'category' ? 'category' : ($object_type === 'custom' ? '' : $object_type),
-                    'menu-item-object-id' => intval($args['object_id'] ?? 0),
+                    'menu-item-type'      => $mi_kind,
+                    'menu-item-object'    => 'custom' === $mi_kind ? '' : $object_type,
+                    'menu-item-object-id' => 'custom' === $mi_kind ? 0 : $mi_object_id,
                     'menu-item-parent-id' => intval($args['parent_id'] ?? 0),
                     'menu-item-position'  => intval($args['position'] ?? 0),
                     'menu-item-target'    => sanitize_text_field($args['target'] ?? ''),
                 ];
                 $item_id = wp_update_nav_menu_item($menu_id, 0, $item_args);
                 if (is_wp_error($item_id)) throw new \Exception(esc_html($item_id->get_error_message()));
-                return ['menu_item_id' => (int) $item_id, 'menu_id' => $menu_id];
+                $mi_saved = wp_setup_nav_menu_item(get_post((int) $item_id));
+                return [
+                    'menu_item_id' => (int) $item_id,
+                    'menu_id'      => $menu_id,
+                    'saved'        => $mi_saved ? [
+                        'title'     => (string) $mi_saved->title,
+                        'url'       => (string) $mi_saved->url,
+                        'type'      => (string) $mi_saved->type,
+                        'object'    => (string) $mi_saved->object,
+                        'object_id' => (int) $mi_saved->object_id,
+                        'parent_id' => (int) $mi_saved->menu_item_parent,
+                    ] : null,
+                ];
 
             case 'wp_update_menu_item':
                 if (!current_user_can('edit_theme_options')) {
@@ -6808,7 +7188,11 @@ class Server {
                     'sslverify'   => true,
                 ]);
                 if (is_wp_error($seo_response)) {
-                    throw new \Exception('Failed to fetch URL: ' . esc_html($seo_response->get_error_message()));
+                    $seo_err = (string) $seo_response->get_error_message();
+                    if (false !== stripos($seo_err, 'timed out') || false !== stripos($seo_err, 'cURL error 28')) {
+                        throw new \Exception(sprintf('The site did not answer within 10 seconds when loading %s for the audit. The page may be slow to build; try again, or check the page loads in a browser.', esc_url_raw($seo_url)));
+                    }
+                    throw new \Exception(sprintf('Could not load %s for the audit: %s', esc_url_raw($seo_url), esc_html($seo_err)));
                 }
                 $seo_status = (int) wp_remote_retrieve_response_code($seo_response);
                 $seo_html   = (string) wp_remote_retrieve_body($seo_response);
@@ -6921,8 +7305,15 @@ class Server {
                 // title_too_long on every page). Defensive fallback to strlen
                 // when mbstring isn't available on the host.
                 $title_len_fn = function_exists('mb_strlen') ? 'mb_strlen' : 'strlen';
+                // The page audited is the one at the end of any redirects.
+                $seo_final_url = $seo_url;
+                if (isset($seo_response['http_response']) && is_object($seo_response['http_response']) && method_exists($seo_response['http_response'], 'get_response_object')) {
+                    $seo_final_url = (string) ($seo_response['http_response']->get_response_object()->url ?? $seo_url);
+                }
                 return [
                     'url'    => $seo_url,
+                    'final_url'  => $seo_final_url,
+                    'redirected' => $seo_final_url !== $seo_url,
                     'status' => $seo_status,
                     'title'  => [
                         'value'      => $title_first,
@@ -7073,11 +7464,15 @@ class Server {
                                 $undo_skipped[] = ['menu_item_id' => $item_id_int, 'reason' => 'invalid_snapshot_entry'];
                                 continue;
                             }
+                            // A menu item's parent lives in its _menu_item_menu_item_parent
+                            // meta, not in post_parent, which stays as WordPress keeps it.
                             $update_result = wp_update_post([
-                                'ID'          => $item_id_int,
-                                'menu_order'  => (int) ($prior['menu_order'] ?? 0),
-                                'post_parent' => (int) ($prior['menu_item_parent'] ?? 0),
+                                'ID'         => $item_id_int,
+                                'menu_order' => (int) ($prior['menu_order'] ?? 0),
                             ], true);
+                            if (!is_wp_error($update_result) && 0 !== $update_result) {
+                                update_post_meta($item_id_int, '_menu_item_menu_item_parent', (string) (int) ($prior['menu_item_parent'] ?? 0));
+                            }
                             if (is_wp_error($update_result)) {
                                 $undo_skipped[] = ['menu_item_id' => $item_id_int, 'reason' => $update_result->get_error_message()];
                                 continue;
@@ -7577,7 +7972,7 @@ class Server {
                         if ( ! $dct_post || $dct_post->post_type !== 'shop_coupon' ) {
                             throw new \Exception('Coupon no longer exists — cannot untrash.');
                         }
-                        if ( ! current_user_can( 'edit_shop_coupon', $undo_dct_id ) && ! current_user_can( 'manage_woocommerce' ) ) {
+                        if ( ! current_user_can( 'manage_woocommerce' ) || ! current_user_can( 'edit_shop_coupon', $undo_dct_id ) ) {
                             throw new \Exception('edit_shop_coupon capability required to undo this operation.');
                         }
                         if ( $dct_post->post_status !== 'trash' ) {
@@ -7595,7 +7990,7 @@ class Server {
 
                     case 'wc_delete_coupon_force':
                         $dcf_target = $undo_snapshot['target'] ?? [];
-                        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+                        if ( ! current_user_can( 'manage_woocommerce' ) || ! current_user_can( 'publish_shop_coupons' ) ) {
                             throw new \Exception('manage_woocommerce capability required to undo this operation.');
                         }
                         $dcf_pre = ( isset( $undo_snapshot['pre_op_state'] ) && is_array( $undo_snapshot['pre_op_state'] ) ) ? $undo_snapshot['pre_op_state'] : [];
@@ -7827,7 +8222,7 @@ class Server {
                                 [ 'undone' => true, 'op' => $undo_op, 'target' => $cc_target, 'restored' => false, 'reason' => 'row_already_gone' ]
                             );
                         }
-                        if ( ! current_user_can( 'delete_shop_coupon', $undo_cc_id ) && ! current_user_can( 'manage_woocommerce' ) ) {
+                        if ( ! current_user_can( 'manage_woocommerce' ) || ! current_user_can( 'delete_shop_coupon', $undo_cc_id ) ) {
                             throw new \Exception('delete_shop_coupon capability required to undo this operation.');
                         }
                         // Route through WC_Coupon::delete so WC's own coupon-code
@@ -7997,6 +8392,36 @@ class Server {
                                 'new_term_id'        => $dt_new_tid,
                                 'original_term_id'   => $undo_dt_orig,
                                 'meta_keys_replayed' => count( $dt_row['meta'] ?? [] ),
+                            ]
+                        );
+
+                    case 'wp_create_post_trash':
+                        $cpt_target = $undo_snapshot['target'] ?? [];
+                        $undo_cpt_id = (int) ( $cpt_target['post_id'] ?? 0 );
+                        $cpt_post = $undo_cpt_id > 0 ? get_post( $undo_cpt_id ) : null;
+                        if ( ! $cpt_post ) {
+                            throw new \Exception('The created post no longer exists, so there is nothing to undo.');
+                        }
+                        if ( ! current_user_can( 'delete_post', $undo_cpt_id ) ) {
+                            throw new \Exception('delete_post capability required to undo this operation.');
+                        }
+                        if ( 'trash' === $cpt_post->post_status ) {
+                            throw new \Exception( sprintf( 'Post %d is already in the trash.', $undo_cpt_id ) );
+                        }
+                        $cpt_was = (string) ( $undo_snapshot['pre_op_state']['modified_gmt'] ?? '' );
+                        if ( '' !== $cpt_was && $cpt_was !== (string) $cpt_post->post_modified_gmt ) {
+                            throw new \Exception( sprintf( 'Cannot undo: post %d was edited after it was created. Trash it with wp_delete_post if it should still go.', $undo_cpt_id ) );
+                        }
+                        self::trash_post_or_refuse( $cpt_post );
+                        clean_post_cache( $undo_cpt_id );
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return \Royal_MCP\MCP\Support\Envelope::success(
+                            sprintf( 'Moved post %d to the trash.', $undo_cpt_id ),
+                            [
+                                'undone'   => true,
+                                'op'       => $undo_op,
+                                'target'   => $cpt_target,
+                                'restored' => true,
                             ]
                         );
 
@@ -8286,7 +8711,7 @@ class Server {
                         if ( ! $uc_undo_coupon->get_id() || get_post_type( $uc_undo_coupon->get_id() ) !== 'shop_coupon' ) {
                             throw new \Exception('Coupon no longer exists — cannot restore.');
                         }
-                        if ( ! current_user_can( 'edit_shop_coupon', $undo_uc_id ) && ! current_user_can( 'manage_woocommerce' ) ) {
+                        if ( ! current_user_can( 'manage_woocommerce' ) || ! current_user_can( 'edit_shop_coupon', $undo_uc_id ) ) {
                             throw new \Exception('edit_shop_coupon capability required to undo this operation.');
                         }
                         $uc_undo_pre    = ( isset( $undo_snapshot['pre_op_state'] ) && is_array( $undo_snapshot['pre_op_state'] ) ) ? $undo_snapshot['pre_op_state'] : [];
@@ -8628,7 +9053,7 @@ class Server {
                         if ( ! $cs_comment ) {
                             throw new \Exception('Comment no longer exists — cannot restore status.');
                         }
-                        if ( ! current_user_can( 'moderate_comments' ) ) {
+                        if ( ! current_user_can( 'moderate_comments' ) || ! current_user_can( 'edit_comment', $undo_cs_id ) ) {
                             throw new \Exception('moderate_comments capability required to undo this operation.');
                         }
                         $cs_pre = ( isset( $undo_snapshot['pre_op_state'] ) && is_array( $undo_snapshot['pre_op_state'] ) ) ? $undo_snapshot['pre_op_state'] : [];
@@ -8764,6 +9189,10 @@ class Server {
                         }
                         $dcf_pre = ( isset( $undo_snapshot['pre_op_state'] ) && is_array( $undo_snapshot['pre_op_state'] ) ) ? $undo_snapshot['pre_op_state'] : [];
                         $dcf_row = ( isset( $dcf_pre['row'] ) && is_array( $dcf_pre['row'] ) ) ? $dcf_pre['row'] : [];
+                        $dcf_post_id = (int) ( $dcf_row['comment_post_ID'] ?? 0 );
+                        if ( $dcf_post_id > 0 && ! current_user_can( 'edit_post', $dcf_post_id ) ) {
+                            throw new \Exception('You do not have permission to restore comments on this post.');
+                        }
                         if ( empty( $dcf_row ) ) {
                             throw new \Exception('Undo snapshot has no row data to recreate.');
                         }
@@ -9081,7 +9510,7 @@ class Server {
                         global $wp_rewrite;
                         if ( $wp_rewrite ) {
                             $wp_rewrite->set_permalink_structure( $plundo_prior );
-                            $wp_rewrite->flush_rules();
+                            self::flush_rewrites_with_server_rules();
                         } else {
                             update_option( 'permalink_structure', $plundo_prior );
                         }
@@ -9573,13 +10002,10 @@ class Server {
                 );
 
             case 'wp_get_custom_css':
-                if (!current_user_can('read')) {
+                if (!current_user_can('edit_theme_options')) {
                     throw new \Exception('You do not have permission to read custom CSS.');
                 }
                 $theme_slug = isset($args['theme_slug']) ? sanitize_key($args['theme_slug']) : get_stylesheet();
-                if ($theme_slug !== get_stylesheet() && !current_user_can('edit_theme_options')) {
-                    throw new \Exception('You do not have permission to read another theme\'s custom CSS.');
-                }
                 $css = wp_get_custom_css($theme_slug);
                 $post = wp_get_custom_css_post($theme_slug);
                 return [
@@ -9589,6 +10015,9 @@ class Server {
                 ];
 
             case 'wp_update_custom_css':
+                if (!current_user_can('edit_theme_options')) {
+                    throw new \Exception('edit_theme_options capability required to update custom CSS.');
+                }
                 if (!current_user_can('unfiltered_html')) {
                     throw new \Exception('unfiltered_html capability required to update custom CSS.');
                 }
@@ -10199,9 +10628,10 @@ class Server {
                 }
 
                 global $wp_rewrite;
+                $pl_server_rules = null;
                 if ($wp_rewrite) {
                     $wp_rewrite->set_permalink_structure($pl_structure);
-                    $wp_rewrite->flush_rules();
+                    $pl_server_rules = self::flush_rewrites_with_server_rules();
                 } else {
                     update_option('permalink_structure', $pl_structure);
                 }
@@ -10236,6 +10666,7 @@ class Server {
                         'success'  => true,
                         'previous' => $pl_previous,
                         'current'  => $pl_actual,
+                        'server_rules' => $pl_server_rules,
                     ],
                     \Royal_MCP\MCP\Support\WriteVerifier::response_partial( $pl_diff )
                 );
@@ -10312,6 +10743,20 @@ class Server {
                     'ttl_minutes'     => $ttl_minutes,
                     'expires_at'      => gmdate('c', $expires_at_unix),
                     'expires_at_unix' => $expires_at_unix,
+                ];
+
+            case 'wp_revoke_preview_links':
+                $post_id = self::resolve_post_id_arg($args);
+                if ($post_id <= 0) throw new \Exception('post_id (or id) is required.');
+                if (!current_user_can('edit_post', $post_id)) {
+                    throw new \Exception('edit_post capability required on this post.');
+                }
+                if (!get_post($post_id)) throw new \Exception('Post not found.');
+                \Royal_MCP\MCP\Support\Preview_Link::revoke_all($post_id);
+                return [
+                    'post_id' => $post_id,
+                    'revoked' => true,
+                    'message' => 'Every preview link made for this post so far no longer works.',
                 ];
 
             case 'wp_get_revision_content':
@@ -11668,6 +12113,7 @@ class Server {
     public static function undo_tool_names() {
         return [
             // WP core reversible writes
+            'wp_create_post', 'wp_create_page', 'wp_clone_post_as_draft',
             'wp_update_post',
             'wp_delete_post',
             'wp_update_post_meta', 'wp_add_post_meta',
@@ -11732,6 +12178,53 @@ class Server {
      */
     private function content_withheld(\WP_Post $post) {
         return '' !== (string) $post->post_password && !current_user_can('edit_post', $post->ID);
+    }
+
+    /**
+     * Post body for the caller, as WordPress's REST API gives it: the stored
+     * source to users who can edit the post, the rendered page to readers
+     * (shortcode settings and HTML comments never reach them), empty when
+     * the body is withheld.
+     */
+    private function content_for_caller(\WP_Post $post) {
+        if ($this->content_withheld($post)) {
+            return '';
+        }
+        if (current_user_can('edit_post', $post->ID)) {
+            return (string) $post->post_content;
+        }
+        $previous = $GLOBALS['post'] ?? null;
+        $GLOBALS['post'] = $post;
+        setup_postdata($post);
+        ob_start();
+        try {
+            $html = (string) apply_filters('the_content', (string) $post->post_content);
+        } finally {
+            ob_end_clean();
+            $GLOBALS['post'] = $previous;
+            if ($previous instanceof \WP_Post) {
+                setup_postdata($previous);
+            }
+        }
+        // Block markup is gone after rendering; comments left are the author's own notes.
+        return (string) preg_replace('/<!--.*?-->/s', '', $html);
+    }
+
+    /** 'raw' or 'rendered', matching content_for_caller(). */
+    private function content_format_for_caller(\WP_Post $post) {
+        return current_user_can('edit_post', $post->ID) ? 'raw' : 'rendered';
+    }
+
+    /**
+     * Source for excerpts and plain-text bodies: the stored body for editors; for
+     * readers, HTML comments and registered shortcodes removed first.
+     */
+    private function text_source_for_caller(\WP_Post $post) {
+        $raw = (string) $post->post_content;
+        if (current_user_can('edit_post', $post->ID)) {
+            return $raw;
+        }
+        return strip_shortcodes((string) preg_replace('/<!--.*?-->/s', '', $raw));
     }
 
     /**

@@ -13,6 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Well_Known_Notice {
 
     const TRANSIENT_KEY                = 'royal_mcp_well_known_status';
+    const SCOPED_TRANSIENT_KEY         = 'royal_mcp_well_known_ns_status';
     const TRANSIENT_TTL                = 12 * HOUR_IN_SECONDS;
     // Adaptive TTL for WAF-fronted sites — state changes (allowlist adds,
     // exclusion rules) need to surface faster during active troubleshooting.
@@ -45,6 +46,7 @@ class Well_Known_Notice {
     const FOREIGN_AS_TRANSIENT             = 'royal_mcp_foreign_as_endpoint';
     const FOREIGN_AS_DISMISS_KEY           = 'royal_mcp_foreign_as_dismissed';
     const FOREIGN_AS_SUPPORT_URL           = 'https://royalplugins.com/support/royal-mcp/another-mcp-plugin-answers-oauth-discovery/';
+    const DISCOVERY_CHAIN_DISMISS_KEY      = 'royal_mcp_discovery_chain_dismissed';
     const PERFMATTERS_DISMISS_KEY          = 'royal_mcp_perfmatters_rest_dismissed';
     const PERFMATTERS_SUPPORT_URL          = 'https://royalplugins.com/support/royal-mcp/perfmatters-disable-rest-api-blocks-mcp.html';
 
@@ -127,6 +129,17 @@ class Well_Known_Notice {
             && ! get_user_meta( $user_id, self::PERFMATTERS_DISMISS_KEY, true )
         ) {
             $this->render_perfmatters_notice();
+            return;
+        }
+
+        // The whole sign-in path an AI client follows. When another plugin
+        // answers a step, this names it and gives the fix, so it comes before
+        // the single-document checks below.
+        $chain = \Royal_MCP\Integrations\Coexistence_Check::discovery_chain();
+        if ( isset( $chain['first_problem']['answered_by'] ) && 'other' === $chain['first_problem']['answered_by']
+            && ! get_user_meta( $user_id, self::DISCOVERY_CHAIN_DISMISS_KEY, true )
+        ) {
+            $this->render_discovery_chain_notice( $chain['first_problem'] );
             return;
         }
 
@@ -277,12 +290,18 @@ class Well_Known_Notice {
      *  - mismatch      : status 200 but content unexpected for unrelated reasons (issuer mismatch)
      */
     public function check_well_known() {
-        $cached = get_transient( self::TRANSIENT_KEY );
+        // With the namespace issuer, clients read the issuer's own document; the
+        // site-root one only matters to clients that skip discovery.
+        $scoped    = class_exists( '\\Royal_MCP\\OAuth\\Server' ) && '' !== \Royal_MCP\OAuth\Server::namespace_issuer();
+        $cache_key = $scoped ? self::SCOPED_TRANSIENT_KEY : self::TRANSIENT_KEY;
+        $cached    = get_transient( $cache_key );
         if ( false !== $cached ) {
             return $cached;
         }
 
-        $url = home_url( '/.well-known/oauth-authorization-server' );
+        $url = $scoped
+            ? home_url( '/.well-known/oauth-authorization-server' . \Royal_MCP\OAuth\Server::namespace_issuer_path() )
+            : home_url( '/.well-known/oauth-authorization-server' );
 
         $response = wp_remote_get(
             $url,
@@ -307,11 +326,12 @@ class Well_Known_Notice {
             $body    = (string) wp_remote_retrieve_body( $response );
             $headers = wp_remote_retrieve_headers( $response );
             $headers = is_array( $headers ) ? $headers : iterator_to_array( $headers );
-            $status  = self::classify_response( $code, $body, $headers, rtrim( home_url(), '/' ) );
+            $issuer  = $scoped ? rtrim( \Royal_MCP\OAuth\Server::namespace_issuer(), '/' ) : rtrim( home_url(), '/' );
+            $status  = self::classify_response( $code, $body, $headers, $issuer, $scoped );
             $ttl     = self::determine_ttl( $headers );
         }
 
-        set_transient( self::TRANSIENT_KEY, $status, $ttl );
+        set_transient( $cache_key, $status, $ttl ); // audit:transient-ttl-only -- both possible keys are cleared in invalidate_check()
 
         return $status;
     }
@@ -407,9 +427,10 @@ class Well_Known_Notice {
      * @param int    $code             HTTP status code.
      * @param string $body             Response body.
      * @param array  $headers          Response headers (key-value array).
-     * @param string $expected_issuer  Trailing-slash-trimmed home URL.
+     * @param string $expected_issuer  Trailing-slash-trimmed issuer URL.
+     * @param bool   $scoped           The probe fetched the namespace issuer's document.
      */
-    public static function classify_response( $code, $body, array $headers, $expected_issuer ) {
+    public static function classify_response( $code, $body, array $headers, $expected_issuer, $scoped = false ) {
         if ( 200 === $code ) {
             // BitNinja WebShield JS challenge — host-level bot protection that
             // returns HTTP 200 with an obfuscated JS interstitial ("One moment,
@@ -482,7 +503,8 @@ class Well_Known_Notice {
                 $data['token_endpoint']         ?? '',
                 $data['registration_endpoint']  ?? '',
             ];
-            foreach ( $endpoints as $endpoint ) {
+            // The namespace issuer's own document lists those paths on purpose.
+            foreach ( $scoped ? [] : $endpoints as $endpoint ) {
                 if ( is_string( $endpoint ) && '' !== $endpoint && false !== strpos( $endpoint, '/wp-json/royal-mcp/v1/' ) ) {
                     return 'stale_static';
                 }
@@ -495,8 +517,9 @@ class Well_Known_Notice {
             // check, so a document from another plugin is reported as that
             // rather than as an incomplete copy of ours. Endpoints the
             // document leaves out are not compared.
-            $foreign = self::detect_foreign_endpoints( $data );
+            $foreign = self::detect_foreign_endpoints( $data, $scoped );
             if ( null !== $foreign ) {
+                $foreign['scoped'] = (bool) $scoped;
                 set_transient( self::FOREIGN_AS_TRANSIENT, $foreign, self::TRANSIENT_TTL );
                 return 'foreign_as';
             }
@@ -578,14 +601,15 @@ class Well_Known_Notice {
      * plugin serves. Returns null when they match, else details of the
      * first foreign endpoint. Public static for testability.
      *
-     * @param array $data Decoded /.well-known/oauth-authorization-server body.
+     * @param array $data   Decoded /.well-known/oauth-authorization-server body.
+     * @param bool  $scoped Compare with the namespace issuer's document.
      * @return array|null { field, advertised, expected }
      */
-    public static function detect_foreign_endpoints( array $data ) {
+    public static function detect_foreign_endpoints( array $data, $scoped = false ) {
         if ( ! class_exists( '\\Royal_MCP\\OAuth\\Server' ) ) {
             return null;
         }
-        $ours = \Royal_MCP\OAuth\Server::build_authorization_server_metadata();
+        $ours = \Royal_MCP\OAuth\Server::build_authorization_server_metadata( (bool) $scoped );
         foreach ( [ 'authorization_endpoint', 'token_endpoint', 'registration_endpoint' ] as $field ) {
             if ( empty( $data[ $field ] ) || ! is_string( $data[ $field ] ) || empty( $ours[ $field ] ) ) {
                 continue;
@@ -642,13 +666,36 @@ class Well_Known_Notice {
             </p>
             <p>
                 <?php
+                if ( ! empty( $detail['scoped'] ) && class_exists( '\\Royal_MCP\\OAuth\\Server' ) ) {
+                    printf(
+                        /* translators: %s: Royal MCP's own discovery path */
+                        esc_html__( 'AI clients find Royal MCP\'s sign-in pages through %s, an address only Royal MCP serves. On this site a different plugin answers it before Royal MCP can, so OAuth connections to Royal MCP go to that plugin instead. Deactivate the other plugin, or ask its author to answer only its own addresses.', 'royal-mcp' ),
+                        '<code>' . esc_html( '/.well-known/oauth-authorization-server' . \Royal_MCP\OAuth\Server::namespace_issuer_path() ) . '</code>'
+                    );
+                } else {
+                    printf(
+                        /* translators: %s: the discovery path /.well-known/oauth-authorization-server */
+                        esc_html__( 'AI clients find Royal MCP\'s sign-in pages through %s. On this site a different plugin answers that address, so OAuth connections to Royal MCP fail, usually with an "invalid_target" error. Only one OAuth plugin can run on a site.', 'royal-mcp' ),
+                        '<code>/.well-known/oauth-authorization-server</code>'
+                    );
+                }
+                ?>
+            </p>
+            <?php
+            if ( class_exists( '\WPMedia\MCP\OAuth\Bootstrap', false ) && class_exists( '\Royal_MCP\Integrations\Coexistence_Check' ) ) :
+                $bundled_host = \Royal_MCP\Integrations\Coexistence_Check::bundled_sign_in_host();
+                ?>
+            <p>
+                <?php
                 printf(
-                    /* translators: %s: the discovery path /.well-known/oauth-authorization-server */
-                    esc_html__( 'AI clients find Royal MCP\'s sign-in pages through %s. On this site a different plugin answers that address, so OAuth connections to Royal MCP fail, usually with an "invalid_target" error. Only one OAuth plugin can run on a site.', 'royal-mcp' ),
-                    '<code>/.well-known/oauth-authorization-server</code>'
+                    /* translators: 1: plugin name, 2: how to turn its sign-in off */
+                    esc_html__( 'The other plugin is likely %1$s, which has a built-in MCP sign-in. %2$s', 'royal-mcp' ),
+                    '<strong>' . esc_html( '' !== $bundled_host ? $bundled_host : __( 'a plugin with a built-in MCP sign-in', 'royal-mcp' ) ) . '</strong>',
+                    esc_html( \Royal_MCP\Integrations\Coexistence_Check::bundled_sign_in_fix() )
                 );
                 ?>
             </p>
+            <?php endif; ?>
             <?php if ( ! empty( $detail['advertised'] ) && ! empty( $detail['expected'] ) ) : ?>
             <p>
                 <?php
@@ -661,6 +708,61 @@ class Well_Known_Notice {
                 );
                 ?>
             </p>
+            <?php endif; ?>
+            <p>
+                <a href="<?php echo esc_url( self::FOREIGN_AS_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
+                    <?php esc_html_e( 'How to fix this', 'royal-mcp' ); ?>
+                </a>
+                <?php $this->render_recheck_button(); ?>
+                <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
+                    <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
+                </a>
+            </p>
+        </div>
+        <?php
+    }
+
+    /**
+     * A step of the sign-in path that another plugin answers in Royal MCP's place.
+     *
+     * @param array $problem Step from Coexistence_Check::discovery_chain().
+     */
+    private function render_discovery_chain_notice( array $problem ) {
+        $dismiss_url = wp_nonce_url(
+            add_query_arg( 'royal_mcp_dismiss_discovery_chain', '1' ),
+            'royal_mcp_dismiss_discovery_chain'
+        );
+        $what = [
+            'challenge'            => __( 'the sign-in challenge from Royal MCP\'s endpoint', 'royal-mcp' ),
+            'protected_resource'   => __( 'the document that tells AI apps where Royal MCP\'s sign-in is', 'royal-mcp' ),
+            'authorization_server' => __( 'Royal MCP\'s sign-in server document', 'royal-mcp' ),
+            'alternate_host'       => __( 'Royal MCP\'s endpoint on the other host name (with or without www)', 'royal-mcp' ),
+        ];
+        $step   = (string) ( $problem['step'] ?? '' );
+        $plugin = ! empty( $problem['plugin'] ) ? (string) $problem['plugin'] : __( 'another plugin', 'royal-mcp' );
+        ?>
+        <div class="notice notice-error royal-mcp-discovery-chain-notice">
+            <p>
+                <strong>
+                <?php
+                /* translators: %s: plugin name, or "another plugin" */
+                printf( esc_html__( 'Royal MCP: %s answers part of Royal MCP\'s sign-in.', 'royal-mcp' ), esc_html( $plugin ) );
+                ?>
+                </strong>
+            </p>
+            <p>
+                <?php
+                printf(
+                    /* translators: 1: what the address is, 2: the address, 3: plugin name */
+                    esc_html__( 'AI apps such as Claude and ChatGPT read %1$s at %2$s to sign in. On this site %3$s answers it instead, so their sign-in goes to that plugin and fails.', 'royal-mcp' ),
+                    esc_html( $what[ $step ] ?? $step ),
+                    '<code>' . esc_html( (string) ( $problem['url'] ?? '' ) ) . '</code>',
+                    esc_html( $plugin )
+                );
+                ?>
+            </p>
+            <?php if ( ! empty( $problem['fix'] ) ) : ?>
+            <p><strong><?php esc_html_e( 'Fix:', 'royal-mcp' ); ?></strong> <?php echo esc_html( (string) $problem['fix'] ); ?></p>
             <?php endif; ?>
             <p>
                 <a href="<?php echo esc_url( self::FOREIGN_AS_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
@@ -701,8 +803,11 @@ class Well_Known_Notice {
      * enabled/disabled or changing OAuth-related config.
      */
     public function invalidate_check() {
+        \Royal_MCP\Integrations\Coexistence_Check::clear();
         delete_transient( self::TRANSIENT_KEY );
+        delete_transient( self::SCOPED_TRANSIENT_KEY );
         delete_transient( self::REGISTER_301_TRANSIENT );
+        delete_transient( self::MISSING_ENDPOINTS_TRANSIENT );
     }
 
     /**
@@ -790,6 +895,14 @@ class Well_Known_Notice {
         ) {
             update_user_meta( get_current_user_id(), self::FOREIGN_AS_DISMISS_KEY, time() );
             wp_safe_redirect( remove_query_arg( [ 'royal_mcp_dismiss_foreign_as', '_wpnonce' ] ) );
+            exit;
+        }
+        if ( isset( $_GET['royal_mcp_dismiss_discovery_chain'] )
+            && isset( $_GET['_wpnonce'] )
+            && wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'royal_mcp_dismiss_discovery_chain' )
+        ) {
+            update_user_meta( get_current_user_id(), self::DISCOVERY_CHAIN_DISMISS_KEY, time() );
+            wp_safe_redirect( remove_query_arg( [ 'royal_mcp_dismiss_discovery_chain', '_wpnonce' ] ) );
             exit;
         }
         if ( isset( $_GET['royal_mcp_dismiss_missing_endpoints'] )

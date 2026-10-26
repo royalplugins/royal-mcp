@@ -355,6 +355,10 @@ class Elementor {
 		if ( \Royal_MCP\MCP\Support\Post_Access::content_withheld( $source ) ) {
 			throw new \Exception( 'This post is password protected; only users who can edit it may copy it.' );
 		}
+		// A copy carries every builder setting, so it needs edit rights on the source.
+		if ( ! current_user_can( 'edit_post', $source_id ) ) {
+			throw new \Exception( 'Only users who can edit the source page may copy it.' );
+		}
 		$create_refusal = \Royal_MCP\MCP\Support\Post_Access::create_refusal( $source->post_type, $new_status );
 		if ( '' !== $create_refusal ) {
 			throw new \Exception( esc_html( $create_refusal ) );
@@ -619,6 +623,7 @@ class Elementor {
 			$merged = array_merge( $target_elements, $template_elements );
 		}
 
+		self::refuse_if_stored_markup_would_be_removed( $target_post_id );
 		update_post_meta( $target_post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $merged ) ) ) );
 
 		// Seed edit_mode = builder if the target didn't have it — makes the
@@ -948,13 +953,6 @@ class Elementor {
 	}
 
 	/**
-	 * Walk an Elementor element tree and replace every element's id with a fresh random 8-char hex.
-	 * Preserves all other fields. Recurses into nested elements.
-	 *
-	 * @param array $elements
-	 * @return array
-	 */
-	/**
 	 * Builder data written for a user without unfiltered_html gets the same
 	 * filtering WordPress applies to that user's post content: HTML through
 	 * wp_kses_post, link URLs through esc_url_raw.
@@ -963,23 +961,28 @@ class Elementor {
 	 * @param string $key   Key the value is stored under.
 	 * @return mixed
 	 */
-	private static function sanitize_tree_for_user( $value, $key = '' ) {
+	public static function sanitize_tree_for_user( $value, $key = '' ) {
 		if ( current_user_can( 'unfiltered_html' ) ) {
 			return $value;
-		}
-		// Object-shaped settings get the same treatment; they are stored as JSON either way.
-		if ( is_object( $value ) ) {
-			$as_array = json_decode( (string) wp_json_encode( $value ), true );
-			if ( ! is_array( $as_array ) ) {
-				return [];
-			}
-			return (object) self::sanitize_tree_for_user( $as_array, $key );
 		}
 		if ( is_array( $value ) ) {
 			foreach ( $value as $k => $v ) {
 				$value[ $k ] = self::sanitize_tree_for_user( $v, (string) $k );
 			}
 			return $value;
+		}
+		// Objects get the same filtering as arrays: plain objects keep their
+		// shape (Elementor stores empty settings as {}), anything else is
+		// turned into an array first.
+		if ( $value instanceof \stdClass ) {
+			foreach ( get_object_vars( $value ) as $k => $v ) {
+				$value->$k = self::sanitize_tree_for_user( $v, (string) $k );
+			}
+			return $value;
+		}
+		if ( is_object( $value ) ) {
+			$as_array = json_decode( (string) wp_json_encode( $value ), true );
+			return is_array( $as_array ) ? self::sanitize_tree_for_user( $as_array, $key ) : '';
 		}
 		if ( ! is_string( $value ) ) {
 			return $value;
@@ -990,6 +993,92 @@ class Elementor {
 		return wp_strip_all_tags( $value ) !== $value ? wp_kses_post( $value ) : $value;
 	}
 
+	/**
+	 * Refuse a write by a user without unfiltered_html when the page already
+	 * holds markup that filtering would remove (a script, iframe or form an
+	 * administrator added). Saving any part of the page filters all of it, so
+	 * the write would silently strip that markup.
+	 *
+	 * @param int $post_id Page whose stored builder data is checked.
+	 * @throws \Exception When the write must not go ahead.
+	 */
+	private static function refuse_if_stored_markup_would_be_removed( $post_id ) {
+		if ( current_user_can( 'unfiltered_html' ) ) {
+			return;
+		}
+		$stored = get_post_meta( (int) $post_id, '_elementor_data', true );
+		$tree   = is_string( $stored ) ? json_decode( $stored, true ) : $stored;
+		if ( is_array( $tree ) && self::filtering_removes_markup( $tree ) ) {
+			throw new \Exception( 'This page holds HTML your account may not save (for example a script, iframe or form added by an administrator). Editing it would remove that HTML, so nothing was changed. Ask an administrator to make this edit.' );
+		}
+	}
+
+	/**
+	 * True when sanitize_tree_for_user() would drop a tag, attribute or link
+	 * protocol, or empty a link, anywhere in the value. Changes that only
+	 * normalise markup (entities, quotes) do not count.
+	 *
+	 * @param mixed  $value Element tree or any value inside it.
+	 * @param string $key   Key the value is stored under.
+	 */
+	private static function filtering_removes_markup( $value, $key = '' ) {
+		if ( is_array( $value ) || is_object( $value ) ) {
+			foreach ( (array) $value as $k => $v ) {
+				if ( self::filtering_removes_markup( $v, (string) $k ) ) {
+					return true;
+				}
+			}
+			return false;
+		}
+		if ( ! is_string( $value ) || '' === $value ) {
+			return false;
+		}
+		if ( 'url' === $key || '_url' === substr( $key, -4 ) ) {
+			return '' === esc_url_raw( $value );
+		}
+		if ( wp_strip_all_tags( $value ) === $value ) {
+			return false;
+		}
+		return self::kses_removes_something( $value );
+	}
+
+	/**
+	 * Filter the HTML twice: with the post allowlist, and with that allowlist
+	 * widened to every tag, attribute and protocol the HTML uses. Both passes
+	 * normalise the same way, so any difference is something the post
+	 * allowlist removed. Markup that cannot be scanned counts as removed.
+	 */
+	private static function kses_removes_something( $html ) {
+		if ( false === preg_match_all( '/<\s*\/?\s*([a-z][a-z0-9-]*)/i', $html, $tags ) || false === preg_match_all( '/([a-z_:][-a-z0-9_:.]*)\s*=/i', $html, $attrs ) ) {
+			return true;
+		}
+		$attr_set = array_fill_keys( array_map( 'strtolower', $attrs[1] ), true );
+		$allowed  = wp_kses_allowed_html( 'post' );
+		foreach ( array_unique( array_map( 'strtolower', $tags[1] ) ) as $tag ) {
+			if ( ! isset( $allowed[ $tag ] ) || ! is_array( $allowed[ $tag ] ) ) {
+				$allowed[ $tag ] = [];
+			}
+		}
+		foreach ( $allowed as $tag => $tag_attrs ) {
+			$allowed[ $tag ] = array_merge( is_array( $tag_attrs ) ? $tag_attrs : [], $attr_set );
+		}
+		$filtered = wp_kses_post( $html );
+		// A tag the filter could not parse comes back as visible text.
+		$as_text = '/&lt;\s*\/?\s*[a-z]/i';
+		if ( (int) preg_match_all( $as_text, $filtered ) > (int) preg_match_all( $as_text, $html ) ) {
+			return true;
+		}
+		$protocols = array_unique( array_merge( wp_allowed_protocols(), [ 'javascript', 'vbscript', 'data' ] ) );
+		return $filtered !== wp_kses( $html, $allowed, $protocols );
+	}
+
+	/**
+	 * Walk an Elementor element tree and replace every element's id with a fresh random 8-char hex.
+	 * Preserves all other fields. Recurses into nested elements.
+	 *
+	 * @param array $elements
+	 * @return array
+	 */
 	private static function regenerate_element_ids( $elements ) {
 		if ( ! is_array( $elements ) ) {
 			return $elements;
@@ -1095,6 +1184,7 @@ class Elementor {
 			);
 		}
 
+		self::refuse_if_stored_markup_would_be_removed( $post_id );
 		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $updated ) ) ) );
 
 		// Sync attachment postmeta only when the caller explicitly opted in.
@@ -1416,6 +1506,7 @@ class Elementor {
 		$counter = [ 'count' => 0 ];
 		$updated = self::walk_widgets_image( $tree, $old_url, $new_url, $old_id, $new_id, $counter );
 
+		self::refuse_if_stored_markup_would_be_removed( $post_id );
 		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $updated ) ) ) );
 
 		$undo_envelope = self::build_elementor_data_undo(
@@ -1806,6 +1897,10 @@ class Elementor {
 
 		$templates = [];
 		foreach ( $posts as $tpl ) {
+			// Templates other people made are listed only to callers who can edit them.
+			if ( ! current_user_can( 'edit_post', $tpl->ID ) ) {
+				continue;
+			}
 			$meta_type = get_post_meta( $tpl->ID, '_elementor_template_type', true );
 			if ( is_string( $meta_type ) && $meta_type !== '' ) {
 				$type = $meta_type;
@@ -1830,6 +1925,23 @@ class Elementor {
 	}
 
 	/**
+	 * Template types this site's Elementor can hold in its library. Theme
+	 * Builder types appear only when Elementor Pro registers them; the site kit
+	 * (global styles) is never a template a tool may create.
+	 *
+	 * @return string[]
+	 */
+	private static function library_template_types() {
+		$known = [ 'page', 'section', 'container', 'loop-item', 'header', 'footer', 'single', 'single-post', 'single-page', 'archive', 'search-results', 'error-404', 'popup', 'product', 'product-archive' ];
+		$registered = null;
+		if ( class_exists( '\\Elementor\\Plugin' ) && isset( \Elementor\Plugin::$instance->documents ) && method_exists( \Elementor\Plugin::$instance->documents, 'get_document_types' ) ) {
+			$registered = array_keys( (array) \Elementor\Plugin::$instance->documents->get_document_types() );
+		}
+		$types = null === $registered ? [ 'page', 'section', 'container' ] : array_values( array_intersect( $known, $registered ) );
+		return $types ? $types : [ 'page', 'section' ];
+	}
+
+	/**
 	 * Create a new Elementor template from a JSON payload.
 	 */
 	private static function import_template( $args ) {
@@ -1838,6 +1950,10 @@ class Elementor {
 		}
 		$title = sanitize_text_field( $args['title'] ?? '' );
 		$template_type = isset( $args['template_type'] ) ? sanitize_key( $args['template_type'] ) : 'page';
+		$allowed_types = self::library_template_types();
+		if ( ! in_array( $template_type, $allowed_types, true ) ) {
+			throw new \Exception( sprintf( 'template_type must be one of: %s.', esc_html( implode( ', ', $allowed_types ) ) ) );
+		}
 		$template_json = (string) ( $args['template_json'] ?? '' );
 		if ( $title === '' || $template_json === '' ) {
 			throw new \Exception( 'title and template_json are required.' );
@@ -1965,6 +2081,7 @@ class Elementor {
 		$tree = self::insert_into_tree( $tree, $parent_id, $position, $new_element );
 
 		// Save.
+		self::refuse_if_stored_markup_would_be_removed( $post_id );
 		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $tree ) ) ) );
 
 		$notice = ! empty( $args['settings'] ) && in_array( $widget_type, self::$curated_widget_types, true )

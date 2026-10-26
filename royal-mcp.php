@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.5.11
+ * Version: 1.5.12
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -41,7 +41,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 }
 
 // Define plugin constants.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.11' );
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.12' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -109,14 +109,22 @@ class Royal_MCP_Plugin {
         // OAuth 2.0 endpoints (served at domain root, not under /wp-json/).
         add_action('init', [$this, 'register_oauth_rewrites']);
         add_filter('query_vars', [$this, 'register_oauth_query_vars']);
-        add_action('parse_request', [$this, 'handle_oauth_request']);
+        add_action('parse_request', [$this, 'handle_oauth_request']); // audit:https-at-edge -- TLS is the site's; plain HTTP stays usable for local testing and the settings page says AI clients need HTTPS
+        // Discovery documents only Royal MCP serves are answered before WordPress
+        // parses the request, so a handler that claims every /.well-known/oauth-*
+        // path while the request is parsed cannot answer them in our place.
+        add_filter('do_parse_request', [$this, 'answer_own_discovery_documents'], 10, 2);
+        // The namespace token / register / revoke routes answer bad request bodies in
+        // OAuth's error format, like the site-root addresses, not WordPress's REST one.
+        add_filter('rest_request_before_callbacks', [$this, 'let_oauth_answer_invalid_json'], 10, 3);
 
         // Rewrite-flush trigger. When ROYAL_MCP_VERSION advances (e.g. 1.5.0
         // → 1.5.1 adds the /mcp root alias), upgraders who never
         // deactivate/reactivate would otherwise never see the new rule land
-        // in WP's cached rewrite_rules option. Runs on admin_init so the
-        // flush cost stays off the frontend request path.
-        add_action('admin_init', [$this, 'maybe_flush_rewrites']);
+        // in WP's cached rewrite_rules option. Runs on the first request of
+        // any kind after an update (auto-updates may never see wp-admin);
+        // after that it is one option read.
+        add_action('init', [$this, 'maybe_flush_rewrites'], 99);
 
         // WebMCP bootstrap-shim JS — enqueued on the frontend only when the
         // Browser Agents toggle is ON and the visitor is logged in. Runs at
@@ -130,7 +138,9 @@ class Royal_MCP_Plugin {
         // Priority 1: ahead of WordPress's own handling of a 404, which may redirect to a similar URL.
         add_action('template_redirect', [$this, 'answer_405_for_oauth_post_paths'], 1);
 
-        // Scheduled token cleanup.
+        // Scheduled token cleanup. Activation schedules it; a site that only
+        // ever updated the plugin gets it scheduled on its next request.
+        add_action('init', [$this, 'ensure_cleanup_scheduled'], 20);
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'cleanup_expired']);
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Undo_Store::class, 'cleanup_expired']);
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Protocol_Counter::class, 'cleanup_expired']);
@@ -177,7 +187,10 @@ class Royal_MCP_Plugin {
         // abilities hook; registering an ability against a non-registered category throws.
         $rmcp_abilities_raw     = get_option( 'royal_mcp_abilities_registration_enabled', null );
         $rmcp_abilities_enabled = ( null === $rmcp_abilities_raw || '' === $rmcp_abilities_raw ) ? true : (bool) $rmcp_abilities_raw;
-        if ( function_exists( 'wp_register_ability_category' ) && $rmcp_abilities_enabled ) {
+        // With Royal MCP switched off, nothing is registered for other servers either.
+        $rmcp_settings_now = get_option( 'royal_mcp_settings', [] );
+        $rmcp_enabled      = is_array( $rmcp_settings_now ) && ! empty( $rmcp_settings_now['enabled'] );
+        if ( function_exists( 'wp_register_ability_category' ) && $rmcp_abilities_enabled && $rmcp_enabled ) {
             add_action( 'wp_abilities_api_categories_init', array( \Royal_MCP\Abilities\Categories::class, 'register' ) );
             add_action( 'wp_abilities_api_init', array( \Royal_MCP\Abilities\Registrar::class, 'register' ) );
 
@@ -219,7 +232,7 @@ class Royal_MCP_Plugin {
         $links = [
             '<' . $home . '/.well-known/mcp/server-cards.json>; rel="mcp-server-card"',
             '<' . $home . '/.well-known/skills/index.json>; rel="agent-skills"',
-            '<' . $home . '/.well-known/oauth-authorization-server>; rel="oauth-authorization-server"',
+            '<' . $home . '/.well-known/oauth-authorization-server' . ( '' !== Royal_MCP\OAuth\Server::namespace_issuer() ? Royal_MCP\OAuth\Server::namespace_issuer_path() : '' ) . '>; rel="oauth-authorization-server"',
         ];
         $response->header( 'Link', implode( ', ', $links ) );
 
@@ -328,7 +341,7 @@ class Royal_MCP_Plugin {
         ] );
         $royal_mcp_activation_uid = (int) get_current_user_id();
         if ( $royal_mcp_activation_uid > 0 ) {
-            set_transient(
+            set_transient( // audit:transient-ttl-only -- one-time key reveal, deleted when the settings page shows it
                 'royal_mcp_reveal_api_key_' . $royal_mcp_activation_uid,
                 $royal_mcp_activation_plaintext,
                 15 * MINUTE_IN_SECONDS
@@ -495,6 +508,13 @@ class Royal_MCP_Plugin {
         return true;
     }
 
+    /** Daily cleanup of expired tokens, sessions, undo snapshots and stale clients. */
+    public function ensure_cleanup_scheduled() {
+        if ( ! wp_next_scheduled( 'royal_mcp_token_cleanup' ) ) {
+            wp_schedule_event( time() + HOUR_IN_SECONDS, 'daily', 'royal_mcp_token_cleanup' );
+        }
+    }
+
     public function deactivate() {
         // Clear scheduled events.
         wp_clear_scheduled_hook( 'royal_mcp_token_cleanup' );
@@ -557,6 +577,10 @@ class Royal_MCP_Plugin {
         // instead of silently serving the site-root document.
         add_rewrite_rule( '\.well-known/oauth-protected-resource/(.+?)/?$', 'index.php?royal_mcp_oauth=protected_resource_endpoint&royal_mcp_resource_path=$matches[1]', 'top' );
         add_rewrite_rule( '\.well-known/oauth-protected-resource/?$', 'index.php?royal_mcp_oauth=protected_resource', 'top' );
+        // RFC 8414 path-inserted documents for the namespace issuer.
+        $issuer_path = preg_quote( ltrim( Royal_MCP\OAuth\Server::namespace_issuer_path(), '/' ), '#' );
+        add_rewrite_rule( '\.well-known/oauth-authorization-server/' . $issuer_path . '/?$', 'index.php?royal_mcp_oauth=metadata_scoped', 'top' );
+        add_rewrite_rule( '\.well-known/openid-configuration/' . $issuer_path . '/?$', 'index.php?royal_mcp_oauth=metadata_oidc_scoped', 'top' );
         add_rewrite_rule( '\.well-known/oauth-authorization-server/mcp/?$', 'index.php?royal_mcp_oauth=metadata_mcp', 'top' );
         add_rewrite_rule( '\.well-known/oauth-authorization-server/?$', 'index.php?royal_mcp_oauth=metadata', 'top' );
         // OIDC Discovery alias of the AS document — the SDK's fallback when the
@@ -787,9 +811,10 @@ class Royal_MCP_Plugin {
         if ( get_option( 'royal_mcp_rewrite_version' ) === ROYAL_MCP_VERSION ) {
             return;
         }
+        // Recorded first so requests arriving during the flush do not flush again.
+        update_option( 'royal_mcp_rewrite_version', ROYAL_MCP_VERSION );
         $this->register_oauth_rewrites();
         flush_rewrite_rules( false );
-        update_option( 'royal_mcp_rewrite_version', ROYAL_MCP_VERSION );
     }
 
     /**
@@ -803,6 +828,52 @@ class Royal_MCP_Plugin {
     }
 
     /**
+     * Answer the discovery documents that exist only for Royal MCP: the
+     * namespace issuer's RFC 8414 and OpenID documents, and the path-suffixed
+     * protected-resource document of each MCP endpoint. The site-root
+     * documents are left to the rewrite rules.
+     *
+     * @param bool $parse Whether WordPress should parse the request.
+     * @param WP   $wp    Current WordPress environment.
+     * @return bool
+     */
+    public function answer_own_discovery_documents( $parse, $wp ) {
+        if ( ! $parse || ! $wp instanceof WP || '' === Royal_MCP\OAuth\Server::namespace_issuer() ) {
+            return $parse;
+        }
+        $method = isset( $_SERVER['REQUEST_METHOD'] ) ? strtoupper( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) ) : 'GET';
+        if ( 'GET' !== $method && 'HEAD' !== $method ) {
+            return $parse;
+        }
+        $path = isset( $_SERVER['REQUEST_URI'] )
+            ? (string) wp_parse_url( wp_unslash( $_SERVER['REQUEST_URI'] ), PHP_URL_PATH ) // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- compared against fixed paths only
+            : '';
+        $path      = '/' . trim( $path, '/' );
+        $home_path = rtrim( (string) wp_parse_url( home_url(), PHP_URL_PATH ), '/' );
+        if ( '' !== $home_path && 0 === strpos( $path . '/', $home_path . '/' ) ) {
+            $path = '/' . trim( substr( $path, strlen( $home_path ) ), '/' );
+        }
+
+        $issuer_path = Royal_MCP\OAuth\Server::namespace_issuer_path();
+        $prm         = '/.well-known/oauth-protected-resource/';
+        $action      = '';
+        if ( '/.well-known/oauth-authorization-server' . $issuer_path === $path ) {
+            $action = 'metadata_scoped';
+        } elseif ( '/.well-known/openid-configuration' . $issuer_path === $path ) {
+            $action = 'metadata_oidc_scoped';
+        } elseif ( 0 === strpos( $path, $prm )
+            && null !== Royal_MCP\OAuth\Server::resolve_resource_path( substr( $path, strlen( $prm ) ) ) ) {
+            $action = 'protected_resource_endpoint';
+        }
+        if ( '' === $action ) {
+            return $parse;
+        }
+        $wp->query_vars['royal_mcp_oauth'] = $action;
+        $this->handle_oauth_request( $wp );
+        return $parse;
+    }
+
+    /**
      * Intercept requests that match OAuth rewrite rules and dispatch to OAuth\Server.
      */
     public function handle_oauth_request( $wp ) {
@@ -811,6 +882,15 @@ class Royal_MCP_Plugin {
         }
 
         $action = sanitize_text_field( $wp->query_vars['royal_mcp_oauth'] );
+
+        // A protected-resource document for a path that is not ours belongs to
+        // another plugin (or nobody): leave the address to it and to WordPress.
+        if ( 'protected_resource_endpoint' === $action
+            && null === Royal_MCP\OAuth\Server::resolve_resource_path( Royal_MCP\OAuth\Server::request_uri_resource_suffix() )
+            && null === Royal_MCP\OAuth\Server::resolve_resource_path( (string) ( $wp->query_vars['royal_mcp_resource_path'] ?? '' ) ) ) {
+            unset( $wp->query_vars['royal_mcp_oauth'], $wp->query_vars['royal_mcp_resource_path'] );
+            return;
+        }
 
         // A form on a page published at one of these addresses posts back to
         // the same address. A POST that is not shaped like the OAuth request
@@ -827,7 +907,7 @@ class Royal_MCP_Plugin {
         }
 
         // Only handle OAuth if plugin is enabled (allow metadata always for discovery).
-        if ( ! in_array( $action, [ 'metadata', 'metadata_mcp', 'metadata_oidc', 'jwks' ], true ) ) {
+        if ( ! in_array( $action, [ 'metadata', 'metadata_mcp', 'metadata_oidc', 'metadata_scoped', 'metadata_oidc_scoped', 'jwks' ], true ) ) {
             $settings = get_option( 'royal_mcp_settings', [] );
             if ( empty( $settings['enabled'] ) ) {
                 status_header( 503 );
@@ -848,6 +928,49 @@ class Royal_MCP_Plugin {
         $oauth_server = new Royal_MCP\OAuth\Server();
         $oauth_server->dispatch( $action, (array) $wp->query_vars );
         // dispatch() calls exit, but just in case:
+        exit;
+    }
+
+    /**
+     * Hand a malformed JSON body on the namespace OAuth routes to the OAuth
+     * handler, which reads the raw body and replies with an OAuth error.
+     *
+     * @param mixed            $response Result so far (an error when the body failed to parse).
+     * @param array            $handler  Route handler.
+     * @param \WP_REST_Request $request  Request.
+     * @return mixed
+     */
+    public function let_oauth_answer_invalid_json( $response, $handler, $request ) {
+        if ( is_wp_error( $response ) && 'rest_invalid_json' === $response->get_error_code()
+            && $request instanceof \WP_REST_Request
+            && 1 === preg_match( '#^/royal-mcp/v1/oauth/(token|register|revoke)$#', (string) $request->get_route() ) ) {
+            return null;
+        }
+        return $response;
+    }
+
+    /**
+     * The namespace token, registration and revocation endpoints. The OAuth
+     * handler writes its own response and ends the request.
+     *
+     * @param \WP_REST_Request $request Request.
+     */
+    public function handle_namespaced_oauth( $request ) {
+        $action   = (string) $request->get_param( 'oauth_action' );
+        $settings = get_option( 'royal_mcp_settings', [] );
+        if ( empty( $settings['enabled'] ) ) {
+            return new \WP_REST_Response( [ 'error' => 'server_error', 'error_description' => 'Royal MCP is currently disabled.' ], 503 );
+        }
+        $ua = isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '';
+        if ( 'Royal MCP Self-Check' === $ua && in_array( $action, [ 'register', 'token' ], true ) ) {
+            return new \WP_REST_Response( null, 204 );
+        }
+        $method = isset( $_SERVER['REQUEST_METHOD'] ) ? strtoupper( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) ) : 'GET';
+        if ( 'GET' === $method ) {
+            $action = 'method_not_allowed';
+        }
+        Royal_MCP\OAuth\Server::$via_namespace = true;
+        ( new Royal_MCP\OAuth\Server() )->dispatch( $action, [] );
         exit;
     }
 
@@ -943,7 +1066,7 @@ class Royal_MCP_Plugin {
             'methods'             => 'GET',
             'callback'            => function () {
                 return new \WP_REST_Response(
-                    \Royal_MCP\OAuth\Server::build_authorization_server_metadata(),
+                    \Royal_MCP\OAuth\Server::build_authorization_server_metadata( true ),
                     200,
                     [ 'Cache-Control' => 'public, max-age=3600' ]
                 );
@@ -954,12 +1077,26 @@ class Royal_MCP_Plugin {
             'methods'             => 'GET',
             'callback'            => function () {
                 return new \WP_REST_Response(
-                    \Royal_MCP\OAuth\Server::build_openid_configuration(),
+                    \Royal_MCP\OAuth\Server::build_openid_configuration( true ),
                     200,
                     [ 'Cache-Control' => 'public, max-age=3600' ]
                 );
             },
             'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
+        ]);
+        register_rest_route('royal-mcp/v1', '/.well-known/jwks.json', [
+            'methods'             => 'GET',
+            'callback'            => function () {
+                return new \WP_REST_Response( [ 'keys' => [] ], 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+            },
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — intentionally public discovery document
+        ]);
+        // Token, registration and revocation for the namespace issuer. Same
+        // handlers as the site-root addresses, which keep answering.
+        register_rest_route('royal-mcp/v1', '/oauth/(?P<oauth_action>token|register|revoke)', [
+            'methods'             => [ 'GET', 'POST' ],
+            'callback'            => [ $this, 'handle_namespaced_oauth' ],
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — OAuth endpoints authenticate the client in the handler
         ]);
         register_rest_route('royal-mcp/v1', '/.well-known/oauth-protected-resource', [
             'methods'             => 'GET',

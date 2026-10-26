@@ -35,7 +35,7 @@ class Agent_Skills_Index {
         }
 
         $doc = self::build();
-        set_transient( self::CACHE_KEY, $doc, self::CACHE_TTL );
+        set_transient( self::CACHE_KEY, $doc, self::CACHE_TTL ); // audit:transient-ttl-only -- also cleared when the settings change
         return $doc;
     }
 

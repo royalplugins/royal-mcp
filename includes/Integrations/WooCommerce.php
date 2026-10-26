@@ -21,6 +21,15 @@ class WooCommerce {
 	/** Tools whose reply is a key => count map; ignored_args would read as data there. */
 	const MAP_REPLIES = [ 'wc_get_coupon_count' ];
 
+	/**
+	 * Statuses the order tools may set. "refunded" is left out: a refund is
+	 * made in WooCommerce, where the payment gateway is refunded too.
+	 */
+	const ORDER_STATUS_TARGETS = [ 'pending', 'processing', 'on-hold', 'completed', 'cancelled', 'failed' ];
+
+	/** Order statuses the order tools do not change away from. */
+	const ORDER_STATUS_LOCKED = [ 'refunded', 'checkout-draft', 'trash', 'auto-draft' ];
+
 	public static function is_available() {
 		return class_exists( 'WooCommerce' );
 	}
@@ -139,7 +148,7 @@ class WooCommerce {
 					'type'       => 'object',
 					'properties' => [
 						'id'     => [ 'type' => 'integer', 'description' => 'Order ID' ],
-						'status' => [ 'type' => 'string', 'description' => 'New status (processing, completed, on-hold, cancelled, refunded)' ],
+						'status' => [ 'type' => 'string', 'description' => 'New status (pending, processing, completed, on-hold, cancelled, failed). Refunds are made in WooCommerce, not here.' ],
 						'note'   => [ 'type' => 'string', 'description' => 'Optional order note. May contain safe HTML (links, formatting).' ],
 					],
 					'required'   => [ 'id', 'status' ],
@@ -674,7 +683,9 @@ class WooCommerce {
 		// Shop Manager role have it; Customer, Subscriber, Contributor, and Editor do
 		// NOT). Per-action additions (publish_products, delete_others_shop_orders, etc.)
 		// layer on top below where the action is destructive.
-		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+		// WooCommerce creates manage_woocommerce; without WooCommerce,
+		// administrators are told it is not active rather than refused.
+		if ( ! current_user_can( self::is_available() ? 'manage_woocommerce' : 'manage_options' ) ) {
 			throw new \Exception( 'You do not have permission to use WooCommerce tools.' );
 		}
 
@@ -768,6 +779,14 @@ class WooCommerce {
 				return self::format_product_detail( $product );
 
 			case 'wc_create_product':
+				// The shop-wide gate is manage_woocommerce; product capabilities
+				// still decide for roles that have one without the other.
+				if ( ! current_user_can( 'edit_products' ) ) {
+					throw new \Exception( 'edit_products capability required to create products.' );
+				}
+				if ( 'publish' === ( $args['status'] ?? '' ) && ! current_user_can( 'publish_products' ) ) {
+					throw new \Exception( 'publish_products capability required to publish a product. Create it as a draft instead.' );
+				}
 				$type              = sanitize_text_field( $args['type'] ?? 'simple' );
 				$product_class_map = [
 					'simple'   => '\WC_Product_Simple',
@@ -782,13 +801,17 @@ class WooCommerce {
 				if ( ! class_exists( $class ) ) {
 					throw new \Exception( 'Product class not available: ' . $class . ' (WooCommerce may not be fully loaded)' );
 				}
+				$price_error = self::price_fields_error( $args );
+				if ( '' !== $price_error ) {
+					return Envelope::error( 'invalid_args', $price_error );
+				}
 				$product = new $class();
 				$product->set_name( sanitize_text_field( $args['name'] ) );
 				if ( isset( $args['regular_price'] ) ) {
-					$product->set_regular_price( sanitize_text_field( $args['regular_price'] ) );
+					$product->set_regular_price( self::clean_price( $args['regular_price'] ) );
 				}
 				if ( isset( $args['sale_price'] ) ) {
-					$product->set_sale_price( sanitize_text_field( $args['sale_price'] ) );
+					$product->set_sale_price( self::clean_price( $args['sale_price'] ) );
 				}
 				if ( isset( $args['description'] ) ) {
 					$product->set_description( wp_kses_post( $args['description'] ) );
@@ -801,7 +824,7 @@ class WooCommerce {
 				}
 				if ( isset( $args['stock_quantity'] ) ) {
 					$product->set_manage_stock( true );
-					$product->set_stock_quantity( intval( $args['stock_quantity'] ) );
+					$product->set_stock_quantity( self::clean_stock( $args['stock_quantity'] ) );
 				}
 				if ( isset( $args['categories'] ) ) {
 					$product->set_category_ids( array_map( 'intval', $args['categories'] ) );
@@ -847,6 +870,16 @@ class WooCommerce {
 				if ( ! current_user_can( 'edit_product', $up_product_id ) ) {
 					throw new \Exception( 'edit_product capability required on this product.' );
 				}
+				// Checked on the value that is stored (WordPress trims and lowercases a status).
+				if ( isset( $args['status'] ) ) {
+					if ( ! is_scalar( $args['status'] ) ) {
+						throw new \Exception( 'status must be a string.' );
+					}
+					$args['status'] = sanitize_key( (string) $args['status'] );
+				}
+				if ( isset( $args['status'] ) && in_array( $args['status'], [ 'publish', 'future', 'private' ], true ) && ! current_user_can( 'publish_products' ) ) {
+					throw new \Exception( 'publish_products capability required to publish a product.' );
+				}
 
 				// Requested-field extraction. Keys mirror the MCP tool arg
 				// names. WC stores currency values as strings for precision,
@@ -857,9 +890,13 @@ class WooCommerce {
 				if ( isset( $args['short_description'] ) ) $up_requested['short_description'] = wp_kses_post( (string) $args['short_description'] );
 				if ( isset( $args['sku'] ) )               $up_requested['sku']               = sanitize_text_field( (string) $args['sku'] );
 				if ( isset( $args['status'] ) )            $up_requested['status']            = sanitize_text_field( (string) $args['status'] );
-				if ( isset( $args['regular_price'] ) )     $up_requested['regular_price']     = sanitize_text_field( (string) $args['regular_price'] );
-				if ( isset( $args['sale_price'] ) )        $up_requested['sale_price']        = sanitize_text_field( (string) $args['sale_price'] );
-				if ( isset( $args['stock_quantity'] ) )    $up_requested['stock_quantity']    = (int) $args['stock_quantity'];
+				$price_error = self::price_fields_error( $args, $up_product->get_regular_price( 'edit' ), $up_product->get_sale_price( 'edit' ) );
+				if ( '' !== $price_error ) {
+					return Envelope::error( 'invalid_args', $price_error, [ 'id' => $up_product_id ] );
+				}
+				if ( isset( $args['regular_price'] ) )     $up_requested['regular_price']     = self::clean_price( $args['regular_price'] );
+				if ( isset( $args['sale_price'] ) )        $up_requested['sale_price']        = self::clean_price( $args['sale_price'] );
+				if ( isset( $args['stock_quantity'] ) )    $up_requested['stock_quantity']    = self::clean_stock( $args['stock_quantity'] );
 
 				if ( empty( $up_requested ) ) {
 					throw new \Exception( 'No update fields provided. Pass at least one of: name, description, short_description, sku, status, regular_price, sale_price, stock_quantity.' );
@@ -1011,10 +1048,17 @@ class WooCommerce {
 				if ( ! $os_order || ! $os_order instanceof \WC_Order ) {
 					return Envelope::error( 'not_found', sprintf( 'Order %d not found.', $os_order_id ), [ 'id' => $os_order_id ] );
 				}
-				$os_allowed = [ 'pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' ];
-				$os_new     = sanitize_text_field( $args['status'] );
+				if ( ! current_user_can( 'edit_shop_orders' ) ) {
+					throw new \Exception( 'edit_shop_orders capability required to change an order status.' );
+				}
+				$os_refusal = self::order_status_change_refusal( $os_order );
+				if ( null !== $os_refusal ) {
+					return $os_refusal;
+				}
+				$os_allowed = self::ORDER_STATUS_TARGETS;
+				$os_new     = is_scalar( $args['status'] ?? null ) ? sanitize_text_field( (string) $args['status'] ) : '';
 				if ( ! in_array( $os_new, $os_allowed, true ) ) {
-					return Envelope::error( 'invalid_args', sprintf( 'Invalid order status "%s". Allowed: %s.', $os_new, implode( ', ', $os_allowed ) ), [ 'received' => $os_new, 'allowed' => $os_allowed ] );
+					return Envelope::error( 'invalid_args', sprintf( 'Invalid order status "%s". Allowed: %s. Refunds are made in WooCommerce so the payment gateway is refunded.', $os_new, implode( ', ', $os_allowed ) ), [ 'received' => $os_new, 'allowed' => $os_allowed ] );
 				}
 				// WC status column is stored as 'wc-<status>'; get_status() strips
 				// the prefix so both prior and new values compare cleanly.
@@ -1300,10 +1344,14 @@ class WooCommerce {
 					$uo_before['customer_note']    = (string) $uo_order->get_customer_note();
 				}
 				if ( ! empty( $args['status'] ) ) {
-					$uo_new_status = sanitize_text_field( (string) $args['status'] );
-					$uo_allowed    = [ 'pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' ];
+					$uo_refusal = self::order_status_change_refusal( $uo_order );
+					if ( null !== $uo_refusal ) {
+						return $uo_refusal;
+					}
+					$uo_new_status = is_scalar( $args['status'] ) ? sanitize_text_field( (string) $args['status'] ) : '';
+					$uo_allowed    = self::ORDER_STATUS_TARGETS;
 					if ( ! in_array( $uo_new_status, $uo_allowed, true ) ) {
-						return Envelope::error( 'invalid_args', sprintf( 'Invalid order status "%s". Allowed: %s.', $uo_new_status, implode( ', ', $uo_allowed ) ), [ 'received' => $uo_new_status, 'allowed' => $uo_allowed ] );
+						return Envelope::error( 'invalid_args', sprintf( 'Invalid order status "%s". Allowed: %s. Refunds are made in WooCommerce so the payment gateway is refunded.', $uo_new_status, implode( ', ', $uo_allowed ) ), [ 'received' => $uo_new_status, 'allowed' => $uo_allowed ] );
 					}
 					$uo_requested['status'] = $uo_new_status;
 					$uo_before['status']    = $uo_order->get_status();
@@ -1560,8 +1608,15 @@ class WooCommerce {
 				if ( ! $cv_parent ) {
 					return Envelope::error( 'not_found', sprintf( 'Product %d not found.', $cv_parent_id ), [ 'product_id' => $cv_parent_id ] );
 				}
+				if ( ! current_user_can( 'edit_product', $cv_parent_id ) ) {
+					throw new \Exception( 'edit_product capability required on the parent product.' );
+				}
 				if ( ! $cv_parent->is_type( 'variable' ) ) {
 					return Envelope::error( 'invalid_args', sprintf( 'Product %d is not a variable product (type: %s).', $cv_parent_id, $cv_parent->get_type() ), [ 'product_id' => $cv_parent_id, 'type' => $cv_parent->get_type() ] );
+				}
+				$price_error = self::price_fields_error( $args );
+				if ( '' !== $price_error ) {
+					return Envelope::error( 'invalid_args', $price_error, [ 'product_id' => $cv_parent_id ] );
 				}
 				$cv_variation = new \WC_Product_Variation();
 				$cv_variation->set_parent_id( $cv_parent_id );
@@ -1659,6 +1714,10 @@ class WooCommerce {
 				$uv_attrs_before_json = null;
 				if ( isset( $args['attributes'] ) ) {
 					$uv_attrs_before_json = wp_json_encode( $uv_var->get_attributes() );
+				}
+				$price_error = self::price_fields_error( $args, $uv_var->get_regular_price( 'edit' ), $uv_var->get_sale_price( 'edit' ) );
+				if ( '' !== $price_error ) {
+					return Envelope::error( 'invalid_args', $price_error, [ 'variation_id' => $uv_var->get_id() ] );
 				}
 
 				self::apply_variation_fields( $uv_var, $args );
@@ -1814,6 +1873,20 @@ class WooCommerce {
 				}
 				if ( ! current_user_can( 'edit_product', $bv_pid ) ) {
 					throw new \Exception( 'edit_product capability required on this product.' );
+				}
+
+				// Check every create / update entry before anything is written.
+				foreach ( [ 'create', 'update' ] as $bv_op ) {
+					foreach ( (array) ( $args[ $bv_op ] ?? [] ) as $bv_i => $bv_data ) {
+						if ( ! is_array( $bv_data ) ) {
+							continue;
+						}
+						$bv_cur = 'update' === $bv_op ? wc_get_product( intval( $bv_data['variation_id'] ?? 0 ) ) : null;
+						$bv_err = self::price_fields_error( $bv_data, $bv_cur ? $bv_cur->get_regular_price( 'edit' ) : '', $bv_cur ? $bv_cur->get_sale_price( 'edit' ) : '' );
+						if ( '' !== $bv_err ) {
+							return Envelope::error( 'invalid_args', sprintf( '%s[%d]: %s Nothing was changed.', $bv_op, $bv_i, $bv_err ), [ 'product_id' => $bv_pid ] );
+						}
+					}
 				}
 
 				$bv_result = [ 'create' => [], 'update' => [], 'delete' => [] ];
@@ -1991,6 +2064,10 @@ class WooCommerce {
 					$taxonomy = $attr_obj->slug;
 				} elseif ( ! empty( $args['taxonomy'] ) ) {
 					$taxonomy = sanitize_text_field( $args['taxonomy'] );
+					// This tool reads product attributes, not any taxonomy on the site.
+					if ( ! in_array( $taxonomy, (array) wc_get_attribute_taxonomy_names(), true ) ) {
+						throw new \Exception( sprintf( '%s is not a product attribute. Use wc_get_product_attributes to list them.', esc_html( $taxonomy ) ) );
+					}
 				} else {
 					throw new \Exception( 'Either taxonomy or attribute_id is required' );
 				}
@@ -2014,6 +2091,9 @@ class WooCommerce {
 				}, $terms ) );
 
 			case 'wc_create_product_attribute':
+				if ( ! current_user_can( 'manage_product_terms' ) ) {
+					throw new \Exception( 'manage_product_terms capability required to create product attributes.' );
+				}
 				$cpa_data = [
 					'name'         => sanitize_text_field( $args['name'] ),
 					'slug'         => sanitize_title( $args['slug'] ?? $args['name'] ),
@@ -2215,6 +2295,9 @@ class WooCommerce {
 				];
 
 			case 'wc_create_coupon':
+				if ( ! current_user_can( 'publish_shop_coupons' ) ) {
+					throw new \Exception( 'publish_shop_coupons capability required to create coupons.' );
+				}
 				$cc_code = strtolower( sanitize_text_field( $args['code'] ?? '' ) );
 				if ( empty( $cc_code ) ) {
 					throw new \Exception( 'Coupon code is required' );
@@ -2262,7 +2345,7 @@ class WooCommerce {
 				if ( ! $uc_coupon->get_id() || get_post_type( $uc_coupon->get_id() ) !== 'shop_coupon' ) {
 					return Envelope::error( 'not_found', sprintf( 'Coupon %d not found.', $uc_id ), [ 'id' => $uc_id ] );
 				}
-				if ( ! current_user_can( 'edit_shop_coupon', $uc_id ) && ! current_user_can( 'manage_woocommerce' ) ) {
+				if ( ! current_user_can( 'edit_shop_coupon', $uc_id ) ) {
 					throw new \Exception( 'edit_shop_coupon capability required on this coupon.' );
 				}
 
@@ -2406,7 +2489,7 @@ class WooCommerce {
 				if ( ! $dc_coupon->get_id() || get_post_type( $dc_coupon->get_id() ) !== 'shop_coupon' ) {
 					return Envelope::error( 'not_found', sprintf( 'Coupon %d not found.', $dc_id ), [ 'id' => $dc_id ] );
 				}
-				if ( ! current_user_can( 'delete_shop_coupon', $dc_id ) && ! current_user_can( 'manage_woocommerce' ) ) {
+				if ( ! current_user_can( 'delete_shop_coupon', $dc_id ) ) {
 					throw new \Exception( 'delete_shop_coupon capability required on this coupon.' );
 				}
 				$dc_force   = isset( $args['force'] ) ? (bool) $args['force'] : false;
@@ -2494,8 +2577,8 @@ class WooCommerce {
 				);
 
 			case 'wc_empty_coupon_trash':
-				if ( ! current_user_can( 'manage_woocommerce' ) ) {
-					throw new \Exception( 'manage_woocommerce capability required.' );
+				if ( ! current_user_can( 'manage_woocommerce' ) || ! current_user_can( 'delete_shop_coupons' ) ) {
+					throw new \Exception( 'delete_shop_coupons capability required.' );
 				}
 				$ect_trashed = get_posts( [
 					'post_type'      => 'shop_coupon',
@@ -2812,6 +2895,23 @@ class WooCommerce {
 	 * Return the order's current billing or shipping address as an associative array —
 	 * used by wc_update_order to merge partial address updates with existing values.
 	 */
+	/**
+	 * Why an order's status must not be changed by these tools, or null.
+	 * Subscriptions share the order classes but are not orders.
+	 *
+	 * @param \WC_Order $order Order.
+	 * @return array|null Error envelope.
+	 */
+	private static function order_status_change_refusal( $order ) {
+		if ( 'shop_order' !== $order->get_type() ) {
+			return Envelope::error( 'not_a_shop_order', sprintf( 'Record %d is a %s, not an order; its status is not changed here.', $order->get_id(), $order->get_type() ), [ 'id' => $order->get_id(), 'type' => $order->get_type() ] );
+		}
+		if ( in_array( $order->get_status(), self::ORDER_STATUS_LOCKED, true ) ) {
+			return Envelope::error( 'order_status_locked', sprintf( 'Order %d is %s; its status is not changed here.', $order->get_id(), $order->get_status() ), [ 'id' => $order->get_id(), 'status' => $order->get_status() ] );
+		}
+		return null;
+	}
+
 	private static function current_address( \WC_Order $order, string $type ): array {
 		$getter_prefix = 'get_' . $type . '_';
 		return [
@@ -3010,15 +3110,70 @@ class WooCommerce {
 		];
 	}
 
+	/**
+	 * A price as WooCommerce stores it, or null when the value is not a
+	 * price. Numbers and dot-decimal strings only, so "100,00" is never read
+	 * as 10000 and "abc" never clears a price; '' clears it.
+	 */
+	private static function clean_price( $raw ) {
+		if ( null === $raw || '' === $raw ) {
+			return '';
+		}
+		if ( is_int( $raw ) || ( is_float( $raw ) && is_finite( $raw ) ) ) {
+			$num = (float) $raw;
+		} elseif ( is_string( $raw ) && preg_match( '/^\d{1,10}(\.\d{1,6})?$/', trim( $raw ) ) ) {
+			$num = (float) trim( $raw );
+		} else {
+			return null;
+		}
+		return $num < 0 ? null : (string) wc_format_decimal( $num );
+	}
+
+	/** A stock quantity (whole number, 0 or more), or null. */
+	private static function clean_stock( $raw ) {
+		if ( is_int( $raw ) ) {
+			return $raw >= 0 ? $raw : null;
+		}
+		if ( is_float( $raw ) && is_finite( $raw ) && $raw >= 0 && floor( $raw ) === $raw ) {
+			return (int) $raw;
+		}
+		if ( is_string( $raw ) && preg_match( '/^\d{1,10}$/', trim( $raw ) ) ) {
+			return (int) trim( $raw );
+		}
+		return null;
+	}
+
+	/**
+	 * Why the prices / stock in $args can't be written, or ''. $regular_now
+	 * and $sale_now are the stored values, for the sale-above-regular check
+	 * when only one side changes.
+	 */
+	private static function price_fields_error( array $args, $regular_now = '', $sale_now = '' ) {
+		foreach ( [ 'regular_price', 'sale_price' ] as $f ) {
+			if ( isset( $args[ $f ] ) && null === self::clean_price( $args[ $f ] ) ) {
+				return sprintf( '%s must be a number, 0 or more, with a dot for decimals (for example 19.99).', $f );
+			}
+		}
+		if ( isset( $args['stock_quantity'] ) && null === self::clean_stock( $args['stock_quantity'] ) ) {
+			return 'stock_quantity must be a whole number, 0 or more.';
+		}
+		$regular = isset( $args['regular_price'] ) ? self::clean_price( $args['regular_price'] ) : (string) $regular_now;
+		$sale    = isset( $args['sale_price'] ) ? self::clean_price( $args['sale_price'] ) : (string) $sale_now;
+		if ( '' !== $regular && '' !== $sale && (float) $sale > (float) $regular ) {
+			return sprintf( 'sale_price (%s) is higher than regular_price (%s).', $sale, $regular );
+		}
+		return '';
+	}
+
 	private static function apply_variation_fields( \WC_Product_Variation $variation, array $args ) {
 		if ( isset( $args['attributes'] ) ) {
 			$variation->set_attributes( self::parse_variation_attributes( $args['attributes'] ) );
 		}
-		if ( isset( $args['regular_price'] ) ) {
-			$variation->set_regular_price( sanitize_text_field( $args['regular_price'] ) );
+		if ( isset( $args['regular_price'] ) && null !== self::clean_price( $args['regular_price'] ) ) {
+			$variation->set_regular_price( self::clean_price( $args['regular_price'] ) );
 		}
-		if ( isset( $args['sale_price'] ) ) {
-			$variation->set_sale_price( sanitize_text_field( $args['sale_price'] ) );
+		if ( isset( $args['sale_price'] ) && null !== self::clean_price( $args['sale_price'] ) ) {
+			$variation->set_sale_price( self::clean_price( $args['sale_price'] ) );
 		}
 		if ( isset( $args['sku'] ) ) {
 			$variation->set_sku( sanitize_text_field( $args['sku'] ) );
@@ -3029,8 +3184,8 @@ class WooCommerce {
 		if ( isset( $args['manage_stock'] ) ) {
 			$variation->set_manage_stock( (bool) $args['manage_stock'] );
 		}
-		if ( isset( $args['stock_quantity'] ) ) {
-			$variation->set_stock_quantity( intval( $args['stock_quantity'] ) );
+		if ( isset( $args['stock_quantity'] ) && null !== self::clean_stock( $args['stock_quantity'] ) ) {
+			$variation->set_stock_quantity( self::clean_stock( $args['stock_quantity'] ) );
 		}
 		if ( isset( $args['stock_status'] ) ) {
 			$variation->set_stock_status( sanitize_text_field( $args['stock_status'] ) );

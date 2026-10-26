@@ -35,6 +35,10 @@ class Tool_Capabilities {
 			'wp_get_permalink_structure'    => 'manage_options',
 			'wp_update_permalink_structure' => 'manage_options',
 			'wp_get_site_status'            => 'manage_options',
+			'wp_get_mcp_coexistence'        => 'manage_options',
+			'wp_security_triage'            => 'manage_options',
+			'wp_revoke_preview_links'       => 'edit_posts',
+			'wp_clone_post_as_draft'        => 'edit_posts',
 			'wp_get_error_log_tail'         => 'manage_options',
 			'wp_get_cron_schedule'          => 'manage_options',
 			'wp_get_plugins'                => 'activate_plugins',
@@ -169,7 +173,7 @@ class Tool_Capabilities {
 			return 'edit_posts';
 		}
 		// Integration-namespace defaults inherit each integration's baseline.
-		if ( strpos( $tool_name, 'wc_' ) === 0 )        return 'manage_woocommerce';
+		if ( strpos( $tool_name, 'wc_' ) === 0 )        return \Royal_MCP\Integrations\WooCommerce::is_available() ? 'manage_woocommerce' : 'manage_options';
 		if ( strpos( $tool_name, 'elementor_' ) === 0 ) return 'edit_posts';
 		if ( strpos( $tool_name, 'fc_' ) === 0 )        return 'edit_posts';
 		if ( strpos( $tool_name, 'sv_' ) === 0 )        return 'manage_options';

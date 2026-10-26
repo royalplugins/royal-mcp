@@ -129,14 +129,6 @@ class Whats_New {
             );
         }
 
-        // Cormorant Garamond for the "R" mark on Slide 4 (rendered inline
-        // via CSS — matches the youtube-watermark HTML generator).
-        wp_enqueue_style(
-            self::CSS_HANDLE . '-cormorant',
-            'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@700&display=swap',
-            [],
-            null
-        );
     }
 
     /**

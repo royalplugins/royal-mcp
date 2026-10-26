@@ -57,7 +57,7 @@ class Pro_Notice {
         );
         $dismiss_url = wp_nonce_url( admin_url( 'admin-post.php?action=' . self::DISMISS_ACTION ), self::DISMISS_ACTION );
         ?>
-        <div class="notice notice-info royal-mcp-pro-notice" style="padding: 14px 18px;">
+        <div class="notice notice-info royal-mcp-pro-notice" style="padding: 14px 18px; border-left-color: #d63638;">
             <p style="margin: 0 0 8px; font-size: 14px;">
                 <strong><?php esc_html_e( 'Run AI across real client work with Royal MCP Pro: 350+ tools, bulk edits and a full audit trail.', 'royal-mcp' ); ?></strong>
             </p>
