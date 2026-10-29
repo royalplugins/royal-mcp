@@ -212,9 +212,9 @@ class Registrar {
 				// Messages are plain text here; the REST layer encodes them. A refusal or a
 				// missing item is the caller's request (400); a PHP error is the site's (500).
 				if ( $e instanceof \Exception && 429 === $e->getCode() && 0 === strpos( $e->getMessage(), 'Rate limit exceeded.' ) ) {
-					return new \WP_Error( 'royal_mcp_rate_limited', wp_strip_all_tags( $e->getMessage() ), array( 'status' => 429 ) );
+					return new \WP_Error( 'royal_mcp_rate_limited', wp_strip_all_tags( \Royal_MCP\MCP\Support\Secret_Scrubber::scrub_text( $e->getMessage() ) ), array( 'status' => 429 ) );
 				}
-				return new \WP_Error( 'royal_mcp_ability_exception', wp_strip_all_tags( $e->getMessage() ), array( 'status' => $e instanceof \Exception ? 400 : 500 ) );
+				return new \WP_Error( 'royal_mcp_ability_exception', wp_strip_all_tags( \Royal_MCP\MCP\Support\Secret_Scrubber::scrub_text( $e->getMessage() ) ), array( 'status' => $e instanceof \Exception ? 400 : 500 ) );
 			}
 		};
 	}

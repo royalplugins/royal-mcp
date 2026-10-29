@@ -1681,8 +1681,26 @@ class Elementor {
 			'depth'        => $depth,
 			'has_children' => count( $children ) > 0,
 			'child_count'  => count( $children ),
-			'settings'     => isset( $el['settings'] ) ? $el['settings'] : new \stdClass(),
+			'settings'     => isset( $el['settings'] ) && is_array( $el['settings'] ) ? self::without_form_secrets( $el['settings'] ) : ( $el['settings'] ?? new \stdClass() ),
 		];
+	}
+
+	/**
+	 * Widget settings without the integration keys and webhook addresses a
+	 * form widget stores, as Elementor Pro's own template export leaves them out.
+	 */
+	private static function without_form_secrets( array $settings ) {
+		static $keys = [
+			'mailchimp_api_key', 'activecampaign_api_key', 'activecampaign_api_url', 'convertkit_custom_api_key',
+			'getresponse_custom_api_key', 'mailerlite_custom_api_key', 'drip_custom_api_token', 'drip_api_token',
+			'mailpoet_api_key', 'webhooks', 'slack_webhook', 'discord_webhook', 'recaptcha_secret_key',
+		];
+		foreach ( $keys as $k ) {
+			if ( isset( $settings[ $k ] ) && '' !== $settings[ $k ] && [] !== $settings[ $k ] ) {
+				$settings[ $k ] = '[REDACTED]';
+			}
+		}
+		return $settings;
 	}
 
 	/**

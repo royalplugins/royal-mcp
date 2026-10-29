@@ -47,7 +47,7 @@ class Duplicator {
 			],
 			[
 				'name'        => 'duplicator_get_installer',
-				'description' => 'Get the installer filename + download URL for a completed Duplicator package. Returns {state: unavailable, reason: not_complete} when the package has not finished building.',
+				'description' => 'Check whether a completed Duplicator package is ready to download, and where in wp-admin to download it. File names and download links are not returned: they give access to the whole site. Returns {state: unavailable, reason: not_complete} when the package has not finished building.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -141,22 +141,13 @@ class Duplicator {
 				'status'     => self::status_label( $status ),
 			];
 		}
-		// Hydrate the serialized package object if available to get the exact
-		// installer filename. Fall back to hash-based convention when the blob
-		// is empty (typical for test seeds; real Duplicator packages always
-		// carry the blob).
-		$installer_filename = '';
-		if ( ! empty( $package->package ) && is_string( $package->package ) ) {
-			$decoded = @unserialize( $package->package );
-			if ( is_object( $decoded ) && method_exists( $decoded, 'getInstallerFilename' ) ) {
-				$installer_filename = (string) $decoded->getInstallerFilename();
-			}
-		}
+		// The installer and archive names carry the package hash, the only thing
+		// protecting their download URLs, so neither is returned.
 		return [
-			'package_id'         => $id,
-			'installer_filename' => $installer_filename,
-			'installer_url'      => self::build_installer_url( $installer_filename ),
-			'notice'             => 'Installer downloads require authenticated access via Duplicator admin; direct download URLs are gated by the plugin.',
+			'package_id' => $id,
+			'state'      => 'ready',
+			'download'   => 'Download the installer and archive from Duplicator > Packages in wp-admin.',
+			'admin_url'  => admin_url( 'admin.php?page=duplicator' ),
 		];
 	}
 
@@ -179,7 +170,6 @@ class Duplicator {
 		return [
 			'id'             => isset( $row->ID ) ? (int) $row->ID : ( isset( $row->id ) ? (int) $row->id : null ),
 			'name'           => $row->name ?? ( isset( $row->Name ) ? $row->Name : '' ),
-			'hash'           => $row->hash ?? '',
 			'owner'          => $row->owner ?? '',
 			'status'         => $status_int,
 			'status_label'   => self::status_label( $status_int ),
@@ -206,12 +196,10 @@ class Duplicator {
 			if ( method_exists( $package_obj, 'getArchiveSize' ) ) {
 				$out['archive_size_bytes'] = (int) $package_obj->getArchiveSize();
 			}
-			if ( method_exists( $package_obj, 'getArchiveFilename' ) ) {
-				$out['archive_filename'] = (string) $package_obj->getArchiveFilename();
-			}
-			if ( method_exists( $package_obj, 'getInstallerFilename' ) ) {
-				$out['installer_filename'] = (string) $package_obj->getInstallerFilename();
-			}
+			// File names are left out: with the package hash in them they are
+			// download links to the whole site and its database.
+			$out['has_archive']   = method_exists( $package_obj, 'getArchiveFilename' ) && '' !== (string) $package_obj->getArchiveFilename();
+			$out['has_installer'] = method_exists( $package_obj, 'getInstallerFilename' ) && '' !== (string) $package_obj->getInstallerFilename();
 			if ( isset( $package_obj->Notes ) ) {
 				$out['notes'] = (string) $package_obj->Notes;
 			}
@@ -232,15 +220,6 @@ class Duplicator {
 			100 => 'complete',
 		];
 		return $map[ $status ] ?? 'unknown';
-	}
-
-	private static function build_installer_url( $filename ) {
-		if ( '' === $filename ) {
-			return '';
-		}
-		$uploads = wp_get_upload_dir();
-		$base    = trailingslashit( $uploads['baseurl'] ) . 'duplicator/';
-		return $base . $filename;
 	}
 
 	private static function to_iso( $mysql_datetime ) {

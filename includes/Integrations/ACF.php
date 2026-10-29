@@ -219,7 +219,7 @@ class ACF {
 					'field_name' => $updated['name'] ?? $field_name,
 					'field_key'  => $updated['key'] ?? '',
 					'type'       => $updated['type'] ?? '',
-					'value'      => self::flatten_value( $updated['value'] ?? null ),
+					'value'      => self::redact_field( is_array( $updated ) ? $updated : [], self::flatten_value( $updated['value'] ?? null ) ),
 					'success'    => true,
 				];
 
@@ -282,11 +282,57 @@ class ACF {
 		if ( 'password' === ( $field['type'] ?? '' ) ) {
 			return $empty ? $value : '[REDACTED]';
 		}
-		static $server = null;
-		if ( null === $server ) {
-			$server = new \Royal_MCP\MCP\Server();
+		$value = self::withhold_password_subfields( $field, $value );
+		// Text fields hold prose ("Password: must be 8+ characters"): content-mode checks.
+		$prose = in_array( $field['type'] ?? '', [ 'text', 'textarea', 'wysiwyg', 'message' ], true );
+		return \Royal_MCP\MCP\Support\Secret_Scrubber::scrub( $value, (string) ( $field['name'] ?? '' ), [ 'mode' => $prose ? 'content' : 'strict' ] );
+	}
+
+	/** Values of password-type sub-fields (group, repeater, flexible content) withheld at any depth. */
+	private static function withhold_password_subfields( array $field, $value, $depth = 0 ) {
+		if ( ! is_array( $value ) || $depth > 8 ) {
+			return $value;
 		}
-		return $server->redact_for_display( $value, (string) ( $field['name'] ?? '' ) );
+		$hide = static function ( array $subs, array $row ) use ( $depth ) {
+			foreach ( $subs as $sub ) {
+				$name = is_array( $sub ) ? (string) ( $sub['name'] ?? '' ) : '';
+				if ( '' === $name || ! array_key_exists( $name, $row ) ) {
+					continue;
+				}
+				if ( 'password' === ( $sub['type'] ?? '' ) ) {
+					$row[ $name ] = ( '' === $row[ $name ] || null === $row[ $name ] ) ? $row[ $name ] : '[REDACTED]';
+				} else {
+					$row[ $name ] = self::withhold_password_subfields( $sub, $row[ $name ], $depth + 1 );
+				}
+			}
+			return $row;
+		};
+		$type = $field['type'] ?? '';
+		if ( 'group' === $type || 'clone' === $type ) {
+			return $hide( (array) ( $field['sub_fields'] ?? [] ), $value );
+		}
+		if ( 'repeater' === $type ) {
+			foreach ( $value as $i => $row ) {
+				if ( is_array( $row ) ) {
+					$value[ $i ] = $hide( (array) ( $field['sub_fields'] ?? [] ), $row );
+				}
+			}
+			return $value;
+		}
+		if ( 'flexible_content' === $type ) {
+			$layouts = [];
+			foreach ( (array) ( $field['layouts'] ?? [] ) as $layout ) {
+				if ( is_array( $layout ) ) {
+					$layouts[ (string) ( $layout['name'] ?? '' ) ] = (array) ( $layout['sub_fields'] ?? [] );
+				}
+			}
+			foreach ( $value as $i => $row ) {
+				if ( is_array( $row ) && isset( $row['acf_fc_layout'] ) && is_string( $row['acf_fc_layout'] ) && isset( $layouts[ $row['acf_fc_layout'] ] ) ) {
+					$value[ $i ] = $hide( $layouts[ $row['acf_fc_layout'] ], $row );
+				}
+			}
+		}
+		return $value;
 	}
 
 	private static function flatten_value( $value ) {

@@ -48,7 +48,7 @@ class UpdraftPlus {
 		return [
 			[
 				'name'        => 'updraftplus_list_backups',
-				'description' => 'List UpdraftPlus backups from local history. Returns nonce (string identifier), timestamp, service (destination), and per-entity presence flags (db, plugins, themes, uploads, others). Read-only.',
+				'description' => 'List UpdraftPlus backups from local history. Returns backup_id (pass it to updraftplus_get_backup_status), timestamp, service (destination), and per-entity presence flags (db, plugins, themes, uploads, others). Read-only.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -59,18 +59,18 @@ class UpdraftPlus {
 			],
 			[
 				'name'        => 'updraftplus_get_backup_status',
-				'description' => 'Read the progress/state of a specific backup by nonce. For in-progress backups returns jobstatus (backup/uploading/clouduploading/encrypted/finished). For completed backups returns the manifest. Read-only.',
+				'description' => 'Read the progress/state of a specific backup by backup_id (from updraftplus_list_backups or updraftplus_trigger_backup). For in-progress backups returns jobstatus (backup/uploading/clouduploading/encrypted/finished). For completed backups returns the manifest. Read-only.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
-						'nonce' => [ 'type' => 'string', 'description' => 'Backup nonce identifier from updraftplus_list_backups.' ],
+						'backup_id' => [ 'type' => 'string', 'description' => 'Backup id from updraftplus_list_backups or updraftplus_trigger_backup.' ],
+						'nonce'     => [ 'type' => 'string', 'description' => 'The backup nonce UpdraftPlus shows in its own screens, accepted in place of backup_id.' ],
 					],
-					'required'   => [ 'nonce' ],
 				],
 			],
 			[
 				'name'        => 'updraftplus_trigger_backup',
-				'description' => 'Trigger a new UpdraftPlus backup asynchronously via WP-Cron dispatch. Returns immediately (under 1 second) with the pre-generated nonce so callers can poll updraftplus_get_backup_status. Additive — creates a new backup, never deletes prior backups. entities filters which components are included via restrict_files_to_override: entities:["plugins"] produces plugins.zip only, entities:["db"] produces db.gz only, entities:["plugins","themes"] produces both zips without db. Default (empty entities) backs up everything (db + all file entities).',
+				'description' => 'Trigger a new UpdraftPlus backup asynchronously via WP-Cron dispatch. Returns immediately (under 1 second) with the backup_id so callers can poll updraftplus_get_backup_status. Additive — creates a new backup, never deletes prior backups. entities filters which components are included via restrict_files_to_override: entities:["plugins"] produces plugins.zip only, entities:["db"] produces db.gz only, entities:["plugins","themes"] produces both zips without db. Default (empty entities) backs up everything (db + all file entities).',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -227,7 +227,7 @@ class UpdraftPlus {
 				$updated_at = (int) $jobdata['backup_time'];
 			}
 			return [
-				'nonce'      => $nonce,
+				'backup_id'  => self::backup_id( $nonce ),
 				'state'      => 'in_progress',
 				'jobstatus'  => (string) $jobdata['jobstatus'],
 				'updated_at' => $updated_at,
@@ -240,7 +240,7 @@ class UpdraftPlus {
 		);
 
 		return [
-			'nonce'              => $formatted['nonce'],
+			'backup_id'          => $formatted['backup_id'],
 			'state'              => 'completed',
 			'timestamp'          => $formatted['timestamp'],
 			'entities'           => $formatted['entities'],
@@ -344,14 +344,14 @@ class UpdraftPlus {
 		$service = (string) $service;
 
 		$summary = sprintf(
-			'UpdraftPlus backup dispatched asynchronously. Nonce: %s. Use updraftplus_get_backup_status to monitor progress.',
-			$nonce
+			'UpdraftPlus backup dispatched asynchronously. Backup id: %s. Use updraftplus_get_backup_status to monitor progress.',
+			self::backup_id( $nonce )
 		);
 
 		return Envelope::success(
 			$summary,
 			[
-				'nonce'      => $nonce,
+				'backup_id'  => self::backup_id( $nonce ),
 				'service'    => $service,
 				'entities'   => $entities,
 				'event'      => $event,
@@ -415,7 +415,7 @@ class UpdraftPlus {
 		}
 
 		return [
-			'nonce'              => isset( $backup['nonce'] ) ? (string) $backup['nonce'] : '',
+			'backup_id'          => isset( $backup['nonce'] ) ? self::backup_id( (string) $backup['nonce'] ) : '',
 			'timestamp'          => (int) $timestamp,
 			'service'            => (string) $service,
 			'entities'           => $entities,
@@ -433,12 +433,39 @@ class UpdraftPlus {
 	 * resolve_post_id helper shape adapted for string identifier.
 	 */
 	private static function resolve_nonce( $args ) {
-		$raw = isset( $args['nonce'] ) ? (string) $args['nonce'] : '';
-		$nonce = sanitize_text_field( $raw );
+		$id = isset( $args['backup_id'] ) ? sanitize_text_field( (string) $args['backup_id'] ) : '';
+		if ( '' !== $id ) {
+			$history = class_exists( '\\UpdraftPlus_Backup_History' ) ? (array) \UpdraftPlus_Backup_History::get_history() : [];
+			foreach ( $history as $set ) {
+				if ( is_array( $set ) && isset( $set['nonce'] ) && hash_equals( self::backup_id( (string) $set['nonce'] ), $id ) ) {
+					return (string) $set['nonce'];
+				}
+			}
+			// A backup still running is not in the history yet: its job record is.
+			global $wpdb;
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$jobs = $wpdb->get_col( $wpdb->prepare( "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s LIMIT 200", $wpdb->esc_like( 'updraft_jobdata_' ) . '%' ) );
+			foreach ( (array) $jobs as $job ) {
+				$nonce = substr( (string) $job, strlen( 'updraft_jobdata_' ) );
+				if ( '' !== $nonce && hash_equals( self::backup_id( $nonce ), $id ) ) {
+					return $nonce;
+				}
+			}
+			throw new \Exception( 'Backup not found: ' . esc_html( $id ) );
+		}
+		$nonce = isset( $args['nonce'] ) ? sanitize_text_field( (string) $args['nonce'] ) : '';
 		if ( $nonce === '' ) {
-			throw new \Exception( 'nonce is required.' );
+			throw new \Exception( 'backup_id is required.' );
 		}
 		return $nonce;
+	}
+
+	/**
+	 * The id a backup is known by in tool replies. UpdraftPlus's own nonce is
+	 * part of the backup file names, so it is not handed out.
+	 */
+	private static function backup_id( $nonce ) {
+		return substr( hash_hmac( 'sha256', (string) $nonce, wp_salt( 'auth' ) ), 0, 16 );
 	}
 
 	/**
