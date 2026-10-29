@@ -268,7 +268,8 @@ class SiteVault {
 	private static function format_backup( $backup ) {
 		return [
 			'id'           => (int) $backup->id,
-			'name'         => $backup->backup_name,
+			// The random suffix is what keeps the archive's address from being guessed.
+			'name'         => preg_replace( '/-[a-f0-9]{32}$/', '', (string) $backup->backup_name ),
 			'type'         => $backup->backup_type,
 			'status'       => $backup->status,
 			'size'         => (int) $backup->backup_size,

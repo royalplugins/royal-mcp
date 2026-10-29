@@ -284,11 +284,12 @@ class SolidSecurity {
 
 		$data = $r->data ?? null;
 		if ( is_string( $data ) ) {
-			$decoded = @unserialize( $data );
+			$decoded = @unserialize( $data, [ 'allowed_classes' => false ] ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.PHP.DiscouragedPHPFunctions.serialize_unserialize -- classes disabled
 			if ( false !== $decoded || 'b:0;' === $data ) {
 				$data = $decoded;
 			}
 		}
+		$data = self::without_request_capture( $data, 0, 'backup' === ( $r->module ?? '' ) );
 
 		return [
 			'id'            => isset( $r->id ) ? (int) $r->id : null,
@@ -298,11 +299,31 @@ class SolidSecurity {
 			'severity'      => isset( $r->severity ) ? (int) $r->severity : null,
 			'ip'            => $r->remote_ip ?? '',
 			'user_id'       => isset( $r->user_id ) ? (int) $r->user_id : 0,
-			'url'           => $r->url ?? '',
+			'url'           => (string) wp_parse_url( (string) ( $r->url ?? '' ), PHP_URL_PATH ),
 			'timestamp'     => $timestamp,
 			'timestamp_iso' => self::to_iso( $timestamp ),
 			'data'          => $data,
 		];
+	}
+
+	/**
+	 * Event data without what Solid keeps of the request itself: server
+	 * variables (request headers, Authorization included), request bodies,
+	 * cookies, and for backup events the backup file names.
+	 */
+	private static function without_request_capture( $data, $depth = 0, $backup = false ) {
+		if ( ! is_array( $data ) || $depth > 4 ) {
+			return $data;
+		}
+		foreach ( array_keys( $data ) as $k ) {
+			if ( is_string( $k ) && ( preg_match( '/^(server|_server|body_data|body|request_body|raw|headers?|cookies?|_post|_get|_files|env)$/i', $k )
+				|| ( $backup && preg_match( '/^(files?|output_file|backup_file)$/i', $k ) ) ) ) {
+				unset( $data[ $k ] );
+				continue;
+			}
+			$data[ $k ] = self::without_request_capture( $data[ $k ], $depth + 1, $backup );
+		}
+		return $data;
 	}
 
 	private static function count_bans() {

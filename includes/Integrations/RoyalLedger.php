@@ -212,7 +212,8 @@ class RoyalLedger {
 						if ( method_exists( '\RLEDGER_Keys', 'get_decrypted' ) && method_exists( '\RLEDGER_Keys', 'mask_key' ) ) {
 							$decrypted_obj = \RLEDGER_Keys::get_decrypted( $key->id );
 							if ( $decrypted_obj && ! empty( $decrypted_obj->license_key ) && is_string( $decrypted_obj->license_key ) ) {
-								$preview = \RLEDGER_Keys::mask_key( $decrypted_obj->license_key );
+								// The last four characters only: a short key would otherwise come back mostly in clear.
+								$preview = strlen( $decrypted_obj->license_key ) >= 12 ? '****' . substr( $decrypted_obj->license_key, -4 ) : '****';
 							}
 						}
 						return [

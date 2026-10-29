@@ -88,6 +88,11 @@ class Post_Access {
 	 * @return bool
 	 */
 	private static function type_allowed( \WP_Post_Type $type ) {
+		// Code snippets keep keys in their code; they are read through the snippet
+		// tools, which redact credentials in code.
+		if ( self::is_code_type( $type->name ) ) {
+			return false;
+		}
 		if ( is_post_type_viewable( $type ) ) {
 			return true;
 		}
@@ -95,6 +100,24 @@ class Post_Access {
 			return false;
 		}
 		return ! empty( $type->show_ui ) || ! empty( $type->show_in_rest ) || current_user_can( 'manage_options' );
+	}
+
+	/**
+	 * Post types that store code (snippet plugins) or pending settings
+	 * (Customizer changesets). The generic post tools neither return nor change
+	 * them; the snippet tools read them with credentials redacted.
+	 *
+	 * @param string $post_type Post type name.
+	 * @return bool
+	 */
+	public static function is_code_type( $post_type ) {
+		/**
+		 * Filter the post types that hold code and stay out of the generic post tools.
+		 *
+		 * @param string[] $types Post type names.
+		 */
+		$types = apply_filters( 'royal_mcp_code_post_types', [ 'wpcode', 'wbcr-snippets', 'custom-css-js', 'elementor_snippet', 'customize_changeset' ] );
+		return in_array( (string) $post_type, (array) $types, true );
 	}
 
 	/**

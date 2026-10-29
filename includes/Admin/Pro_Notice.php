@@ -57,15 +57,15 @@ class Pro_Notice {
         );
         $dismiss_url = wp_nonce_url( admin_url( 'admin-post.php?action=' . self::DISMISS_ACTION ), self::DISMISS_ACTION );
         ?>
-        <div class="notice notice-info royal-mcp-pro-notice" style="padding: 14px 18px; border-left-color: #d63638;">
+        <div class="notice notice-info royal-mcp-pro-notice" style="padding: 14px 18px; background: #f0fdf4; border-left-color: #166534;">
             <p style="margin: 0 0 8px; font-size: 14px;">
-                <strong><?php esc_html_e( 'Run AI across real client work with Royal MCP Pro: 350+ tools, bulk edits and a full audit trail.', 'royal-mcp' ); ?></strong>
+                <strong><?php esc_html_e( 'Royal MCP Pro + Royally: AI you can hold to account, on every client site.', 'royal-mcp' ); ?></strong>
             </p>
             <p style="margin: 0 0 12px;">
-                <?php esc_html_e( 'Bulk-edit WooCommerce prices, stock and orders, build Elementor and Divi layouts that stay editable in the builder, set up ACF field groups and run a whole SEO launch in one call. Give each AI connection only the tools it needs, and hand clients a 90-day log of everything the AI did, with undo. Royally, one dashboard for every client site, is in beta and coming soon to Royal MCP Pro members.', 'royal-mcp' ); ?><?php if ( current_datetime()->format( 'Y-m-d' ) <= self::OFFER_ENDS ) : ?> <?php esc_html_e( '30-50% off ends Oct 31st.', 'royal-mcp' ); ?><?php endif; ?>
+                <?php esc_html_e( 'On each WordPress site, Royal MCP Pro adds 350+ tools, from bulk WooCommerce, SEO and content edits to Elementor and Divi layouts that stay editable in the builder, and records every change with undo. In the cloud, Royally is the guardrail layer across your whole fleet: run the same bulk action or edit on many sites at once, approve changes before they go out, and keep one record of everything the AI did.', 'royal-mcp' ); ?><?php if ( current_datetime()->format( 'Y-m-d' ) <= self::OFFER_ENDS ) : ?> <strong><?php esc_html_e( '30-50% off ends Oct 31st.', 'royal-mcp' ); ?></strong><?php endif; ?>
             </p>
             <p style="margin: 0;">
-                <a href="<?php echo esc_url( $pro_url ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary" style="background:#00a32a;border-color:#008a20;color:#fff;"><?php esc_html_e( 'Get Royal MCP Pro &rarr;', 'royal-mcp' ); ?></a>
+                <a href="<?php echo esc_url( $pro_url ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary" style="background:#00a32a;border-color:#008a20;color:#fff;"><?php esc_html_e( 'See Pro and Royally &rarr;', 'royal-mcp' ); ?></a>
                 &nbsp;
                 <a href="<?php echo esc_url( $dismiss_url ); ?>" class="royal-mcp-pro-notice-dismiss" style="margin-left: 6px;"><?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?></a>
             </p>

@@ -200,7 +200,7 @@ class Royal_MCP_Chrome {
                     printf(
                         wp_kses(
                             /* translators: %s: link to Royal MCP Pro */
-                            __( "You're using Royal MCP Free. %s adds 350+ tools, bulk edits and a 90-day audit trail for client work.", 'royal-mcp' ),
+                            __( "You're using Royal MCP Free. %s adds 350+ tools on each site, and Royally adds approvals, bulk actions and one audit trail across your whole fleet.", 'royal-mcp' ),
                             [ 'a' => [ 'href' => [], 'class' => [], 'target' => [], 'rel' => [] ] ]
                         ),
                         '<a class="royal-mcp-chrome-upgrade-bar-cta" href="' . esc_url( $cta_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Royal MCP Pro', 'royal-mcp' ) . '</a>'

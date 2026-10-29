@@ -172,6 +172,9 @@ class Connected_Clients_Page {
                                         <?php endforeach; ?>
                                     </select>
                                     <button type="submit" class="button"><?php esc_html_e( 'Save', 'royal-mcp' ); ?></button>
+                                    <?php if ( \Royal_MCP\MCP\Support\Access_Levels::is_inherited( $row['client_id'] ) ) : ?>
+                                        <span class="description"><?php esc_html_e( 'Same as an earlier registration of this client. Choose Full and Save to lift it.', 'royal-mcp' ); ?></span>
+                                    <?php endif; ?>
                                 </form>
                             </td>
                             <td>

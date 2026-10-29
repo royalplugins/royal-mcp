@@ -200,14 +200,16 @@ final class WriteVerifier {
      * throw_if_input_mangled() first if either condition should abort the
      * response.
      *
-     * @param array $diff Output from diff() above.
+     * @param array  $diff      Output from diff() above.
+     * @param string $name_hint Name of what was written (option, meta key); values are
+     *                          checked for credentials under it.
      * @return array {
      *     saved_fields:   field => actual (both applied + modified rows)
      *     modified_by_wp: field => [requested, actual]     (only when non-empty)
      *     input_mangled:  field => [raw, sanitized]        (only when non-empty)
      * }
      */
-    public static function response_partial( array $diff ) : array {
+    public static function response_partial( array $diff, $name_hint = '' ) : array {
         $saved = $diff['applied'];
         foreach ( $diff['silent_modifies'] as $field => $info ) {
             $saved[ $field ] = $info['actual'];
@@ -218,6 +220,11 @@ final class WriteVerifier {
         }
         if ( ! empty( $diff['input_mangled'] ) ) {
             $out['input_mangled'] = $diff['input_mangled'];
+        }
+        if ( '' !== (string) $name_hint ) {
+            array_walk_recursive( $out, static function ( &$v ) use ( $name_hint ) {
+                $v = Secret_Scrubber::scrub( $v, (string) $name_hint );
+            } );
         }
         return $out;
     }
@@ -233,10 +240,9 @@ final class WriteVerifier {
         if ( is_bool( $value ) ) {
             return $value ? 'true' : 'false';
         }
-        if ( is_scalar( $value ) ) {
-            $s = (string) $value;
-            return strlen( $s ) > 80 ? substr( $s, 0, 77 ) . '...' : $s;
-        }
-        return wp_json_encode( $value );
+        // Messages reach the client: credentials are replaced and long values cut.
+        $value = Secret_Scrubber::scrub( $value );
+        $s     = is_scalar( $value ) ? (string) $value : (string) wp_json_encode( $value );
+        return strlen( $s ) > 120 ? substr( $s, 0, 117 ) . '...' : $s;
     }
 }

@@ -85,6 +85,7 @@ class Server {
     private $request_auth_method  = null;   // 'api-key' | 'oauth-bearer' | null
     private $request_client_id    = null;   // OAuth client_id of the current request, or null
     private $request_route        = 'native'; // 'abilities' when called through the WordPress Abilities API
+    private $offered_tool_names   = null; // names left in the royal_mcp_tools list, before endpoint profiles
     private $request_token_ttl    = null;   // int seconds until token expiry, or null (api-key never rotates)
     private $request_session_id   = null;   // MCP session ID from Mcp-Session-Id header, or null (no session for pre-initialize)
 
@@ -1524,7 +1525,7 @@ class Server {
             ['name' => 'wp_update_custom_css', 'description' => 'Update the active theme\'s custom CSS. CSS is filtered through wp_kses (script tags stripped). Requires the "Allow AI to modify theme appearance" admin toggle and unfiltered_html capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['css' => ['type' => 'string'], 'theme_slug' => ['type' => 'string', 'description' => 'Theme slug (defaults to active theme)']], 'required' => ['css']]],
             ['name' => 'wp_get_widgets', 'description' => 'List widget instances. Uses the WordPress core /wp/v2/widgets REST endpoint in edit context so both rendered output AND full instance payload are returned uniformly for classic and block widgets. Classic widgets: instance carries the widget-specific settings (text, title, filter, etc.). Block widgets: instance.raw.content carries the raw block markup, and a blocks field is added with the parsed block tree for structured inspection. Omit sidebar to return widgets across ALL sidebars including wp_inactive_widgets (orphaned widgets from prior themes — these have rendered:"" and produce no front-end output). Filter by a specific sidebar ID (discover IDs via wp_get_sidebars) to scope results; a non-existent sidebar ID returns an empty array, not an error.', 'inputSchema' => ['type' => 'object', 'properties' => ['sidebar' => ['type' => 'string', 'description' => 'Optional sidebar ID to filter by. Omit to return widgets across all sidebars (includes wp_inactive_widgets).']]]],
             ['name' => 'wp_get_sidebars', 'description' => 'List registered sidebars (widget areas) on the active theme with their IDs, names, description, and status. Use to discover sidebar IDs before calling wp_get_widgets or wp_update_widget.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
-            ['name' => 'wp_update_widget', 'description' => 'Update a widget instance by ID. Requires the "Allow AI to modify theme appearance" admin toggle AND edit_theme_options capability. Uses WordPress core /wp/v2/widgets so classic and block widgets are handled uniformly. Pass the id returned by wp_get_widgets. Response includes a 72-hour undo token that restores the prior widget instance via mcp_undo_last_operation. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string', 'description' => 'Widget ID (e.g. text-2, block-15)'], 'sidebar' => ['type' => 'string', 'description' => 'Sidebar ID to place the widget in (omit to leave unchanged)'], 'instance' => ['type' => 'object', 'additionalProperties' => true, 'description' => 'Widget instance data. For classic widgets, either pass the same {encoded, hash} object returned by wp_get_widgets or wrap raw settings as {raw: {…}}.'], 'form_data' => ['type' => 'string', 'description' => 'Serialized form data (classic widgets alternative to instance)']], 'required' => ['id']]],
+            ['name' => 'wp_update_widget', 'description' => 'Update a widget instance by ID. Requires the "Allow AI to modify theme appearance" admin toggle AND edit_theme_options capability. Uses WordPress core /wp/v2/widgets so classic and block widgets are handled uniformly. Pass the id returned by wp_get_widgets. Response includes a 72-hour undo token that restores the prior widget instance via mcp_undo_last_operation. Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string', 'description' => 'Widget ID (e.g. text-2, block-15)'], 'sidebar' => ['type' => 'string', 'description' => 'Sidebar ID to place the widget in (omit to leave unchanged)'], 'instance' => ['type' => 'object', 'additionalProperties' => true, 'description' => 'Widget instance data. For classic widgets, pass the settings as {raw: {…}} as wp_get_widgets returns them; Royal MCP encodes them for widgets that only take the encoded form.'], 'form_data' => ['type' => 'string', 'description' => 'Serialized form data (classic widgets alternative to instance)']], 'required' => ['id']]],
 
             // SEO Meta (auto-detects Yoast SEO / Rank Math / AIOSEO / SEObolt)
             ['name' => 'wp_get_seo_meta', 'description' => 'Get the SEO meta fields for a post (title, description, focus keyword, noindex, OG overrides where supported, URL slug). Auto-detects the active SEO plugin — Yoast SEO, Rank Math, AIOSEO, SEOPress, or SEObolt — and returns that plugin\'s fields plus the post slug (which is a WordPress-native field, returned regardless of SEO plugin). AIOSEO + SEObolt return the four core fields (title/description/focus_keyword/noindex); og_title/og_description are populated for Yoast + Rank Math only. Returns RAW stored templates (e.g. Yoast\'s default "%%page%% %%sep%% %%sitename%%") — do NOT measure length from these values, they contain template markup that never appears in the rendered <title> tag and will produce false-positive title_too_short / title_too_long flags. For measured/rendered SEO values, use Royal MCP Pro\'s wp_audit_seo_bulk which resolves per-engine template variables before measuring.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer']], 'required' => ['post_id']]],
@@ -1848,6 +1849,38 @@ class Server {
             $names = array_fill_keys( array_column( $this->get_builtin_tools(), 'name' ), true );
         }
         return isset( $names[ (string) $name ] );
+    }
+
+    /**
+     * Whether the royal_mcp_tools filter leaves this tool in the list. Endpoint
+     * profiles are not applied here: they only trim what tools/list shows.
+     */
+    private function tool_is_offered( $name ) {
+        static $building = false;
+        if ( $building ) {
+            // A royal_mcp_tools filter that calls a tool: answer from the call in progress.
+            return true;
+        }
+        if ( null === $this->offered_tool_names ) {
+            $building = true;
+            $profile_filter = [ \Royal_MCP\MCP\Tool_Profiles::class, 'apply_profile' ];
+            $profile_prio   = has_filter( 'royal_mcp_tools', $profile_filter );
+            if ( false !== $profile_prio ) {
+                remove_filter( 'royal_mcp_tools', $profile_filter, $profile_prio );
+            }
+            try {
+                $this->offered_tool_names = array_fill_keys( array_column( $this->get_tools(), 'name' ), true );
+            } catch ( \Throwable $e ) {
+                // A filter that fails cannot switch tools off; calls go on as before it was added.
+                $this->offered_tool_names = false;
+            } finally {
+                $building = false;
+                if ( false !== $profile_prio ) {
+                    add_filter( 'royal_mcp_tools', $profile_filter, $profile_prio );
+                }
+            }
+        }
+        return false === $this->offered_tool_names || isset( $this->offered_tool_names[ (string) $name ] );
     }
 
     /**
@@ -2931,7 +2964,7 @@ class Server {
                 [
                     'uri'      => $uri,
                     'mimeType' => 'application/json',
-                    'text'     => (string) wp_json_encode( $data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ),
+                    'text'     => (string) wp_json_encode( in_array( $uri, [ 'royal-mcp://tool-catalog', 'royal-mcp://health' ], true ) ? $data : \Royal_MCP\MCP\Support\Secret_Scrubber::scrub( $data, '', [ 'mode' => 'content' ] ), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ),
                 ],
             ],
         ];
@@ -3077,6 +3110,7 @@ class Server {
 
         try {
             $result = $this->execute_tool($name, $args);
+            $result = $this->scrub_tool_result($name, $result);
             $this->log_tool_call($name, $args, 'success', null, $start, $result, null);
 
             // If the tool already returned a pre-formed MCP envelope (isError
@@ -3118,12 +3152,12 @@ class Server {
                     'resultType' => 'complete',
                     'content' => [[
                         'type' => 'text',
-                        'text' => 'Error: ' . $e->getMessage(),
+                        'text' => 'Error: ' . $this->scrub_error_message($e->getMessage()),
                     ]],
                     'isError' => true, // audit:helper-bypass-safe -- tools/call error reply, completed by ensure_structured_content
                     'structuredContent' => [
                         'error'   => 'exception',
-                        'message' => $e->getMessage(),
+                        'message' => $this->scrub_error_message($e->getMessage()),
                     ],
                 ] ),
             ];
@@ -3148,6 +3182,215 @@ class Server {
                 ] ),
             ];
         }
+    }
+
+    /**
+     * Tools whose reply carries a credential on purpose: the link or sign-in
+     * address the caller asked for. Their results are not scrubbed.
+     */
+    private static function returns_credential_by_design( $name ) {
+        /**
+         * Filter the tools whose replies reach the AI client without credential
+         * scrubbing. Only list tools whose purpose is to hand back a link or key
+         * the caller asked for.
+         *
+         * @param string[] $tools Tool names.
+         */
+        $tools = apply_filters( 'royal_mcp_unscrubbed_tools', [
+            'wp_create_preview_link', 'wp_create_login_link', 'wc_create_order',
+            // Royal MCP's own tool metadata and connection details.
+            'get_tool_info', 'discover_tools', 'royal_mcp_connection_health',
+        ] );
+        return in_array( (string) $name, (array) $tools, true );
+    }
+
+    /**
+     * Tools whose replies are settings, logs or code, where free text gets the
+     * strict checks. Other replies get the content-mode checks (credential
+     * names, shapes and provider formats still apply everywhere).
+     */
+    private static function strict_scrub_tool( $name ) {
+        static $tools = [
+            'wp_get_plugin_settings', 'wp_get_option', 'wp_update_option', 'wp_get_post_meta', 'wp_update_post_meta', 'wp_add_post_meta',
+            'wp_delete_post_meta', 'wp_get_term_meta', 'wp_update_term_meta', 'wp_delete_term_meta', 'wp_get_theme_mods', 'wp_update_theme_mod',
+            'wp_get_cron_schedule', 'wp_get_error_log_tail', 'wp_get_php_errors', 'wp_get_widgets', 'wp_update_widget', 'mcp_get_change',
+            'solid_list_events', 'wordfence_get_blocked_requests', 'wordfence_get_failed_logins', 'raif_get_recent_hits',
+            'wpcode_get_snippet', 'wpcode_list_snippets', 'wpcode_get_snippet_status', 'snippets_get', 'snippets_list', 'snippets_recently_active',
+        ];
+        /**
+         * Filter the tools whose replies get the strict credential checks on free text.
+         *
+         * @param bool   $strict Whether the tool's reply is checked strictly.
+         * @param string $name   Tool name.
+         */
+        return (bool) apply_filters( 'royal_mcp_strict_scrub_tool', in_array( (string) $name, $tools, true ), (string) $name );
+    }
+
+    /** Keys whose string values are prose (post content, titles), checked in content mode. */
+    private static function scrub_content_keys() {
+        return [ 'content', 'content_raw', 'raw_content', 'post_content', 'rendered', 'excerpt', 'post_excerpt', 'snippet', 'title', 'post_title', 'html', 'body', 'comment_content', 'caption', 'description', 'alt', 'alt_text', 'label', 'summary', 'name' ];
+    }
+
+    /**
+     * Replace credentials in a tool result before it leaves for the client.
+     * Royal MCP's own reply fields (undo token, change id, _meta, result type)
+     * are set aside and put back unchanged, in the structured content and in
+     * its text copy alike.
+     *
+     * @param string $name   Tool name.
+     * @param mixed  $result Tool result (envelope, array, string or scalar).
+     * @return mixed
+     */
+    private function scrub_tool_result( $name, $result ) {
+        if ( self::returns_credential_by_design( $name ) ) {
+            return $result;
+        }
+        $opts = [
+            'mode'         => self::strict_scrub_tool( $name ) ? 'strict' : 'content',
+            'exempt_keys'  => [ 'session_id', 'token_ttl', 'resultType', 'isError', 'client_id' ],
+            // Royal MCP's own undo and change fields, at any depth (lists of changes carry them too).
+            'skip_keys'    => [ 'undo', 'undo_token', 'change_id', '_meta' ],
+            'content_keys' => self::scrub_content_keys(),
+        ];
+        if ( is_string( $result ) ) {
+            return \Royal_MCP\MCP\Support\Secret_Scrubber::scrub( $result, '', $opts );
+        }
+        if ( ! is_array( $result ) ) {
+            return $result;
+        }
+        if ( ! \Royal_MCP\MCP\Support\Envelope::is_envelope( $result ) ) {
+            return $this->scrub_reply_payload( $result, $opts, false );
+        }
+        $result = $this->scrub_reply_payload( $result, $opts, true );
+        if ( isset( $result['structuredContent'] ) && is_array( $result['structuredContent'] ) ) {
+            $result['structuredContent'] = $this->scrub_reply_payload( $result['structuredContent'], $opts, false );
+        }
+        // Our own tokens, so the text copy keeps them where the structured reply does.
+        $sc  = is_array( $result['structuredContent'] ?? null ) ? $result['structuredContent'] : [];
+        $own = array_filter( [
+            $result['undo']['token'] ?? null,
+            $result['change_id'] ?? null,
+            $sc['undo_token'] ?? null,
+            $sc['undo']['token'] ?? null,
+            $sc['change_id'] ?? null,
+        ], 'is_string' );
+        if ( isset( $result['content'] ) && is_array( $result['content'] ) ) {
+            foreach ( $result['content'] as $i => $item ) {
+                if ( ! is_array( $item ) || ! isset( $item['text'] ) || ! is_string( $item['text'] ) ) {
+                    continue;
+                }
+                $decoded = json_decode( $item['text'], true );
+                if ( is_array( $decoded ) && JSON_ERROR_NONE === json_last_error() ) {
+                    $clean = $this->scrub_reply_payload( $decoded, $opts, false );
+                    if ( $clean !== $decoded ) {
+                        $result['content'][ $i ]['text'] = (string) wp_json_encode( $clean, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+                    }
+                    continue;
+                }
+                $result['content'][ $i ]['text'] = (string) \Royal_MCP\MCP\Support\Secret_Scrubber::scrub_text( $item['text'], 'strict', array_values( $own ) );
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * Scrub one reply level with Royal MCP's own fields set aside, keeping key order.
+     *
+     * @param bool $envelope True at an envelope's top level, where content and
+     *                       structuredContent are handled separately.
+     */
+    private function scrub_reply_payload( array $payload, array $opts, $envelope ) {
+        $own_keys = [ 'undo', 'undo_token', 'change_id', '_meta', 'resultType', 'isError' ];
+        if ( $envelope ) {
+            $own_keys[] = 'content';
+            $own_keys[] = 'structuredContent';
+        }
+        $rest = array_diff_key( $payload, array_flip( $own_keys ) );
+        $rest = (array) \Royal_MCP\MCP\Support\Secret_Scrubber::scrub( $rest, '', $opts );
+        $out  = [];
+        foreach ( $payload as $k => $v ) {
+            $out[ $k ] = array_key_exists( $k, $rest ) ? $rest[ $k ] : $v;
+        }
+        return $out;
+    }
+
+    /**
+     * Log lines checked as one block, so dumps that span lines (var_dump) are
+     * caught; line by line when the block cannot be checked as a whole.
+     *
+     * @param string[] $lines Log lines.
+     * @return string[]
+     */
+    private function scrub_log_block( array $lines ) {
+        $block = \Royal_MCP\MCP\Support\Secret_Scrubber::scrub_text( implode( "\n", $lines ), 'strict' );
+        $out   = explode( "\n", (string) $block );
+        if ( \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER === $block || count( $out ) !== count( $lines ) ) {
+            $out = array_map( static function ( $line ) {
+                return (string) \Royal_MCP\MCP\Support\Secret_Scrubber::scrub_text( (string) $line, 'strict' );
+            }, $lines );
+        }
+        return $out;
+    }
+
+    /**
+     * The code or changeset post type a write tool call would change, or null.
+     * Covers the generic post, page, block, meta, term, revision and builder
+     * write tools by the argument that names their post.
+     */
+    private function code_post_write_target( $name, array $args ) {
+        static $by_id = [
+            'wp_update_post', 'wp_update_page', 'wp_delete_post', 'wp_delete_page', 'wp_replace_in_post', 'wp_replace_in_page',
+            'wp_clone_post_as_draft', 'wp_insert_blocks', 'wp_replace_block', 'wp_move_block', 'wp_delete_block',
+            'wp_replace_text_in_blocks', 'wp_update_block_attributes',
+        ];
+        static $by_post_id = [
+            'wp_set_featured_image', 'wp_add_post_terms', 'wp_update_post_meta', 'wp_add_post_meta', 'wp_delete_post_meta',
+            'wp_update_seo_meta', 'yoast_update_meta', 'wp_create_preview_link', 'wp_revoke_preview_links', 'acf_update_field',
+            'elementor_replace_text', 'elementor_replace_image', 'elementor_add_widget', 'elementor_rebuild_post_content',
+            'divi_replace_text', 'divi_replace_image',
+        ];
+        $name = (string) $name;
+        $post = 0;
+        if ( in_array( $name, $by_id, true ) ) {
+            $post = (int) ( $args['id'] ?? ( $args['post_id'] ?? 0 ) );
+        } elseif ( in_array( $name, $by_post_id, true ) ) {
+            $post = (int) ( $args['post_id'] ?? ( $args['id'] ?? 0 ) );
+        } elseif ( 'wp_restore_revision' === $name ) {
+            $post = (int) wp_get_post_parent_id( (int) ( $args['revision_id'] ?? 0 ) );
+        } elseif ( 'wp_create_post' === $name || 'wp_create_page' === $name ) {
+            $type = isset( $args['post_type'] ) ? sanitize_key( (string) $args['post_type'] ) : '';
+            return '' !== $type && \Royal_MCP\MCP\Support\Post_Access::is_code_type( $type ) ? $type : null;
+        }
+        if ( $post <= 0 ) {
+            return null;
+        }
+        $type = get_post_type( $post );
+        return is_string( $type ) && \Royal_MCP\MCP\Support\Post_Access::is_code_type( $type ) ? $type : null;
+    }
+
+    /** Error text with credentials replaced, for replies to the client. */
+    private function scrub_error_message( $message ) {
+        return (string) \Royal_MCP\MCP\Support\Secret_Scrubber::scrub_text( (string) $message, 'strict' );
+    }
+
+    /**
+     * A widget as returned to the client: settings as a plain array, without
+     * the admin form HTML (it holds every field's current value, password
+     * fields included) or the base64 settings blob and its hash.
+     */
+    private static function widget_for_client( array $w ) {
+        unset( $w['rendered_form'] );
+        if ( isset( $w['instance'] ) && is_array( $w['instance'] ) ) {
+            if ( ! isset( $w['instance']['raw'] ) && isset( $w['instance']['encoded'] ) && is_string( $w['instance']['encoded'] ) ) {
+                $decoded  = base64_decode( $w['instance']['encoded'], true ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode -- widget settings as WordPress stores them
+                $settings = false !== $decoded ? @unserialize( $decoded, [ 'allowed_classes' => false ] ) : false; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.PHP.DiscouragedPHPFunctions.serialize_unserialize -- classes disabled
+                if ( is_array( $settings ) ) {
+                    $w['instance']['raw'] = $settings;
+                }
+            }
+            unset( $w['instance']['encoded'], $w['instance']['hash'] );
+        }
+        return $w;
     }
 
     /**
@@ -3503,7 +3746,7 @@ class Server {
             if ( $log ) {
                 $this->log_tool_call( $name, $args, 'success', '', $start, $result );
             }
-            return $result;
+            return $this->scrub_tool_result( $name, $result );
         } catch ( \Throwable $e ) {
             if ( $log ) {
                 $this->log_tool_call( $name, $args, 'error', $e->getMessage(), $start, null, $e );
@@ -3535,6 +3778,12 @@ class Server {
     }
 
     private function execute_tool($name, $args) {
+        // A Royal MCP tool a site removed with the royal_mcp_tools filter cannot be
+        // called by name either; removing it only from the list would not switch it off.
+        if ( ( null !== $this->request_auth_method || 'abilities' === $this->request_route )
+            && $this->is_builtin_tool_name( $name ) && ! $this->tool_is_offered( $name ) ) {
+            throw new \Exception( sprintf( '%s is not available on this site.', esc_html( (string) $name ) ) );
+        }
         // Calls through other MCP servers and browser agents: only the users the
         // site owner allows (Settings, default administrators).
         if ( ( 'abilities' === $this->request_route || 'cookie-session' === $this->request_auth_method )
@@ -3548,6 +3797,23 @@ class Server {
             && $this->is_builtin_tool_name( $name )
             && ! current_user_can( \Royal_MCP\Abilities\Tool_Capabilities::for_tool( (string) $name ) ) ) {
             throw new \Exception( 'You do not have permission to use ' . esc_html( (string) $name ) . '.' );
+        }
+        // A write carrying the redaction marker would store the marker in place of the real value.
+        // The execute_tool passthrough is checked when it calls the tool it names;
+        // search terms (find, search, query) may name the marker to clean it up.
+        if ( ( null !== $this->request_auth_method || 'abilities' === $this->request_route )
+            && 'execute_tool' !== $name
+            && ! $this->tool_is_read_only( $name )
+            && \Royal_MCP\MCP\Support\Secret_Scrubber::contains_marker( is_array( $args ) ? array_diff_key( $args, array_flip( [ 'find', 'search', 'query', 'old_text', 'old_string', 'pattern', 'needle' ] ) ) : $args ) ) {
+            throw new \Exception( 'This request contains "[REDACTED]", which Royal MCP shows in place of hidden credentials. Writing it would replace the real value with that text. Leave that field out or send the real value; to change text around a hidden value, use wp_replace_in_post, wp_replace_in_page or wp_replace_text_in_blocks.' );
+        }
+        // Snippet code and pending Customizer settings are changed through their own
+        // plugin screens, never through the generic post write tools.
+        if ( null !== $this->request_auth_method || 'abilities' === $this->request_route ) {
+            $code_type = $this->code_post_write_target( $name, is_array( $args ) ? $args : [] );
+            if ( null !== $code_type ) {
+                throw new \Exception( sprintf( '%s cannot change %s posts: they hold code or pending Customizer settings. Use that plugin\'s own screen.', esc_html( (string) $name ), esc_html( $code_type ) ) );
+            }
         }
         if ( self::read_only_mode() && ! $this->allowed_in_read_only_mode( $name ) ) {
             throw new \Exception( 'This site is in read-only mode: tools that change the site are switched off.' );
@@ -5225,7 +5491,7 @@ class Server {
                         'meta_key' => $tmeta_key,
                         'updated'  => (bool) $tmeta_result,
                     ],
-                    \Royal_MCP\MCP\Support\WriteVerifier::response_partial( $tmeta_diff )
+                    \Royal_MCP\MCP\Support\WriteVerifier::response_partial( $tmeta_diff, (string) $tmeta_key )
                 );
                 if ( ! empty( $tmeta_warnings ) ) {
                     $tmeta_struct['warnings'] = $tmeta_warnings;
@@ -5758,7 +6024,7 @@ class Server {
                         'verified'     => true,
                         'stored_value' => $actual_value,
                     ],
-                    \Royal_MCP\MCP\Support\WriteVerifier::response_partial( $meta_diff )
+                    \Royal_MCP\MCP\Support\WriteVerifier::response_partial( $meta_diff, (string) $meta_key )
                 );
                 if ( ! empty( $warnings ) ) {
                     $meta_struct['warnings'] = $warnings;
@@ -6497,7 +6763,8 @@ class Server {
                     'truncated'      => $offset > 0,
                     'filter'         => $filter,
                     'total_returned' => count($tail),
-                    'lines'          => array_values(array_map([$this, 'redact_log_line'], $tail)),
+                    // Checked as one block first so dumps that span lines (var_dump) are caught too.
+                    'lines'          => array_values(array_map([$this, 'redact_log_line'], $this->scrub_log_block($tail))),
                 ];
 
             // Enumerate scheduled cron events. manage_options gate: cron args can carry token-like identifiers.
@@ -6757,7 +7024,7 @@ class Server {
                         'previous' => $this->redact_sensitive_keys($opt_previous, $name),
                         'sanitized_by' => $opt_sanitizer,
                     ],
-                    \Royal_MCP\MCP\Support\WriteVerifier::response_partial( $opt_diff )
+                    \Royal_MCP\MCP\Support\WriteVerifier::response_partial( $opt_diff, (string) $name )
                 );
                 if ( 'none' === $opt_sanitizer ) {
                     $opt_warnings[] = 'No sanitizer for this option is registered in this request (the plugin that owns it may register it only in wp-admin), so the value was saved as sent. Check it with wp_get_option.';
@@ -9980,11 +10247,11 @@ class Server {
                 $tm_struct = array_merge(
                     [
                         'mod_name'       => $mod_name,
-                        'previous_value' => $tm_previous,
-                        'new_value'      => $tm_actual,
+                        'previous_value' => $this->redact_sensitive_keys($tm_previous, (string) $mod_name),
+                        'new_value'      => $this->redact_sensitive_keys($tm_actual, (string) $mod_name),
                         'existed_before' => $tm_existed,
                     ],
-                    \Royal_MCP\MCP\Support\WriteVerifier::response_partial( $tm_diff )
+                    \Royal_MCP\MCP\Support\WriteVerifier::response_partial( $tm_diff, (string) $mod_name )
                 );
                 if ( ! empty( $tm_warnings ) ) {
                     $tm_struct['warnings'] = $tm_warnings;
@@ -10123,6 +10390,7 @@ class Server {
                         ) {
                             $w['blocks'] = parse_blocks((string) $w['instance']['raw']['content']);
                         }
+                        $w = self::widget_for_client($w);
                     }
                     unset($w);
                 }
@@ -10180,6 +10448,18 @@ class Server {
                     }
                 }
 
+                // Classic widgets without raw REST support only take {encoded, hash}: encode raw
+                // settings here, as wp_get_widgets returns settings as raw.
+                if (isset($args['instance']['raw']) && is_array($args['instance']['raw']) && !isset($args['instance']['encoded'])) {
+                    global $wp_widget_factory;
+                    $uw_base   = preg_replace('/-\d+$/', '', $widget_id);
+                    $uw_object = ($wp_widget_factory instanceof \WP_Widget_Factory) ? $wp_widget_factory->get_widget_object($uw_base) : null;
+                    if ($uw_object && empty($uw_object->widget_options['show_instance_in_rest'])) {
+                        $uw_serialized     = serialize($args['instance']['raw']); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_serialize -- the encoding the widgets endpoint expects
+                        $args['instance'] = ['encoded' => base64_encode($uw_serialized), 'hash' => wp_hash($uw_serialized)]; // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- as above
+                    }
+                }
+
                 $request = new \WP_REST_Request('PUT', '/wp/v2/widgets/' . $widget_id);
                 foreach (['sidebar', 'instance', 'form_data'] as $param) {
                     if (isset($args[$param])) {
@@ -10212,7 +10492,7 @@ class Server {
                     }
                 }
 
-                $uw_struct = is_array($uw_result_data) ? $uw_result_data : ['result' => $uw_result_data];
+                $uw_struct = is_array($uw_result_data) ? self::widget_for_client($uw_result_data) : ['result' => $uw_result_data];
                 $uw_struct['widget_id'] = $widget_id;
                 if (!empty($uw_warnings)) {
                     $uw_struct['warnings'] = $uw_warnings;
@@ -11607,10 +11887,21 @@ class Server {
         if (empty($rows)) return [];
 
         $pair_prefixes = $this->pair_secret_prefixes(array_column($rows, 'option_name'), false);
+        /**
+         * Filter the options wp_get_plugin_settings leaves out, by exact name or a
+         * prefix ending in * (e.g. 'myplugin_private_*').
+         *
+         * @param string[] $excluded Option names or prefix patterns.
+         * @param string   $slug     The plugin slug or prefix asked for.
+         */
+        $excluded = (array) apply_filters('royal_mcp_plugin_settings_excluded_options', [], $slug);
 
         $result = [];
         foreach ($rows as $row) {
             if ($this->is_denylisted_option($row->option_name)) {
+                continue;
+            }
+            if ($this->is_excluded_plugin_setting($row->option_name, $excluded)) {
                 continue;
             }
             $value = maybe_unserialize($row->option_value);
@@ -11623,6 +11914,19 @@ class Server {
             $result[$row->option_name] = $this->redact_sensitive_keys($value, $row->option_name);
         }
         return $result;
+    }
+
+    /** Whether an option name matches one of the excluded names or prefix* patterns. */
+    private function is_excluded_plugin_setting($name, array $excluded) {
+        foreach ($excluded as $pattern) {
+            if (!is_string($pattern) || '' === $pattern) continue;
+            if ('*' === substr($pattern, -1)) {
+                if (0 === strpos($name, substr($pattern, 0, -1))) return true;
+            } elseif ($name === $pattern) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -11680,144 +11984,46 @@ class Server {
     }
 
     /**
-     * Walk a value (array/object/scalar) and redact anything that looks
-     * like a credential. Three redaction triggers:
-     *   1. The value's own key ($key_hint) matches is_sensitive_key.
-     *      This is what closes the row-level scalar leak — an option
-     *      stored under a sensitive-named row (e.g. litespeed_api_key)
-     *      would otherwise pass through untouched because it's a scalar
-     *      string, not an array.
-     *   2. Any nested key inside an array matches is_sensitive_key.
-     *      Recursive walk, checked per key via the key_hint on child calls.
-     *   3. Any scalar string matches is_credential_shaped_value.
-     *      Defense-in-depth for the case where a plugin stores a token
-     *      under an innocuous key name (e.g. _plugin_state, config_blob).
+     * Replace credentials in a value with [REDACTED] (see Secret_Scrubber):
+     * by the name it is stored under ($key_hint, e.g. an option name), by
+     * nested key names, and by the value's own shape, after opening JSON,
+     * serialized and base64 strings.
      *
-     * @param mixed  $value    The value to walk.
-     * @param string $key_hint Optional. The key name this value is stored
-     *                         under (e.g. WP option_name for row-level
-     *                         calls). Enables outer-key redaction.
+     * @param mixed  $value    The value to check.
+     * @param string $key_hint Optional. The name this value is stored under.
      * @return mixed
      */
     private function redact_sensitive_keys($value, $key_hint = '') {
-        // Outer-key check: redact the whole subtree regardless of shape
-        // when the containing key is credential-shaped.
-        if ($key_hint !== '' && $this->is_sensitive_key($key_hint)) {
-            // Preserve falsy sentinels — an empty/null/false/[]/'0' value
-            // under a sensitive-named key is a "not set" signal, not a
-            // secret worth masking. Returning [REDACTED] for these would
-            // be indistinguishable from "set to a secret we won't tell you"
-            // and gives operators no way to see that a slot is unconfigured
-            // (e.g. oauth_client_id === '' means DCR is in play, not that
-            // a static client_id exists but is being hidden).
-            if ($value === '' || $value === null || $value === [] || $value === '0' || $value === false) {
-                return $value;
-            }
-            return '[REDACTED]';
-        }
-
-        if (is_object($value)) {
-            $value = (array) $value;
-        }
-
-        if (!is_array($value)) {
-            // Scalar value: apply shape heuristic as defense in depth.
-            if (is_string($value) && $this->is_credential_shaped_value($value)) {
-                return '[REDACTED]';
-            }
-            return $value;
-        }
-
-        // Special-case: WordPress attachment EXIF blob (_wp_attachment_metadata
-        // -> image_meta) contains GPS + device fingerprint fields with no
-        // legitimate use for an SEO/content tool. Strip these keys entirely
-        // rather than [REDACTED]-flag them — a placeholder in a coordinate
-        // slot adds noise for no benefit. Kept: title, caption, credit,
-        // copyright, keywords (occasionally useful for schema/attribution).
-        if ($key_hint === 'image_meta') {
-            $exif_pii_keys = [
-                'latitude', 'longitude',
-                'camera',
-                'aperture', 'iso', 'shutter_speed',
-                'focal_length', 'orientation',
-                'created_timestamp',
-            ];
-            $filtered = [];
-            foreach ($value as $k => $v) {
-                if (in_array(strtolower((string) $k), $exif_pii_keys, true)) continue;
-                $filtered[$k] = $v;
-            }
-            $value = $filtered;
-        }
-
-        $pair_prefixes = $this->pair_secret_prefixes(array_keys($value), true);
-
-        $out = [];
-        foreach ($value as $k => $v) {
-            if ([] !== $pair_prefixes && is_string($k) && $this->is_credential_partner($k, $pair_prefixes)
-                && !($v === '' || $v === null || $v === [] || $v === '0' || $v === false)) {
-                $out[$k] = '[REDACTED]';
-                continue;
-            }
-            $out[$k] = $this->redact_sensitive_keys($v, (string) $k);
-        }
-        return $out;
+        return \Royal_MCP\MCP\Support\Secret_Scrubber::scrub($value, (string) $key_hint);
     }
 
-    /**
-     * Lower-case name with a PHP object-property marker removed, camelCase
-     * split and spaces turned into underscores: "\0*\0smtpUser Name" -> "smtp_user_name".
-     */
+    /** Lower-case name, object-property marker removed, camelCase split. */
     private function normalize_key_name($key) {
-        $key = preg_replace('/^\x00.*\x00/s', '', (string) $key);
-        $key = preg_replace('/([a-z0-9])([A-Z])/', '$1_$2', $key);
-        return strtolower(preg_replace('/\s+/', '_', trim($key)));
+        return \Royal_MCP\MCP\Support\Secret_Scrubber::normalize_name($key);
     }
 
     /**
-     * Prefixes of the names in $keys that hold the secret half of a login
-     * pair (password, private or transaction key, API key, signature), as a
-     * set: "wsc_client_secret" gives "", "wsc_" and "wsc_client_". Licence
-     * keys, public keys, nonces, salts and hashes are not pair secrets.
+     * Prefixes of the names in $keys that hold the secret half of a login pair.
      *
      * @param bool $with_empty Include "" so an unprefixed username pairs with any secret.
      * @return array<string,bool>
      */
     private function pair_secret_prefixes(array $keys, $with_empty) {
-        $set = [];
-        foreach ($keys as $k) {
-            if (!is_string($k) || !$this->is_sensitive_key($k)) continue;
-            $name = $this->normalize_key_name($k);
-            $flat = str_replace(['_', '-', '.'], '', $name);
-            if (preg_match('/licen[cs]e|nonce|salt|hash|public|(?<!api)signature/', $flat)) continue;
-            if ($with_empty) $set[''] = true;
-            $len = strlen($name);
-            for ($i = 0; $i < $len; $i++) {
-                if ('_' === $name[$i] || '-' === $name[$i] || '.' === $name[$i]) $set[substr($name, 0, $i + 1)] = true;
-            }
-        }
-        return $set;
+        return \Royal_MCP\MCP\Support\Secret_Scrubber::pair_secret_prefixes($keys, $with_empty);
     }
 
     /**
-     * The login half of a credential pair (merchant ID, login ID, username,
-     * user, account, partner, vendor, account email) stored next to a pair
-     * secret with the same prefix: `username` beside `password`,
-     * `wsc_email` beside `wsc_client_secret`. The same names elsewhere stay readable.
+     * The login half of a credential pair stored next to a pair secret with the same prefix.
      *
      * @param array<string,bool> $pair_prefixes From pair_secret_prefixes().
      */
     private function is_credential_partner($key, array $pair_prefixes) {
-        $prefix = $this->credential_partner_prefix($key);
-        return null !== $prefix && isset($pair_prefixes[$prefix]);
+        return \Royal_MCP\MCP\Support\Secret_Scrubber::is_credential_partner($key, $pair_prefixes);
     }
 
     /** Prefix of a login-half name ("smtp_" for "smtp_user_name"), or null when the name is not one. */
     private function credential_partner_prefix($key) {
-        if (!preg_match('/^(|.*[_\-.])(merchant[_\-.]?id|merchant|login[_\-.]?id|login|user[_\-.]?name|user|email|account[_\-.]?(?:id|sid|number)|account|partner[_\-.]?id|partner|vendor|seller[_\-.]?id)$/', $this->normalize_key_name($key), $m)) {
-            return null;
-        }
-        return $m[1];
+        return \Royal_MCP\MCP\Support\Secret_Scrubber::credential_partner_prefix($key);
     }
 
     /**
@@ -11959,102 +12165,24 @@ class Server {
             $line
         );
 
-        return $line;
+        return \Royal_MCP\MCP\Support\Secret_Scrubber::scrub_text($line, 'strict');
     }
 
     /**
      * Returns true if the given key name looks like a credential.
-     * Pattern is intentionally aggressive — false positives are recoverable
-     * (user can fetch the underlying option directly), false negatives leak.
+     * Intentionally aggressive: false positives are recoverable, false negatives leak.
      */
     private function is_sensitive_key($key) {
-        if (!is_string($key) || $key === '') return false;
-        $key_lc = $this->normalize_key_name($key);
-        // The same name with separators removed: "Transaction Key",
-        // "api-login" and "smtpPassword" all reduce to one word.
-        $flat = str_replace(['_', '-', '.'], '', $key_lc);
-
-        // Compound-substring needles — match anywhere in the key.
-        $needles = [
-            'password', 'passwd', 'secret', 'salt', 'token', 'nonce',
-            'apikey', 'api_key', 'accesskey', 'access_key',
-            'private_key', 'public_key',
-            'client_secret', 'client_id', 'auth_key', 'auth_token',
-            'bearer', 'license_key', 'consumer_secret', 'consumer_key',
-            'webhook_secret', 'session_key', 'credential', 'passcode', 'authorization',
-        ];
-        foreach ($needles as $needle) {
-            if (strpos($key_lc, $needle) !== false || strpos($flat, str_replace('_', '', $needle)) !== false) return true;
-        }
-
-        // Credential names written as one word (privatekey, transactionkey,
-        // securitykey, apisignature, secretword, smtppass) and gateway login
-        // names that are half of a key pair. "keyword" and "monkey" carry no
-        // such prefix; "masterkeywords" is a keyword list, not a key.
-        if (preg_match('/(private|secret|security|encryption|transaction|signing|merchant|master|shared|account|secure|consumer|webhook|storage|access|auth|app)key(?!word)/', $flat)) {
-            return true;
-        }
-        if (preg_match('/(smtp|mail|db|ftp|sftp|ssh|proxy|user|admin)(pass|pwd)/', $flat)) {
-            return true;
-        }
-        foreach ([
-            'signature', 'secretword', 'passphrase', 'apiuser', 'apilogin', 'loginname',
-            'purchasecode', 'authcode', 'recoverycodes', 'backupcodes', 'otpseed', 'totpseed',
-            'connectionstring', 'databaseurl',
-        ] as $needle) {
-            if (strpos($flat, $needle) !== false) return true;
-        }
-
-        // Boundary-anchored generic suffix patterns — catches
-        // cdn-cloudflare_key, stripe_public_key, mailserver_pass,
-        // admin_pwd, third-party.conf.secret, dot-notation keys, etc.
-        // Boundary chars _-. and start/end of string prevent word-inside-
-        // word matches (donkey, keyword, passageway all pass through).
-        if (preg_match('/(^|[_\-.])(key|pass|pwd|pw|secret|token|dsn)([_\-.]|$)/i', $key_lc)) {
-            return true;
-        }
-
-        // Hash suffix — only redact when paired with a credential-shaped
-        // root token. content_hash, file_hash, checksum_hash are legit
-        // plugin data and stay unredacted; api_key_hash, password_hash,
-        // token_hash, secret_hash all redact.
-        if (preg_match('/(key|pass|pwd|secret|token|auth|salt)_?hash/i', $key_lc)) {
-            return true;
-        }
-
-        return false;
+        return \Royal_MCP\MCP\Support\Secret_Scrubber::is_secret_name($key);
     }
 
     /**
-     * Returns true if the value looks like a credential regardless of
-     * the key it's stored under. Defense-in-depth backstop for plugins
-     * that stash tokens under innocuous key names (_plugin_state,
-     * config_blob, etc.).
-     *
-     * Matches: 32+ char pure-alphanumeric-with-dash/underscore strings
-     * (covers Cloudflare 40-char tokens, Stripe sk_test_ 100+ char keys,
-     * generic 32-char API keys) and dot-separated JWT shapes.
-     *
-     * Trade-off: long alphanumeric slugs, UUIDs (with dashes), and
-     * base64url-encoded blobs will also match and redact. Per the
-     * is_sensitive_key comment, false positives are recoverable — user
-     * can fetch the underlying option via wp_get_option after opting it
-     * into the readable allowlist. False negatives leak credentials.
-     *
-     * Length cap 4096 avoids catching serialized blobs and image data.
+     * Returns true if the value looks like a credential regardless of the
+     * key it is stored under (token shapes, JWTs, provider key formats,
+     * private key blocks).
      */
     private function is_credential_shaped_value($value) {
-        if (!is_string($value)) return false;
-        $len = strlen($value);
-        if ($len < 32 || $len > 4096) return false;
-
-        // Pure token shape: [A-Za-z0-9_-]{32,}
-        if (preg_match('/^[A-Za-z0-9_\-]{32,}$/', $value)) return true;
-
-        // JWT shape: header.payload.signature (each base64url)
-        if (preg_match('/^[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}$/', $value)) return true;
-
-        return false;
+        return \Royal_MCP\MCP\Support\Secret_Scrubber::is_secret_value($value);
     }
 
     /**
@@ -12096,7 +12224,7 @@ class Server {
 
     /** Whether a setting, key or variable name looks like a credential (the rule tool replies use). */
     public function is_credential_name($key) {
-        return $this->is_sensitive_key($key);
+        return $this->is_denylist_name($key);
     }
 
     /** Whether a value looks like a credential by its shape alone. */
@@ -12282,6 +12410,69 @@ class Server {
         return $keys;
     }
 
+    /**
+     * The option denylist's name rule (also used for credentials in snippet
+     * code). Narrower than the read-side rule on purpose: a name it matches
+     * can never be read or written through Royal MCP, even when allowlisted.
+     */
+    private function is_denylist_name($key) {
+        if (!is_string($key) || $key === '') return false;
+        $key_lc = $this->normalize_key_name($key);
+        // The same name with separators removed: "Transaction Key",
+        // "api-login" and "smtpPassword" all reduce to one word.
+        $flat = str_replace(['_', '-', '.'], '', $key_lc);
+
+        // Compound-substring needles — match anywhere in the key.
+        $needles = [
+            'password', 'passwd', 'secret', 'salt', 'token', 'nonce',
+            'apikey', 'api_key', 'accesskey', 'access_key',
+            'private_key', 'public_key',
+            'client_secret', 'client_id', 'auth_key', 'auth_token',
+            'bearer', 'license_key', 'consumer_secret', 'consumer_key',
+            'webhook_secret', 'session_key', 'credential', 'passcode', 'authorization',
+        ];
+        foreach ($needles as $needle) {
+            if (strpos($key_lc, $needle) !== false || strpos($flat, str_replace('_', '', $needle)) !== false) return true;
+        }
+
+        // Credential names written as one word (privatekey, transactionkey,
+        // securitykey, apisignature, secretword, smtppass) and gateway login
+        // names that are half of a key pair. "keyword" and "monkey" carry no
+        // such prefix; "masterkeywords" is a keyword list, not a key.
+        if (preg_match('/(private|secret|security|encryption|transaction|signing|merchant|master|shared|account|secure|consumer|webhook|storage|access|auth|app)key(?!word)/', $flat)) {
+            return true;
+        }
+        if (preg_match('/(smtp|mail|db|ftp|sftp|ssh|proxy|user|admin)(pass|pwd)/', $flat)) {
+            return true;
+        }
+        foreach ([
+            'signature', 'secretword', 'passphrase', 'apiuser', 'apilogin', 'loginname',
+            'purchasecode', 'authcode', 'recoverycodes', 'backupcodes', 'otpseed', 'totpseed',
+            'connectionstring', 'databaseurl',
+        ] as $needle) {
+            if (strpos($flat, $needle) !== false) return true;
+        }
+
+        // Boundary-anchored generic suffix patterns — catches
+        // cdn-cloudflare_key, stripe_public_key, mailserver_pass,
+        // admin_pwd, third-party.conf.secret, dot-notation keys, etc.
+        // Boundary chars _-. and start/end of string prevent word-inside-
+        // word matches (donkey, keyword, passageway all pass through).
+        if (preg_match('/(^|[_\-.])(key|pass|pwd|pw|secret|token|dsn)([_\-.]|$)/i', $key_lc)) {
+            return true;
+        }
+
+        // Hash suffix — only redact when paired with a credential-shaped
+        // root token. content_hash, file_hash, checksum_hash are legit
+        // plugin data and stay unredacted; api_key_hash, password_hash,
+        // token_hash, secret_hash all redact.
+        if (preg_match('/(key|pass|pwd|secret|token|auth|salt)_?hash/i', $key_lc)) {
+            return true;
+        }
+
+        return false;
+    }
+
     private function is_denylisted_option($name) {
         $name_lc = strtolower($name);
 
@@ -12302,6 +12493,9 @@ class Server {
             'mailserver_pass',    // SMTP secret — the generic *_key/*_secret filter does not match this name.
             'mailserver_url',     // SMTP host — outbound mail-config surface.
             'mailserver_port',    // Same class as mailserver_url.
+            'uninstall_plugins',  // Uninstall callbacks of every plugin.
+            'new_admin_email',    // Pending admin email change.
+            'adminhash',          // Confirmation hash for that change.
             // Role/cap-shaped global option names — mostly inert (real per-user
             // cap data lives in wp_usermeta) but any auditor seeing
             // wp_capabilities in the writable set will file a bug.
@@ -12314,13 +12508,15 @@ class Server {
 
         // Royal MCP namespace is reserved.
         if (strpos($name_lc, 'royal_mcp_') === 0) return true;
+        if (strpos($name_lc, 'rmcp_pro_') === 0) return true;
 
-        // Delegate remaining pattern check to the unified sensitive-key
-        // helper so read and write denylists stay in lockstep. Any key
-        // the read path redacts, the write path rejects — single source
-        // of truth. The generic suffix regex catches variants like
-        // cdn-cloudflare_key, stripe_public_key, mailserver_pass.
-        if ($this->is_sensitive_key($name)) return true;
+        // Rows named as holding sensitive data, whatever their inner keys are called.
+        if (preg_match('/(^|[_\-.])sensitive([_\-.]|$)/', $name_lc) && !preg_match('/case[_\-.]?(in)?sensitive/', $name_lc)) return true;
+
+        // Names the denylist rule matches can never be read or written. The
+        // read-side redaction rule is wider: names it matches stay listable
+        // and writable, but their values are hidden in every reply.
+        if ($this->is_denylist_name($name)) return true;
 
         return false;
     }

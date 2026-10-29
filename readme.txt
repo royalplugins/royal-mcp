@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.5.12
+Stable tag: 1.5.13
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -195,7 +195,7 @@ Yes. When WooCommerce is active, Royal MCP automatically adds 29 MCP tools spann
 
 Yes, with safety controls. Royal MCP exposes two tools for plugin configuration:
 
-* `wp_get_plugin_settings` lets AI read any plugin's stored settings by slug. Sensitive values (API keys, secrets, tokens, passwords, license keys, OAuth credentials) are automatically replaced with `[REDACTED]` before they leave your server, so AI assistants can understand a plugin's configuration without ever seeing stored credentials.
+* `wp_get_plugin_settings` lets AI read any plugin's stored settings by slug. Sensitive values (API keys, secrets, tokens, passwords, license keys, OAuth credentials) are automatically replaced with `[REDACTED]` before they leave your server, including values stored as JSON or encoded text, so AI assistants can understand a plugin's configuration without ever seeing stored credentials.
 
 * `wp_update_option` lets AI write to WordPress options, but only after passing three security gates:
     1. The site admin must enable the "Allow AI to write WordPress options" toggle on the Royal MCP settings page (off by default)
@@ -226,7 +226,7 @@ By design, Royal MCP's OAuth endpoints (`/register`, `/token`, `/authorize`) are
 
 = Is my content safe? =
 
-Royal MCP is designed with defense in depth. API key authentication is required for all MCP sessions. Rate limiting prevents abuse (60 requests per minute per IP without credentials, 300 with; 300 per minute per user through the Abilities API and other MCP servers). Activity logging records every tool call. Sensitive data is filtered — user emails, usernames, admin email, PHP version, and stored credentials inside plugin settings (api keys, secrets, tokens, passwords) are never exposed through MCP. Comment creation respects your WordPress moderation settings. Post meta values are sanitized before storage. Option writes are disabled by default and gated by three independent checks (admin toggle, allowlist, hard denylist) when enabled. The plugin itself starts disabled by default — nothing is accessible until you explicitly enable it.
+Royal MCP is designed with defense in depth. API key authentication is required for all MCP sessions. Rate limiting prevents abuse (60 requests per minute per IP without credentials, 300 with; 300 per minute per user through the Abilities API and other MCP servers). Activity logging records every tool call. Sensitive data is filtered — user emails, usernames, admin email, PHP version, and credentials stored by any plugin (API keys, licence keys, tokens, passwords, webhook addresses) are hidden in every tool response, including values stored as JSON or encoded text. Comment creation respects your WordPress moderation settings. Post meta values are sanitized before storage. Option writes are disabled by default and gated by three independent checks (admin toggle, allowlist, hard denylist) when enabled. The plugin itself starts disabled by default — nothing is accessible until you explicitly enable it.
 
 = Can I use local AI models instead of cloud services? =
 
@@ -279,6 +279,16 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 10. Royal MCP tool list in ChatGPT after connection
 
 == Changelog ==
+
+= 1.5.13 =
+* New: site owners can keep chosen plugin options out of plugin settings replies.
+* Enhancement: UpdraftPlus backups are identified by backup_id instead of the backup nonce.
+* Enhancement: wp_update_widget accepts classic widget settings in the form wp_get_widgets returns them.
+* Fix: saving settings never changes the API key, and every new key is recorded in the activity log.
+* Fix: a tool that a site removes from the tool list can no longer be called by name.
+* Security: keys, tokens and passwords that other plugins store are hidden in every tool response.
+* Security: the post editing tools no longer change code snippets or pending Customizer changes.
+* Security: an AI client that registers again keeps the access level it had.
 
 = 1.5.12 =
 * New: AI clients sign in at Royal MCP's own address, so Claude and ChatGPT connect even when another plugin answers the site's usual sign-in addresses.
@@ -778,6 +788,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release.
 
 == Upgrade Notice ==
+
+= 1.5.13 =
+Hides keys and tokens that other plugins store from every tool response; recommended for all sites.
 
 = 1.5.12 =
 Claude and ChatGPT now sign in at Royal MCP's own address; existing connections keep working.

@@ -330,9 +330,9 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                     </svg>
                                     <?php esc_html_e('Copy', 'royal-mcp'); ?>
                                 </button>
+                                <?php // Submits its own form (below the settings form), never the settings form: Enter in a settings field cannot reach it. ?>
                                 <button type="submit"
-                                        name="royal_mcp_settings[regenerate_api_key]"
-                                        value="1"
+                                        form="rmcp-regenerate-key-form"
                                         class="button"
                                         id="rmcp-regenerate-key"
                                         style="<?php echo esc_attr( $royal_mcp_btn_style ); ?>">
@@ -863,6 +863,12 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
         </div><!-- /.royal-mcp-settings-container -->
 
         <?php submit_button(); ?>
+    </form>
+
+    <?php // Regenerate posts this form, not the settings form, so a settings save can never rotate the key. ?>
+    <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" id="rmcp-regenerate-key-form" style="display:none">
+        <input type="hidden" name="action" value="<?php echo esc_attr( \Royal_MCP\Admin\Settings_Page::REGENERATE_ACTION ); ?>">
+        <?php wp_nonce_field( \Royal_MCP\Admin\Settings_Page::REGENERATE_ACTION ); ?>
     </form>
 
     <!-- Troubleshooting / Reset OAuth State -->

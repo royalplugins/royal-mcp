@@ -11,6 +11,9 @@ class Settings_Page {
     /** True only while save_programmatically() is saving. */
     private static $programmatic_save = false;
 
+    /** admin-post action (and nonce action) that rotates the API key. */
+    const REGENERATE_ACTION = 'royal_mcp_regenerate_api_key';
+
     /**
      * Save settings from our own code, keeping the stored values as they are.
      * The settings form keeps going through sanitize_settings().
@@ -34,6 +37,7 @@ class Settings_Page {
         // AJAX handlers
         add_action('wp_ajax_royal_mcp_reset_oauth_state', [$this, 'ajax_reset_oauth_state']);
         add_action('wp_ajax_royal_mcp_clear_oauth_field', [$this, 'ajax_clear_oauth_field']);
+        add_action('admin_post_' . self::REGENERATE_ACTION, [$this, 'handle_regenerate_api_key']);
     }
 
     /** Render the wp.org review-request banner (Free tier only, version-stamped dismissal). */
@@ -367,33 +371,19 @@ class Settings_Page {
         // plaintext is handed to the admin ONCE via a short-lived reveal
         // transient after regeneration — after that the field renders masked
         // and the admin must regenerate again if they lose the copy.
-        $regenerated = false;
-        if ( isset( $input['regenerate_api_key'] ) ) {
-            $plaintext                   = bin2hex( random_bytes( 16 ) );
-            $sanitized['api_key_hash']   = hash( 'sha256', $plaintext );
-            $sanitized['api_key']        = '';
-            set_transient( // audit:transient-ttl-only -- one-time key reveal, deleted when the settings page shows it
-                'royal_mcp_reveal_api_key_' . (int) get_current_user_id(),
-                $plaintext,
-                15 * MINUTE_IN_SECONDS
-            );
-            $regenerated = true;
-        } else {
-            // Preserve whatever's already at rest. If a legacy install still has
-            // a plaintext key, keep it in place so existing MCP clients keep
-            // working; maybe_upgrade_db handles the one-time migration to the
-            // hashed form on the next plugin load.
-            $sanitized['api_key_hash'] = $settings['api_key_hash'] ?? '';
-            $sanitized['api_key']      = $settings['api_key']      ?? '';
-        }
+        // A settings save never changes the key: it is rotated only by the
+        // Regenerate action (handle_regenerate_api_key) and by WP-CLI. A posted
+        // regenerate_api_key field is ignored. If a legacy install still has a
+        // plaintext key, keep it in place so existing MCP clients keep working;
+        // maybe_upgrade_db handles the one-time migration to the hashed form.
+        $sanitized['api_key_hash'] = $settings['api_key_hash'] ?? '';
+        $sanitized['api_key']      = $settings['api_key']      ?? '';
 
         // Bind the api_key to a specific user_id so the auth path attributes
         // tool calls to a real human rather than "first administrator on the
         // site". Rebound on every regeneration; back-filled for existing
         // installs where a key exists but the bind is missing.
-        if ( $regenerated ) {
-            $sanitized['api_key_user_id'] = (int) get_current_user_id();
-        } elseif ( ( ! empty( $sanitized['api_key_hash'] ) || ! empty( $sanitized['api_key'] ) )
+        if ( ( ! empty( $sanitized['api_key_hash'] ) || ! empty( $sanitized['api_key'] ) )
                    && empty( $settings['api_key_user_id'] ) ) {
             $sanitized['api_key_user_id'] = (int) get_current_user_id();
         } else {
@@ -414,6 +404,50 @@ class Settings_Page {
         }
 
         return $sanitized;
+    }
+
+    /**
+     * Rotate the API key from the settings screen's Regenerate button: its own
+     * form and nonce, so no settings save can change the key. The new key is
+     * shown once and the rotation is logged.
+     */
+    public function handle_regenerate_api_key() {
+        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- per-site option royal_mcp_settings only
+            wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
+        }
+        check_admin_referer( self::REGENERATE_ACTION );
+
+        $settings  = get_option( 'royal_mcp_settings', [] );
+        $settings  = is_array( $settings ) ? $settings : [];
+        $previous  = (int) ( $settings['api_key_user_id'] ?? 0 );
+        $user_id   = (int) get_current_user_id();
+        $plaintext = bin2hex( random_bytes( 16 ) );
+        $settings['api_key_hash']    = hash( 'sha256', $plaintext );
+        $settings['api_key']         = '';
+        $settings['api_key_user_id'] = $user_id;
+        self::save_programmatically( $settings );
+        set_transient( // audit:transient-ttl-only -- one-time key reveal, deleted when the settings page shows it
+            'royal_mcp_reveal_api_key_' . $user_id,
+            $plaintext,
+            15 * MINUTE_IN_SECONDS
+        );
+
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Intentional direct insert to the logs table.
+        $wpdb->insert(
+            $wpdb->prefix . 'royal_mcp_logs',
+            [
+                'mcp_server'    => 'MCP Server',
+                'action'        => 'settings:api_key_rotated',
+                'request_data'  => wp_json_encode( [ 'source' => 'settings', 'bound_to' => $user_id, 'previously_bound_to' => $previous ] ),
+                'response_data' => wp_json_encode( [ 'status' => 'success' ] ),
+                'status'        => 'success',
+            ],
+            [ '%s', '%s', '%s', '%s', '%s' ]
+        );
+
+        wp_safe_redirect( add_query_arg( [ 'page' => 'royal-mcp', 'settings-updated' => 'true' ], admin_url( 'admin.php' ) ) );
+        exit;
     }
 
     public function enqueue_scripts($hook) {
