@@ -280,7 +280,7 @@ class WooCommerce {
 					'properties' => [
 						'per_page' => [ 'type' => 'integer', 'description' => 'Customers per call (default 10, min 1, max 100)' ],
 						'page'     => [ 'type' => 'integer', 'description' => 'Page number, 1-indexed. When given, the reply includes total and total_pages.' ],
-						'search'   => [ 'type' => 'string', 'description' => 'Search by name or email' ],
+						'search'   => [ 'type' => 'string', 'description' => 'Search by name; login and email are searched too for users who may list users' ],
 					],
 				],
 			],
@@ -613,6 +613,47 @@ class WooCommerce {
 	}
 
 	/**
+	 * Save a product so backslashes in its description and short description survive.
+	 * WooCommerce passes these fields to WordPress unslashed, so WordPress's unslash on save drops
+	 * every backslash (block attributes, JSON). The text set on the product (already filtered for
+	 * users without unfiltered_html) is put back just before the write, with the processing
+	 * WordPress gives post content: invalid entities converted, tags balanced when the site asks
+	 * for it, emoji encoded where the posts table cannot store them. On a new product the first
+	 * product written in the call is the one.
+	 */
+	public static function save_product_exact( $product ) {
+		$id      = (int) $product->get_id();
+		$content = (string) $product->get_description( 'edit' );
+		$excerpt = (string) $product->get_short_description( 'edit' );
+		$done    = false;
+		$prepare = static function ( $text, $field ) {
+			global $wpdb;
+			$text = convert_invalid_entities( $text );
+			if ( get_option( 'use_balanceTags' ) ) {
+				$text = balanceTags( $text, true );
+			}
+			if ( 'utf8' === $wpdb->get_col_charset( $wpdb->posts, $field ) ) {
+				$text = wp_encode_emoji( $text );
+			}
+			return $text;
+		};
+		$keep = static function ( $data, $postarr ) use ( $id, $content, $excerpt, $prepare, &$done ) {
+			if ( ! $done && isset( $data['post_type'] ) && 'product' === $data['post_type'] && $id === (int) ( $postarr['ID'] ?? 0 ) ) {
+				$done                 = 0 === $id;
+				$data['post_content'] = wp_slash( $prepare( $content, 'post_content' ) );
+				$data['post_excerpt'] = wp_slash( $prepare( $excerpt, 'post_excerpt' ) );
+			}
+			return $data;
+		};
+		add_filter( 'wp_insert_post_data', $keep, PHP_INT_MAX, 2 );
+		try {
+			return $product->save();
+		} finally {
+			remove_filter( 'wp_insert_post_data', $keep, PHP_INT_MAX );
+		}
+	}
+
+	/**
 	 * Execute a WooCommerce MCP tool.
 	 *
 	 * @param string $name Tool name.
@@ -814,10 +855,10 @@ class WooCommerce {
 					$product->set_sale_price( self::clean_price( $args['sale_price'] ) );
 				}
 				if ( isset( $args['description'] ) ) {
-					$product->set_description( wp_kses_post( $args['description'] ) );
+					$product->set_description( \Royal_MCP\MCP\Support\SafeText::rich_html( $args['description'] ) );
 				}
 				if ( isset( $args['short_description'] ) ) {
-					$product->set_short_description( wp_kses_post( $args['short_description'] ) );
+					$product->set_short_description( \Royal_MCP\MCP\Support\SafeText::rich_html( $args['short_description'] ) );
 				}
 				if ( isset( $args['sku'] ) ) {
 					$product->set_sku( sanitize_text_field( $args['sku'] ) );
@@ -830,7 +871,7 @@ class WooCommerce {
 					$product->set_category_ids( array_map( 'intval', $args['categories'] ) );
 				}
 				$product->set_status( in_array( $args['status'] ?? 'draft', [ 'publish', 'draft' ] ) ? $args['status'] : 'draft' );
-				$product_id = $product->save();
+				$product_id = self::save_product_exact( $product );
 				if ( ! $product_id ) {
 					throw new \Exception( 'Failed to create product' );
 				}
@@ -886,8 +927,8 @@ class WooCommerce {
 				// so regular_price / sale_price are string-typed here.
 				$up_requested = [];
 				if ( isset( $args['name'] ) )              $up_requested['name']              = sanitize_text_field( (string) $args['name'] );
-				if ( isset( $args['description'] ) )       $up_requested['description']       = wp_kses_post( (string) $args['description'] );
-				if ( isset( $args['short_description'] ) ) $up_requested['short_description'] = wp_kses_post( (string) $args['short_description'] );
+				if ( isset( $args['description'] ) )       $up_requested['description']       = \Royal_MCP\MCP\Support\SafeText::rich_html( $args['description'] );
+				if ( isset( $args['short_description'] ) ) $up_requested['short_description'] = \Royal_MCP\MCP\Support\SafeText::rich_html( $args['short_description'] );
 				if ( isset( $args['sku'] ) )               $up_requested['sku']               = sanitize_text_field( (string) $args['sku'] );
 				if ( isset( $args['status'] ) )            $up_requested['status']            = sanitize_text_field( (string) $args['status'] );
 				$price_error = self::price_fields_error( $args, $up_product->get_regular_price( 'edit' ), $up_product->get_sale_price( 'edit' ) );
@@ -945,7 +986,7 @@ class WooCommerce {
 					$up_product->set_manage_stock( true );
 					$up_product->set_stock_quantity( $up_requested['stock_quantity'] );
 				}
-				$up_product->save();
+				self::save_product_exact( $up_product );
 				wc_delete_product_transients( $up_product_id );
 
 				// Re-read AFTER for requested fields.
@@ -1542,8 +1583,9 @@ class WooCommerce {
 					'count_total' => $gc_paged,
 				];
 				if ( ! empty( $args['search'] ) ) {
+					// Searching logins and emails tells which addresses have accounts: that needs list_users.
 					$customer_args['search']         = '*' . sanitize_text_field( $args['search'] ) . '*';
-					$customer_args['search_columns']  = [ 'user_login', 'user_email', 'display_name' ];
+					$customer_args['search_columns'] = current_user_can( 'list_users' ) ? [ 'user_login', 'user_email', 'display_name' ] : [ 'display_name' ];
 				}
 				$gc_query  = new \WP_User_Query( $customer_args );
 				$customers = (array) $gc_query->get_results();
@@ -1673,7 +1715,7 @@ class WooCommerce {
 				if ( isset( $args['stock_quantity'] ) ) $uv_requested['stock_quantity'] = (int) $args['stock_quantity'];
 				if ( isset( $args['stock_status'] ) )   $uv_requested['stock_status']   = sanitize_text_field( (string) $args['stock_status'] );
 				if ( isset( $args['weight'] ) )         $uv_requested['weight']         = sanitize_text_field( (string) $args['weight'] );
-				if ( isset( $args['description'] ) )    $uv_requested['description']    = wp_kses_post( (string) $args['description'] );
+				if ( isset( $args['description'] ) )    $uv_requested['description']    = \Royal_MCP\MCP\Support\SafeText::rich_html( $args['description'] );
 				if ( isset( $args['image_id'] ) )       $uv_requested['image_id']       = (int) $args['image_id'];
 				if ( isset( $args['dimensions']['length'] ) ) $uv_requested['dimensions.length'] = sanitize_text_field( (string) $args['dimensions']['length'] );
 				if ( isset( $args['dimensions']['width'] ) )  $uv_requested['dimensions.width']  = sanitize_text_field( (string) $args['dimensions']['width'] );
@@ -1787,7 +1829,7 @@ class WooCommerce {
 				if ( ! current_user_can( 'delete_product', $dv_var_id ) ) {
 					throw new \Exception( 'delete_product capability required on this variation.' );
 				}
-				$dv_force = isset( $args['force'] ) ? (bool) $args['force'] : true;
+				$dv_force = isset( $args['force'] ) ? filter_var( $args['force'], FILTER_VALIDATE_BOOLEAN ) : true;
 
 				// Snapshot BEFORE the delete. For soft-trash (force=false), we
 				// just need the parent_id to re-sync on undo. For hard-delete
@@ -2492,7 +2534,7 @@ class WooCommerce {
 				if ( ! current_user_can( 'delete_shop_coupon', $dc_id ) ) {
 					throw new \Exception( 'delete_shop_coupon capability required on this coupon.' );
 				}
-				$dc_force   = isset( $args['force'] ) ? (bool) $args['force'] : false;
+				$dc_force   = isset( $args['force'] ) ? filter_var( $args['force'], FILTER_VALIDATE_BOOLEAN ) : false;
 				$dc_status  = get_post_status( $dc_id );
 
 				// Already-in-trash is a no-op (WC's original behavior); return
@@ -3205,7 +3247,7 @@ class WooCommerce {
 			}
 		}
 		if ( isset( $args['description'] ) ) {
-			$variation->set_description( wp_kses_post( $args['description'] ) );
+			$variation->set_description( \Royal_MCP\MCP\Support\SafeText::rich_html( $args['description'] ) );
 		}
 		if ( isset( $args['image_id'] ) ) {
 			$variation->set_image_id( intval( $args['image_id'] ) );

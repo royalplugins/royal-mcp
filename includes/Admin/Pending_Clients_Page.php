@@ -48,7 +48,7 @@ class Pending_Clients_Page {
             'royal-mcp',
             __( 'Pending Clients', 'royal-mcp' ),
             $label,
-            'manage_options',
+            Settings_Page::admin_capability(),
             self::MENU_SLUG,
             [ $this, 'render' ]
         );
@@ -59,7 +59,7 @@ class Pending_Clients_Page {
      * requests without visiting the Royal MCP menu.
      */
     public function admin_bar_count( \WP_Admin_Bar $bar ) {
-        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- per-site OAuth clients only (wp_royal_mcp_oauth_clients is per-site-prefixed); sub-site admins can manage their own site's clients
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from Settings_Page::admin_capability(); per-site OAuth clients only (wp_royal_mcp_oauth_clients is per-site-prefixed); sub-site admins can manage their own site's clients
             return;
         }
         $count = Token_Store::count_pending_clients();
@@ -86,7 +86,7 @@ class Pending_Clients_Page {
     }
 
     public function render() {
-        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- per-site OAuth clients only (wp_royal_mcp_oauth_clients is per-site-prefixed); sub-site admins can manage their own site's clients
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from Settings_Page::admin_capability(); per-site OAuth clients only (wp_royal_mcp_oauth_clients is per-site-prefixed); sub-site admins can manage their own site's clients
             wp_die( esc_html__( 'You do not have permission to access this page.', 'royal-mcp' ) );
         }
         $rows = Token_Store::get_pending_clients();
@@ -146,7 +146,7 @@ class Pending_Clients_Page {
     }
 
     public function handle_approve() {
-        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- per-site OAuth clients only (wp_royal_mcp_oauth_clients is per-site-prefixed); sub-site admins can manage their own site's clients
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from Settings_Page::admin_capability(); per-site OAuth clients only (wp_royal_mcp_oauth_clients is per-site-prefixed); sub-site admins can manage their own site's clients
             wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ) );
         }
         check_admin_referer( self::APPROVE_NONCE );
@@ -160,7 +160,7 @@ class Pending_Clients_Page {
     }
 
     public function handle_reject() {
-        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- per-site OAuth clients only (wp_royal_mcp_oauth_clients is per-site-prefixed); sub-site admins can manage their own site's clients
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from Settings_Page::admin_capability(); per-site OAuth clients only (wp_royal_mcp_oauth_clients is per-site-prefixed); sub-site admins can manage their own site's clients
             wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ) );
         }
         check_admin_referer( self::REJECT_NONCE );

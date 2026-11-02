@@ -157,7 +157,8 @@ class RoyalLedger {
 					$data['url'] = esc_url_raw( $args['url'] );
 				}
 				if ( ! empty( $args['notes'] ) ) {
-					$data['notes'] = sanitize_textarea_field( $args['notes'] );
+					// Royal Ledger sanitizes notes itself; a second pass here would only remove more.
+					$data['notes'] = is_scalar( $args['notes'] ) ? (string) $args['notes'] : '';
 				}
 				$item_id = \RLEDGER_Items::create( $data );
 				if ( ! $item_id ) {

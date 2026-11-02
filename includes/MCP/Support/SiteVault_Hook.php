@@ -28,15 +28,80 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class SiteVault_Hook {
 
+    /** @var array|null [tool name, args] while a write tool is running and has not written yet. */
+    private static $armed = null;
+
+    /** @var callable|null The query filter that fires the hook. */
+    private static $watch = null;
+
+    /** Tools that change files, not the database: the hook fires for them straight away. */
+    const FIRE_AT_START = [ 'fc_clear_cache', 'fc_purge_url' ];
+
     /**
-     * Fire the pre-op hook for a destructive tool call.
-     *
-     * Wraps do_action in try/catch so any listener bug can't break the
-     * write path. Failed listeners get logged when WP_DEBUG is on.
-     *
-     * @param string $tool_name The MCP tool name about to execute.
-     * @param array  $args      The tool's raw args (post_id, term_id, etc).
-     * @return void
+     * Fire the hook just before the running tool's first database write, so a call the
+     * tool refuses (permission, not found, invalid input) never starts backup work.
+     * Writes to Royal MCP's own tables and to transients do not count. The outermost
+     * tool owns the watch: a tool it calls does not re-arm it under its own name.
+     */
+    public static function arm( string $tool_name, array $args ): void {
+        if ( null !== self::$armed || ! has_action( 'royal_mcp_before_destructive_write' ) ) {
+            return;
+        }
+        if ( in_array( $tool_name, self::FIRE_AT_START, true ) ) {
+            self::maybe_fire( $tool_name, $args );
+            return;
+        }
+        self::$armed = [ $tool_name, $args ];
+        self::$watch = static function ( $query ) {
+            if ( null !== self::$armed && is_string( $query ) && self::is_counted_write( $query ) ) {
+                list( $tool, $tool_args ) = self::$armed;
+                self::disarm();
+                self::maybe_fire( $tool, $tool_args );
+            }
+            return $query;
+        };
+        add_filter( 'query', self::$watch, 1 );
+    }
+
+    /**
+     * A write the hook waits for: judged by the table the statement writes to (and, for the
+     * options table, the option name), never by the values it carries.
+     */
+    private static function is_counted_write( string $query ): bool {
+        if ( ! preg_match( '/^\s*(?:INSERT\s+(?:IGNORE\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|ALTER\s+TABLE)\s+`?([A-Za-z0-9_$]+)`?/i', $query, $m ) ) {
+            return false;
+        }
+        $table = strtolower( $m[1] );
+        if ( false !== strpos( $table, 'royal_mcp_' ) ) {
+            return false;
+        }
+        global $wpdb;
+        $transient_tables = array_filter( [ $wpdb->options ?? '', is_multisite() ? ( $wpdb->sitemeta ?? '' ) : '' ] );
+        if ( in_array( $table, array_map( 'strtolower', $transient_tables ), true )
+            && preg_match( "/(?:option_name|meta_key)`?\s*=\s*'_(?:site_)?transient_|VALUES\s*\(\s*(?:\d+\s*,\s*)?'_(?:site_)?transient_/i", $query ) ) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Stop watching. With a tool name, only when that tool armed the watch (the call that
+     * armed it has finished); without one, unconditionally.
+     */
+    public static function disarm( ?string $tool_name = null ): void {
+        if ( null !== $tool_name && ( null === self::$armed || self::$armed[0] !== $tool_name ) ) {
+            return;
+        }
+        if ( null !== self::$watch ) {
+            remove_filter( 'query', self::$watch, 1 );
+        }
+        self::$watch = null;
+        self::$armed = null;
+    }
+
+    /**
+     * Fire royal_mcp_before_destructive_write now, if anything listens. Non-blocking: a
+     * listener that throws is logged (with WP_DEBUG) and the write goes on.
      */
     public static function maybe_fire( string $tool_name, array $args ): void {
         // Only fire if at least one listener is registered — skips the

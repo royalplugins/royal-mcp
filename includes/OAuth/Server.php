@@ -36,6 +36,28 @@ class Server {
     /** Client of the authorize request being answered, for the response's iss. */
     private $authorize_client_id = '';
 
+    /** True while serving the namespace issuer's sign-in page (see set_issuer_mark()). */
+    private static $issuer_mark = false;
+
+    /**
+     * Record that this request came to the namespace issuer's sign-in page, the
+     * authorization address only the namespace document advertises.
+     */
+    public static function set_issuer_mark( $on ) {
+        self::$issuer_mark = (bool) $on && '' !== self::namespace_issuer();
+    }
+
+    /** The sign-in page address for this request, kept through login and the consent form. */
+    private static function authorize_page_url() {
+        if ( ! class_exists( '\\Royal_MCP_Plugin' ) ) {
+            return home_url( '/authorize' );
+        }
+        $paths = \Royal_MCP_Plugin::get_oauth_rewrite_paths();
+        $slug  = isset( $paths['authorize'] ) ? trim( trim( (string) $paths['authorize'] ), '/' ) : '';
+        $slug  = '' === $slug ? 'authorize' : $slug;
+        return home_url( '/' . ( self::$issuer_mark ? \Royal_MCP_Plugin::namespace_authorize_slug() : $slug ) );
+    }
+
     /** True while a request arrived at the namespace endpoints (/wp-json/royal-mcp/v1/oauth/*). */
     public static $via_namespace = false;
 
@@ -442,6 +464,10 @@ class Server {
             // The sign-in page stays at the site root: it needs the browser's
             // WordPress session, which the REST API does not use.
             $metadata['issuer']                                     = $issuer;
+            // Its own sign-in address (same page), so the response can name this issuer.
+            if ( class_exists( '\\Royal_MCP_Plugin' ) && \Royal_MCP_Plugin::has_namespace_authorize_rule() ) {
+                $metadata['authorization_endpoint'] = $base . '/' . \Royal_MCP_Plugin::namespace_authorize_slug();
+            }
             $metadata['token_endpoint']                             = $issuer . '/oauth/token';
             $metadata['registration_endpoint']                      = $issuer . '/oauth/register';
             $metadata['revocation_endpoint']                        = $issuer . '/oauth/revoke';
@@ -664,7 +690,7 @@ class Server {
         $response_type         = isset( $_GET['response_type'] ) ? sanitize_text_field( wp_unslash( $_GET['response_type'] ) ) : '';
         $client_id             = isset( $_GET['client_id'] ) ? sanitize_text_field( wp_unslash( $_GET['client_id'] ) ) : '';
         $this->authorize_client_id = $client_id;
-        $redirect_uri          = isset( $_GET['redirect_uri'] ) ? sanitize_text_field( wp_unslash( $_GET['redirect_uri'] ) ) : '';
+        $redirect_uri          = isset( $_GET['redirect_uri'] ) && is_string( $_GET['redirect_uri'] ) ? Token_Store::sanitize_redirect_uri( wp_unslash( $_GET['redirect_uri'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitize_redirect_uri() is the sanitizer registration stores with
         $code_challenge        = isset( $_GET['code_challenge'] ) ? sanitize_text_field( wp_unslash( $_GET['code_challenge'] ) ) : '';
         $code_challenge_method = isset( $_GET['code_challenge_method'] ) ? sanitize_text_field( wp_unslash( $_GET['code_challenge_method'] ) ) : '';
         $state                 = isset( $_GET['state'] ) ? sanitize_text_field( wp_unslash( $_GET['state'] ) ) : '';
@@ -734,7 +760,7 @@ class Server {
                     'state'                 => $state,
                     'scope'                 => $scope,
                 ],
-                home_url( '/authorize' )
+                self::authorize_page_url()
             );
 
             wp_safe_redirect( wp_login_url( $authorize_url ) );
@@ -772,6 +798,7 @@ class Server {
             'user_display_name'     => $current_user->display_name,
             'site_name'             => $site_name,
             'nonce'                 => wp_create_nonce( 'royal_mcp_authorize' ),
+            'form_action'           => self::authorize_page_url(),
         ];
 
         // Load the consent template.
@@ -796,7 +823,7 @@ class Server {
             );
         }
 
-        $redirect_uri          = isset( $_POST['redirect_uri'] ) ? sanitize_text_field( wp_unslash( $_POST['redirect_uri'] ) ) : '';
+        $redirect_uri          = isset( $_POST['redirect_uri'] ) && is_string( $_POST['redirect_uri'] ) ? Token_Store::sanitize_redirect_uri( wp_unslash( $_POST['redirect_uri'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitize_redirect_uri() is the sanitizer registration stores with
         $client_id             = isset( $_POST['client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['client_id'] ) ) : '';
         $this->authorize_client_id = $client_id;
         $code_challenge        = isset( $_POST['code_challenge'] ) ? sanitize_text_field( wp_unslash( $_POST['code_challenge'] ) ) : '';
@@ -907,7 +934,7 @@ class Server {
      */
     private function token_authorization_code() {
         $code          = isset( $_POST['code'] ) ? sanitize_text_field( wp_unslash( $_POST['code'] ) ) : '';
-        $redirect_uri  = isset( $_POST['redirect_uri'] ) ? sanitize_text_field( wp_unslash( $_POST['redirect_uri'] ) ) : '';
+        $redirect_uri  = isset( $_POST['redirect_uri'] ) && is_string( $_POST['redirect_uri'] ) ? Token_Store::sanitize_redirect_uri( wp_unslash( $_POST['redirect_uri'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitize_redirect_uri() is the sanitizer registration stores with
         $client_id     = isset( $_POST['client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['client_id'] ) ) : '';
         $code_verifier = isset( $_POST['code_verifier'] ) ? sanitize_text_field( wp_unslash( $_POST['code_verifier'] ) ) : '';
 
@@ -975,11 +1002,13 @@ class Server {
             $this->json_error( 'invalid_request', 'Missing required parameters: refresh_token, client_id.', 400 );
         }
 
-        // Authenticate confidential clients before consuming the refresh
-        // token so the rotation step only runs on requests that pass client
-        // auth. Mirrors the block in token_authorization_code(). Unknown
-        // client_ids fall through to the invalid_grant path below so this
-        // doesn't act as a client-id enumeration oracle.
+        // The token must belong to the client named here, and a confidential client
+        // must authenticate, before the token is used: otherwise nothing changes.
+        // A wrong client id and an unknown token get the same invalid_grant.
+        $peek = Token_Store::peek_refresh_token( $refresh_token );
+        if ( ! $peek || ! hash_equals( (string) $peek['client_id'], $client_id ) ) {
+            $this->json_error( 'invalid_grant', 'Refresh token is invalid, expired, or revoked.', 400 );
+        }
         $client = Token_Store::get_client( $client_id );
         if ( $client && 'client_secret_post' === ( $client['token_endpoint_auth_method'] ?? 'none' ) ) {
             $client_secret = isset( $_POST['client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['client_secret'] ) ) : '';
@@ -988,9 +1017,13 @@ class Server {
             }
         }
 
-        // Consume the refresh token (rotation — old one is revoked).
-        $token_data = Token_Store::consume_refresh_token( $refresh_token );
+        // Consume the refresh token (rotation: it stops working after a short grace window).
+        $reused     = false;
+        $token_data = Token_Store::consume_refresh_token( $refresh_token, $reused );
         if ( ! $token_data ) {
+            if ( $reused ) {
+                $this->log_event( 'refresh_token_reused', 'A refresh token was presented again after it was used; every token of that connection was revoked.', 400 );
+            }
             $this->json_error( 'invalid_grant', 'Refresh token is invalid, expired, or revoked.', 400 );
         }
 
@@ -1001,6 +1034,12 @@ class Server {
 
         // Issue new token pair.
         $tokens = Token_Store::create_token_pair( $client_id, (int) $token_data['user_id'], $token_data['scope'] ?? '' );
+        // A revocation that landed while this refresh was running covers the new pair too.
+        if ( Token_Store::token_is_revoked( (int) $token_data['id'] ) ) {
+            Token_Store::revoke_connection( $client_id, (int) $token_data['user_id'] );
+            $this->log_event( 'refresh_after_revoke', 'The connection was revoked while a refresh was in progress; the new tokens were revoked too.', 400 );
+            $this->json_error( 'invalid_grant', 'Refresh token is invalid, expired, or revoked.', 400 );
+        }
 
         $this->log_event( 'token_refreshed', 'Access + refresh tokens rotated via refresh_token grant.', 200, 'success' );
 
@@ -1035,13 +1074,19 @@ class Server {
         }
 
         // A client that authenticates with a secret at the token endpoint
-        // must do the same here.
+        // must do the same here. An unknown client id fails the same way
+        // (RFC 6749 section 5.2: invalid_client covers an unknown client), so a
+        // confidential client and an unknown one get the same answer. A token
+        // whose client is gone (a cleared static client id) stays revocable by its holder.
         $authenticated = false;
         if ( '' !== $client_id ) {
             $client = Token_Store::get_client( $client_id );
-            if ( $client && 'client_secret_post' === ( $client['token_endpoint_auth_method'] ?? 'none' ) ) {
+            $owner  = $client ? null : Token_Store::token_client( $token );
+            $orphan = null !== $owner && hash_equals( $owner, $client_id );
+            if ( ! $orphan && ( ! $client || 'client_secret_post' === ( $client['token_endpoint_auth_method'] ?? 'none' ) ) ) {
                 $client_secret = isset( $_POST['client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['client_secret'] ) ) : '';
-                if ( empty( $client_secret ) || ! hash_equals( (string) $client['client_secret_hash'], hash( 'sha256', $client_secret ) ) ) {
+                if ( ! $client || '' === $client_secret || ! hash_equals( (string) $client['client_secret_hash'], hash( 'sha256', $client_secret ) ) ) {
+                    $this->log_event( 'revoke_client_auth_failed', 'Revocation request with an unknown client, or a missing or wrong client secret; nothing was revoked.', 401 );
                     $this->json_error( 'invalid_client', 'Client authentication failed.', 401 );
                 }
                 $authenticated = true;
@@ -1241,9 +1286,17 @@ class Server {
         return add_query_arg( $params, $redirect_uri );
     }
 
-    /** The issuer a client discovered. */
+    /**
+     * The issuer a client discovered: the namespace issuer when it came to the sign-in
+     * address only the namespace document advertises, otherwise the one it registered
+     * with (clients that read an older copy of the namespace document, which pointed at
+     * the shared sign-in address, are marked when they registered there).
+     */
     public static function issuer_for_client( $client_id ) {
         $namespace = self::namespace_issuer();
+        if ( '' !== $namespace && self::$issuer_mark ) {
+            return $namespace;
+        }
         if ( '' !== $namespace && '' !== $client_id
             && ( Token_Store::is_cimd_client( $client_id ) || Token_Store::is_namespace_client( $client_id ) ) ) {
             return $namespace;

@@ -234,6 +234,7 @@ class Core {
 					'language'    => array( 'type' => 'string' ),
 					'timezone'    => array( 'type' => 'string' ),
 					'wp_version'  => array( 'type' => 'string' ),
+					'core_update' => array( 'type' => 'object' ),
 				),
 			),
 			'royal_mcp_connection_health' => array(
@@ -254,6 +255,13 @@ class Core {
 							'gutenberg_active' => array( 'type' => 'boolean' ),
 						),
 					),
+					'oauth_sign_in'  => array(
+						'type'       => 'object',
+						'properties' => array(
+							'available' => array( 'type' => 'boolean' ),
+							'note'      => array( 'type' => 'string' ),
+						),
+					),
 				),
 			),
 			// ==================== BLOCKS (reads) ====================
@@ -272,6 +280,8 @@ class Core {
 				'type'       => 'object',
 				'properties' => array(
 					'count'       => array( 'type' => 'integer' ),
+					'total'       => array( 'type' => 'integer' ),
+					'truncated'   => array( 'type' => 'boolean' ),
 					'block_types' => array( 'type' => 'array', 'items' => array( 'type' => 'object', 'properties' => array( 'name' => array( 'type' => 'string' ), 'title' => array( 'type' => 'string' ), 'category' => array( 'type' => 'string' ), 'parent' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ), 'server_rendered' => array( 'type' => 'boolean' ), 'attributes' => array( 'type' => 'object' ) ) ) ),
 					'note'        => array( 'type' => 'string' ),
 				),
@@ -495,9 +505,11 @@ class Core {
 				'items' => array(
 					'type'       => 'object',
 					'properties' => array(
-						'id'   => array( 'type' => 'integer' ),
-						'name' => array( 'type' => 'string' ),
-						'slug' => array( 'type' => 'string' ),
+						'id'        => array( 'type' => 'integer' ),
+						'name'      => array( 'type' => 'string' ),
+						'slug'      => array( 'type' => 'string' ),
+						'count'     => array( 'type' => 'integer' ),
+						'locations' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
 					),
 				),
 			),
@@ -536,34 +548,52 @@ class Core {
 
 			// ==================== PLUGINS & THEMES ====================
 			'wp_get_plugins' => array(
-				'type'  => 'array',
-				'items' => array(
-					'type'       => 'object',
-					'properties' => array(
-						'type'           => array( 'type' => 'string', 'enum' => array( 'regular', 'must_use', 'dropin' ) ),
-						'name'           => array( 'type' => 'string' ),
-						'version'        => array( 'type' => 'string' ),
-						'active'         => array( 'type' => 'boolean' ),
-						'network_active' => array( 'type' => 'boolean' ),
-						'modified_at'    => array( 'type' => array( 'string', 'null' ) ),
-						'author'         => array( 'type' => 'string' ),
-						'requires_wp'    => array( 'type' => array( 'string', 'null' ) ),
-						'requires_php'   => array( 'type' => array( 'string', 'null' ) ),
-						'tested_up_to'   => array( 'type' => array( 'string', 'null' ) ),
+				'type'       => 'object',
+				'properties' => array(
+					'results'            => array(
+						'type'  => 'array',
+						'items' => array(
+							'type'       => 'object',
+							'properties' => array(
+								'type'                => array( 'type' => 'string', 'enum' => array( 'regular', 'must_use', 'dropin' ) ),
+								'name'                => array( 'type' => 'string' ),
+								'version'             => array( 'type' => 'string' ),
+								'active'              => array( 'type' => 'boolean' ),
+								'network_active'      => array( 'type' => 'boolean' ),
+								'modified_at'         => array( 'type' => array( 'string', 'null' ) ),
+								'author'              => array( 'type' => 'string' ),
+								'requires_wp'         => array( 'type' => array( 'string', 'null' ) ),
+								'requires_php'        => array( 'type' => array( 'string', 'null' ) ),
+								'tested_up_to'        => array( 'type' => array( 'string', 'null' ) ),
+								'update_available'    => array( 'type' => 'boolean' ),
+								'new_version'         => array( 'type' => array( 'string', 'null' ) ),
+								'update_tested_up_to' => array( 'type' => array( 'string', 'null' ) ),
+								'update_requires_php' => array( 'type' => array( 'string', 'null' ) ),
+								'update_requires_wp'  => array( 'type' => array( 'string', 'null' ) ),
+								'auto_update'         => array( 'type' => 'boolean' ),
+							),
+						),
 					),
+					'updates_checked_at' => array( 'type' => array( 'string', 'null' ) ),
 				),
 			),
 			'wp_get_themes' => array(
-				'type'  => 'array',
-				'items' => array(
-					'type'       => 'object',
-					'properties' => array(
-						'slug'    => array( 'type' => 'string' ),
-						'name'    => array( 'type' => 'string' ),
-						'version' => array( 'type' => 'string' ),
-						'active'  => array( 'type' => 'boolean' ),
-						'author'  => array( 'type' => 'string' ),
+				'type'       => 'object',
+				'properties' => array(
+					'results'            => array(
+						'type'  => 'array',
+						'items' => array(
+							'type'       => 'object',
+							'properties' => array(
+								'slug'    => array( 'type' => 'string' ),
+								'name'    => array( 'type' => 'string' ),
+								'version' => array( 'type' => 'string' ),
+								'active'  => array( 'type' => 'boolean' ),
+								'author'  => array( 'type' => 'string' ),
+							),
+						),
 					),
+					'updates_checked_at' => array( 'type' => array( 'string', 'null' ) ),
 				),
 			),
 
@@ -723,6 +753,13 @@ class Core {
 			'expires_at'    => array( 'type' => 'string' ),
 			'undone_at'     => array( 'type' => 'string' ),
 			'undo_token'    => array( 'type' => 'string' ),
+			'user'          => array(
+				'type'       => 'object',
+				'properties' => array(
+					'id'    => array( 'type' => 'integer' ),
+					'login' => array( 'type' => 'string' ),
+				),
+			),
 		);
 	}
 
@@ -948,8 +985,12 @@ class Core {
 				'id'     => array( 'type' => 'integer' ),
 				'title'  => array( 'type' => 'string' ),
 				'url'    => array( 'type' => 'string' ),
-				'parent' => array( 'type' => array( 'integer', 'string' ) ),
-				'order'  => array( 'type' => 'integer' ),
+				'parent'    => array( 'type' => array( 'integer', 'string' ) ),
+				'order'     => array( 'type' => 'integer' ),
+				'type'      => array( 'type' => 'string' ),
+				'object'    => array( 'type' => 'string' ),
+				'object_id' => array( 'type' => 'integer' ),
+				'target'    => array( 'type' => 'string' ),
 			),
 		);
 	}

@@ -40,6 +40,9 @@ class Block_Tools {
 		'wp_get_global_styles', 'wp_list_block_templates', 'wp_get_block_template',
 	];
 
+	/** wp_list_block_types returns at most this many types per call when include_attributes is on. */
+	const MAX_TYPES_WITH_ATTRIBUTES = 50;
+
 	/**
 	 * Run one of the block tools.
 	 *
@@ -151,10 +154,11 @@ class Block_Tools {
 			throw new \Exception( 'You do not have permission to list block types.' );
 		}
 		$ns    = isset( $args['namespace'] ) ? trim( sanitize_text_field( (string) $args['namespace'] ), '/' ) : '';
-		$attrs = ! empty( $args['include_attributes'] );
+		$attrs = filter_var( $args['include_attributes'] ?? false, FILTER_VALIDATE_BOOLEAN );
 		$out   = [];
 		foreach ( \WP_Block_Type_Registry::get_instance()->get_all_registered() as $name => $type ) {
-			if ( '' !== $ns && 0 !== strpos( $name, $ns . '/' ) ) {
+			// namespace is a plugin prefix ("core") or one block's full name ("core/paragraph").
+			if ( '' !== $ns && $name !== $ns && 0 !== strpos( $name, $ns . '/' ) ) {
 				continue;
 			}
 			$row = [
@@ -176,8 +180,18 @@ class Block_Tools {
 		usort( $out, static function ( $a, $b ) {
 			return strcmp( $a['name'], $b['name'] );
 		} );
+		// Attribute schemas are large: with include_attributes the list is capped; namespace narrows it.
+		$total  = count( $out );
+		$offset = $attrs ? max( 0, (int) ( is_scalar( $args['offset'] ?? null ) ? $args['offset'] : 0 ) ) : 0;
+		if ( $attrs ) {
+			$out = array_slice( $out, $offset, self::MAX_TYPES_WITH_ATTRIBUTES );
+		}
+		$truncated = $attrs && $offset + count( $out ) < $total;
 		return [
 			'count'       => count( $out ),
+			'total'       => $total,
+			'truncated'   => $truncated,
+			'next_offset' => $truncated ? $offset + count( $out ) : null,
 			'block_types' => $out,
 			'note'        => 'Block types registered on the server. Some plugins register further blocks only in the editor; markup using those passes wp_validate_blocks as editor_only when other blocks of the same plugin are registered.',
 		];
@@ -368,11 +382,11 @@ class Block_Tools {
 			$in_markup = 0;
 			foreach ( $block['innerContent'] as $k => $chunk ) {
 				if ( is_string( $chunk ) ) {
-					$in_markup                  += self::count_forms( $chunk, $markup );
-					$block['innerContent'][ $k ] = strtr( $chunk, $markup );
+					$block['innerContent'][ $k ] = self::replace_in_markup( $chunk, $markup, $in_markup );
 				}
 			}
-			$block['innerHTML'] = strtr( (string) $block['innerHTML'], $markup );
+			$unused             = 0;
+			$block['innerHTML'] = self::replace_in_markup( (string) $block['innerHTML'], $markup, $unused );
 			$in_attrs           = 0;
 			$block['attrs']     = self::replace_deep( (array) $block['attrs'], $forms, $in_attrs );
 			if ( $in_attrs > 0 && 0 === $in_markup && self::stores_markup( $block ) ) {
@@ -511,11 +525,35 @@ class Block_Tools {
 	 * comments would re-nest the tree).
 	 */
 	private static function write_tree( \WP_Post $post, array $tree, $tool, $what, array $extra = [] ) {
-		$content = serialize_blocks( $tree );
+		$content = serialize_blocks( self::keep_object_attributes( $tree ) );
 		if ( self::shape( parse_blocks( $content ) ) !== self::shape( $tree ) ) {
 			throw new \Exception( 'The result would not read back as the same blocks (some markup contains block comments), so nothing was written. Check the markup with wp_validate_blocks.' );
 		}
 		return self::write( $post, [ 'post_content' => $content ], $tool, $what, $extra );
+	}
+
+	/**
+	 * parse_blocks() reads an empty JSON object as an empty array, which would be written back as [].
+	 * An attribute its block type declares as an object goes back as {}.
+	 */
+	private static function keep_object_attributes( array $list ) {
+		$registry = \WP_Block_Type_Registry::get_instance();
+		foreach ( $list as $i => $block ) {
+			if ( ! empty( $block['blockName'] ) && ! empty( $block['attrs'] ) && is_array( $block['attrs'] ) ) {
+				$type   = $registry->get_registered( (string) $block['blockName'] );
+				$schema = $type ? (array) $type->get_attributes() : [];
+				foreach ( $block['attrs'] as $key => $value ) {
+					$declared = isset( $schema[ $key ]['type'] ) ? (array) $schema[ $key ]['type'] : [];
+					if ( [] === $value && in_array( 'object', $declared, true ) && ! in_array( 'array', $declared, true ) ) {
+						$list[ $i ]['attrs'][ $key ] = new \stdClass();
+					}
+				}
+			}
+			if ( ! empty( $block['innerBlocks'] ) ) {
+				$list[ $i ]['innerBlocks'] = self::keep_object_attributes( (array) $block['innerBlocks'] );
+			}
+		}
+		return $list;
 	}
 
 	/**
@@ -1073,6 +1111,12 @@ class Block_Tools {
 		return $list;
 	}
 
+	/**
+	 * Block attributes the replace leaves alone: the markup's class and id, and preset
+	 * slugs, which the markup carries inside class names (has-<slug>-color and the like).
+	 */
+	const REPLACE_SKIP_ATTRIBUTES = [ 'className', 'anchor', 'textColor', 'backgroundColor', 'borderColor', 'gradient', 'fontSize', 'fontFamily', 'align', 'tagName', 'ref', 'metadata', 'lock', 'layout' ];
+
 	private static function replace_deep( $value, array $forms, &$count ) {
 		if ( is_string( $value ) ) {
 			$count += self::count_forms( $value, $forms );
@@ -1080,10 +1124,54 @@ class Block_Tools {
 		}
 		if ( is_array( $value ) ) {
 			foreach ( $value as $k => $v ) {
+				if ( is_string( $k ) && in_array( $k, self::REPLACE_SKIP_ATTRIBUTES, true ) ) {
+					continue;
+				}
 				$value[ $k ] = self::replace_deep( $v, $forms, $count );
 			}
 		}
 		return $value;
+	}
+
+	/**
+	 * Replace in a block's markup: in text and in attribute values, never in tag names,
+	 * attribute names, HTML comments, or the class and id attributes.
+	 *
+	 * @param string $html  Markup chunk.
+	 * @param array  $map   strtr() map.
+	 * @param int    $count Occurrences replaced, added to.
+	 * @return string
+	 */
+	private static function replace_in_markup( $html, array $map, &$count ) {
+		$parts = preg_split( '/(<!--.*?-->|<(?:[^>"\']|"[^"]*"|\'[^\']*\')*>)/s', (string) $html, -1, PREG_SPLIT_DELIM_CAPTURE );
+		if ( ! is_array( $parts ) ) {
+			return (string) $html;
+		}
+		foreach ( $parts as $i => $part ) {
+			if ( '' === $part ) {
+				continue;
+			}
+			if ( '<' !== $part[0] ) {
+				$count      += self::count_forms( $part, $map );
+				$parts[ $i ] = strtr( $part, $map );
+				continue;
+			}
+			if ( 0 === strpos( $part, '<!--' ) ) {
+				continue;
+			}
+			$parts[ $i ] = (string) preg_replace_callback(
+				'/(\s([^\s=\/>"\']+)\s*=\s*)("[^"]*"|\'[^\']*\'|[^\s"\'=<>`]+)/',
+				static function ( $m ) use ( $map, &$count ) {
+					if ( in_array( strtolower( $m[2] ), [ 'class', 'id' ], true ) ) {
+						return $m[0];
+					}
+					$count += self::count_forms( $m[3], $map );
+					return $m[1] . strtr( $m[3], $map );
+				},
+				$part
+			);
+		}
+		return implode( '', $parts );
 	}
 
 	/**
@@ -1234,6 +1322,11 @@ class Block_Tools {
 		}
 		if ( self::is_elementor_page( $post ) ) {
 			throw new \Exception( 'This page is built with Elementor, which rebuilds its content from its own data, so block changes would be lost. Use the elementor_* tools.' );
+		}
+		// Classic-editor, shortcode-builder and global-styles content has no blocks: a block write would wrap it
+		// all in one Classic block.
+		if ( 'wp_global_styles' === $post->post_type || ( '' !== trim( (string) $post->post_content ) && ! has_blocks( (string) $post->post_content ) ) ) {
+			throw new \Exception( 'This post is not built with blocks (classic editor, a shortcode page builder or global styles), so block tools would wrap its whole content in a Classic block. Nothing was written. Use wp_update_post, wp_replace_in_post, the builder\'s own tools, or wp_get_global_styles.' );
 		}
 		return $post;
 	}

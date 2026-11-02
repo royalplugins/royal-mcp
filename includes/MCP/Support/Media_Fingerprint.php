@@ -69,7 +69,7 @@ class Media_Fingerprint {
 
 	/**
 	 * An attachment an earlier upload made from the same bytes (or the same
-	 * URL) with the same image options, that the current user can read and
+	 * URL) with the same image options, that the current user can edit and
 	 * whose file still exists. 0 when there is none.
 	 *
 	 * @param string $by       'sha' | 'url'.
@@ -101,7 +101,7 @@ class Media_Fingerprint {
 		);
 		foreach ( $ids as $id ) {
 			$file = get_attached_file( (int) $id );
-			if ( current_user_can( 'read_post', (int) $id ) && $file && file_exists( $file ) ) {
+			if ( current_user_can( 'edit_post', (int) $id ) && $file && file_exists( $file ) ) {
 				return (int) $id;
 			}
 		}

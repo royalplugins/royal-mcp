@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Admin submenu showing what AI clients changed in the last 72 hours: every
+ * Admin submenu showing what AI clients changed within the undo window: every
  * undo-tracked write, with a before / after / now view per change. Reads the
  * undo snapshots only; nothing here changes the site.
  */
@@ -28,7 +28,7 @@ class Changes_Page {
             'royal-mcp',
             __( 'Recent Changes', 'royal-mcp' ),
             __( 'Recent Changes', 'royal-mcp' ),
-            'manage_options',
+            Settings_Page::admin_capability(),
             self::MENU_SLUG,
             [ $this, 'render' ]
         );
@@ -52,7 +52,7 @@ class Changes_Page {
     }
 
     public function render() {
-        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- per-site undo snapshots in this site's options table only
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from Settings_Page::admin_capability(); per-site undo snapshots in this site's options table only
             wp_die( esc_html__( 'You do not have permission to access this page.', 'royal-mcp' ), '', [ 'response' => 403 ] );
         }
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only view selector.
@@ -71,9 +71,15 @@ class Changes_Page {
         $changes = array_values( array_filter( Undo_Store::all_changes(), [ Change_View::class, 'can_view' ] ) );
         ?>
         <h1><?php esc_html_e( 'Recent Changes', 'royal-mcp' ); ?></h1>
-        <p><?php esc_html_e( 'Changes AI clients made through Royal MCP in the last 72 hours that can be reviewed and undone. Open one to see each value before the change, what the change wrote, and what it is now. Undo is done by the AI client that made the change, using the undo token it was given. Changes older than 72 hours are not kept.', 'royal-mcp' ); ?></p>
+        <p><?php
+        /* translators: %1$s and %2$s: the undo window, e.g. "72 hours" or "7 days" */
+        echo esc_html( sprintf( __( 'Changes AI clients made through Royal MCP in the last %1$s that can be reviewed and undone. Open one to see each value before the change, what the change wrote, and what it is now. Undo is done by the AI client that made the change, using the undo token it was given. Changes older than %2$s are not kept.', 'royal-mcp' ), Undo_Store::window_label(), Undo_Store::window_label() ) );
+        ?></p>
         <?php if ( empty( $changes ) ) : ?>
-            <p><strong><?php esc_html_e( 'No changes in the last 72 hours.', 'royal-mcp' ); ?></strong></p>
+            <p><strong><?php
+            /* translators: %s: the undo window, e.g. "72 hours" or "7 days" */
+            echo esc_html( sprintf( __( 'No changes in the last %s.', 'royal-mcp' ), Undo_Store::window_label() ) );
+            ?></strong></p>
             <?php return; ?>
         <?php endif; ?>
         <table class="wp-list-table widefat fixed striped">
@@ -112,7 +118,7 @@ class Changes_Page {
         <p><a href="<?php echo esc_url( $back ); ?>">&larr; <?php esc_html_e( 'All recent changes', 'royal-mcp' ); ?></a></p>
         <?php
         if ( ! $change || ! Change_View::can_view( $change ) ) {
-            echo '<div class="notice notice-info inline"><p>' . esc_html__( 'This change is no longer kept. Changes are kept for 72 hours.', 'royal-mcp' ) . '</p></div>';
+            echo '<div class="notice notice-info inline"><p>' . esc_html( sprintf( /* translators: %s: the undo window, e.g. "72 hours" or "7 days" */ __( 'This change is no longer kept. Changes are kept for %s.', 'royal-mcp' ), Undo_Store::window_label() ) ) . '</p></div>';
             return;
         }
         $server = new \Royal_MCP\MCP\Server();

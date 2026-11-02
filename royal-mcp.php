@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.5.13
+ * Version: 1.5.14
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -41,7 +41,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 }
 
 // Define plugin constants.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.13' );
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.14' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -155,6 +155,10 @@ class Royal_MCP_Plugin {
         // Auto-expire pending-approval clients that the admin never acted on.
         // Default 48h TTL, filterable via royal_mcp_pending_client_ttl_hours.
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'gc_expired_pending_clients']);
+
+        // A new password signs the user out of every AI client they connected.
+        add_action('after_password_reset', [\Royal_MCP\OAuth\Token_Store::class, 'revoke_on_password_reset'], 10, 1);
+        add_action('wp_set_password', [\Royal_MCP\OAuth\Token_Store::class, 'revoke_on_password_set'], 10, 2);
 
         // Add plugin action links (Settings, Docs)
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), [$this, 'add_action_links']);
@@ -333,14 +337,18 @@ class Royal_MCP_Plugin {
         // — the raw plaintext is handed to the activating admin ONCE via a
         // short-lived reveal transient they can read on the settings page.
         $royal_mcp_activation_plaintext = bin2hex( random_bytes( 16 ) );
-        add_option( 'royal_mcp_settings', [ // audit:autoload-ok -- read on every request (auth path, chrome, discovery, admin bar)
+        $royal_mcp_key_created = add_option( 'royal_mcp_settings', [ // audit:autoload-ok -- read on every request (auth path, chrome, discovery, admin bar)
             'enabled'         => false,
             'api_key'         => '',
             'api_key_hash'    => hash( 'sha256', $royal_mcp_activation_plaintext ),
             'api_key_user_id' => (int) get_current_user_id(),
         ] );
         $royal_mcp_activation_uid = (int) get_current_user_id();
-        if ( $royal_mcp_activation_uid > 0 ) {
+        // The first key is recorded like every later rotation; a re-activation keeps the stored key.
+        if ( $royal_mcp_key_created && class_exists( '\\Royal_MCP\\Admin\\Settings_Page' ) ) {
+            \Royal_MCP\Admin\Settings_Page::log_api_key_event( 'settings:api_key_created', 'activation', $royal_mcp_activation_uid );
+        }
+        if ( $royal_mcp_key_created && $royal_mcp_activation_uid > 0 ) {
             set_transient( // audit:transient-ttl-only -- one-time key reveal, deleted when the settings page shows it
                 'royal_mcp_reveal_api_key_' . $royal_mcp_activation_uid,
                 $royal_mcp_activation_plaintext,
@@ -593,6 +601,12 @@ class Royal_MCP_Plugin {
             if ( $slug === '' ) continue;
             add_rewrite_rule( $slug . '/?$', 'index.php?royal_mcp_oauth=' . $action, 'top' );
         }
+        // The sign-in page for clients that read the namespace issuer's document: the same
+        // consent page, and the response names the issuer of the document that sent them.
+        $authorize_slug = self::namespace_authorize_slug();
+        if ( '' !== $authorize_slug ) {
+            add_rewrite_rule( $authorize_slug . '/?$', 'index.php?royal_mcp_oauth=authorize&royal_mcp_issuer=namespace', 'top' );
+        }
 
         // Root-path /mcp alias — served through WordPress's built-in REST
         // bootstrap by rewriting to rest_route. The Cloudflare WebMCP bridge
@@ -660,6 +674,24 @@ class Royal_MCP_Plugin {
             }
         }
         return $rules;
+    }
+
+    /** Path of the namespace issuer's sign-in page (the authorize path plus /royal-mcp), or ''. */
+    public static function namespace_authorize_slug() {
+        $paths = self::get_oauth_rewrite_paths();
+        $slug  = isset( $paths['authorize'] ) ? trim( trim( (string) $paths['authorize'] ), '/' ) : '';
+        return '' === $slug ? '' : $slug . '/royal-mcp';
+    }
+
+    /** Whether the stored rewrite rules route the namespace issuer's sign-in page. */
+    public static function has_namespace_authorize_rule() {
+        $slug = self::namespace_authorize_slug();
+        if ( '' === $slug ) {
+            return false;
+        }
+        $rules = get_option( 'rewrite_rules' );
+        return is_array( $rules ) && isset( $rules[ $slug . '/?$' ] )
+            && false !== strpos( (string) $rules[ $slug . '/?$' ], 'royal_mcp_issuer=namespace' );
     }
 
     /**
@@ -892,6 +924,17 @@ class Royal_MCP_Plugin {
             return;
         }
 
+        // Another plugin's sign-in uses the bare site-root discovery documents and has its own
+        // rule for this one: leave it to that plugin. Royal MCP's clients find its sign-in at its
+        // own namespaced addresses (not in root issuer mode, where they need the root documents).
+        if ( in_array( $action, [ 'metadata', 'metadata_oidc', 'protected_resource' ], true )
+            && '' !== Royal_MCP\OAuth\Server::namespace_issuer()
+            && class_exists( '\\Royal_MCP\\Integrations\\Coexistence_Check' )
+            && '' !== Royal_MCP\Integrations\Coexistence_Check::root_documents_owner( false )
+            && Royal_MCP\Integrations\Coexistence_Check::hand_root_document_to_owner( $wp ) ) {
+            return;
+        }
+
         // A form on a page published at one of these addresses posts back to
         // the same address. A POST that is not shaped like the OAuth request
         // the endpoint takes, when the site has content at that address, is
@@ -925,6 +968,8 @@ class Royal_MCP_Plugin {
             exit;
         }
 
+        // Set by the namespace sign-in page's own rule only, never by a query string.
+        Royal_MCP\OAuth\Server::set_issuer_mark( false !== strpos( (string) $wp->matched_query, 'royal_mcp_issuer=namespace' ) );
         $oauth_server = new Royal_MCP\OAuth\Server();
         $oauth_server->dispatch( $action, (array) $wp->query_vars );
         // dispatch() calls exit, but just in case:

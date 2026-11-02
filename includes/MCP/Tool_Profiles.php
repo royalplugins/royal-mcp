@@ -33,6 +33,17 @@ class Tool_Profiles {
     /**
      * Register the profile filter. Called from plugin bootstrap.
      */
+    /** The stock profiles: name → tool-name prefixes kept. */
+    const STOCK_PROFILES = [
+        'core'     => [ 'wp_', 'royal_mcp_', 'mcp_' ],
+        'seopress' => [ 'wp_', 'royal_mcp_', 'mcp_', 'seopress_' ],
+    ];
+
+    /** Names of the stock profiles, which no custom profile may take. */
+    public static function stock_profile_names() {
+        return array_keys( self::STOCK_PROFILES );
+    }
+
     public static function register() {
         add_filter( 'royal_mcp_tools', [ __CLASS__, 'apply_profile' ], 20 );
     }
@@ -103,10 +114,7 @@ class Tool_Profiles {
      * @return array List of tool-name prefixes to keep.
      */
     private static function get_profile_prefixes( $profile ) {
-        $profiles = [
-            'core'     => [ 'wp_', 'royal_mcp_', 'mcp_' ],
-            'seopress' => [ 'wp_', 'royal_mcp_', 'mcp_', 'seopress_' ],
-        ];
+        $profiles = self::STOCK_PROFILES;
         /**
          * Filter the profile → prefixes map. Pro adds custom profiles here.
          *

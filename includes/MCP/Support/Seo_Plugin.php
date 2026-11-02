@@ -307,4 +307,18 @@ class Seo_Plugin {
 		}
 		return defined( 'SEOBOLT_VERSION' );
 	}
+	/** Fields whose stored value can be an SEO plugin template (not slug or image URLs). */
+	const TEMPLATE_FIELDS = [ 'title', 'description', 'og_title', 'og_description', 'twitter_title', 'twitter_description' ];
+
+	/**
+	 * Whether a title or description holds SEO template variables: %%var%% (Yoast, SEOPress),
+	 * %var% or %var(arg)% (Rank Math) and #tags (AIOSEO). Percent-encoded bytes (%20, %c3%a9)
+	 * are not variables.
+	 */
+	public static function has_template( $value ): bool {
+		if ( ! is_string( $value ) || '' === $value ) {
+			return false;
+		}
+		return 1 === preg_match( '/%%[a-z0-9_-]+%%|%(?![a-f]{2}%)[a-z_]{2,}(?:\([^)]*\))?%|#(?:post_(?:title|excerpt|content|date|day|month|year|link)|site_(?:title|link)|separator_sa|tagline|taxonomy_(?:title|name)|author_(?:name|first_name|last_name|bio|url)|categories|current_(?:date|day|month|year)|permalink|page_number|archive_(?:title|date)|parent_title|search_term|attachment_caption|custom_field-[a-z0-9_-]+|tax_name-[a-z0-9_-]+)(?![a-z0-9_])/', $value );
+	}
 }

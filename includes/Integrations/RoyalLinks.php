@@ -176,7 +176,12 @@ class RoyalLinks {
 					throw new \Exception( 'You do not have permission to view stats for this Royal Link.' );
 				}
 				$period = sanitize_text_field( $args['period'] ?? '30days' );
-				$stats  = \Royal_Links_Tracker::get_link_stats( $link_id, $period );
+				// Royal Links calls the twelve-month window 'year'.
+				$periods = [ '7days' => '7days', '30days' => '30days', '90days' => '90days', '12months' => 'year', 'year' => 'year', 'all' => 'all' ];
+				if ( ! isset( $periods[ $period ] ) ) {
+					throw new \Exception( 'period must be one of: 7days, 30days, 90days, 12months, all.' );
+				}
+				$stats  = \Royal_Links_Tracker::get_link_stats( $link_id, $periods[ $period ] );
 				return [
 					'link_id' => $link_id,
 					'title'   => $post->post_title,

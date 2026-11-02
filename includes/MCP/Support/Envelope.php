@@ -85,7 +85,7 @@ final class Envelope {
             // the tool response text block, not just on the wire envelope.
             $summary = rtrim( $summary, ". \t\r\n" )
                 . '. Undo token: ' . (string) $undo['token']
-                . ' (72h, pass to mcp_undo_last_operation to reverse).';
+                . ' (' . \Royal_MCP\MCP\Undo_Store::window_label() . ', pass to mcp_undo_last_operation to reverse).';
         }
         $out = [
             'resultType'        => 'complete',

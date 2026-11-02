@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.5.13
+Stable tag: 1.5.14
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -279,6 +279,23 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 10. Royal MCP tool list in ChatGPT after connection
 
 == Changelog ==
+
+= 1.5.14 =
+* New: Royal MCP recognises other MCP plugins on the site, including ones with their own sign-in, and keeps answering at its own addresses beside them.
+* New: the API key can be turned off on the Settings screen.
+* Enhancement: AI clients that were connected earlier also sign in at Royal MCP's own address.
+* Enhancement: wp_get_plugins and wp_get_themes show which updates are available.
+* Enhancement: wp_delete_page and wp_delete_post_meta can be undone, and every new API key is recorded in the Activity Log.
+* Enhancement: undo leaves later edits alone on Elementor pages, Divi image and template changes and deleted post meta.
+* Enhancement: replace text, replace image and the page outline work with Elementor 4 widgets.
+* Fix: saving the settings screen never changes the API key, and the Enabled switch changes only when you tick or untick it.
+* Fix: Elementor page data and other JSON saved with wp_update_post_meta is stored exactly as sent.
+* Fix: wp_replace_text_in_blocks changes text and attribute values only, never tag or attribute names.
+* Fix: gp_get_blocked_ips lists every GuardPress block, including permanent and range blocks.
+* Security: changing or resetting a password signs that user out of every connected AI app.
+* Security: the OAuth Client Secret is stored only as a hash, and a fixed OAuth client signs in only to the addresses listed in OAuth Redirect URIs.
+* Security: an AI app you reject stays rejected, and the public server card no longer lists the plugins your site runs.
+* Security: the X-Royal-MCP-API-Key header no longer signs in; send the key as Authorization: Bearer instead.
 
 = 1.5.13 =
 * New: site owners can keep chosen plugin options out of plugin settings replies.
@@ -788,6 +805,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release.
 
 == Upgrade Notice ==
+
+= 1.5.14 =
+Security and undo improvements; if you send the API key in the X-Royal-MCP-API-Key header, switch to Authorization: Bearer.
 
 = 1.5.13 =
 Hides keys and tokens that other plugins store from every tool response; recommended for all sites.

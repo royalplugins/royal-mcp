@@ -262,8 +262,9 @@ class Drafts_Policy {
 			return null; // The undo tool gives its usual answer for unknown tokens.
 		}
 		$op = (string) ( $snapshot['op'] ?? '' );
-		// Deleting a new table again; the undo itself refuses once the table is changed or placed on a page.
-		if ( in_array( $op, [ 'tablepress_create_table', 'tablepress_copy_table' ], true ) ) {
+		// Deleting a new table or an imported template again (the policy allowed creating it);
+		// each undo refuses once what it created was changed since.
+		if ( in_array( $op, [ 'tablepress_create_table', 'tablepress_copy_table', 'elementor_import_template' ], true ) ) {
 			return null;
 		}
 		if ( ! isset( self::UNDO_CONTENT_OPS[ $op ] ) ) {

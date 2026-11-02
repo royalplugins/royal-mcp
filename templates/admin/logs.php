@@ -39,7 +39,7 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
             <form method="get">
                 <input type="hidden" name="page" value="royal-mcp-logs">
                 <button type="submit" class="button"><?php esc_html_e('Refresh', 'royal-mcp'); ?></button>
-                <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=' . \Royal_MCP\Admin\Changes_Page::MENU_SLUG)); ?>"><?php esc_html_e('Recent changes (72 hours)', 'royal-mcp'); ?></a>
+                <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=' . \Royal_MCP\Admin\Changes_Page::MENU_SLUG)); ?>"><?php /* translators: %s: the undo window, e.g. "72 hours" or "7 days" */ echo esc_html( sprintf( __( 'Recent changes (%s)', 'royal-mcp' ), \Royal_MCP\MCP\Undo_Store::window_label() ) ); ?></a>
             </form>
         </div>
         <?php if ($royal_mcp_total_pages > 1) : ?>

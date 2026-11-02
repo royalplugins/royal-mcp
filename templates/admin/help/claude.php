@@ -7,7 +7,7 @@ $royal_mcp_help_endpoint     = isset( $royal_mcp_help_endpoint ) ? $royal_mcp_he
 $royal_mcp_help_endpoint     = preg_replace( '/^http:/', 'https:', $royal_mcp_help_endpoint );
 $royal_mcp_help_settings_url = admin_url( 'admin.php?page=royal-mcp' );
 $royal_mcp_help_logs_url     = class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false )
-	? admin_url( 'admin.php?page=royal-mcp-pro' )
+	? admin_url( 'admin.php?page=royal-mcp-pro-audit' )
 	: admin_url( 'admin.php?page=royal-mcp-logs' );
 ?>
 <div class="royal-mcp-help-tab-content royal-mcp-help-tab-claude">

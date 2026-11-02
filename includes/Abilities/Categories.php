@@ -1,7 +1,7 @@
 <?php
 /**
- * Pre-registers the 10 Royal MCP ability categories on wp_abilities_api_init (priority 5),
- * before ability registration walks the tool registry at priority 10.
+ * Pre-registers Royal MCP's ability categories on wp_abilities_api_categories_init,
+ * before ability registration walks the tool registry.
  *
  * WP core requires every ability to reference a pre-registered category slug — an ability
  * whose `category` arg does not resolve to a registered category throws at registration time.
@@ -136,7 +136,7 @@ class Categories {
 	}
 
 	/**
-	 * Fires on wp_abilities_api_init at priority 5, before ability registration at priority 10.
+	 * Fires on wp_abilities_api_categories_init, before abilities are registered.
 	 */
 	public static function register(): void {
 		if ( ! function_exists( 'wp_register_ability_category' ) ) {

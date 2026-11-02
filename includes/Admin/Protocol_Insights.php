@@ -52,7 +52,7 @@ class Protocol_Insights {
             self::PARENT_SLUG,
             __( 'Protocol Insights', 'royal-mcp' ),
             __( 'Protocol Insights', 'royal-mcp' ),
-            self::CAPABILITY,
+            Settings_Page::admin_capability(),
             self::PAGE_SLUG,
             array( __CLASS__, 'render_page' )
         );
@@ -155,7 +155,7 @@ class Protocol_Insights {
     }
 
     public static function render_page() {
-        if ( ! current_user_can( self::CAPABILITY ) ) {
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) {
             wp_die( esc_html__( 'You do not have permission to view this page.', 'royal-mcp' ) );
         }
 
@@ -336,7 +336,7 @@ class Protocol_Insights {
      * Cap + nonce gated.
      */
     public static function handle_export() {
-        if ( ! current_user_can( self::CAPABILITY ) ) {
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) {
             wp_die( esc_html__( 'Insufficient permissions.', 'royal-mcp' ), '', array( 'response' => 403 ) );
         }
         check_admin_referer( self::EXPORT_NONCE );

@@ -40,7 +40,9 @@ class Connected_Clients_Page {
      * A confirmation step on the Revoke all button; nothing else on the page needs script.
      */
     public function enqueue( $hook_suffix ) {
-        if ( 'royal-mcp_page_' . self::MENU_SLUG !== $hook_suffix ) {
+        // The page sits under Free's menu or, when absorbed, under Pro's.
+        $suffix = '_page_' . self::MENU_SLUG;
+        if ( substr( (string) $hook_suffix, -strlen( $suffix ) ) !== $suffix ) {
             return;
         }
         wp_register_script( self::SCRIPT_HANDLE, false, [], ROYAL_MCP_VERSION, true );
@@ -57,14 +59,14 @@ class Connected_Clients_Page {
             'royal-mcp',
             __( 'Connected Clients', 'royal-mcp' ),
             __( 'Connected Clients', 'royal-mcp' ),
-            'manage_options',
+            Settings_Page::admin_capability(),
             self::MENU_SLUG,
             [ $this, 'render' ]
         );
     }
 
     public function render() {
-        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- per-site OAuth tokens only (wp_royal_mcp_oauth_tokens is per-site-prefixed); sub-site admins can manage their own site's connections
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from Settings_Page::admin_capability(); per-site OAuth tokens only (wp_royal_mcp_oauth_tokens is per-site-prefixed); sub-site admins can manage their own site's connections
             wp_die( esc_html__( 'You do not have permission to access this page.', 'royal-mcp' ), '', [ 'response' => 403 ] );
         }
         $rows = Token_Store::list_connections();
@@ -206,7 +208,7 @@ class Connected_Clients_Page {
     }
 
     public function handle_revoke() {
-        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- per-site OAuth tokens only (wp_royal_mcp_oauth_tokens is per-site-prefixed); sub-site admins can manage their own site's connections
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from Settings_Page::admin_capability(); per-site OAuth tokens only (wp_royal_mcp_oauth_tokens is per-site-prefixed); sub-site admins can manage their own site's connections
             wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
         }
         check_admin_referer( self::REVOKE_NONCE );
@@ -257,7 +259,7 @@ class Connected_Clients_Page {
      * the client stays registered.
      */
     public function handle_set_access() {
-        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- per-site option royal_mcp_client_access only
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from Settings_Page::admin_capability(); per-site option royal_mcp_client_access only
             wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
         }
         check_admin_referer( self::ACCESS_NONCE );
@@ -299,7 +301,7 @@ class Connected_Clients_Page {
      * only issued tokens are revoked, so each client can sign in again.
      */
     public function handle_revoke_all() {
-        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- per-site OAuth tokens only (wp_royal_mcp_oauth_tokens is per-site-prefixed)
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from Settings_Page::admin_capability(); per-site OAuth tokens only (wp_royal_mcp_oauth_tokens is per-site-prefixed)
             wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
         }
         // Only the form's POST may do this; a followed link must not.

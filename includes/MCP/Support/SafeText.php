@@ -33,6 +33,22 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class SafeText {
 
     /**
+     * HTML that WordPress itself would store for the current user: unchanged for users who may post
+     * unfiltered HTML, through wp_kses_post() for everyone else. Filtering an administrator's text
+     * up front turns block markup and JSON attributes into broken text.
+     *
+     * @param mixed $value Input value. Non-scalar → empty string.
+     * @return string
+     */
+    public static function rich_html( $value ) : string {
+        if ( is_object( $value ) || is_array( $value ) ) {
+            return '';
+        }
+        $value = (string) $value;
+        return current_user_can( 'unfiltered_html' ) ? $value : wp_kses_post( $value );
+    }
+
+    /**
      * Sanitize a text field while preserving percent-encoded sequences.
      *
      * Mirrors the body of WordPress core's `_sanitize_text_fields()` minus

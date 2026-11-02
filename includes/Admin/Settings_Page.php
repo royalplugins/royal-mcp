@@ -13,6 +13,49 @@ class Settings_Page {
 
     /** admin-post action (and nonce action) that rotates the API key. */
     const REGENERATE_ACTION = 'royal_mcp_regenerate_api_key';
+    const DISABLE_KEY_ACTION = 'royal_mcp_disable_api_key';
+
+    /**
+     * Record an API key event (created or rotated) in the activity log, with where it came from.
+     * Writes nothing when the log table does not exist yet.
+     *
+     * @param string $action  settings:api_key_created | settings:api_key_rotated.
+     * @param string $source  activation | settings | wp-cli.
+     * @param int    $user_id User the key is bound to.
+     */
+    public static function log_api_key_event( $action, $source, $user_id ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'royal_mcp_logs';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- existence check of our own table
+        if ( $table !== $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) ) ) {
+            return;
+        }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- insert into our own log table
+        $wpdb->insert(
+            $table,
+            [
+                'mcp_server'    => 'MCP Server',
+                'action'        => (string) $action,
+                'request_data'  => wp_json_encode( [ 'source' => (string) $source, 'bound_to' => (int) $user_id ] ),
+                'response_data' => wp_json_encode( [ 'status' => 'success' ] ),
+                'status'        => 'success',
+            ],
+            [ '%s', '%s', '%s', '%s', '%s' ]
+        );
+    }
+
+    /** A fingerprint of the stored settings, carried by the form so a stale tab can be refused. */
+    public static function settings_fingerprint( $settings = null ) {
+        $settings = null === $settings ? get_option( 'royal_mcp_settings', [] ) : $settings;
+        $settings = is_array( $settings ) ? $settings : [];
+        // Taken over the form the settings have after the one-time static-secret migration, so
+        // that migration (run by any OAuth request) does not make an open tab look stale.
+        if ( isset( $settings['oauth_client_secret'] ) && '' !== (string) $settings['oauth_client_secret'] ) {
+            $settings['oauth_client_secret_hash'] = hash( 'sha256', (string) $settings['oauth_client_secret'] );
+            unset( $settings['oauth_client_secret'] );
+        }
+        return hash( 'sha256', (string) wp_json_encode( $settings ) );
+    }
 
     /**
      * Save settings from our own code, keeping the stored values as they are.
@@ -38,6 +81,7 @@ class Settings_Page {
         add_action('wp_ajax_royal_mcp_reset_oauth_state', [$this, 'ajax_reset_oauth_state']);
         add_action('wp_ajax_royal_mcp_clear_oauth_field', [$this, 'ajax_clear_oauth_field']);
         add_action('admin_post_' . self::REGENERATE_ACTION, [$this, 'handle_regenerate_api_key']);
+        add_action('admin_post_' . self::DISABLE_KEY_ACTION, [$this, 'handle_disable_api_key']);
     }
 
     /** Render the wp.org review-request banner (Free tier only, version-stamped dismissal). */
@@ -106,11 +150,20 @@ class Settings_Page {
         exit;
     }
 
+    /**
+     * Capability the Royal MCP settings, logs and sign-in reset need. Filter
+     * royal_mcp_settings_capability (Royal MCP Pro asks for a network admin on multisite).
+     */
+    public static function admin_capability() {
+        $cap = apply_filters( 'royal_mcp_settings_capability', 'manage_options' );
+        return is_string( $cap ) && '' !== $cap ? $cap : 'manage_options';
+    }
+
     public function add_menu_page() {
         add_menu_page(
             __('Royal MCP Settings', 'royal-mcp'),
             __('Royal MCP', 'royal-mcp'),
-            'manage_options',
+            self::admin_capability(),
             'royal-mcp',
             [$this, 'render_settings_page'],
             'dashicons-networking',
@@ -121,7 +174,7 @@ class Settings_Page {
             'royal-mcp',
             __('Settings', 'royal-mcp'),
             __('Settings', 'royal-mcp'),
-            'manage_options',
+            self::admin_capability(),
             'royal-mcp',
             [$this, 'render_settings_page']
         );
@@ -130,7 +183,7 @@ class Settings_Page {
             'royal-mcp',
             __('Activity Log', 'royal-mcp'),
             __('Activity Log', 'royal-mcp'),
-            'manage_options',
+            self::admin_capability(),
             'royal-mcp-logs',
             [$this, 'render_logs_page']
         );
@@ -138,6 +191,8 @@ class Settings_Page {
     }
 
     public function register_settings() {
+        // options.php saves of this form need the same capability as the page.
+        add_filter( 'option_page_capability_royal_mcp_settings_group', [ __CLASS__, 'admin_capability' ] );
         register_setting('royal_mcp_settings_group', 'royal_mcp_settings', [
             'sanitize_callback' => [$this, 'sanitize_settings'],
         ]);
@@ -260,7 +315,26 @@ class Settings_Page {
             return is_array( $input ) ? $input : $settings;
         }
 
-        $sanitized['enabled'] = isset($input['enabled']) ? (bool) $input['enabled'] : false;
+        // When the option did not exist yet, WordPress runs this sanitizer a second time on its own
+        // first-pass result; that result is already clean.
+        if ( null !== self::$form_result && $input === self::$form_result ) {
+            return $input;
+        }
+        // Only the settings form changes Enabled: it posts a marker and a hidden "0" before the
+        // checkbox, so "unticked" and "not part of this save" are told apart.
+        $from_form = is_array( $input ) && isset( $input['_form'] ) && 'settings' === $input['_form'];
+        // 4: a form post must carry the fingerprint of the settings it was opened with.
+        if ( $from_form && ( ! isset( $input['_settings_hash'] ) || ! is_string( $input['_settings_hash'] )
+            || ! hash_equals( self::settings_fingerprint( $settings ), $input['_settings_hash'] ) ) ) {
+            add_settings_error( 'royal_mcp_settings', 'royal_mcp_settings_stale', __( 'Settings were changed elsewhere since this page was opened (another tab, another admin, WP-CLI or Royally). Nothing was saved: reload the page and save again.', 'royal-mcp' ), 'error' );
+            return $settings;
+        }
+        if ( $from_form ) {
+            $posted = $input['enabled'] ?? '0';
+            $sanitized['enabled'] = is_scalar( $posted ) && in_array( strtolower( trim( (string) $posted ) ), [ '1', 'on', 'true', 'yes' ], true );
+        } else {
+            $sanitized['enabled'] = ! empty( $settings['enabled'] );
+        }
         $sanitized['allow_option_writes'] = isset($input['allow_option_writes']) ? (bool) $input['allow_option_writes'] : false;
         $sanitized['allow_theme_writes'] = isset($input['allow_theme_writes']) ? (bool) $input['allow_theme_writes'] : false;
         $sanitized['require_client_approval'] = isset($input['require_client_approval']) ? (bool) $input['require_client_approval'] : false;
@@ -397,14 +471,40 @@ class Settings_Page {
             $sanitized['oauth_client_id'] = $settings['oauth_client_id'] ?? '';
         }
 
-        if (isset($input['oauth_client_secret']) && !empty($input['oauth_client_secret'])) {
-            $sanitized['oauth_client_secret'] = sanitize_text_field($input['oauth_client_secret']);
-        } else {
-            $sanitized['oauth_client_secret'] = $settings['oauth_client_secret'] ?? '';
+        // The static client secret is kept as a hash only; the plain value is never stored or shown again.
+        $secret_hash = (string) ( $settings['oauth_client_secret_hash'] ?? '' );
+        if ( '' === $secret_hash && ! empty( $settings['oauth_client_secret'] ) ) {
+            $secret_hash = hash( 'sha256', (string) $settings['oauth_client_secret'] );
+        }
+        if ( isset( $input['oauth_client_secret'] ) && is_string( $input['oauth_client_secret'] ) && '' !== trim( $input['oauth_client_secret'] ) ) {
+            $secret_hash = hash( 'sha256', sanitize_text_field( $input['oauth_client_secret'] ) );
+        }
+        if ( '' !== $secret_hash ) {
+            $sanitized['oauth_client_secret_hash'] = $secret_hash;
         }
 
+        // Redirect URIs the static client may send people back to (https or loopback, one per line).
+        if ( isset( $input['oauth_static_redirect_uris'] ) && is_string( $input['oauth_static_redirect_uris'] ) ) {
+            $uris = [];
+            foreach ( preg_split( '/[\r\n]+/', substr( $input['oauth_static_redirect_uris'], 0, 4000 ) ) as $uri ) {
+                $uri = trim( (string) $uri );
+                if ( '' !== $uri && \Royal_MCP\OAuth\Token_Store::is_acceptable_redirect_uri( $uri ) ) {
+                    $uris[] = \Royal_MCP\OAuth\Token_Store::sanitize_redirect_uri( $uri );
+                }
+            }
+            $sanitized['oauth_static_redirect_uris'] = implode( "\n", array_slice( array_values( array_unique( $uris ) ), 0, 10 ) );
+        } else {
+            $sanitized['oauth_static_redirect_uris'] = (string) ( $settings['oauth_static_redirect_uris'] ?? '' );
+        }
+
+        if ( $from_form ) {
+            self::$form_result = $sanitized;
+        }
         return $sanitized;
     }
+
+    /** The last settings-form result, recognised when WordPress sanitizes it a second time. */
+    private static $form_result = null;
 
     /**
      * Rotate the API key from the settings screen's Regenerate button: its own
@@ -412,7 +512,7 @@ class Settings_Page {
      * shown once and the rotation is logged.
      */
     public function handle_regenerate_api_key() {
-        if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- per-site option royal_mcp_settings only
+        if ( ! current_user_can( self::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from admin_capability(); per-site option royal_mcp_settings only
             wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
         }
         check_admin_referer( self::REGENERATE_ACTION );
@@ -440,6 +540,43 @@ class Settings_Page {
                 'mcp_server'    => 'MCP Server',
                 'action'        => 'settings:api_key_rotated',
                 'request_data'  => wp_json_encode( [ 'source' => 'settings', 'bound_to' => $user_id, 'previously_bound_to' => $previous ] ),
+                'response_data' => wp_json_encode( [ 'status' => 'success' ] ),
+                'status'        => 'success',
+            ],
+            [ '%s', '%s', '%s', '%s', '%s' ]
+        );
+
+        wp_safe_redirect( add_query_arg( [ 'page' => 'royal-mcp', 'settings-updated' => 'true' ], admin_url( 'admin.php' ) ) );
+        exit;
+    }
+
+    /**
+     * Turn the API key off: no key is stored, so every API-key request is refused
+     * until Regenerate makes a new one. OAuth sign-ins are not affected.
+     */
+    public function handle_disable_api_key() {
+        if ( ! current_user_can( self::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from admin_capability(); per-site option royal_mcp_settings only
+            wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
+        }
+        check_admin_referer( self::DISABLE_KEY_ACTION );
+
+        $settings = get_option( 'royal_mcp_settings', [] );
+        $settings = is_array( $settings ) ? $settings : [];
+        $previous = (int) ( $settings['api_key_user_id'] ?? 0 );
+        $settings['api_key_hash']    = '';
+        $settings['api_key']         = '';
+        $settings['api_key_user_id'] = 0;
+        self::save_programmatically( $settings );
+        delete_transient( 'royal_mcp_reveal_api_key_' . (int) get_current_user_id() );
+
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Intentional direct insert to the logs table.
+        $wpdb->insert(
+            $wpdb->prefix . 'royal_mcp_logs',
+            [
+                'mcp_server'    => 'MCP Server',
+                'action'        => 'settings:api_key_disabled',
+                'request_data'  => wp_json_encode( [ 'source' => 'settings', 'by' => (int) get_current_user_id(), 'previously_bound_to' => $previous ] ),
                 'response_data' => wp_json_encode( [ 'status' => 'success' ] ),
                 'status'        => 'success',
             ],
@@ -491,7 +628,7 @@ class Settings_Page {
     }
 
     public function render_settings_page() {
-        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- reads per-site royal_mcp_settings only (per-site option, no network-scope state)
+        if (!current_user_can( self::admin_capability() )) { // audit:multisite-manage-options-safe -- capability from admin_capability(); reads per-site royal_mcp_settings only (per-site option, no network-scope state)
             return;
         }
 
@@ -506,7 +643,7 @@ class Settings_Page {
     }
 
     public function render_logs_page() {
-        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- reads per-site wp_royal_mcp_logs (per-site-prefixed table, no network-scope data)
+        if (!current_user_can( self::admin_capability() )) { // audit:multisite-manage-options-safe -- capability from admin_capability(); reads per-site wp_royal_mcp_logs (per-site-prefixed table, no network-scope data)
             return;
         }
 
@@ -546,7 +683,7 @@ class Settings_Page {
     public function ajax_reset_oauth_state() {
         check_ajax_referer('royal_mcp_nonce', 'nonce');
 
-        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- clears per-site OAuth tables only (wp_royal_mcp_oauth_* are per-site-prefixed; no network-scope state)
+        if (!current_user_can( self::admin_capability() )) { // audit:multisite-manage-options-safe -- capability from admin_capability(); clears per-site OAuth tables only (wp_royal_mcp_oauth_* are per-site-prefixed; no network-scope state)
             wp_send_json_error(['message' => esc_html__('Unauthorized', 'royal-mcp')]);
         }
 
@@ -602,7 +739,7 @@ class Settings_Page {
     public function ajax_clear_oauth_field() {
         check_ajax_referer('royal_mcp_nonce', 'nonce');
 
-        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- clears one field on per-site royal_mcp_settings option (no network-scope state)
+        if (!current_user_can( self::admin_capability() )) { // audit:multisite-manage-options-safe -- capability from admin_capability(); clears one field on per-site royal_mcp_settings option (no network-scope state)
             wp_send_json_error(['message' => esc_html__('Unauthorized', 'royal-mcp')]);
         }
 
@@ -616,7 +753,11 @@ class Settings_Page {
         if (!is_array($settings)) {
             $settings = [];
         }
-        $settings[$field] = '';
+        if ('oauth_client_secret' === $field) {
+            unset($settings['oauth_client_secret'], $settings['oauth_client_secret_hash']);
+        } else {
+            $settings[$field] = '';
+        }
         self::save_programmatically($settings);
 
         wp_send_json_success([

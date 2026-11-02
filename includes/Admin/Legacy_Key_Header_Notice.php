@@ -6,10 +6,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Tells site admins when a connection still sends the API key in the
- * deprecated X-Royal-MCP-API-Key header, so they can move it to
+ * Tells site admins when a connection still sends the API key in the old
+ * X-Royal-MCP-API-Key header, which is refused, so they can move it to
  * Authorization: Bearer. Shows on Royal MCP screens only, and stops showing
- * 14 days after the header was last used.
+ * 14 days after the header was last sent.
  */
 class Legacy_Key_Header_Notice {
 
@@ -20,7 +20,7 @@ class Legacy_Key_Header_Notice {
 	}
 
 	public function maybe_render_notice() {
-		if ( ! current_user_can( 'manage_options' ) ) {
+		if ( ! current_user_can( Settings_Page::admin_capability() ) ) {
 			return;
 		}
 		$seen = (int) get_transient( \Royal_MCP\MCP\Server::LEGACY_KEY_HEADER_SEEN );
@@ -38,7 +38,7 @@ class Legacy_Key_Header_Notice {
 				<?php
 				printf(
 					/* translators: %s: how long ago the header was last used, e.g. "3 hours". */
-					esc_html__( 'Last seen %s ago. That header is deprecated: update the connection to send the key as Authorization: Bearer <your API key> instead.', 'royal-mcp' ),
+					esc_html__( 'Last seen %s ago. That header is no longer accepted, so the connection cannot sign in: update it to send the key as Authorization: Bearer <your API key> instead.', 'royal-mcp' ),
 					esc_html( human_time_diff( $seen, time() ) )
 				);
 				?>
