@@ -472,6 +472,7 @@ class Divi {
 					'properties' => [
 						'template_id' => [ 'type' => 'integer', 'description' => 'ID of the et_pb_layout library item, obtained from divi_list_local_templates.' ],
 						'include_raw' => [ 'type' => 'boolean', 'description' => 'When true, include raw post_content string. Default false (content_tree only).' ],
+						'include_unpublished' => [ 'type' => 'boolean', 'description' => 'Also return a draft, pending, scheduled or trashed item (default false: those are refused with item_not_published). The reply always says the item\'s status.' ],
 					],
 					'required'   => [ 'template_id' ],
 				],
@@ -1435,6 +1436,15 @@ class Divi {
 			);
 		}
 
+		// Unpublished items only on request; the reply always says the status.
+		if ( ! in_array( $template->post_status, [ 'publish', 'private' ], true ) && ! filter_var( $args['include_unpublished'] ?? false, FILTER_VALIDATE_BOOLEAN ) ) {
+			return Envelope::error(
+				'item_not_published',
+				sprintf( 'Library item %d is %s. Pass include_unpublished: true to read it anyway.', $template_id, $template->post_status ),
+				[ 'template_id' => $template_id, 'status' => (string) $template->post_status ]
+			);
+		}
+
 		$include_raw = ! empty( $args['include_raw'] );
 		$content     = (string) $template->post_content;
 		$format      = self::detect_format( $template_id );
@@ -1467,6 +1477,7 @@ class Divi {
 		$structured = [
 			'template_id'    => $template_id,
 			'title'          => (string) $template->post_title,
+			'status'         => (string) $template->post_status,
 			'layout_type'    => $layout_type,
 			'format'         => $format,
 			'is_global'      => has_term( 'global', 'layout_category', $template_id ),
@@ -1569,7 +1580,7 @@ class Divi {
 		}
 
 		$case_sensitive = ! empty( $args['case_sensitive'] );
-		$force          = ! empty( $args['force'] );
+		$force          = filter_var( $args['force'] ?? false, FILTER_VALIDATE_BOOLEAN );
 
 		if ( ! current_user_can( 'edit_post', $post_id ) ) {
 			return Envelope::error(
@@ -1588,7 +1599,7 @@ class Divi {
 			);
 		}
 
-		// Builder-session guard (Art R2 write-collision prevention). Uses
+		// Builder-session guard: refuse while someone edits the post. Uses
 		// WordPress core _edit_lock via Builder_Safety, so any editor open on
 		// this post — Divi, block editor, classic — trips the guard.
 		if ( ! $force ) {
@@ -1652,10 +1663,11 @@ class Divi {
 		self::assert_divi_meta_flags( $post_id, $format );
 		self::purge_divi_static_css( $post_id );
 
-		// Warn (don't refuse) on \u or \\ in replace values — may not survive to storage as literal backslashes.
+		// Warn (don't refuse) on \u or \\ in replace values when the stored content differs from what was written.
 		$warnings = [];
+		$intact   = self::stored_content( $post_id ) === $content;
 		foreach ( $pairs as $pair ) {
-			if ( false !== strpos( $pair['replace'], '\\u' ) || false !== strpos( $pair['replace'], '\\\\' ) ) {
+			if ( ! $intact && ( false !== strpos( $pair['replace'], '\\u' ) || false !== strpos( $pair['replace'], '\\\\' ) ) ) {
 				$warnings[] = [
 					'code'       => 'backslash_escape_in_replace',
 					'message'    => sprintf(
@@ -1679,7 +1691,8 @@ class Divi {
 			'per_replacement_counts' => $per_pair,
 			'telemetry'              => [
 				'content_length_before' => strlen( $content_before ),
-				'content_length_after'  => strlen( $content ),
+				'content_length_after'  => strlen( self::stored_content( $post_id ) ),
+				'content_stored_intact' => self::stored_content( $post_id ) === $content,
 				'divi_format'           => $format,
 			],
 		];
@@ -1943,6 +1956,12 @@ class Divi {
 		);
 	}
 
+	/** post_content as stored now (read back after a write, so the reply shows what the site kept). */
+	private static function stored_content( $post_id ) {
+		clean_post_cache( (int) $post_id );
+		return (string) get_post_field( 'post_content', (int) $post_id, 'raw' );
+	}
+
 	public static function handle_replace_image( array $args ) {
 		if ( ! current_user_can( 'edit_posts' ) ) {
 			return Envelope::error( 'insufficient_caps', 'edit_posts capability required.' );
@@ -1950,7 +1969,7 @@ class Divi {
 		$post_id = (int) ( $args['post_id'] ?? 0 );
 		$find    = isset( $args['find_url'] ) ? esc_url_raw( (string) $args['find_url'] ) : '';
 		$repl    = isset( $args['replace_url'] ) ? esc_url_raw( (string) $args['replace_url'] ) : '';
-		$force   = ! empty( $args['force'] );
+		$force   = filter_var( $args['force'] ?? false, FILTER_VALIDATE_BOOLEAN );
 		if ( $post_id <= 0 || $find === '' || $repl === '' ) {
 			return Envelope::error( 'invalid_args', 'post_id, find_url, and replace_url are required.' );
 		}
@@ -2003,7 +2022,7 @@ class Divi {
 		$undo_envelope = Undo_Store::store( [
 			'op'           => 'divi_replace_image',
 			'target'       => [ 'post_id' => $post_id ],
-			'pre_op_state' => $snapshot,
+			'pre_op_state' => array_merge( (array) $snapshot, [ 'written_sha256' => hash( 'sha256', self::stored_content( $post_id ) ) ] ),
 			'summary'      => sprintf( 'Restore prior content of post %d (before divi_replace_image).', $post_id ),
 		] );
 
@@ -2015,7 +2034,8 @@ class Divi {
 				'replacements'    => $counter['count'],
 				'telemetry'       => [
 					'content_length_before' => strlen( (string) ( $snapshot['post_content'] ?? '' ) ),
-					'content_length_after'  => strlen( $content ),
+					'content_length_after'  => strlen( self::stored_content( $post_id ) ),
+					'content_stored_intact' => self::stored_content( $post_id ) === $content,
 					'divi_format'           => (string) $format,
 				],
 			],
@@ -2031,7 +2051,7 @@ class Divi {
 		$template_id = (int) ( $args['template_id'] ?? 0 );
 		$mode        = isset( $args['mode'] ) ? sanitize_key( (string) $args['mode'] ) : 'merge';
 		$position    = isset( $args['position'] ) ? sanitize_key( (string) $args['position'] ) : 'bottom';
-		$force       = ! empty( $args['force'] );
+		$force       = filter_var( $args['force'] ?? false, FILTER_VALIDATE_BOOLEAN );
 		if ( ! in_array( $mode, [ 'merge', 'replace' ], true ) ) $mode = 'merge';
 		if ( ! in_array( $position, [ 'top', 'bottom' ], true ) ) $position = 'bottom';
 		if ( $target_id <= 0 || $template_id <= 0 ) {
@@ -2108,7 +2128,7 @@ class Divi {
 		$undo_envelope = Undo_Store::store( [
 			'op'           => 'divi_import_template',
 			'target'       => [ 'target_post_id' => $target_id ],
-			'pre_op_state' => $snapshot,
+			'pre_op_state' => array_merge( (array) $snapshot, [ 'written_sha256' => hash( 'sha256', self::stored_content( $target_id ) ) ] ),
 			'summary'      => sprintf( 'Restore prior content of post %d (before divi_import_template).', $target_id ),
 		] );
 
@@ -2129,7 +2149,8 @@ class Divi {
 				'warnings'        => $warnings,
 				'telemetry'       => [
 					'content_length_before' => strlen( (string) ( $snapshot['post_content'] ?? '' ) ),
-					'content_length_after'  => strlen( $new_content ),
+					'content_length_after'  => strlen( self::stored_content( $target_id ) ),
+					'content_stored_intact' => self::stored_content( $target_id ) === $new_content,
 					'divi_format'           => (string) $effective_format,
 				],
 			],

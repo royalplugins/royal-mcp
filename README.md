@@ -7,7 +7,7 @@
 [![WordPress](https://img.shields.io/badge/WordPress-5.8+-21759B?style=flat-square&logo=wordpress)](https://wordpress.org/plugins/royal-mcp/)
 [![PHP](https://img.shields.io/badge/PHP-7.4+-777BB4?style=flat-square&logo=php)](https://www.php.net/)
 [![License](https://img.shields.io/badge/License-GPLv2-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-2.0.html)
-[![Version](https://img.shields.io/badge/Version-1.5.13-C9A227?style=flat-square)](https://wordpress.org/plugins/royal-mcp/)
+[![Version](https://img.shields.io/badge/Version-1.5.14-C9A227?style=flat-square)](https://wordpress.org/plugins/royal-mcp/)
 
 [Download on WordPress.org](https://wordpress.org/plugins/royal-mcp/) · [Documentation](https://royalplugins.com/support/royal-mcp/) · [Royal MCP Pro](https://royalplugins.com/royal-mcp-pro/) · [Royal Plugins](https://royalplugins.com)
 
@@ -182,7 +182,7 @@ curl -X POST https://yoursite.com/wp-json/royal-mcp/v1/mcp \
   -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 2}'
 ```
 
-The older `X-Royal-MCP-API-Key` header still works in this release but is deprecated. Send the key as `Authorization: Bearer` instead.
+The older `X-Royal-MCP-API-Key` header no longer signs in. Send the key as `Authorization: Bearer` instead.
 
 ## Security model
 
@@ -201,13 +201,13 @@ Found a security issue? Report it privately through [royalplugins.com/contact](h
 
 ## Royal MCP Pro
 
-**Royal MCP gives one site owner a safe AI connection. [Royal MCP Pro](https://royalplugins.com/royal-mcp-pro/) is for running AI across real client work:** 350+ tools, bulk operations across many pages and products, deeper Elementor, Divi, WooCommerce and ACF authoring, cross-plugin workflows that run a whole job in one call, and a full audit trail.
+**Royal MCP gives one site owner a safe AI connection. [Royal MCP Pro](https://royalplugins.com/royal-mcp-pro/) is for running AI across real client work:** 400+ tools, bulk operations across many pages and products, deeper Elementor, Divi, WooCommerce and ACF authoring, cross-plugin workflows that run a whole job in one call, and a full audit trail.
 
 Pro is one plugin that includes everything in Royal MCP. When Pro is active, you run Pro on its own.
 
 | | Royal MCP (free) | Royal MCP Pro |
 |---|:---:|:---:|
-| **Tools** | 270 | **350+** |
+| **Tools** | 270 | **400+** |
 | Connect Claude, ChatGPT, Cursor and any MCP app (OAuth or API key) | ✅ | ✅ |
 | Read-only and drafts-only modes, per-connection access levels | ✅ | ✅ |
 | Recent Changes and 72-hour undo on destructive writes | ✅ | ✅ Pro tools too |
@@ -251,7 +251,7 @@ Royal MCP works with the rest of the Royal Plugins family. Each one adds its own
 
 | Plugin | What it does |
 |---|---|
-| [Royal MCP Pro](https://royalplugins.com/royal-mcp-pro/) | 350+ tools for agencies: bulk operations, deep builder and store authoring, audit log |
+| [Royal MCP Pro](https://royalplugins.com/royal-mcp-pro/) | 400+ tools for agencies: bulk operations, deep builder and store authoring, audit log |
 | [GuardPress](https://royalplugins.com/guardpress/) | Security: firewall, malware scanner, 2FA, login protection, activity log |
 | [SiteVault](https://royalplugins.com/sitevault/) | Automated backups, staging, encryption, migration ([free version](https://wordpress.org/plugins/sitevault-backup-restore-migration/)) |
 | [ForgeCache](https://royalplugins.com/forgecache/) | Page caching, CSS and JS optimization, lazy loading, CDN, Core Web Vitals |

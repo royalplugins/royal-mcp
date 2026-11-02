@@ -7,7 +7,7 @@ $royal_mcp_help_diagnostic    = isset( $royal_mcp_help_diagnostic ) ? $royal_mcp
 $royal_mcp_help_support_urls  = isset( $royal_mcp_help_support_urls ) ? $royal_mcp_help_support_urls : \Royal_MCP\Admin\Help_Page::SUPPORT_URLS;
 $royal_mcp_help_settings_url  = admin_url( 'admin.php?page=royal-mcp' );
 $royal_mcp_help_logs_url      = class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false )
-	? admin_url( 'admin.php?page=royal-mcp-pro' )
+	? admin_url( 'admin.php?page=royal-mcp-pro-audit' )
 	: admin_url( 'admin.php?page=royal-mcp-logs' );
 $royal_mcp_help_permalinks    = admin_url( 'options-permalink.php' );
 $royal_mcp_unknown_client_url = $royal_mcp_help_support_urls['unknown_client_id'] ?? 'https://royalplugins.com/support/royal-mcp/';

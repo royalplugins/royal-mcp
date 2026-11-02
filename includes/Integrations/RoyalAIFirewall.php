@@ -426,7 +426,7 @@ class RoyalAIFirewall {
 			];
 		}
 
-		$result = \Royal_AI_Firewall\PolicyWriter::apply( $bot_id, $policy );
+		$result = \Royal_AI_Firewall\PolicyWriter::apply( $bot_id, $policy, self::kept_extras( self::policy_row( $bot_id ) ) );
 		if ( is_wp_error( $result ) ) {
 			throw new \Exception( esc_html( $result->get_error_message() ) );
 		}
@@ -523,7 +523,7 @@ class RoyalAIFirewall {
 				continue;
 			}
 
-			$result = \Royal_AI_Firewall\PolicyWriter::apply( $bot_id, 'block' );
+			$result = \Royal_AI_Firewall\PolicyWriter::apply( $bot_id, 'block', self::kept_extras( self::policy_row( $bot_id ) ) );
 			if ( is_wp_error( $result ) ) {
 				$errors[ $bot_id ] = $result->get_error_message();
 				continue;
@@ -536,6 +536,31 @@ class RoyalAIFirewall {
 			'skipped_always_allow'  => $skipped,
 			'errors'                => (object) $errors,
 			'previous_global_default' => (string) get_option( 'raif_default_policy', 'log-only' ),
+		];
+	}
+
+	/** The bot's stored override row, or null. */
+	public static function policy_row( $bot_id ) {
+		global $wpdb;
+		$table = $wpdb->prefix . ROYAL_AI_FIREWALL_TABLE_POLICY;
+		// policy_source and auto_reason arrived with Royal AI Firewall's auto-block; older tables lack them.
+		static $has_source = null;
+		if ( null === $has_source ) {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- column check on Royal AI Firewall's own table
+			$has_source = (bool) $wpdb->get_var( $wpdb->prepare( 'SHOW COLUMNS FROM %i LIKE %s', $table, 'auto_reason' ) );
+		}
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- one row of Royal AI Firewall's own table
+		$row = $has_source
+			? $wpdb->get_row( $wpdb->prepare( 'SELECT action, rate_limit_per_min, paywall_url, policy_source, auto_reason FROM %i WHERE bot_id = %s', $table, $bot_id ), ARRAY_A )
+			: $wpdb->get_row( $wpdb->prepare( 'SELECT action, rate_limit_per_min, paywall_url FROM %i WHERE bot_id = %s', $table, $bot_id ), ARRAY_A );
+		return is_array( $row ) ? $row : null;
+	}
+
+	/** Rate limit and paywall to keep when a policy changes. */
+	private static function kept_extras( $row ) {
+		return [
+			'rate_limit_per_min' => ( is_array( $row ) && null !== $row['rate_limit_per_min'] ) ? (int) $row['rate_limit_per_min'] : null,
+			'paywall_url'        => is_array( $row ) ? (string) ( $row['paywall_url'] ?? '' ) : '',
 		];
 	}
 

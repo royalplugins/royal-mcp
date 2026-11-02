@@ -79,7 +79,7 @@ class Help_Page {
 			'royal-mcp',
 			__( 'Royal MCP Help', 'royal-mcp' ),
 			__( 'Help', 'royal-mcp' ),
-			'manage_options',
+			Settings_Page::admin_capability(),
 			self::SLUG,
 			[ $this, 'render' ]
 		);

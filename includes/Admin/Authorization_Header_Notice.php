@@ -39,7 +39,7 @@ class Authorization_Header_Notice {
      * can delete the transient via WP-CLI or a fresh Royal MCP settings save.
      */
     public function maybe_probe() {
-        if ( ! current_user_can( 'manage_options' ) ) {
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) {
             return;
         }
         if ( is_multisite() && ! is_main_site() ) {
@@ -154,7 +154,7 @@ class Authorization_Header_Notice {
      * Render the notice when the canary shows the header is being stripped.
      */
     public function maybe_render_notice() {
-        if ( ! current_user_can( 'manage_options' ) ) {
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) {
             return;
         }
         $user_id = get_current_user_id();
@@ -218,7 +218,7 @@ class Authorization_Header_Notice {
         if ( ! isset( $_GET['royal_mcp_dismiss_auth_header'] ) ) {
             return;
         }
-        if ( ! current_user_can( 'manage_options' ) ) {
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) {
             return;
         }
         if ( ! isset( $_GET['_wpnonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'royal_mcp_dismiss_auth_header' ) ) {

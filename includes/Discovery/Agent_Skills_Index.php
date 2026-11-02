@@ -52,7 +52,7 @@ class Agent_Skills_Index {
         // scanners that cross-reference the two documents see consistent
         // category names.
         $by_category = [];
-        foreach ( $tools as $tool ) {
+        foreach ( Server_Card::public_tools( $tools ) as $tool ) {
             $name = isset( $tool['name'] ) ? (string) $tool['name'] : '';
             if ( $name === '' ) {
                 continue;

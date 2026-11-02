@@ -190,6 +190,10 @@ class TablePress {
 			if ( is_wp_error( $table ) ) {
 				continue;
 			}
+			// A table TablePress would not open for this user is not listed (same check as tablepress_get_table).
+			if ( ! current_user_can( 'tablepress_edit_table', (string) $id ) ) {
+				continue;
+			}
 			if ( '' !== $search && false === stripos( $table['name'] . ' ' . $table['description'], $search ) ) {
 				continue;
 			}

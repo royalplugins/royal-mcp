@@ -284,7 +284,7 @@ final class Secret_Scrubber {
 
 	/** Keys that name an identifier (hashes, slugs, hooks), whose values are not judged by shape. */
 	private static function is_identifier_name( $key ) {
-		return '' !== $key && (bool) preg_match( '/(^|_)(hash|sha1|sha256|md5|checksum|etag|slug|hook|uuid|guid|handle|template|class|action|filter|post_name|file_name|filename)$/', self::normalize_name( $key ) );
+		return '' !== $key && (bool) preg_match( '/(^|_)(id|hash|sha1|sha256|md5|checksum|etag|slug|hook|uuid|guid|handle|template|class|action|filter|post_name|file_name|filename)$/', self::normalize_name( $key ) );
 	}
 
 	// ------------------------------------------------------------------
@@ -493,7 +493,8 @@ final class Secret_Scrubber {
 			}
 		}
 
-		// Name/value rows: [ { "name": "api_key", "value": "..." } ].
+		// Name/value rows: [ { "name": "api_key", "value": "..." } ], and field
+		// definitions whose default is the stored value: { "name": "api_key", "default_value": "..." }.
 		$row_secret = false;
 		foreach ( [ 'name', 'key', 'field', 'param', 'header', 'option' ] as $nk ) {
 			if ( isset( $value[ $nk ] ) && is_string( $value[ $nk ] ) && self::is_secret_name( $value[ $nk ] ) ) {
@@ -501,10 +502,14 @@ final class Secret_Scrubber {
 				break;
 			}
 		}
+		// A password-type field holds a password whatever it is called.
+		if ( false === $row_secret && ( ( isset( $value['type'] ) && 'password' === $value['type'] ) || ( isset( $value['field_type'] ) && 'password' === $value['field_type'] ) ) ) {
+			$row_secret = 'password';
+		}
 
 		$out = [];
 		foreach ( $value as $k => $v ) {
-			if ( false !== $row_secret && is_string( $k ) && in_array( $k, [ 'value', 'val', 'data', 'content', 'secret', 'default' ], true ) ) {
+			if ( false !== $row_secret && is_string( $k ) && in_array( $k, [ 'value', 'val', 'data', 'content', 'secret', 'default', 'default_value' ], true ) ) {
 				$out[ $k ] = self::value_under_secret_name( $v, $row_secret );
 				continue;
 			}
@@ -846,7 +851,7 @@ final class Secret_Scrubber {
 			// Unquoted name=value / name: value on one line. The value may not itself
 			// start another name: value pair ("Error: password: x" checks password).
 			$steps[] = [
-				'/(?<![A-Za-z0-9_\-.])([A-Za-z][A-Za-z0-9_\-.]{1,63})([ \t]*[:=][ \t]*)(?!\[REDACTED)(?![A-Za-z][\w\-.]{0,63}[ \t]*[:=])(?!\/\/)(?!=)([^\s"\'&;,<>)\]\\\\]{1,4096})/',
+				'/(?<![A-Za-z0-9_\-.])([A-Za-z][A-Za-z0-9_\-.]{1,63})([ \t]*[:=][ \t]*)(?!:)(?!\[REDACTED)(?![A-Za-z][\w\-.]{0,63}[ \t]*[:=])(?!\/\/)(?!=)([^\s"\'&;,<>)\]\\\\]{1,4096})/',
 				static function ( $x ) use ( $m ) {
 					return self::pair_value_is_secret( $x[1], $x[3] ) ? $x[1] . $x[2] . $m : $x[0];
 				},
@@ -861,7 +866,7 @@ final class Secret_Scrubber {
 			// In prose a name=value pair is hidden only when the value looks generated:
 			// "use api_key=YOUR_KEY" in a how-to stays, "api_key=Qz9x41..." does not.
 			$steps[] = [
-				'/(?<![A-Za-z0-9_\-.])([A-Za-z][A-Za-z0-9_\-.]{1,63})([ \t]*[:=][ \t]*)(?!\[REDACTED)(?![A-Za-z][\w\-.]{0,63}[ \t]*[:=])(?!\/\/)(?!=)([^\s"\'&;,<>)\]\\\\]{8,4096})/',
+				'/(?<![A-Za-z0-9_\-.])([A-Za-z][A-Za-z0-9_\-.]{1,63})([ \t]*[:=][ \t]*)(?!:)(?!\[REDACTED)(?![A-Za-z][\w\-.]{0,63}[ \t]*[:=])(?!\/\/)(?!=)([^\s"\'&;,<>)\]\\\\]{8,4096})/',
 				static function ( $x ) use ( $m ) {
 					$v         = $x[3];
 					$generated = self::is_secret_value( $v ) || ( preg_match( '/\d/', $v ) && preg_match( '/[A-Za-z]/', $v ) && ! self::looks_like_words( $v ) );

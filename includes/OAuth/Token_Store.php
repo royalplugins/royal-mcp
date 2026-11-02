@@ -12,6 +12,8 @@ if ( ! defined( 'ABSPATH' ) ) {
  * and dynamically registered OAuth clients.
  */
 class Token_Store {
+    const REJECTED_CIMD_OPTION = 'royal_mcp_rejected_cimd_clients';
+
 
     /** Token lifetimes in seconds. */
     const ACCESS_TOKEN_TTL  = 86400;      // 24 hours — default fallback; site-configurable via get_access_token_ttl()
@@ -120,6 +122,7 @@ class Token_Store {
             expires_at datetime NOT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             revoked tinyint(1) DEFAULT 0 NOT NULL,
+            rotated_at datetime DEFAULT NULL,
             PRIMARY KEY  (id),
             UNIQUE KEY token_hash (token_hash),
             KEY client_id (client_id),
@@ -146,6 +149,7 @@ class Token_Store {
             user_agent varchar(255) DEFAULT '' NOT NULL,
             last_authorized_at datetime DEFAULT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            issuer_kind varchar(16) DEFAULT '' NOT NULL,
             PRIMARY KEY  (id),
             UNIQUE KEY client_id (client_id(191)),
             KEY status (status)
@@ -172,6 +176,14 @@ class Token_Store {
             UNIQUE KEY code_hash (code_hash),
             KEY expires_at (expires_at)
         ) $charset_collate;" );
+
+        static $migrating = false;
+        if ( ! $migrating ) {
+            $migrating = true;
+            // Re-checked: the tables were just created or altered.
+            self::migrate_namespace_clients( true );
+            $migrating = false;
+        }
     }
 
     /**
@@ -358,13 +370,58 @@ class Token_Store {
     /**
      * Validate and consume a refresh token (token rotation).
      *
-     * @param string $raw_refresh_token The raw refresh token.
+     * A used token is kept as revoked = 2 with its rotation time: inside the grace window it is a
+     * client retry, after it a copy, which ends the whole grant.
+     *
+     * @param string    $raw_refresh_token The raw refresh token.
+     * @param bool|null $reused            Set to true when the token was presented again after its grace window.
      * @return array|false Token row or false.
      */
-    public static function consume_refresh_token( $raw_refresh_token ) {
+    public static function consume_refresh_token( $raw_refresh_token, &$reused = null ) {
         global $wpdb;
-        $table = self::tokens_table();
-        $hash  = hash( 'sha256', $raw_refresh_token );
+        $table  = self::tokens_table();
+        $hash   = hash( 'sha256', $raw_refresh_token );
+        $reused = false;
+
+        if ( self::has_rotation_column() ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+            $row = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT * FROM `{$table}` WHERE token_hash = %s AND token_type = 'refresh' AND revoked IN ( 0, 2 ) AND expires_at > %s LIMIT 1",
+                    $hash,
+                    gmdate( 'Y-m-d H:i:s' )
+                ),
+                ARRAY_A
+            );
+            if ( ! $row ) {
+                return false;
+            }
+            if ( empty( $row['rotated_at'] ) ) {
+                $now = gmdate( 'Y-m-d H:i:s' );
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+                $claimed = (int) $wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET rotated_at = %s, revoked = 2 WHERE id = %d AND rotated_at IS NULL AND revoked = 0", $now, (int) $row['id'] ) );
+                if ( 1 === $claimed ) {
+                    $row['rotated_at'] = $now;
+                    return $row;
+                }
+                // Another request rotated it a moment ago: read its rotation time.
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+                $row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d AND revoked IN ( 0, 2 ) LIMIT 1", (int) $row['id'] ), ARRAY_A );
+                if ( ! $row || empty( $row['rotated_at'] ) ) {
+                    return false;
+                }
+            }
+            // A rotated token presented again inside the grace window is a client retry; it gets its own pair.
+            if ( time() - (int) strtotime( $row['rotated_at'] . ' UTC' ) <= self::REFRESH_GRACE_SECONDS ) {
+                return $row;
+            }
+            // Presented again after the grace window: the token has been copied. End the whole grant.
+            $reused = true;
+            self::revoke_connection( $row['client_id'], (int) $row['user_id'] );
+            return false;
+        }
+
+        // Tokens table without rotated_at (the upgrade has not added it): rotation by expiry only.
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
         $row = $wpdb->get_row(
@@ -401,6 +458,71 @@ class Token_Store {
     }
 
     /**
+     * Whether the tokens table has rotated_at, which records when a refresh token was used.
+     * Adds it once when it is missing; a failed attempt is not retried for an hour.
+     */
+    private static function has_rotation_column() {
+        static $has = [];
+        global $wpdb;
+        $table = self::tokens_table();
+        if ( isset( $has[ $table ] ) ) {
+            return $has[ $table ];
+        }
+        $probe = static function () use ( $wpdb, $table ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+            return (bool) $wpdb->get_var( $wpdb->prepare( "SHOW COLUMNS FROM `{$table}` LIKE %s", 'rotated_at' ) );
+        };
+        $found = $probe();
+        if ( ! $found && ! get_transient( 'royal_mcp_rotation_column_failed' ) ) {
+            self::create_tables();
+            $found = $probe();
+            if ( ! $found ) {
+                set_transient( 'royal_mcp_rotation_column_failed', 1, HOUR_IN_SECONDS );
+            }
+        }
+        $has[ $table ] = $found;
+        return $found;
+    }
+
+    /**
+     * The client and user a live refresh token belongs to, read without using it.
+     *
+     * @return array|null [client_id, user_id] or null.
+     */
+    public static function peek_refresh_token( $raw_refresh_token ) {
+        global $wpdb;
+        $table = self::tokens_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT client_id, user_id FROM `{$table}` WHERE token_hash = %s AND token_type = 'refresh' AND revoked IN ( 0, 2 ) AND expires_at > %s LIMIT 1",
+                hash( 'sha256', (string) $raw_refresh_token ),
+                gmdate( 'Y-m-d H:i:s' )
+            ),
+            ARRAY_A
+        );
+        return $row ? $row : null;
+    }
+
+    /** The client a stored token (of either kind) was issued to, or null. */
+    public static function token_client( $raw_token ) {
+        global $wpdb;
+        $table = self::tokens_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+        $client_id = $wpdb->get_var( $wpdb->prepare( "SELECT client_id FROM `{$table}` WHERE token_hash = %s LIMIT 1", hash( 'sha256', (string) $raw_token ) ) );
+        return null === $client_id ? null : (string) $client_id;
+    }
+
+    /** Whether a stored token has been revoked since it was read. */
+    public static function token_is_revoked( $token_id ) {
+        global $wpdb;
+        $table = self::tokens_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+        $revoked = $wpdb->get_var( $wpdb->prepare( "SELECT revoked FROM `{$table}` WHERE id = %d", (int) $token_id ) );
+        return null === $revoked || 1 === (int) $revoked;
+    }
+
+    /**
      * Soft-delete every unrevoked access + refresh token in one operation.
      *
      * Powers the "Revoke all" button on the Connected Clients screen.
@@ -415,9 +537,38 @@ class Token_Store {
         $table = self::tokens_table();
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
         $count = (int) $wpdb->query(
-            "UPDATE `{$table}` SET revoked = 1 WHERE revoked = 0"
+            "UPDATE `{$table}` SET revoked = 1 WHERE revoked <> 1"
         );
         return $count;
+    }
+
+    /**
+     * Revoke every OAuth token a user holds, on every client.
+     *
+     * @return int Token rows revoked.
+     */
+    public static function revoke_all_for_user( $user_id ) {
+        global $wpdb;
+        $user_id = (int) $user_id;
+        if ( $user_id <= 0 ) {
+            return 0;
+        }
+        $table = self::tokens_table();
+        // Active tokens and refresh tokens still inside their reuse grace window (revoked = 2).
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from a safe helper
+        return (int) $wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET revoked = 1 WHERE user_id = %d AND revoked IN (0, 2)", $user_id ) );
+    }
+
+    /** after_password_reset: the user chose a new password through the reset link. */
+    public static function revoke_on_password_reset( $user ) {
+        if ( is_object( $user ) && isset( $user->ID ) ) {
+            self::revoke_all_for_user( (int) $user->ID );
+        }
+    }
+
+    /** wp_set_password: the password was changed (profile screen, an admin, or code). */
+    public static function revoke_on_password_set( $password, $user_id = 0 ) {
+        self::revoke_all_for_user( (int) $user_id );
     }
 
     /**
@@ -463,7 +614,7 @@ class Token_Store {
             ),
             ARRAY_A
         );
-        if ( ! $row || (int) $row['revoked'] ) {
+        if ( ! $row || 1 === (int) $row['revoked'] ) {
             return 0;
         }
 
@@ -496,7 +647,7 @@ class Token_Store {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
         return (int) $wpdb->query(
             $wpdb->prepare(
-                "UPDATE `{$table}` SET revoked = 1 WHERE client_id = %s AND user_id = %d AND revoked = 0",
+                "UPDATE `{$table}` SET revoked = 1 WHERE client_id = %s AND user_id = %d AND revoked <> 1",
                 (string) $client_id,
                 (int) $user_id
             )
@@ -611,9 +762,9 @@ class Token_Store {
         // Without this clear, an admin in manual-creds mode has no UI path back to DCR.
         $static_creds_cleared = 0;
         $settings             = get_option( 'royal_mcp_settings', [] );
-        if ( is_array( $settings ) && ( ! empty( $settings['oauth_client_id'] ) || ! empty( $settings['oauth_client_secret'] ) ) ) {
-            $settings['oauth_client_id']     = '';
-            $settings['oauth_client_secret'] = '';
+        if ( is_array( $settings ) && ( ! empty( $settings['oauth_client_id'] ) || ! empty( $settings['oauth_client_secret'] ) || ! empty( $settings['oauth_client_secret_hash'] ) ) ) {
+            $settings['oauth_client_id'] = '';
+            unset( $settings['oauth_client_secret'], $settings['oauth_client_secret_hash'], $settings['oauth_static_redirect_uris'] );
             if ( class_exists( '\\Royal_MCP\\Admin\\Settings_Page' ) ) {
                 \Royal_MCP\Admin\Settings_Page::save_programmatically( $settings );
             } else {
@@ -843,16 +994,18 @@ class Token_Store {
         }
 
         // Check static client from settings.
-        $settings = get_option( 'royal_mcp_settings', [] );
-        if ( ! empty( $settings['oauth_client_id'] ) && hash_equals( $settings['oauth_client_id'], $client_id ) ) {
+        $settings = self::static_client_settings();
+        if ( ! empty( $settings['oauth_client_id'] ) && hash_equals( (string) $settings['oauth_client_id'], (string) $client_id ) ) {
+            $secret_hash = ! empty( $settings['oauth_client_secret_hash'] ) ? (string) $settings['oauth_client_secret_hash'] : null;
             return [
                 'client_id'                  => $settings['oauth_client_id'],
-                'client_secret_hash'         => ! empty( $settings['oauth_client_secret'] ) ? hash( 'sha256', $settings['oauth_client_secret'] ) : null,
+                'client_secret_hash'         => $secret_hash,
                 'client_name'                => get_bloginfo( 'name' ) . ' (static)',
-                'redirect_uris'              => [], // Static clients accept any localhost/HTTPS redirect.
+                // Only the redirect URIs the site owner registered for this client.
+                'redirect_uris'              => self::static_redirect_uris( $settings ),
                 'grant_types'                => 'authorization_code',
                 'status'                     => 'active', // Static clients are always active — never gated by approval.
-                'token_endpoint_auth_method' => ! empty( $settings['oauth_client_secret'] ) ? 'client_secret_post' : 'none',
+                'token_endpoint_auth_method' => null !== $secret_hash ? 'client_secret_post' : 'none',
                 'is_static'                  => true,
             ];
         }
@@ -865,6 +1018,107 @@ class Token_Store {
      * ----------------------------------------------------------------*/
 
     /**
+     * Clients registered at the namespace endpoints, by client_id: the list kept before
+     * the clients table had an issuer_kind column. Read until it has been moved into
+     * the column (migrate_namespace_clients()), then deleted.
+     */
+    const NAMESPACE_CLIENTS_OPTION = 'royal_mcp_oauth_namespace_clients';
+
+    /** Record that a client registered through the namespace endpoints, on its own row. */
+    public static function mark_namespace_client( $client_id ) {
+        global $wpdb;
+        if ( self::has_issuer_kind_column() ) {
+            $table = self::clients_table();
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Clients table, no cache layer.
+            $done = $wpdb->update( $table, [ 'issuer_kind' => 'namespace' ], [ 'client_id' => (string) $client_id ], [ '%s' ], [ '%s' ] );
+            if ( false !== $done ) {
+                return;
+            }
+        }
+        // Without the column (its creation failed on this host): the bounded list.
+        $map = get_option( self::NAMESPACE_CLIENTS_OPTION, [] );
+        $map = is_array( $map ) ? $map : [];
+        $map[ (string) $client_id ] = time();
+        arsort( $map );
+        update_option( self::NAMESPACE_CLIENTS_OPTION, array_slice( $map, 0, 2000, true ), false );
+    }
+
+    /** Whether a client registered through the namespace endpoints. */
+    public static function is_namespace_client( $client_id ) {
+        global $wpdb;
+        $client_id = (string) $client_id;
+        if ( '' === $client_id ) {
+            return false;
+        }
+        if ( self::has_issuer_kind_column() ) {
+            $table = self::clients_table();
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+            if ( 'namespace' === $wpdb->get_var( $wpdb->prepare( "SELECT issuer_kind FROM `{$table}` WHERE client_id = %s LIMIT 1", $client_id ) ) ) {
+                return true;
+            }
+        }
+        $map = get_option( self::NAMESPACE_CLIENTS_OPTION, [] );
+        return is_array( $map ) && isset( $map[ $client_id ] );
+    }
+
+    /**
+     * Move the bounded namespace-client list into the issuer_kind column, then delete
+     * the list. The list is kept when any row fails to update, so nothing is lost.
+     */
+    public static function migrate_namespace_clients( $fresh = false ) {
+        global $wpdb;
+        $map = get_option( self::NAMESPACE_CLIENTS_OPTION, null );
+        if ( null === $map ) {
+            return true;
+        }
+        if ( ! is_array( $map ) || [] === $map ) {
+            delete_option( self::NAMESPACE_CLIENTS_OPTION );
+            return true;
+        }
+        if ( ! self::has_issuer_kind_column( $fresh ) ) {
+            return false;
+        }
+        $table = self::clients_table();
+        foreach ( array_chunk( array_map( 'strval', array_keys( $map ) ), 200 ) as $ids ) {
+            $marks = implode( ',', array_fill( 0, count( $ids ), '%s' ) );
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method; one placeholder per id.
+            if ( false === $wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET issuer_kind = 'namespace' WHERE client_id IN ( {$marks} )", $ids ) ) ) {
+                return false;
+            }
+        }
+        delete_option( self::NAMESPACE_CLIENTS_OPTION );
+        return true;
+    }
+
+    /** Whether the clients table has the issuer_kind column (created when missing, retried hourly). */
+    private static function has_issuer_kind_column( $fresh = false ) {
+        static $has = [];
+        global $wpdb;
+        $table = self::clients_table();
+        if ( $fresh ) {
+            unset( $has[ $table ] );
+        }
+        if ( isset( $has[ $table ] ) ) {
+            return $has[ $table ];
+        }
+        $probe = static function () use ( $wpdb, $table ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+            return (bool) $wpdb->get_var( $wpdb->prepare( "SHOW COLUMNS FROM `{$table}` LIKE %s", 'issuer_kind' ) );
+        };
+        $found = $probe();
+        if ( ! $found && ! get_transient( 'royal_mcp_issuer_kind_column_failed' ) ) {
+            $has[ $table ] = false;
+            self::create_tables();
+            $found = $probe();
+            if ( ! $found ) {
+                set_transient( 'royal_mcp_issuer_kind_column_failed', 1, HOUR_IN_SECONDS );
+            }
+        }
+        $has[ $table ] = $found;
+        return $found;
+    }
+
+    /**
      * Detect a CIMD client_id by shape. CIMD client_ids are absolute https URLs
      * that point to a JSON metadata document; standard dynamic-registration
      * client_ids use the `rmcp_` prefix. Detection by prefix avoids a false
@@ -873,26 +1127,6 @@ class Token_Store {
      * @param mixed $client_id Value from the OAuth request; may be non-string.
      * @return bool
      */
-    /** Clients registered at the namespace endpoints, by client_id. */
-    const NAMESPACE_CLIENTS_OPTION = 'royal_mcp_oauth_namespace_clients';
-
-    /** Record that a client registered through the namespace endpoints. */
-    public static function mark_namespace_client( $client_id ) {
-        $map = get_option( self::NAMESPACE_CLIENTS_OPTION, [] );
-        $map = is_array( $map ) ? $map : [];
-        $map[ (string) $client_id ] = time();
-        // Newest first, bounded: clients that never sign in are removed by
-        // gc_stale_clients() and fall out of this list too.
-        arsort( $map );
-        update_option( self::NAMESPACE_CLIENTS_OPTION, array_slice( $map, 0, 2000, true ), false );
-    }
-
-    /** Whether a client registered through the namespace endpoints. */
-    public static function is_namespace_client( $client_id ) {
-        $map = get_option( self::NAMESPACE_CLIENTS_OPTION, [] );
-        return is_array( $map ) && isset( $map[ (string) $client_id ] );
-    }
-
     public static function is_cimd_client( $client_id ) {
         return is_string( $client_id )
             && strlen( $client_id ) > 8
@@ -920,12 +1154,16 @@ class Token_Store {
             return null;
         }
 
+        if ( self::is_rejected_cimd_client( $client_id ) ) {
+            return null;
+        }
+
         $metadata = self::fetch_cimd_metadata( $client_id );
         if ( null === $metadata ) {
             return null;
         }
 
-        if ( ! self::validate_cimd_metadata( $metadata ) ) {
+        if ( ! self::validate_cimd_metadata( $metadata, $client_id ) ) {
             return null;
         }
 
@@ -966,11 +1204,22 @@ class Token_Store {
             return null;
         }
 
+        // This runs before sign-in: cap how many documents one address can make the site fetch.
+        $ip    = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
+        $limit = (int) apply_filters( 'royal_mcp_cimd_fetches_per_ip', 20 );
+        $rkey  = 'royal_mcp_cimd_rate_' . md5( $ip );
+        $count = (int) get_transient( $rkey );
+        if ( $limit > 0 && $count >= $limit ) {
+            return null;
+        }
+        set_transient( $rkey, $count + 1, 10 * MINUTE_IN_SECONDS ); // audit:transient-ttl-only -- per-address fetch counter
+
         $response = wp_safe_remote_get(
             $url,
             [
-                'timeout'     => 5,
-                'redirection' => 3,
+                'timeout'             => 5,
+                'redirection'         => 3,
+                'limit_response_size' => 64 * 1024 + 1,
                 'user-agent'  => 'RoyalMCP/' . ROYAL_MCP_VERSION . ' (+https://royalplugins.com/support/royal-mcp/)',
                 'headers'     => [ 'Accept' => 'application/json' ],
             ]
@@ -1004,13 +1253,19 @@ class Token_Store {
      * Validate a CIMD metadata document against RFC 7591 required fields.
      *
      * Required: `redirect_uris` (non-empty array of strings).
-     * Optional but typed: `client_name` (string when present).
+     * Optional but typed: `client_name` (string when present). A `client_id`
+     * in the document must be the address it was fetched from.
      *
-     * @param array $metadata Parsed metadata document.
+     * @param array  $metadata  Parsed metadata document.
+     * @param string $client_id The address the document was fetched from.
      * @return bool
      */
-    private static function validate_cimd_metadata( array $metadata ) {
+    private static function validate_cimd_metadata( array $metadata, $client_id = '' ) {
         if ( empty( $metadata['redirect_uris'] ) || ! is_array( $metadata['redirect_uris'] ) ) {
+            return false;
+        }
+
+        if ( isset( $metadata['client_id'] ) && ( ! is_string( $metadata['client_id'] ) || (string) $client_id !== $metadata['client_id'] ) ) {
             return false;
         }
 
@@ -1031,9 +1286,9 @@ class Token_Store {
      * Persist (upsert) a CIMD-registered client into the clients table.
      *
      * Unlike register_client(), the client_id is provided by the caller (the
-     * metadata document URL) rather than randomly generated. Idempotent: an
-     * existing row with the same client_id is replaced so a refreshed
-     * metadata document overrides the prior snapshot.
+     * metadata document URL) rather than randomly generated. Idempotent: a
+     * refreshed metadata document updates the existing row in place and keeps
+     * its status; a new client waits for approval when the site requires it.
      *
      * @param string $client_id The URL-shaped client_id (metadata document URL).
      * @param array  $metadata  The validated metadata document.
@@ -1059,23 +1314,28 @@ class Token_Store {
 
         $table = self::clients_table();
 
-        // Upsert. UNIQUE KEY on client_id(191) makes REPLACE delete-then-insert
-        // the row with the same client_id. tokens.client_id is a plain KEY (not
-        // FK) on the varchar identity, so existing tokens continue to resolve
-        // after the row's auto-inc id churns.
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $replaced = $wpdb->replace(
-            $table,
-            [
-                'client_id'                  => $client_id,
-                'client_secret_hash'         => null,
-                'client_name'                => $client_name,
-                'redirect_uris'              => wp_json_encode( $redirect_uris ),
-                'grant_types'                => $grant_types,
-                'token_endpoint_auth_method' => 'none',
-            ],
-            [ '%s', '%s', '%s', '%s', '%s', '%s' ]
-        );
+        $fields = [
+            'client_name'                => $client_name,
+            'redirect_uris'              => wp_json_encode( $redirect_uris ),
+            'grant_types'                => $grant_types,
+            'token_endpoint_auth_method' => 'none',
+        ];
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix
+        $existing = $wpdb->get_var( $wpdb->prepare( "SELECT status FROM `{$table}` WHERE client_id = %s LIMIT 1", $client_id ) );
+        if ( null !== $existing ) {
+            // A refreshed document updates the row; its status (pending, approved) stays.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $replaced = $wpdb->update( $table, $fields, [ 'client_id' => $client_id ], [ '%s', '%s', '%s', '%s' ], [ '%s' ] );
+        } else {
+            $settings = get_option( 'royal_mcp_settings', [] );
+            $status   = ( is_array( $settings ) && ! empty( $settings['require_client_approval'] ) ) ? 'pending_approval' : 'active';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $replaced = $wpdb->insert(
+                $table,
+                array_merge( [ 'client_id' => $client_id, 'client_secret_hash' => null ], $fields, [ 'status' => $status ] ),
+                [ '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+            );
+        }
 
         if ( false === $replaced ) {
             return new \WP_Error(
@@ -1143,11 +1403,26 @@ class Token_Store {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $wpdb->delete( self::tokens_table(), [ 'client_id' => $client_id ], [ '%s' ] );
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        return (bool) $wpdb->delete(
+        $deleted = (bool) $wpdb->delete(
             self::clients_table(),
             [ 'client_id' => $client_id, 'status' => 'pending_approval' ],
             [ '%s', '%s' ]
         );
+        // A metadata-document client would register itself again on its next sign-in; remember the rejection.
+        if ( $deleted && self::is_cimd_client( $client_id ) ) {
+            $rejected = get_option( self::REJECTED_CIMD_OPTION, [] );
+            $rejected = is_array( $rejected ) ? $rejected : [];
+            $rejected[ hash( 'sha256', (string) $client_id ) ] = time();
+            arsort( $rejected );
+            update_option( self::REJECTED_CIMD_OPTION, array_slice( $rejected, 0, 500, true ), false );
+        }
+        return $deleted;
+    }
+
+    /** True when an administrator rejected this metadata-document client. */
+    public static function is_rejected_cimd_client( $client_id ) {
+        $rejected = get_option( self::REJECTED_CIMD_OPTION, [] );
+        return is_array( $rejected ) && isset( $rejected[ hash( 'sha256', (string) $client_id ) ] );
     }
 
     /**
@@ -1217,6 +1492,67 @@ class Token_Store {
     }
 
     /**
+     * Royal MCP settings with the static client secret kept as a hash only. A secret
+     * saved in plain text by an earlier version is replaced by its hash on first read.
+     *
+     * @return array
+     */
+    public static function static_client_settings() {
+        $settings = get_option( 'royal_mcp_settings', [] );
+        if ( ! is_array( $settings ) ) {
+            return [];
+        }
+        if ( isset( $settings['oauth_client_secret'] ) && '' !== (string) $settings['oauth_client_secret'] ) {
+            $settings['oauth_client_secret_hash'] = hash( 'sha256', (string) $settings['oauth_client_secret'] );
+            unset( $settings['oauth_client_secret'] );
+            if ( class_exists( '\\Royal_MCP\\Admin\\Settings_Page' ) ) {
+                \Royal_MCP\Admin\Settings_Page::save_programmatically( $settings );
+            } else {
+                update_option( 'royal_mcp_settings', $settings );
+            }
+        }
+        return $settings;
+    }
+
+    /**
+     * Where a static client with no registered redirect may still return (besides loopback
+     * addresses for desktop clients): the sign-in callbacks of the common AI clients.
+     *
+     * @return string[]
+     */
+    public static function static_default_redirect_uris() {
+        /**
+         * Filter the redirect URIs a static OAuth client may use when none are registered.
+         *
+         * @param string[] $uris Redirect URIs.
+         */
+        return (array) apply_filters( 'royal_mcp_static_client_default_redirects', [
+            'https://claude.ai/api/mcp/auth_callback',
+            'https://claude.com/api/mcp/auth_callback',
+            'https://chatgpt.com/connector_platform_oauth_redirect',
+        ] );
+    }
+
+    /**
+     * The redirect URIs registered for the static client (one per line in Settings).
+     *
+     * @param array $settings Royal MCP settings.
+     * @return string[]
+     */
+    public static function static_redirect_uris( array $settings ) {
+        $raw  = $settings['oauth_static_redirect_uris'] ?? [];
+        $list = is_array( $raw ) ? $raw : preg_split( '/[\r\n]+/', (string) $raw );
+        $out  = [];
+        foreach ( (array) $list as $uri ) {
+            $uri = trim( (string) $uri );
+            if ( '' !== $uri && self::is_acceptable_redirect_uri( $uri ) ) {
+                $out[] = self::sanitize_redirect_uri( $uri );
+            }
+        }
+        return array_values( array_unique( $out ) );
+    }
+
+    /**
      * Validate a redirect URI against a client's registered URIs.
      *
      * @param string $redirect_uri The URI to validate.
@@ -1228,15 +1564,19 @@ class Token_Store {
             return false;
         }
 
-        // Static clients (from settings) accept any acceptable URI.
-        if ( ! empty( $client['is_static'] ) ) {
-            return true;
-        }
-
-        // Dynamic / CIMD clients: match against the registered list. An empty
+        // Every client, the static one included, matches against its registered list. An empty
         // registered list denies — nothing to match against, and treating
         // that state as accept-anything defeats the point of the check.
         $registered = $client['redirect_uris'] ?? [];
+        if ( empty( $registered ) && ! empty( $client['is_static'] ) ) {
+            // No registered redirect: desktop clients on a loopback address, or the known AI client callbacks.
+            $host   = (string) wp_parse_url( $redirect_uri, PHP_URL_HOST );
+            $scheme = strtolower( (string) wp_parse_url( $redirect_uri, PHP_URL_SCHEME ) );
+            if ( '' !== $host && in_array( $scheme, [ 'http', 'https' ], true ) && self::is_loopback_host( $host ) ) {
+                return true;
+            }
+            $registered = self::static_default_redirect_uris();
+        }
         if ( empty( $registered ) ) {
             return false;
         }

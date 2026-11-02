@@ -60,6 +60,9 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                 <label for="enabled"><?php esc_html_e('Enable Royal MCP Integration', 'royal-mcp'); ?></label>
                             </th>
                             <td>
+                                <input type="hidden" name="royal_mcp_settings[_form]" value="settings">
+                                <input type="hidden" name="royal_mcp_settings[_settings_hash]" value="<?php echo esc_attr( \Royal_MCP\Admin\Settings_Page::settings_fingerprint() ); ?>">
+                                <input type="hidden" name="royal_mcp_settings[enabled]" value="0">
                                 <label class="switch">
                                     <input type="checkbox"
                                            name="royal_mcp_settings[enabled]"
@@ -187,19 +190,21 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                     <label for="oauth_client_secret"><?php esc_html_e('OAuth Client Secret', 'royal-mcp'); ?> <span class="optional">(<?php esc_html_e('optional', 'royal-mcp'); ?>)</span></label>
                                 </th>
                                 <td>
+                                    <?php $royal_mcp_secret_set = ! empty( $royal_mcp_settings['oauth_client_secret_hash'] ) || ! empty( $royal_mcp_settings['oauth_client_secret'] ); ?>
                                     <input type="password"
                                            name="royal_mcp_settings[oauth_client_secret]"
                                            id="oauth_client_secret"
-                                           value="<?php echo esc_attr($royal_mcp_settings['oauth_client_secret'] ?? ''); ?>"
+                                           value=""
+                                           autocomplete="new-password"
                                            class="regular-text code"
-                                           placeholder="<?php esc_attr_e('Leave empty for Dynamic Client Registration', 'royal-mcp'); ?>">
+                                           placeholder="<?php echo $royal_mcp_secret_set ? esc_attr__('A secret is set. Enter a new one to replace it.', 'royal-mcp') : esc_attr__('Leave empty for Dynamic Client Registration', 'royal-mcp'); ?>">
                                     <button type="button" class="button toggle-password">
                                         <span class="dashicons dashicons-visibility"></span>
                                     </button>
                                     <button type="button" class="button copy-btn" data-target="oauth_client_secret">
                                         <span class="dashicons dashicons-clipboard"></span>
                                     </button>
-                                    <?php if (empty($royal_mcp_settings['oauth_client_secret'])) : ?>
+                                    <?php if ( ! $royal_mcp_secret_set ) : ?>
                                         <button type="button" class="button generate-oauth" data-field="oauth_client_secret">
                                             <?php esc_html_e('Generate', 'royal-mcp'); ?>
                                         </button>
@@ -209,8 +214,28 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                         </button>
                                     <?php endif; ?>
                                     <p class="description">
-                                        <?php esc_html_e('Optional companion to OAuth Client ID. Leave blank unless your client requires it.', 'royal-mcp'); ?>
+                                        <?php esc_html_e('Optional companion to OAuth Client ID. Leave blank unless your client requires it. The secret is stored as a hash and shown only when you generate it, so copy it before saving.', 'royal-mcp'); ?>
                                     </p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="oauth_static_redirect_uris"><?php esc_html_e('OAuth Redirect URIs', 'royal-mcp'); ?> <span class="optional">(<?php esc_html_e('static client', 'royal-mcp'); ?>)</span></label>
+                                </th>
+                                <td>
+                                    <textarea name="royal_mcp_settings[oauth_static_redirect_uris]"
+                                              id="oauth_static_redirect_uris"
+                                              rows="3"
+                                              class="large-text code"
+                                              placeholder="https://claude.ai/api/mcp/auth_callback"><?php echo esc_textarea( (string) ( $royal_mcp_settings['oauth_static_redirect_uris'] ?? '' ) ); ?></textarea>
+                                    <p class="description">
+                                        <?php esc_html_e('Where your AI client returns after sign-in, one per line (https, or a localhost address for desktop clients). A static Client ID signs in only to these addresses.', 'royal-mcp'); ?>
+                                    </p>
+                                    <?php if ( ! empty( $royal_mcp_settings['oauth_client_id'] ) && '' === trim( (string) ( $royal_mcp_settings['oauth_static_redirect_uris'] ?? '' ) ) ) : ?>
+                                        <p class="description" style="color:#b32d2e;">
+                                            <?php esc_html_e('A static Client ID is set but no redirect URI is: it signs in only to Claude, ChatGPT and localhost until you add the address your AI client uses.', 'royal-mcp'); ?>
+                                        </p>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         </table>
@@ -343,6 +368,20 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                     </svg>
                                     <?php esc_html_e('Regenerate', 'royal-mcp'); ?>
                                 </button>
+                                <?php if ( $royal_mcp_api_key_masked || '' !== $royal_mcp_reveal_key ) : ?>
+                                <button type="submit"
+                                        form="rmcp-disable-key-form"
+                                        class="button"
+                                        id="rmcp-disable-key"
+                                        style="<?php echo esc_attr( $royal_mcp_btn_style ); ?>">
+                                    <svg style="<?php echo esc_attr( $royal_mcp_svg_style ); ?>" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <circle cx="12" cy="12" r="10"/>
+                                        <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+                                    </svg>
+                                    <?php esc_html_e('Turn off', 'royal-mcp'); ?>
+                                </button>
+                                <p class="description"><?php esc_html_e( 'Turn off removes the key: every request that uses it is refused until you regenerate one. Clients that sign in with OAuth keep working.', 'royal-mcp' ); ?></p>
+                                <?php endif; ?>
                                 <?php if ( '' !== $royal_mcp_reveal_key ) : ?>
                                 <div class="notice notice-warning inline" style="margin-top:10px;">
                                     <p style="margin:6px 0;">
@@ -505,6 +544,9 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                 <?php endif; ?>
                                 <p class="description">
                                     <?php esc_html_e('When on, browser-based AI agents that use a WebMCP bridge can call Royal MCP tools as the signed-in WordPress user. Each call must carry a WordPress security token, so other websites cannot use it. Clients such as Claude, ChatGPT and Cursor sign in with OAuth either way.', 'royal-mcp'); ?>
+                                </p>
+                                <p class="description">
+                                    <?php esc_html_e('WebMCP grants the browser AI agent the same WordPress permissions as your current login. Enable only on browsers where you trust the extensions and agents currently installed.', 'royal-mcp'); ?>
                                 </p>
                             </td>
                         </tr>
@@ -869,6 +911,10 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
     <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" id="rmcp-regenerate-key-form" style="display:none">
         <input type="hidden" name="action" value="<?php echo esc_attr( \Royal_MCP\Admin\Settings_Page::REGENERATE_ACTION ); ?>">
         <?php wp_nonce_field( \Royal_MCP\Admin\Settings_Page::REGENERATE_ACTION ); ?>
+    </form>
+    <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" id="rmcp-disable-key-form" style="display:none">
+        <input type="hidden" name="action" value="<?php echo esc_attr( \Royal_MCP\Admin\Settings_Page::DISABLE_KEY_ACTION ); ?>">
+        <?php wp_nonce_field( \Royal_MCP\Admin\Settings_Page::DISABLE_KEY_ACTION ); ?>
     </form>
 
     <!-- Troubleshooting / Reset OAuth State -->

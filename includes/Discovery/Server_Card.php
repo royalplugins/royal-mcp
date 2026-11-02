@@ -41,9 +41,20 @@ class Server_Card {
      * delete_transient( self::CACHE_KEY ) when a change materially affects
      * the card contents (e.g. webmcp_enabled toggle).
      */
+    /** Royal MCP's issuer path while another plugin owns the site-root sign-in documents, else ''. */
+    private static function own_sign_in_path(): string {
+        if ( '' === \Royal_MCP\OAuth\Server::namespace_issuer() || ! class_exists( '\Royal_MCP\Integrations\Coexistence_Check' )
+            || '' === \Royal_MCP\Integrations\Coexistence_Check::root_documents_owner( false ) ) {
+            return '';
+        }
+        return (string) \Royal_MCP\OAuth\Server::namespace_issuer_path();
+    }
+
     public static function build_or_cached(): array {
         $cached = get_transient( self::CACHE_KEY );
-        if ( is_array( $cached ) ) {
+        // A cached card built before another plugin took (or left) the site-root sign-in
+        // documents names the wrong sign-in addresses: build it again.
+        if ( is_array( $cached ) && ( '' !== self::own_sign_in_path() ) === ( '' !== (string) ( $cached['endpoints']['authorizationServerPath'] ?? '' ) ) ) {
             return $cached;
         }
 
@@ -88,6 +99,10 @@ class Server_Card {
         // schema.
         $version = '';
 
+        // While another plugin owns the site-root sign-in documents, point at Royal MCP's own copies.
+        $card_issuer_path   = self::own_sign_in_path();
+        $card_resource_path = '' !== $card_issuer_path ? '/wp-json/royal-mcp/v1/mcp' : '';
+
         // Shape follows SEP-1649 (modelcontextprotocol/modelcontextprotocol #2127):
         //   - serverInfo.name + serverInfo.version REQUIRED
         //   - endpoint (scalar URL) REQUIRED, transport-agnostic single canonical URL
@@ -112,8 +127,9 @@ class Server_Card {
             'protocolVersions' => \Royal_MCP\MCP\Server::SUPPORTED_PROTOCOL_VERSIONS,
             'endpoints'        => [
                 'mcp'                         => $home . '/mcp',
-                'authorizationServer'         => $home . '/.well-known/oauth-authorization-server',
-                'protectedResource'           => $home . '/.well-known/oauth-protected-resource',
+                'authorizationServer'         => $home . '/.well-known/oauth-authorization-server' . $card_issuer_path,
+                'protectedResource'           => $home . '/.well-known/oauth-protected-resource' . $card_resource_path,
+                'authorizationServerPath'     => $card_issuer_path,
                 // wp-json fallback URLs for managed hosts whose edge layer
                 // reserves the root /.well-known/* prefix before requests
                 // reach PHP (SiteGround, WP Engine, some cPanel edge). Both
@@ -145,7 +161,8 @@ class Server_Card {
      * can't enumerate the full attack surface from this document.
      */
     private static function tools_summary( array $tools ): array {
-        $total = count( $tools );
+        $tools       = self::public_tools( $tools );
+        $total       = count( $tools );
         $by_category = [];
 
         foreach ( $tools as $tool ) {
@@ -167,7 +184,29 @@ class Server_Card {
             'total'             => $total,
             'categories'        => array_keys( $by_category ),
             'count_by_category' => $by_category,
+            'integrations'      => 'Tools for supported plugins are listed to signed-in clients only.',
         ];
+    }
+
+    /**
+     * Tools that are the same on every site: WordPress core and Royal MCP's own.
+     * Integration tools appear only when their plugin is active, so listing them
+     * in a public document would tell anyone which plugins a site runs.
+     */
+    public static function public_tools( array $tools ): array {
+        return array_values( array_filter( $tools, static function ( $tool ) {
+            $name = isset( $tool['name'] ) ? (string) $tool['name'] : '';
+            return '' !== $name && self::is_public_tool_name( $name );
+        } ) );
+    }
+
+    public static function is_public_tool_name( string $name ): bool {
+        if ( in_array( $name, [ 'discover_tools', 'get_tool_info', 'execute_tool' ], true ) ) {
+            return true;
+        }
+        $underscore = strpos( $name, '_' );
+        $prefix     = false === $underscore ? $name : substr( $name, 0, $underscore );
+        return in_array( $prefix, [ 'wp', 'mcp', 'royal' ], true );
     }
 
     /**

@@ -467,7 +467,7 @@ class Complianz {
 		if ( [] === $columns ) {
 			throw new \Exception( 'Pass purpose, retention, cookie_function or collected_personal_data.' );
 		}
-		if ( empty( $args['keep_sync'] ) ) {
+		if ( ! filter_var( $args['keep_sync'] ?? false, FILTER_VALIDATE_BOOLEAN ) ) {
 			$columns['sync'] = 0;
 		}
 		$before = array_intersect_key( $row, $columns );

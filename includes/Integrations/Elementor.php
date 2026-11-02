@@ -56,7 +56,7 @@ class Elementor {
 			],
 			[
 				'name'        => 'elementor_replace_text',
-				'description' => 'Replace text in all text-bearing widget settings of an Elementor page. Walks the _elementor_data tree and substitutes matching strings in known text fields (heading title, text-editor content, button text, image caption, image alt / title on image + image-box + image-carousel + image-gallery + basic-gallery widgets, etc.). Case-sensitive by default. Atomic widgets are skipped (opaque passthrough). Response includes match count, undo token (72h), and a read-after-write verification block. Optional dry_run=true reports match count without writing. Optional expected_count guards the write — aborts unless the actual match count equals this value. Optional sync_attachment_meta=true also updates the underlying WP media library _wp_attachment_image_alt postmeta so Elementor front-end renders (which read attachment metadata by default) reflect the new alt immediately without the user reopening the editor (sitewide blast radius — opt-in only). Note: _elementor_data stores text with HTML entities (& → &amp;, — → &mdash;, etc.); when 0 matches are returned and the search string contains special characters, try the HTML-entity-encoded form.',
+				'description' => 'Replace text in all text-bearing widget settings of an Elementor page. Walks the _elementor_data tree and substitutes matching strings in known text fields (heading title, text-editor content, button text, image caption, image alt / title on image + image-box + image-carousel + image-gallery + basic-gallery widgets, etc.). Case-sensitive by default. Classic and Elementor 4 (atomic) widgets alike. Response includes match count, an undo token, and a read-after-write verification block. Undo is refused while the page has been edited since (the token stays valid; force: true restores anyway). Optional dry_run=true reports match count without writing. Optional expected_count guards the write — aborts unless the actual match count equals this value. Optional sync_attachment_meta=true also updates the underlying WP media library _wp_attachment_image_alt postmeta so Elementor front-end renders (which read attachment metadata by default) reflect the new alt immediately without the user reopening the editor (sitewide blast radius — opt-in only). Note: _elementor_data stores text with HTML entities (& → &amp;, — → &mdash;, etc.); when 0 matches are returned and the search string contains special characters, try the HTML-entity-encoded form.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -73,7 +73,7 @@ class Elementor {
 			],
 			[
 				'name'        => 'elementor_replace_image',
-				'description' => 'Swap image URLs in an Elementor page across all image-bearing widgets (image widget, background image, gallery items, etc.). Optionally also remap WP attachment IDs. Returns count of replacements made.',
+				'description' => 'Swap image URLs in an Elementor page across all image-bearing widgets (image widget, background image, gallery items, etc.). Optionally also remap WP attachment IDs. Returns count of replacements made, with an undo token that is refused while the page has been edited since unless forced.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -123,7 +123,7 @@ class Elementor {
 			],
 			[
 				'name'        => 'elementor_import_template',
-				'description' => 'Create a new Elementor template (in the elementor_library CPT) from a JSON payload. Accepts the structure exported by the Elementor editor (an array of section/container elements). Validates top-level shape and stores the data as _elementor_data on a new template post. Returns the new template post ID.',
+				'description' => 'Create a new Elementor template (in the elementor_library CPT) from a JSON payload. Accepts the structure exported by the Elementor editor (an array of section/container elements, or the full export object, whose page_settings are kept too). Validates top-level shape and stores the data as _elementor_data on a new template post. Returns the new template post ID.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -189,7 +189,7 @@ class Elementor {
 			],
 			[
 				'name'        => 'elementor_apply_template_to_page',
-				'description' => 'Insert an existing Elementor library template onto a target page. Bridges elementor_list_local_templates (enumerate) and the raw elementor_add_widget primitive with a single call — the same two-click workflow Elementor\'s editor exposes. position="top" prepends, "bottom" (default) appends, "after_element" inserts as sibling immediately after the given element id. Element IDs are regenerated so re-applying the same template multiple times never collides. Returns list of inserted element IDs + edit_url + view_url. Emits a 72h undo token that restores the prior _elementor_data on the target. Cap: edit_post on target_post_id + read_post on template_id.',
+				'description' => 'Insert an existing Elementor library template onto a target page. Bridges elementor_list_local_templates (enumerate) and the raw elementor_add_widget primitive with a single call — the same two-click workflow Elementor\'s editor exposes. position="top" prepends, "bottom" (default) appends, "after_element" inserts as sibling immediately after the given element id. Element IDs are regenerated so re-applying the same template multiple times never collides. Returns list of inserted element IDs + edit_url + view_url. Emits an undo token that restores the prior _elementor_data on the target, refused while the page has been edited since unless forced. Cap: edit_post on target_post_id + read_post on template_id.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -203,7 +203,7 @@ class Elementor {
 			],
 			[
 				'name'        => 'elementor_rebuild_post_content',
-				'description' => 'Rebuild a post\'s post_content from its _elementor_data using Elementor\'s own render pipeline. Idempotent by default: skips posts that already have non-empty post_content unless force=true is passed. Fixes pages where post_content is empty (which breaks WP core search, RSS excerpts, SEO auto-descriptions, and read-after-write verification). Returns action=repaired with prior_length + new_length, or action=skipped_populated / no_elementor_data. Emits a 72h undo token capturing prior post_content.',
+				'description' => 'Rebuild a post\'s post_content from its _elementor_data using Elementor\'s own render pipeline. Idempotent by default: skips posts that already have non-empty post_content unless force=true is passed. Fixes pages where post_content is empty (which breaks WP core search, RSS excerpts, SEO auto-descriptions, and read-after-write verification). Returns action=repaired with prior_length + new_length, or action=skipped_populated / no_elementor_data. Emits an undo token capturing prior post_content.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -244,7 +244,7 @@ class Elementor {
 			],
 			[
 				'name'        => 'elementor_rebuild_post_content_bulk',
-				'description' => 'Scan all posts with _elementor_data + empty post_content and rebuild them in batch. Fixes bulk SEO / search damage from prior clone operations that shipped without post_content. Pass dry_run=true to preview the count + first 20 candidate post IDs without writing. Batches up to limit posts per call (default 50, max 200). NO undo tokens emitted (bulk rebuild of empty content is generally not something users want to reverse — take a SiteVault snapshot beforehand if reversal capability matters). Cap: edit_posts to enter the tool, then each individual post is re-checked with edit_post before its own rebuild — posts the caller cannot edit are skipped with reason=edit_post capability missing rather than failing the whole call.',
+				'description' => 'Scan all posts with _elementor_data + empty post_content and rebuild them in batch. Fixes bulk SEO / search damage from prior clone operations that shipped without post_content. Pass dry_run=true to preview the count + first 20 candidate post IDs without writing. Batches up to limit posts per call (default 50, max 200). NO undo tokens emitted (bulk rebuild of empty content is generally not something users want to reverse — take a SiteVault snapshot beforehand if reversal capability matters). Cap: edit_posts to enter the tool; only posts the caller can edit are scanned and rebuilt.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -265,6 +265,18 @@ class Elementor {
 	 * @return mixed Result data.
 	 * @throws \Exception If tool fails.
 	 */
+	/**
+	 * What a post created by a tool looks like now (title, content, Elementor data,
+	 * modified time), so its undo can tell whether someone edited it since.
+	 */
+	public static function created_fingerprint( $post_id ) {
+		$post = get_post( (int) $post_id );
+		if ( ! $post ) {
+			return '';
+		}
+		return md5( $post->post_title . "\0" . $post->post_content . "\0" . (string) get_post_meta( $post->ID, '_elementor_data', true ) . "\0" . $post->post_modified_gmt );
+	}
+
 	public static function execute_tool( $name, $args ) {
 		// Umbrella cap check runs BEFORE is_available for anti-fingerprint: unprivileged
 		// callers get "no permission" not "Elementor is not active", so plugin presence
@@ -428,7 +440,8 @@ class Elementor {
 			'summary' => sprintf( 'Delete cloned %s %d ("%s")', $source->post_type, (int) $new_id, $new_title ),
 			'target'  => [ 'new_post_id' => (int) $new_id, 'post_type' => $source->post_type ],
 			'pre_op_state' => [
-				'created_post_id' => (int) $new_id,
+				'created_post_id'     => (int) $new_id,
+				'created_fingerprint' => self::created_fingerprint( (int) $new_id ),
 			],
 		] );
 
@@ -458,9 +471,11 @@ class Elementor {
 
 	/**
 	 * Build an undo envelope for a mutation of _elementor_data on $post_id.
-	 * Captures the prior blob compressed. Returns null if the reverse-state
-	 * exceeds the 1MB gzip cap (caller then reports "undo not available" +
-	 * suggests SiteVault snapshot).
+	 * Captures the prior blob compressed, plus a hash of the data as written
+	 * (callers build it right after their write) so undo can tell when the
+	 * page was edited since. Returns null if the reverse-state exceeds the
+	 * 1MB gzip cap (caller then reports "undo not available" + suggests
+	 * SiteVault snapshot).
 	 */
 	private static function build_elementor_data_undo( $op, $post_id, $prior_blob, $summary ) {
 		$reverse_json = (string) wp_json_encode( [ 'prior_elementor_data' => $prior_blob ] );
@@ -473,6 +488,7 @@ class Elementor {
 			'target'  => [ 'post_id' => (int) $post_id ],
 			'pre_op_state' => [
 				'prior_elementor_data' => $prior_blob,
+				'written_sha256'       => hash( 'sha256', (string) get_post_meta( $post_id, '_elementor_data', true ) ),
 			],
 		] );
 	}
@@ -748,7 +764,7 @@ class Elementor {
 	 */
 	private static function rebuild_post_content( $args ) {
 		$post_id = (int) ( $args['post_id'] ?? 0 );
-		$force   = ! empty( $args['force'] );
+		$force   = filter_var( $args['force'] ?? false, FILTER_VALIDATE_BOOLEAN );
 		if ( $post_id <= 0 ) {
 			throw new \Exception( 'post_id is required.' );
 		}
@@ -932,7 +948,7 @@ class Elementor {
 			? ' Skipped ' . count( $skipped ) . ' (reasons in structured detail).'
 			: '';
 		return \Royal_MCP\MCP\Support\Envelope::success(
-			sprintf( 'Bulk rebuild: %d repaired, %d skipped (scanned %d candidate(s)).%s%s',
+			sprintf( 'Bulk rebuild: %d repaired, %d skipped (scanned %d candidate(s)).%s%s There is no undo for a bulk rebuild.',
 				count( $repaired ),
 				count( $skipped ),
 				count( $candidate_ids ),
@@ -941,6 +957,8 @@ class Elementor {
 			),
 			[
 				'action'           => 'bulk_repair',
+				'undo_available'   => false,
+				'undo_reason'      => 'bulk_rebuild_has_no_undo',
 				'scanned'          => count( $candidate_ids ),
 				'repaired_count'   => count( $repaired ),
 				'skipped_count'    => count( $skipped ),
@@ -1186,6 +1204,7 @@ class Elementor {
 
 		self::refuse_if_stored_markup_would_be_removed( $post_id );
 		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $updated ) ) ) );
+		Elementor_Atomic::clear_post_cache( $post_id );
 
 		// Sync attachment postmeta only when the caller explicitly opted in.
 		// Blast-radius awareness: a single attachment used across many pages
@@ -1280,8 +1299,8 @@ class Elementor {
 
 	/**
 	 * Recursively walk widgets and substitute text in known text-bearing fields.
-	 * Atomic widgets (elType=widget with widgetType matching atomic patterns) are
-	 * skipped — their schema is not publicly documented and we don't want to corrupt them.
+	 * Elementor 4 atomic widgets are handled by Elementor_Atomic (their typed
+	 * text props only).
 	 */
 	private static function walk_widgets_text( $elements, $find, $replace, $case_insensitive, &$counter, &$attachment_alt_updates = null ) {
 		if ( ! is_array( $elements ) ) {
@@ -1335,6 +1354,10 @@ class Elementor {
 				// Skip atomic widgets — they live under a different schema in Editor V4
 				// and we shouldn't blindly mutate their settings.
 				$is_atomic = strpos( $widget_type, 'a-' ) === 0 || strpos( $widget_type, 'e-' ) === 0;
+
+				if ( $is_atomic && isset( $el['settings'] ) && is_array( $el['settings'] ) ) {
+					$el['settings'] = Elementor_Atomic::replace_text( $el['settings'], $find, $replace, $case_insensitive, $counter, $widget_type );
+				}
 
 				if ( ! $is_atomic && isset( $text_fields[ $widget_type ] ) && isset( $el['settings'] ) && is_array( $el['settings'] ) ) {
 					foreach ( $text_fields[ $widget_type ] as $key ) {
@@ -1508,6 +1531,7 @@ class Elementor {
 
 		self::refuse_if_stored_markup_would_be_removed( $post_id );
 		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $updated ) ) ) );
+		Elementor_Atomic::clear_post_cache( $post_id );
 
 		$undo_envelope = self::build_elementor_data_undo(
 			'elementor_replace_image',
@@ -1555,7 +1579,14 @@ class Elementor {
 				continue;
 			}
 
-			if ( isset( $el['settings'] ) && is_array( $el['settings'] ) ) {
+			if ( Elementor_Atomic::is_atomic( $el ) ) {
+				// Typed image values in settings, and background images in styles.
+				foreach ( [ 'settings', 'styles' ] as $part ) {
+					if ( isset( $el[ $part ] ) && is_array( $el[ $part ] ) ) {
+						$el[ $part ] = Elementor_Atomic::replace_image( $el[ $part ], $old_url, $new_url, (int) $old_id, (int) $new_id, $counter );
+					}
+				}
+			} elseif ( isset( $el['settings'] ) && is_array( $el['settings'] ) ) {
 				// Walk every settings key — if it's a dict with 'url' that matches, swap.
 				// Covers image widget (settings.image.url), background images
 				// (settings.background_image.url), and similar.
@@ -1837,6 +1868,17 @@ class Elementor {
 		if ( ! is_array( $s ) ) {
 			return '';
 		}
+		// Elementor 4 widgets keep their text as typed values: { $$type, value }.
+		$atomic_text = [ 'e-heading' => 'title', 'e-paragraph' => 'paragraph', 'e-button' => 'text' ];
+		if ( isset( $atomic_text[ $widget_type ] ) ) {
+			$v = $s[ $atomic_text[ $widget_type ] ] ?? null;
+			$v = is_array( $v ) ? ( $v['value'] ?? null ) : $v;
+			// Elementor 4.0 wraps it once more: { content: { $$type, value }, children }.
+			if ( is_array( $v ) && is_array( $v['content'] ?? null ) ) {
+				$v = $v['content']['value'] ?? null;
+			}
+			return is_string( $v ) && '' !== $v ? mb_strimwidth( wp_strip_all_tags( $v ), 0, 80, '...' ) : '';
+		}
 		$snippet_candidates = [
 			'heading'        => [ 'title' ],
 			'text-editor'    => [ 'editor' ],
@@ -1989,8 +2031,12 @@ class Elementor {
 		}
 		// If the payload is the full Elementor export shape ({ 'content': [...], 'page_settings': {...}, ... })
 		// extract content. Otherwise assume it's the bare elements array.
+		$page_settings = [];
 		if ( isset( $decoded['content'] ) && is_array( $decoded['content'] ) ) {
 			$elements = $decoded['content'];
+			if ( isset( $decoded['page_settings'] ) && is_array( $decoded['page_settings'] ) ) {
+				$page_settings = self::sanitize_tree_for_user( $decoded['page_settings'] );
+			}
 		} else {
 			$elements = $decoded;
 		}
@@ -2016,13 +2062,20 @@ class Elementor {
 		update_post_meta( $new_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $elements ) ) ) );
 		update_post_meta( $new_id, '_elementor_edit_mode', 'builder' );
 		update_post_meta( $new_id, '_elementor_template_type', $template_type );
+		// The export's page settings (layout, background, custom CSS) belong to the template too.
+		$page_settings_saved = 0;
+		if ( is_array( $page_settings ) && [] !== $page_settings ) {
+			update_post_meta( $new_id, '_elementor_page_settings', wp_slash( $page_settings ) );
+			$page_settings_saved = count( $page_settings );
+		}
 
 		$it_undo_envelope = \Royal_MCP\MCP\Undo_Store::store( [
 			'op'      => 'elementor_import_template',
 			'summary' => sprintf( 'Delete imported template %d ("%s")', (int) $new_id, $title ),
 			'target'  => [ 'template_id' => (int) $new_id ],
 			'pre_op_state' => [
-				'created_post_id' => (int) $new_id,
+				'created_post_id'     => (int) $new_id,
+				'created_fingerprint' => self::created_fingerprint( (int) $new_id ),
 			],
 		] );
 
@@ -2034,6 +2087,7 @@ class Elementor {
 				'title'         => $title,
 				'template_type' => $template_type,
 				'edit_url'      => $it_edit_url,
+				'page_settings_restored' => $page_settings_saved,
 			],
 			$it_undo_envelope
 		);
@@ -2101,6 +2155,7 @@ class Elementor {
 		// Save.
 		self::refuse_if_stored_markup_would_be_removed( $post_id );
 		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $tree ) ) ) );
+		Elementor_Atomic::clear_post_cache( $post_id );
 
 		$notice = ! empty( $args['settings'] ) && in_array( $widget_type, self::$curated_widget_types, true )
 			? 'Raw settings supplied for a curated widget_type — curated params were ignored. To use curated, omit the settings parameter.'

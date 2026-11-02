@@ -105,6 +105,7 @@ function royal_mcp_uninstall_site() {
     // token and authorization-code rows the daily cleanup removes.
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal_mcp_undo_%'");
+    delete_option( 'royal_mcp_rejected_cimd_clients' );
     $now = gmdate( 'Y-m-d H:i:s' );
     foreach ( array(
         'royal_mcp_sessions'         => 'expires_at < %s',
@@ -128,6 +129,8 @@ function royal_mcp_uninstall_site() {
         delete_option('royal_mcp_abilities_registration_enabled');
         delete_option('royal_mcp_client_access');
         delete_option('royal_mcp_oauth_namespace_clients');
+        delete_transient('royal_mcp_issuer_kind_column_failed');
+        delete_transient('royal_mcp_rotation_column_failed');
 
         // Cleared with the tables so a reinstall recreates them.
         delete_option('royal_mcp_db_version');

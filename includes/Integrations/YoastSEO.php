@@ -962,6 +962,16 @@ class YoastSEO {
 		$post_id = self::resolve_post_id( $args );
 		self::ensure_post_exists( $post_id );
 		self::ensure_can_edit( $post_id );
+		// Same template guard as wp_update_seo_meta.
+		if ( ! filter_var( $args['force'] ?? false, FILTER_VALIDATE_BOOLEAN ) ) {
+			foreach ( [ 'title' => '_yoast_wpseo_title', 'description' => '_yoast_wpseo_metadesc' ] as $tpl_arg => $tpl_key ) {
+				$tpl_now = (string) get_post_meta( $post_id, $tpl_key, true );
+				if ( isset( $args[ $tpl_arg ] ) && is_string( $args[ $tpl_arg ] ) && '' !== $args[ $tpl_arg ]
+					&& \Royal_MCP\MCP\Support\Seo_Plugin::has_template( $tpl_now ) && ! \Royal_MCP\MCP\Support\Seo_Plugin::has_template( $args[ $tpl_arg ] ) ) {
+					throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'template_overwrite', sprintf( 'Nothing was written. %s holds an SEO template (%s) that Yoast fills in for each page; the new value has no template variables, so it would replace the template with fixed text. Send a value with the template variables, or pass force: true to replace the template.', $tpl_arg, $tpl_now ), [ 'field' => $tpl_arg, 'current_value' => $tpl_now ] );
+				}
+			}
+		}
 
 		// Adapter-scoped field map. Keys are caller-facing arg names; values
 		// are the postmeta keys Yoast reads/writes.

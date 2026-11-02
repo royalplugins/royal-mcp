@@ -6,7 +6,7 @@
  * diff for long text such as post content, CSS and builder data.
  *
  * Reads only what the undo snapshot already holds plus the live object, so
- * nothing is kept past the snapshot's 72-hour window.
+ * nothing is kept past the snapshot's undo window.
  *
  * @package Royal_MCP
  */
@@ -284,7 +284,8 @@ class Change_View {
 		if ( 'expired' === $out['status'] ) {
 			$out['fields'] = [];
 			$out['diffs']  = [];
-			$out['note']   = __( 'This change is older than 72 hours, so its before state is no longer kept.', 'royal-mcp' );
+			/* translators: %s: the undo window, e.g. "72 hours" or "7 days" */
+			$out['note']   = sprintf( __( 'This change is older than %s, so its before state is no longer kept.', 'royal-mcp' ), \Royal_MCP\MCP\Undo_Store::window_label() );
 			return $out;
 		}
 		$op       = (string) ( $change['op'] ?? '' );

@@ -194,6 +194,8 @@ jQuery(document).ready(function($) {
             success: function(response) {
                 if (response.success) {
                     $status.css('color', '#00a32a').text(response.data.message);
+                    // The stored settings changed; reload so a later Save uses them.
+                    setTimeout(function() { window.location.reload(); }, 1500);
                 } else {
                     $status.css('color', '#d63638').text((response.data && response.data.message) || 'Reset failed');
                 }

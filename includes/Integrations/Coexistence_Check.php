@@ -242,6 +242,25 @@ class Coexistence_Check {
 	}
 
 	/** Addresses MCP clients and AI crawlers read at the site root. */
+	/**
+	 * Other MCP servers Royal MCP knows by name: how to tell they are there, the MCP
+	 * endpoint they serve, which discovery addresses they answer, and how to fix a clash.
+	 * root_oauth: their sign-in uses the bare site-root discovery documents.
+	 */
+	const KNOWN_SERVERS = [
+		'ai-engine'        => [ 'name' => 'AI Engine', 'folders' => [ 'ai-engine', 'ai-engine-pro' ], 'constant' => 'MWAI_VERSION', 'namespace' => '', 'endpoint' => '/wp-json/mcp/v1/http', 'root_oauth' => true, 'takes' => 'every /.well-known/oauth-protected-resource and /.well-known/oauth-authorization-server address', 'fix' => 'Turn off the MCP module in AI Engine\'s settings if this site does not need it.' ],
+		'easy-mcp-ai'      => [ 'name' => 'Easy MCP AI', 'folders' => [ 'easy-mcp-ai' ], 'constant' => 'EASY_MCP_AI_VERSION', 'namespace' => 'easy-mcp-ai/v1', 'endpoint' => '/wp-json/easy-mcp-ai/v1/mcp', 'root_oauth' => true, 'takes' => 'the site-root sign-in documents', 'fix' => 'Turn off OAuth sign-in in Easy MCP AI\'s settings if this site does not need it.' ],
+		'emcp-tools'       => [ 'name' => 'EMCP Tools', 'folders' => [ 'emcp-tools' ], 'constant' => '', 'namespace' => '', 'endpoint' => '/wp-json/mcp/emcp-tools-server', 'root_oauth' => true, 'takes' => 'the site-root sign-in documents (its issuer is the site root)', 'fix' => 'Turn off OAuth in EMCP Tools if this site does not need it.' ],
+		'mosmcp'           => [ 'name' => 'miniOrange Secure MCP Server', 'folders' => [ 'secure-mcp-server', 'miniorange-secure-mcp-server', 'mo-secure-mcp-server' ], 'constant' => '', 'namespace' => 'mosmcp/v1', 'endpoint' => '/wp-json/mosmcp/v1/mcp', 'root_oauth' => false, 'takes' => 'every path-suffixed /.well-known sign-in address', 'fix' => 'Deactivate miniOrange Secure MCP Server if this site does not need it.' ],
+		'enable-abilities' => [ 'name' => 'Enable Abilities for MCP', 'folders' => [ 'enable-abilities-for-mcp', 'enable-abilities' ], 'constant' => '', 'namespace' => '', 'endpoint' => '', 'root_oauth' => false, 'takes' => 'path-suffixed /.well-known requests once its OAuth is on (it rewrites them to the site root)', 'fix' => 'Turn off OAuth in Enable Abilities for MCP if this site does not need it.' ],
+		'wsp-mcp'          => [ 'name' => 'WSP MCP', 'folders' => [ 'wsp-mcp' ], 'constant' => '', 'namespace' => 'wsp-mcp/v1', 'endpoint' => '/wp-json/wsp-mcp/v1/mcp', 'root_oauth' => true, 'takes' => 'the site-root sign-in documents (its issuer is the site root)', 'fix' => 'Deactivate WSP MCP if this site does not need it.' ],
+		'cowboy-mcp'       => [ 'name' => 'Cowboy MCP', 'folders' => [ 'cowboy-mcp' ], 'constant' => '', 'namespace' => 'cowboy-mcp/v1', 'endpoint' => '/wp-json/cowboy-mcp/v1/endpoint', 'root_oauth' => true, 'takes' => 'the site-root sign-in documents (its issuer is the site root)', 'fix' => 'Deactivate Cowboy MCP if this site does not need it.' ],
+		'gobuildwp'        => [ 'name' => 'GoBuildWP', 'folders' => [ 'wordpress-mcp-ai-gobuildwp', 'gobuildwp', 'wppilot' ], 'constant' => '', 'namespace' => 'mcp/wppilot-oauth', 'endpoint' => '', 'root_oauth' => false, 'takes' => '', 'fix' => 'Deactivate GoBuildWP if this site does not need it.' ],
+		'novamira'         => [ 'name' => 'Novamira', 'folders' => [ 'novamira' ], 'constant' => '', 'namespace' => '', 'endpoint' => '', 'root_oauth' => false, 'takes' => 'the site-root sign-in documents when its OAuth is on; it also bundles its own copy of the MCP Adapter', 'fix' => 'Deactivate Novamira if this site does not need it.' ],
+		'flex-mcp'         => [ 'name' => 'Flex MCP', 'folders' => [ 'stifli-flex-mcp' ], 'constant' => '', 'namespace' => '', 'endpoint' => '', 'root_oauth' => false, 'takes' => 'the site-root sign-in documents when its OAuth is on', 'fix' => 'Use Application Passwords in Flex MCP, or deactivate it if this site does not need it.' ],
+		'ai-puffer'        => [ 'name' => 'AI Puffer', 'folders' => [ 'gpt3-ai-content-generator' ], 'constant' => '', 'namespace' => '', 'endpoint' => '', 'root_oauth' => false, 'takes' => '', 'fix' => 'Turn off the MCP feature in AI Puffer if this site does not need it.' ],
+	];
+
 	const SHARED_PATHS = [
 		'/.well-known/oauth-authorization-server',
 		'/.well-known/oauth-protected-resource',
@@ -289,7 +308,7 @@ class Coexistence_Check {
 	 * Other MCP servers and hubs: known ones by their classes or switches, plus any
 	 * active plugin whose name says it is an MCP server.
 	 */
-	private static function other_servers() {
+	public static function other_servers() {
 		if ( ! function_exists( 'get_plugins' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/plugin.php';
 		}
@@ -314,9 +333,33 @@ class Coexistence_Check {
 		}
 		$out[] = [ 'id' => 'mcp-adapter', 'name' => 'WordPress MCP Adapter', 'active' => $adapter, 'detail' => $adapter_detail ];
 
+		$known_folders = [];
+		$known_names   = [];
+		foreach ( self::known_servers_present( $active ) as $id => $k ) {
+			$known_folders = array_merge( $known_folders, (array) $k['folders'] );
+			$known_names[] = strtolower( (string) $k['name'] );
+			$row = [
+				'id'     => (string) $id,
+				'name'   => (string) $k['name'],
+				'active' => (bool) $k['on'],
+				'detail' => (string) $k['detail'],
+			];
+			if ( '' !== $k['endpoint'] ) {
+				$row['mcp_endpoint'] = (string) $k['endpoint'];
+			}
+			if ( $k['on'] && '' !== $k['takes'] ) {
+				$row['takes_addresses'] = (string) $k['takes'];
+			}
+			if ( $k['on'] ) {
+				$row['fix'] = (string) $k['fix'];
+			}
+			$out[] = $row;
+		}
+
 		foreach ( $active as $file ) {
 			$file = (string) $file;
-			if ( 0 === strpos( $file, 'royal-mcp' ) || ! isset( $plugins[ $file ] ) ) {
+			if ( 0 === strpos( $file, 'royal-mcp' ) || ! isset( $plugins[ $file ] ) || in_array( dirname( $file ), $known_folders, true )
+				|| in_array( strtolower( trim( (string) ( $plugins[ $file ]['Name'] ?? '' ) ) ), $known_names, true ) ) {
 				continue;
 			}
 			$name = (string) ( $plugins[ $file ]['Name'] ?? '' );
@@ -328,6 +371,178 @@ class Coexistence_Check {
 					'detail' => 'version ' . (string) ( $plugins[ $file ]['Version'] ?? '' ),
 				];
 			}
+		}
+		return $out;
+	}
+
+	/**
+	 * The KNOWN_SERVERS that are on this site, each with on (its MCP server or sign-in
+	 * is serving), detail, endpoint, takes, fix and folders. Read from constants, the
+	 * active plugin list and registered REST namespaces; no request is made.
+	 *
+	 * @param string[]|null $active Active plugin files (read when null).
+	 * @return array<string,array>
+	 */
+	public static function known_servers_present( $active = null ) {
+		if ( null === $active ) {
+			$active = (array) get_option( 'active_plugins', [] );
+			if ( is_multisite() ) {
+				$active = array_merge( $active, array_keys( (array) get_site_option( 'active_sitewide_plugins', [] ) ) );
+			}
+		}
+		$folders = array_map( static function ( $f ) { return dirname( (string) $f ); }, $active );
+		$spaces  = did_action( 'rest_api_init' ) && function_exists( 'rest_get_server' ) ? (array) rest_get_server()->get_namespaces() : [];
+		$out     = [];
+		foreach ( self::KNOWN_SERVERS as $id => $k ) {
+			$by_folder = (bool) array_intersect( (array) $k['folders'], $folders );
+			$by_const  = '' !== $k['constant'] && defined( $k['constant'] );
+			$by_space  = '' !== $k['namespace'] && in_array( $k['namespace'], $spaces, true );
+			if ( ! $by_folder && ! $by_const && ! $by_space ) {
+				continue;
+			}
+			$on     = true;
+			$detail = 'active';
+			if ( 'ai-engine' === $id ) {
+				$opts   = get_option( 'mwai_options', [] );
+				$on     = class_exists( 'Meow_MWAI_Labs_MCP_OAuth', false ) || ( is_array( $opts ) && ! empty( $opts['module_mcp'] ) );
+				$detail = $on ? 'MCP server and sign-in on at /wp-json/mcp/v1/http; answers every /.well-known/oauth-protected-resource and /.well-known/oauth-authorization-server address' : 'AI Engine active, its MCP module off';
+			} elseif ( 'easy-mcp-ai' === $id ) {
+				$oauth    = get_option( 'easy_mcp_ai_oauth_enabled', true );
+				$on       = ! in_array( $oauth, [ false, 0, '0', 'no', 'off', '' ], true );
+				$fallback = (string) get_option( 'easy_mcp_ai_oauth_root_fallback', 'auto' );
+				$armed    = 'on' === $fallback || ( 'auto' === $fallback && (bool) get_option( 'easy_mcp_ai_oauth_root_discovery', false ) );
+				$detail   = sprintf( 'sign-in %s; answers the site-root discovery documents; root fallback %s (%s)', $on ? 'on' : 'off', in_array( $fallback, [ 'auto', 'on', 'off' ], true ) ? $fallback : 'auto', $armed ? 'armed' : 'not armed' );
+			}
+			$out[ $id ] = $k + [ 'on' => $on, 'detail' => $detail ];
+		}
+		return $out;
+	}
+
+	/**
+	 * The plugin whose sign-in uses the bare site-root discovery documents, when one is
+	 * serving: Royal MCP then leaves those two documents to it (its own clients use
+	 * Royal MCP's namespaced addresses). Empty when none is.
+	 */
+	public static function root_documents_owner( $need_name = true ) {
+		static $cache = [];
+		$key = $need_name ? 'name' : 'any';
+		if ( isset( $cache[ $key ] ) ) {
+			return $cache[ $key ];
+		}
+		$owner = '';
+		foreach ( self::known_servers_present() as $k ) {
+			if ( $k['on'] && ! empty( $k['root_oauth'] ) ) {
+				$owner = (string) $k['name'];
+				break;
+			}
+		}
+		if ( '' === $owner && self::bundled_sign_in_enabled() ) {
+			$owner = $need_name ? self::bundled_sign_in_host() : 'MCP sign-in library';
+			if ( '' === $owner ) {
+				$owner = __( 'a plugin with a built-in MCP sign-in', 'royal-mcp' );
+			}
+		}
+		/**
+		 * Name of another plugin that owns the site-root OAuth discovery documents, or ''.
+		 *
+		 * @param string $owner Detected owner ('' for none).
+		 */
+		$cache[ $key ] = (string) apply_filters( 'royal_mcp_root_oauth_documents_owner', $owner );
+		return $cache[ $key ];
+	}
+
+	/** Whether the bundled WP Media MCP sign-in library is loaded and switched on, read as it reads its own switch. */
+	private static function bundled_sign_in_enabled() {
+		if ( ! class_exists( '\WPMedia\MCP\OAuth\Bootstrap', false ) ) {
+			return false;
+		}
+		$legacy  = apply_filters( 'rocket_mcp_oauth_server_enabled', true );
+		$default = is_bool( $legacy ) ? $legacy : true;
+		$enabled = apply_filters( 'wpmedia_mcp_oauth_server_enabled', $default );
+		return is_bool( $enabled ) ? $enabled : $default;
+	}
+
+	/**
+	 * When Royal MCP's rule matched a bare site-root discovery address that another plugin
+	 * also has a rewrite rule for, hand the request to that plugin's rule: its query vars
+	 * replace Royal MCP's. False (nothing changed) when no other plugin's rule takes it.
+	 *
+	 * @param \WP $wp The request being parsed.
+	 */
+	public static function hand_root_document_to_owner( $wp ) {
+		global $wp_rewrite;
+		if ( ! $wp instanceof \WP || ! $wp_rewrite instanceof \WP_Rewrite ) {
+			return false;
+		}
+		$request = (string) $wp->request;
+		foreach ( (array) $wp_rewrite->wp_rewrite_rules() as $match => $query ) {
+			$query = (string) $query;
+			if ( false !== strpos( $query, 'royal_mcp_oauth' ) || false === strpos( (string) $match, 'well-known' ) ) {
+				continue;
+			}
+			if ( ! preg_match( '#^' . $match . '#', $request, $matches ) && ! preg_match( '#^' . $match . '#', urldecode( $request ), $matches ) ) {
+				continue;
+			}
+			$query = (string) preg_replace( '!^.+\?!', '', $query );
+			parse_str( (string) \WP_MatchesMapRegex::apply( $query, $matches ), $vars );
+			$public = (array) apply_filters( 'query_vars', $wp->public_query_vars );
+			$taken  = false;
+			foreach ( (array) $vars as $var => $value ) {
+				if ( in_array( $var, $public, true ) ) {
+					$wp->query_vars[ $var ] = $value;
+					$taken                  = true;
+				}
+			}
+			if ( $taken ) {
+				unset( $wp->query_vars['royal_mcp_oauth'] );
+				$wp->matched_rule  = $match;
+				$wp->matched_query = $query;
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Royal MCP's own discovery addresses, checked after the shared ones: each entry says
+	 * who answers it, judged by the document's resource or issuer, never by mentions.
+	 *
+	 * @param float $deadline microtime() after which addresses are reported unknown.
+	 * @return array[]
+	 */
+	private static function own_addresses( $deadline ) {
+		$issuer = self::expected_issuer();
+		$paths  = [];
+		// The address the challenge names (canonical endpoint) and the root /mcp alias.
+		$own_paths = (array) OAuth_Server::mcp_resource_paths();
+		$own_paths = array_values( array_unique( array_filter( [ $own_paths[0] ?? '', in_array( '/mcp', $own_paths, true ) ? '/mcp' : '' ] ) ) );
+		foreach ( $own_paths as $rel ) {
+			$paths[ '/.well-known/oauth-protected-resource' . '/' . ltrim( (string) $rel, '/' ) ] = [ 'prm', OAuth_Server::canonical_resource_url( (string) $rel ) ];
+		}
+		if ( '' !== OAuth_Server::namespace_issuer() ) {
+			$paths[ '/.well-known/oauth-authorization-server' . OAuth_Server::namespace_issuer_path() ] = [ 'as', '' ];
+			$paths[ '/.well-known/openid-configuration' . OAuth_Server::namespace_issuer_path() ]       = [ 'as', '' ];
+		}
+		$out = [];
+		foreach ( $paths as $path => $kind ) {
+			if ( microtime( true ) > $deadline ) {
+				$out[] = [ 'path' => $path, 'status' => null, 'answered_by' => 'unknown', 'detail' => 'not checked: the check ran out of time', 'royal_mcp_own' => true ];
+				continue;
+			}
+			$got = self::fetch_json( home_url( $path ) );
+			$who = 'prm' === $kind[0] ? self::classify_protected_resource( $got['json'], $kind[1], $issuer ) : self::classify_authorization_server( $got['json'], $issuer );
+			if ( 'nobody' === $who && $got['status'] >= 200 && $got['status'] < 300 ) {
+				$who = 'other';
+			}
+			$row = [ 'path' => $path, 'status' => $got['status'] ? (int) $got['status'] : null, 'answered_by' => $who, 'detail' => self::address_detail( $path, (int) $got['status'], (string) wp_json_encode( $got['json'] ) ), 'royal_mcp_own' => true ];
+			if ( 'other' === $who && is_array( $got['json'] ) ) {
+				$plugin = self::identify_plugin( $got['json'] );
+				if ( $plugin ) {
+					$row['answered_by_plugin'] = $plugin['name'];
+					$row['fix']                = $plugin['fix'];
+				}
+			}
+			$out[] = $row;
 		}
 		return $out;
 	}
@@ -350,10 +565,14 @@ class Coexistence_Check {
 
 	/** Who answers each shared address: Royal MCP, another plugin, the site, or nobody. */
 	private static function shared_addresses() {
-		$out   = [];
-		$down  = '';
+		$deadline = microtime( true ) + 10;
+		$out      = [];
+		$down     = '';
 		foreach ( self::SHARED_PATHS as $path ) {
 			// One address the site does not answer means the rest would time out too.
+			if ( '' === $down && microtime( true ) > $deadline ) {
+				$down = 'not checked: the check ran out of time';
+			}
 			if ( '' !== $down ) {
 				$out[] = [ 'path' => $path, 'status' => null, 'answered_by' => 'unknown', 'detail' => $down ];
 				continue;
@@ -370,7 +589,8 @@ class Coexistence_Check {
 			$body  = (string) wp_remote_retrieve_body( $resp );
 			$out[] = [ 'path' => $path, 'status' => $code, 'answered_by' => self::who_answered( $path, $code, $body ), 'detail' => self::address_detail( $path, $code, $body ) ];
 		}
-		return $out;
+		// Royal MCP's own addresses come after the five shared ones, which keep their order.
+		return '' === $down ? array_merge( $out, self::own_addresses( $deadline ) ) : $out;
 	}
 
 	/**

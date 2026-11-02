@@ -69,7 +69,7 @@ class Well_Known_Notice {
      * Render the notice when the self-check confirms /.well-known/ is blocked.
      */
     public function maybe_render_notice() {
-        if ( ! current_user_can( 'manage_options' ) ) {
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) {
             return;
         }
 
@@ -659,6 +659,10 @@ class Well_Known_Notice {
         );
         $detail = get_transient( self::FOREIGN_AS_TRANSIENT );
         $detail = is_array( $detail ) ? $detail : [];
+        // Another plugin owns the site-root documents and Royal MCP's own addresses are in use.
+        $root_owner = empty( $detail['scoped'] ) && class_exists( '\Royal_MCP\Integrations\Coexistence_Check' ) && class_exists( '\Royal_MCP\OAuth\Server' )
+            && '' !== \Royal_MCP\OAuth\Server::namespace_issuer()
+            ? \Royal_MCP\Integrations\Coexistence_Check::root_documents_owner() : '';
         ?>
         <div class="notice notice-error royal-mcp-foreign-as-notice">
             <p>
@@ -670,6 +674,14 @@ class Well_Known_Notice {
                     printf(
                         /* translators: %s: Royal MCP's own discovery path */
                         esc_html__( 'AI clients find Royal MCP\'s sign-in pages through %s, an address only Royal MCP serves. On this site a different plugin answers it before Royal MCP can, so OAuth connections to Royal MCP go to that plugin instead. Deactivate the other plugin, or ask its author to answer only its own addresses.', 'royal-mcp' ),
+                        '<code>' . esc_html( '/.well-known/oauth-authorization-server' . \Royal_MCP\OAuth\Server::namespace_issuer_path() ) . '</code>'
+                    );
+                } elseif ( '' !== $root_owner ) {
+                    printf(
+                        /* translators: 1: plugin name, 2: the site-root discovery path, 3: Royal MCP's own discovery path */
+                        esc_html__( '%1$s answers the site-root sign-in address %2$s, so Royal MCP leaves that address to it. AI clients that use Royal MCP\'s own address %3$s still connect to Royal MCP; clients that only read the site-root address get the other plugin\'s sign-in.', 'royal-mcp' ),
+                        '<strong>' . esc_html( $root_owner ) . '</strong>',
+                        '<code>/.well-known/oauth-authorization-server</code>',
                         '<code>' . esc_html( '/.well-known/oauth-authorization-server' . \Royal_MCP\OAuth\Server::namespace_issuer_path() ) . '</code>'
                     );
                 } else {
@@ -867,7 +879,7 @@ class Well_Known_Notice {
      * Persist a per-user dismissal of the notice when the dismiss link is followed.
      */
     public function maybe_dismiss() {
-        if ( ! current_user_can( 'manage_options' ) ) {
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) {
             return;
         }
 
@@ -995,7 +1007,7 @@ class Well_Known_Notice {
      * matches the fresh state.
      */
     public function handle_recheck() {
-        if ( ! current_user_can( 'manage_options' ) ) {
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) {
             wp_die(
                 esc_html__( 'You do not have permission to re-check OAuth discovery.', 'royal-mcp' ),
                 '',

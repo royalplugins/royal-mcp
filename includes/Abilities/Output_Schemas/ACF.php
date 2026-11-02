@@ -44,14 +44,22 @@ class ACF {
 				),
 			),
 			'acf_get_field_groups' => array(
-				'type'  => 'array',
-				'items' => array(
-					'type'                 => 'object',
-					'additionalProperties' => true,
-					'properties'           => array(
-						'id'    => array( 'type' => array( 'integer', 'string' ) ),
-						'title' => array( 'type' => 'string' ),
-						'key'   => array( 'type' => 'string' ),
+				'type'                 => 'object',
+				'additionalProperties' => true,
+				'properties'           => array(
+					'count'        => array( 'type' => 'integer' ),
+					'field_groups' => array(
+						'type'  => 'array',
+						'items' => array(
+							'type'                 => 'object',
+							'additionalProperties' => true,
+							'properties'           => array(
+								'key'      => array( 'type' => 'string' ),
+								'title'    => array( 'type' => 'string' ),
+								'location' => array( 'type' => 'array' ),
+								'fields'   => array( 'type' => 'array' ),
+							),
+						),
 					),
 				),
 			),

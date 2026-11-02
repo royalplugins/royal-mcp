@@ -199,7 +199,7 @@ $royal_mcp_redirect_host = isset( $rmcp_oauth['redirect_host'] ) ? $rmcp_oauth['
         </div>
         <?php endif; ?>
 
-        <form method="post" action="<?php echo esc_url( home_url( '/authorize' ) ); ?>">
+        <form method="post" action="<?php echo esc_url( isset( $rmcp_oauth['form_action'] ) ? $rmcp_oauth['form_action'] : home_url( '/authorize' ) ); ?>">
             <input type="hidden" name="_wpnonce" value="<?php echo esc_attr( $rmcp_oauth['nonce'] ); ?>">
             <input type="hidden" name="client_id" value="<?php echo esc_attr( $rmcp_oauth['client_id'] ); ?>">
             <input type="hidden" name="redirect_uri" value="<?php echo esc_attr( $rmcp_oauth['redirect_uri'] ); ?>">

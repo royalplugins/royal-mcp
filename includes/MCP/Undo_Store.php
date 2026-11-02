@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  * Storage: one wp_options row per snapshot, keyed `royal_mcp_undo_<token>`,
  * autoload = no (snapshots are read only when a specific undo is requested).
  *
- * TTL: 72 hours by default. Expired rows are pruned lazily on next read AND
+ * TTL: 72 hours by default (filter royal_mcp_undo_ttl_seconds). Expired rows are pruned lazily on next read AND
  * bulk-swept on the shared `royal_mcp_token_cleanup` daily cron.
  */
 class Undo_Store {
@@ -54,7 +54,7 @@ class Undo_Store {
     public static function store( array $snapshot ): array {
         $token          = bin2hex( random_bytes( 16 ) );
         $created_at_int = time();
-        $expires_at_int = $created_at_int + self::DEFAULT_TTL;
+        $expires_at_int = $created_at_int + self::ttl_seconds();
 
         // Bind the snapshot to the user who created it so replay is scoped
         // to the same caller. read() enforces the match on retrieval; the
@@ -78,8 +78,34 @@ class Undo_Store {
             'token'      => $token,
             'expires_at' => gmdate( 'c', $expires_at_int ),
             'summary'    => isset( $snapshot['summary'] ) ? (string) $snapshot['summary'] : '',
-            'ttl_hours'  => (int) ( self::DEFAULT_TTL / 3600 ),
+            'ttl_hours'  => self::ttl_hours(),
         ];
+    }
+
+    /** How long an undo token lasts, in seconds (at least one hour). */
+    public static function ttl_seconds(): int {
+        return max( 3600, (int) apply_filters( 'royal_mcp_undo_ttl_seconds', self::DEFAULT_TTL ) );
+    }
+
+    public static function ttl_hours(): int {
+        return (int) floor( self::ttl_seconds() / 3600 );
+    }
+
+    /** The undo window for people: "7 days" or "72 hours". */
+    public static function window_label(): string {
+        $hours = self::ttl_hours();
+        if ( $hours > 72 && 0 === $hours % 24 ) {
+            /* translators: %d: number of days */
+            return sprintf( _n( '%d day', '%d days', $hours / 24, 'royal-mcp' ), $hours / 24 );
+        }
+        /* translators: %d: number of hours */
+        return sprintf( _n( '%d hour', '%d hours', $hours, 'royal-mcp' ), $hours );
+    }
+
+    /** The undo window as a modifier: "7-day" or "72-hour". */
+    public static function window_adjective(): string {
+        $hours = self::ttl_hours();
+        return ( $hours > 72 && 0 === $hours % 24 ) ? ( $hours / 24 ) . '-day' : $hours . '-hour';
     }
 
     /**
@@ -96,7 +122,7 @@ class Undo_Store {
             return null;
         }
         $stored = get_option( self::OPTION_PREFIX . $token );
-        if ( ! $stored ) {
+        if ( ! $stored || ! is_string( $stored ) ) {
             return null;
         }
         $raw = @gzuncompress( base64_decode( $stored ) );
@@ -255,7 +281,8 @@ class Undo_Store {
         if ( ! preg_match( '/^[a-f0-9]{32}$/', $token ) ) {
             return null;
         }
-        return self::decode( (string) get_option( self::OPTION_PREFIX . $token, '' ) );
+        $stored = get_option( self::OPTION_PREFIX . $token, '' );
+        return is_string( $stored ) ? self::decode( $stored ) : null;
     }
 
     private static function decode( string $stored ): ?array {
@@ -419,13 +446,17 @@ class Undo_Store {
         );
         $deleted = 0;
         foreach ( (array) $option_names as $option_name ) {
-            $token = substr( $option_name, strlen( self::OPTION_PREFIX ) );
-            // read() auto-deletes on expiry; count deletes by checking whether the row is gone after.
-            $existed_before = (bool) get_option( $option_name );
-            self::read( $token );
-            $existed_after = (bool) get_option( $option_name );
-            if ( $existed_before && ! $existed_after ) {
-                $deleted++;
+            $token = substr( (string) $option_name, strlen( self::OPTION_PREFIX ) );
+            if ( ! preg_match( '/^[a-f0-9]{32}$/', $token ) ) {
+                continue; // not a snapshot row
+            }
+            // A row that cannot be read is no use to anyone; an expired one is past its window.
+            $data = self::decode_row( $token );
+            if ( null === $data || ( isset( $data['expires_at'] ) && (int) $data['expires_at'] < time() ) ) {
+                self::delete( $token );
+                if ( false === get_option( (string) $option_name, false ) ) {
+                    $deleted++;
+                }
             }
         }
         return $deleted;
