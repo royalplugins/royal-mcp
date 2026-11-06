@@ -400,6 +400,27 @@ class Settings_Page {
             delete_transient( \Royal_MCP\Discovery\Agent_Skills_Index::CACHE_KEY );
         }
 
+        // Tools switched off for browser agents. The form posts a marker and the
+        // ticked tools; everything not ticked is stored as off, so a tool added in
+        // a later release starts on. Without the marker the stored list is kept.
+        $prior_webmcp_off = array_keys( \Royal_MCP\MCP\Server::webmcp_disabled_tools() );
+        if ( isset( $input['webmcp_tools_form'] ) ) {
+            $webmcp_on = isset( $input['webmcp_allowed_tools'] ) && is_array( $input['webmcp_allowed_tools'] )
+                ? array_map( 'sanitize_key', array_filter( wp_unslash( $input['webmcp_allowed_tools'] ), 'is_string' ) )
+                : [];
+            $next_webmcp_off = array_values( array_diff( \Royal_MCP\MCP\Server::webmcp_switchable_tools(), $webmcp_on ) );
+        } else {
+            $next_webmcp_off = $prior_webmcp_off;
+        }
+        $sanitized['webmcp_disabled_tools'] = $next_webmcp_off;
+        $webmcp_off_sorted = $next_webmcp_off;
+        sort( $webmcp_off_sorted );
+        $prior_off_sorted = $prior_webmcp_off;
+        sort( $prior_off_sorted );
+        if ( $prior_off_sorted !== $webmcp_off_sorted ) {
+            self::log_setting_change( 'settings:webmcp_disabled_tools', implode( ',', $prior_off_sorted ), implode( ',', $webmcp_off_sorted ), 'settings' );
+        }
+
         // Abilities API registration — standalone option key, NOT nested
         // inside royal_mcp_settings, so the bootstrap gate at royal-mcp.php
         // can read it without depending on the settings array being
@@ -408,10 +429,20 @@ class Settings_Page {
         // Store as string '1' / '0' — booleans serialize false to empty string,
         // which is indistinguishable from "option missing" and defeats the
         // default-on fallback at read sites.
-        update_option(
-            'royal_mcp_abilities_registration_enabled',
-            isset( $input['abilities_registration_enabled'] ) ? '1' : '0'
-        );
+        // Only the settings form changes it: a programmatic save (WP-CLI, another tool) that does not
+        // carry the field leaves registration as it is.
+        if ( $from_form ) {
+            update_option(
+                'royal_mcp_abilities_registration_enabled',
+                isset( $input['abilities_registration_enabled'] ) ? '1' : '0'
+            );
+        }
+
+        // Recording PHP fatal errors for wp_get_php_errors: standalone option, on by default,
+        // changed only by the settings form itself.
+        if ( $from_form ) {
+            update_option( \Royal_MCP\Integrations\Php_Errors::SETTING, isset( $input['record_php_errors'] ) ? '1' : '0', false );
+        }
 
         // Access token TTL — whitelist against the 4 UI choices; anything else falls back to the default.
         $posted_ttl = isset($input['access_token_ttl_seconds']) ? (int) $input['access_token_ttl_seconds'] : 0;

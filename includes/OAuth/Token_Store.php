@@ -28,6 +28,9 @@ class Token_Store {
      */
     const REFRESH_GRACE_SECONDS = 60;
 
+    /** How many times a used refresh token may be presented again inside its grace window. */
+    const REFRESH_GRACE_RETRIES = 3;
+
     /** Whitelist of access token TTL values selectable in Settings → OAuth. */
     const ACCESS_TOKEN_TTL_CHOICES = [ 3600, 28800, 86400, 604800 ];
 
@@ -411,8 +414,12 @@ class Token_Store {
                     return false;
                 }
             }
-            // A rotated token presented again inside the grace window is a client retry; it gets its own pair.
+            // A rotated token presented again inside the grace window is a client retry; it gets its own pair,
+            // a few times at most (each retry would otherwise mint another working pair).
             if ( time() - (int) strtotime( $row['rotated_at'] . ' UTC' ) <= self::REFRESH_GRACE_SECONDS ) {
+                if ( ! self::claim_grace_retry( $hash ) ) {
+                    return false;
+                }
                 return $row;
             }
             // Presented again after the grace window: the token has been copied. End the whole grant.
@@ -630,6 +637,74 @@ class Token_Store {
         }
 
         return self::revoke_connection( $row['client_id'], (int) $row['user_id'] );
+    }
+
+    /**
+     * Count one more retry of a used refresh token inside its grace window, if the cap allows it.
+     * The counter is a database row changed by single conditional statements, so two requests at
+     * the same moment cannot both take the last retry. Rows are removed by the daily cleanup.
+     *
+     * @param string $hash sha256 of the presented refresh token.
+     * @return bool True when this retry may get a new pair.
+     */
+    private static function claim_grace_retry( $hash ) {
+        global $wpdb;
+        $cap = (int) apply_filters( 'royal_mcp_refresh_grace_retries', self::REFRESH_GRACE_RETRIES );
+        if ( $cap <= 0 ) {
+            return false;
+        }
+        $name = self::GRACE_RETRY_PREFIX . substr( (string) $hash, 0, 40 );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- atomic counter row
+        $inserted = (int) $wpdb->query( $wpdb->prepare( "INSERT IGNORE INTO {$wpdb->options} ( option_name, option_value, autoload ) VALUES ( %s, '1', 'no' )", $name ) );
+        if ( 1 === $inserted ) {
+            return true;
+        }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- atomic counter row
+        $claimed = (int) $wpdb->query( $wpdb->prepare( "UPDATE {$wpdb->options} SET option_value = CAST( option_value AS UNSIGNED ) + 1 WHERE option_name = %s AND CAST( option_value AS UNSIGNED ) < %d", $name, $cap ) );
+        return 1 === $claimed;
+    }
+
+    /** Option-name prefix of the grace-window retry counters. */
+    const GRACE_RETRY_PREFIX = 'royal_mcp_rt_retry_';
+
+    /**
+     * Revoke every token issued to one client, for every user.
+     *
+     * @param string $client_id Client identifier.
+     * @return int Token rows revoked.
+     */
+    public static function revoke_client_tokens( $client_id ) {
+        global $wpdb;
+        $client_id = (string) $client_id;
+        if ( '' === $client_id ) {
+            return 0;
+        }
+        $table = self::tokens_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from a safe helper
+        return (int) $wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET revoked = 1 WHERE client_id = %s AND revoked <> 1", $client_id ) );
+    }
+
+    /**
+     * When the static client id in Settings is changed or cleared, the old id's tokens stop working.
+     * Hooked on update_option_royal_mcp_settings.
+     *
+     * @param mixed $old_value Settings before the save.
+     * @param mixed $new_value Settings after the save.
+     */
+    public static function on_settings_updated( $old_value, $new_value ) {
+        $old_id = is_array( $old_value ) ? (string) ( $old_value['oauth_client_id'] ?? '' ) : '';
+        $new_id = is_array( $new_value ) ? (string) ( $new_value['oauth_client_id'] ?? '' ) : '';
+        if ( '' === $old_id || $old_id === $new_id ) {
+            return;
+        }
+        // A registered client with the same id is a different application; leave its tokens alone.
+        global $wpdb;
+        $clients = self::clients_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from a safe helper
+        if ( $wpdb->get_var( $wpdb->prepare( "SELECT 1 FROM `{$clients}` WHERE client_id = %s LIMIT 1", $old_id ) ) ) {
+            return;
+        }
+        self::revoke_client_tokens( $old_id );
     }
 
     /**
@@ -877,6 +952,10 @@ class Token_Store {
                 $now
             )
         );
+
+        // Grace-window retry counters: their tokens' windows ended long before the daily run.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $wpdb->esc_like( self::GRACE_RETRY_PREFIX ) . '%' ) );
     }
 
     /* ------------------------------------------------------------------
@@ -1146,33 +1225,52 @@ class Token_Store {
      *                    not a CIMD client, feature disabled, or fetch/validate failed.
      */
     public static function resolve_cimd_client( $client_id ) {
+        self::$cimd_failure = '';
         if ( ! self::is_cimd_client( $client_id ) ) {
             return null;
         }
 
         if ( ! apply_filters( 'royal_mcp_cimd_enabled', true ) ) {
+            self::$cimd_failure = 'disabled';
             return null;
         }
 
         if ( self::is_rejected_cimd_client( $client_id ) ) {
+            self::$cimd_failure = 'rejected';
             return null;
         }
 
         $metadata = self::fetch_cimd_metadata( $client_id );
         if ( null === $metadata ) {
+            if ( '' === self::$cimd_failure ) {
+                self::$cimd_failure = 'fetch_failed';
+            }
             return null;
         }
 
         if ( ! self::validate_cimd_metadata( $metadata, $client_id ) ) {
+            self::$cimd_failure = 'invalid_document';
             return null;
         }
 
         $result = self::register_cimd_client( $client_id, $metadata );
         if ( is_wp_error( $result ) ) {
+            self::$cimd_failure = 'not_saved';
             return null;
         }
 
         return $result;
+    }
+
+    /** Why the last resolve_cimd_client() call in this request found no client ('' when it did, or was not a URL client). */
+    private static $cimd_failure = '';
+
+    /**
+     * The reason the last metadata-document lookup failed: disabled, rejected, rate_limited,
+     * fetch_failed, invalid_document, not_saved, or '' when nothing failed.
+     */
+    public static function cimd_failure_reason() {
+        return self::$cimd_failure;
     }
 
     /**
@@ -1210,6 +1308,7 @@ class Token_Store {
         $rkey  = 'royal_mcp_cimd_rate_' . md5( $ip );
         $count = (int) get_transient( $rkey );
         if ( $limit > 0 && $count >= $limit ) {
+            self::$cimd_failure = 'rate_limited';
             return null;
         }
         set_transient( $rkey, $count + 1, 10 * MINUTE_IN_SECONDS ); // audit:transient-ttl-only -- per-address fetch counter

@@ -42,30 +42,43 @@ class Pro_Notice {
         return empty( $seen ) || version_compare( (string) $seen, ROYAL_MCP_VERSION, '<' );
     }
 
+    /**
+     * The notice's Pro link with its campaign tags; query arguments already on
+     * the base link are kept.
+     */
+    public static function pro_url() {
+        return add_query_arg(
+            [
+                'utm_source'   => 'royal-mcp-free',
+                'utm_medium'   => 'wp-admin-banner',
+                'utm_campaign' => 'royally-audit-log',
+            ],
+            'https://royalplugins.com/royally/'
+        );
+    }
+
     public function render() {
         if ( ! self::should_show() ) {
             return;
         }
-        $pro_url = add_query_arg(
-            [
-                'utm_source'   => 'admin_notice',
-                'utm_medium'   => 'free_plugin',
-                'utm_content'  => 'post_launch',
-                'utm_campaign' => str_replace( '.', '', ROYAL_MCP_VERSION ) . '_postlaunch_notice',
-            ],
-            \Royal_MCP\Chrome\Royal_MCP_Chrome::PRO_POST_LAUNCH_URL_BASE
-        );
+        $pro_url = self::pro_url();
         $dismiss_url = wp_nonce_url( admin_url( 'admin-post.php?action=' . self::DISMISS_ACTION ), self::DISMISS_ACTION );
         ?>
         <div class="notice notice-info royal-mcp-pro-notice" style="padding: 14px 18px; background: #eff6ff; border-left-color: #1d4ed8;">
             <p style="margin: 0 0 8px; font-size: 14px;">
-                <strong><?php esc_html_e( 'Royal MCP Pro & Royally starts at just $9/month', 'royal-mcp' ); ?></strong>
+                <strong><?php esc_html_e( 'See everything your AI agent changed this week, and undo any of it.', 'royal-mcp' ); ?></strong>
+            </p>
+            <p style="margin: 0 0 8px;">
+                <?php esc_html_e( 'Royal MCP Pro adds an audit log with one-click undo, a 7-day undo window, update rollback and 400+ tools for WooCommerce, Elementor, Divi and ACF.', 'royal-mcp' ); ?>
+            </p>
+            <p style="margin: 0 0 8px;">
+                <?php esc_html_e( "Royally, in the cloud, brings all your sites together and connects Cloudflare and 9 other WordPress MCP servers, including Elementor's own. Updates and bulk changes can run on your linked staging copy first, and you approve them in one place.", 'royal-mcp' ); ?>
             </p>
             <p style="margin: 0 0 12px;">
-                <?php esc_html_e( 'Get 400+ tools, bulk edits with undo, and Royally to manage AI changes across every site you link up.', 'royal-mcp' ); ?>
+                <strong><?php esc_html_e( 'One plan covers both, from $9/month.', 'royal-mcp' ); ?></strong>
             </p>
             <p style="margin: 0;">
-                <a href="<?php echo esc_url( $pro_url ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary" style="background:#1d4ed8;border-color:#1e40af;color:#fff;"><?php esc_html_e( 'Upgrade now', 'royal-mcp' ); ?></a>
+                <a href="<?php echo esc_url( $pro_url ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary" style="background:#1d4ed8;border-color:#1e40af;color:#fff;"><?php esc_html_e( 'Compare Pro Plans Now', 'royal-mcp' ); ?></a>
                 &nbsp;
                 <a href="<?php echo esc_url( $dismiss_url ); ?>" class="royal-mcp-pro-notice-dismiss" style="margin-left: 6px;"><?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?></a>
             </p>

@@ -52,6 +52,9 @@ class Change_View {
 		'wc_update_order_status', 'wp_set_comment_status',
 		'tablepress_update_cells', 'tablepress_create_table', 'tablepress_copy_table', 'snippets_update_metadata',
 		'complianz_update_banner_text', 'complianz_update_cookie_description',
+		'redirection_create_redirect', 'redirection_update_redirect',
+		'relevanssi_reindex_post', 'relevanssi_update_synonyms', 'relevanssi_add_stopword',
+		'mailpoet_save_subscriber', 'mailpoet_set_subscriber_lists', 'mailpoet_save_draft',
 	];
 
 	/** The tool that made a change. */
@@ -201,6 +204,16 @@ class Change_View {
 			case 'complianz_update_banner_text':
 			case 'complianz_update_cookie_description':
 				return [ [ \Royal_MCP\Integrations\Complianz::cap() ] ];
+			case 'relevanssi_reindex_post':
+				return [ [ \Royal_MCP\Integrations\Relevanssi::options_cap() ], [ 'edit_post', $id( 'post_id' ) ] ];
+			case 'relevanssi_update_synonyms':
+			case 'relevanssi_add_stopword':
+				return [ [ \Royal_MCP\Integrations\Relevanssi::options_cap() ] ];
+			case 'mailpoet_save_subscriber':
+			case 'mailpoet_set_subscriber_lists':
+				return current_user_can( 'mailpoet_manage_subscribers' ) ? [ [ 'manage_options' ] ] : [];
+			case 'mailpoet_save_draft':
+				return current_user_can( 'mailpoet_manage_emails' ) ? [ [ 'manage_options' ] ] : [];
 		}
 		return [ [ 'manage_options' ] ];
 	}
@@ -264,6 +277,9 @@ class Change_View {
 		];
 		if ( ! empty( $change['undone_at'] ) ) {
 			$out['undone_at'] = gmdate( 'c', (int) $change['undone_at'] );
+		} elseif ( ! empty( $change['partial_undo'] ) ) {
+			$out['partially_undone']    = true;
+			$out['partially_undone_at'] = gmdate( 'c', (int) ( $change['partial_undo']['at'] ?? 0 ) );
 		}
 		if ( $with_token && 'active' === $status && ! empty( $change['token'] ) ) {
 			$out['undo_token'] = (string) $change['token'];
@@ -355,6 +371,9 @@ class Change_View {
 			if ( 'active' === $out['status'] ) {
 				$notes[] = __( 'This has been changed again since; undo restores only when the value is still what this change wrote, so it will likely be refused.', 'royal-mcp' );
 			}
+		}
+		if ( 'active' === $out['status'] && ! empty( $out['partially_undone'] ) ) {
+			$notes[] = __( 'This change was partly undone; undo again restores only what is still left.', 'royal-mcp' );
 		}
 		if ( 'undone' === $out['status'] ) {
 			$notes[] = __( 'This change was undone. "Before" is what undo restored.', 'royal-mcp' );
@@ -754,6 +773,27 @@ class Change_View {
 				}
 				break;
 
+			case 'relevanssi_update_synonyms':
+			case 'relevanssi_add_stopword':
+				$rlv_option = 'relevanssi_update_synonyms' === $op ? 'relevanssi_synonyms' : 'relevanssi_stopwords';
+				$rlv_all    = get_option( $rlv_option, [] );
+				$rlv_lang   = (string) ( $t['language'] ?? '' );
+				$rlv_has    = is_array( $rlv_all ) && array_key_exists( $rlv_lang, $rlv_all );
+				$rows[]     = self::pair_row( (string) ( $t['relevanssi_setting'] ?? 'value' ), $pre['prior_value'] ?? null, $pre['applied_value'] ?? null, $rlv_has ? (string) $rlv_all[ $rlv_lang ] : null, true );
+				break;
+
+			case 'relevanssi_reindex_post':
+				$rows[] = [ 'field' => 'index_terms', 'before' => count( (array) ( $pre['rows'] ?? [] ) ) ];
+				$note   = __( 'No live comparison for this kind of change.', 'royal-mcp' );
+				break;
+
+			case 'mailpoet_save_subscriber':
+			case 'mailpoet_set_subscriber_lists':
+			case 'mailpoet_save_draft':
+				$rows = \Royal_MCP\Integrations\MailPoet::change_rows( $op, $t, $pre );
+				$note = __( 'No live comparison for this kind of change. Email addresses are not shown.', 'royal-mcp' );
+				break;
+
 			default:
 				foreach ( $pre as $field => $before ) {
 					$rows[] = [ 'field' => (string) $field, 'before' => $before ];
@@ -786,7 +826,8 @@ class Change_View {
 		'option_name' => 'option', 'mod_name' => 'theme mod', 'theme_slug' => 'custom CSS of theme',
 		'meta_key' => 'meta key', 'adapter' => 'SEO plugin', 'code' => 'code',
 		'table_id' => 'TablePress table', 'snippet_id' => 'snippet',
-		'banner_id' => 'cookie banner', 'cookie_id' => 'cookie',
+		'banner_id' => 'cookie banner', 'cookie_id' => 'cookie', 'relevanssi_setting' => 'Relevanssi',
+		'subscriber_id' => 'MailPoet subscriber', 'newsletter_id' => 'MailPoet email',
 	];
 
 	/** Short name of what a change touched, for example: post 12 "Hello", meta key price. */

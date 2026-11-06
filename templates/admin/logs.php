@@ -77,6 +77,9 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
                 <th scope="col" class="manage-column column-action">
                     <?php esc_html_e('Action', 'royal-mcp'); ?>
                 </th>
+                <th scope="col" class="manage-column column-who">
+                    <?php esc_html_e('User / client', 'royal-mcp'); ?>
+                </th>
                 <th scope="col" class="manage-column column-status">
                     <?php esc_html_e('Status', 'royal-mcp'); ?>
                 </th>
@@ -88,7 +91,7 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
         <tbody>
             <?php if (empty($royal_mcp_logs)) : ?>
             <tr>
-                <td colspan="5" class="no-items">
+                <td colspan="6" class="no-items">
                     <?php esc_html_e('No activity logs found.', 'royal-mcp'); ?>
                 </td>
             </tr>
@@ -103,6 +106,38 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
                     </td>
                     <td class="column-action">
                         <code><?php echo esc_html($royal_mcp_log->action); ?></code>
+                    </td>
+                    <td class="column-who">
+                        <?php
+                        $royal_mcp_req   = json_decode((string) $royal_mcp_log->request_data, true);
+                        $royal_mcp_uid   = is_array($royal_mcp_req) && isset($royal_mcp_req['user_id']) && is_numeric($royal_mcp_req['user_id']) ? (int) $royal_mcp_req['user_id'] : 0;
+                        $royal_mcp_user  = $royal_mcp_uid > 0 ? get_userdata($royal_mcp_uid) : false;
+                        $royal_mcp_cid   = is_array($royal_mcp_req) && isset($royal_mcp_req['client_id']) && is_string($royal_mcp_req['client_id']) ? $royal_mcp_req['client_id'] : '';
+                        $royal_mcp_auth  = is_array($royal_mcp_req) && isset($royal_mcp_req['auth']) && is_string($royal_mcp_req['auth']) ? $royal_mcp_req['auth'] : '';
+                        $royal_mcp_route = is_array($royal_mcp_req) && isset($royal_mcp_req['route']) && is_string($royal_mcp_req['route']) ? $royal_mcp_req['route'] : '';
+                        $royal_mcp_via   = '';
+                        if ('' !== $royal_mcp_cid) {
+                            $royal_mcp_client = \Royal_MCP\OAuth\Token_Store::get_client($royal_mcp_cid);
+                            $royal_mcp_via    = is_array($royal_mcp_client) && !empty($royal_mcp_client['client_name']) ? (string) $royal_mcp_client['client_name'] : $royal_mcp_cid;
+                        } elseif ('api-key' === $royal_mcp_auth) {
+                            $royal_mcp_via = __('API key', 'royal-mcp');
+                        } elseif ('cookie-session' === $royal_mcp_auth) {
+                            $royal_mcp_via = __('Browser agent', 'royal-mcp');
+                        } elseif ('abilities' === $royal_mcp_route) {
+                            $royal_mcp_via = __('Another MCP server or the Abilities API', 'royal-mcp');
+                        }
+                        if ($royal_mcp_user) {
+                            echo esc_html($royal_mcp_user->user_login);
+                        } elseif ($royal_mcp_uid > 0) {
+                            /* translators: %d: user ID */
+                            echo esc_html(sprintf(__('User %d', 'royal-mcp'), $royal_mcp_uid));
+                        } else {
+                            echo '&mdash;';
+                        }
+                        if ('' !== $royal_mcp_via) {
+                            echo '<br><span class="description">' . esc_html($royal_mcp_via) . '</span>';
+                        }
+                        ?>
                     </td>
                     <td class="column-status">
                         <?php

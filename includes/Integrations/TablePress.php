@@ -14,8 +14,10 @@ if ( ! defined( 'ABSPATH' ) ) {
  * server path or URL, deleting tables and editing custom CSS are not offered.
  *
  * TablePress's own capabilities apply (tablepress_list_tables, _add_tables,
- * _edit_table, _copy_table, _export_table). Cell HTML is filtered like post
- * content for users without unfiltered_html, as TablePress's editor does.
+ * _edit_tables, _copy_tables, _export_tables), and each table is checked with
+ * TablePress's per-table capabilities (tablepress_edit_table and the like).
+ * Cell HTML is filtered like post content for users without unfiltered_html,
+ * as TablePress's editor does.
  */
 class TablePress {
 

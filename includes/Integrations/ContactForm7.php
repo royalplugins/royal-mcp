@@ -1,6 +1,8 @@
 <?php
 namespace Royal_MCP\Integrations;
 
+use Royal_MCP\MCP\Support\Form_Entry_Privacy;
+
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
@@ -41,7 +43,7 @@ class ContactForm7 {
 			],
 			[
 				'name'        => 'cf7_get_form',
-				'description' => 'Get a single Contact Form 7 form by ID. Returns the parsed field list (name, type, required flag, default values, options), messages, and the raw form template. Mail settings are omitted to avoid exposing recipient addresses.',
+				'description' => 'Get a single Contact Form 7 form by ID. Returns the parsed field list (name, type, required flag, default values, options), messages, and the raw form template. Mail settings are omitted to avoid exposing recipient addresses. Email addresses and phone numbers in labels, choice values and the form template are hidden.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -52,7 +54,7 @@ class ContactForm7 {
 			],
 			[
 				'name'        => 'cf7_list_submissions',
-				'description' => 'List Contact Form 7 submissions. Requires the Flamingo add-on (or a compatible storage plugin) — CF7 does not store submissions on its own. Returns id, subject, from, timestamp, fields, and spam flag. When no storage add-on is active the response is {state: unavailable, reason: requires_addon}.',
+				'description' => 'List Contact Form 7 submissions. Requires the Flamingo add-on (or a compatible storage plugin) — CF7 does not store submissions on its own. Returns id, subject, from, timestamp, fields, and spam flag. Personal data is masked: from, from_name, from_email and personal fields (email, phone, file, hidden, fields named like a name, address or phone, and every field of a message whose form no longer exists) come back as null and are listed in masked_fields; those values, email addresses and phone numbers are hidden in the subject and other text. The site can opt in to more with the royal_mcp_form_entry_fields filter. When no storage add-on is active the response is {state: unavailable, reason: requires_addon}.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -113,9 +115,9 @@ class ContactForm7 {
 	}
 
 	private static function handle_get_form( $args ) {
-		$id = intval( $args['id'] ?? 0 );
-		if ( $id <= 0 ) {
-			throw new \Exception( 'id is required' );
+		$id = self::whole_number( $args['id'] ?? null );
+		if ( null === $id || $id <= 0 ) {
+			throw new \Exception( 'id is required and must be a positive integer.' );
 		}
 		$form = \WPCF7_ContactForm::get_instance( $id );
 		if ( ! $form ) {
@@ -135,8 +137,16 @@ class ContactForm7 {
 			];
 		}
 
-		$limit  = min( max( intval( $args['limit']  ?? 50 ), 1 ), 200 );
-		$offset = max( intval( $args['offset'] ?? 0 ), 0 );
+		// limit 0 or absent means the default; offset absent means 0.
+		$limit = self::whole_number( $args['limit'] ?? 0 );
+		if ( null === $limit ) {
+			throw new \Exception( 'limit must be a positive integer.' );
+		}
+		$limit  = 0 === $limit ? 50 : min( $limit, 200 );
+		$offset = self::whole_number( $args['offset'] ?? 0 );
+		if ( null === $offset ) {
+			throw new \Exception( 'offset must be zero or a positive integer.' );
+		}
 
 		$query = [
 			'posts_per_page' => $limit,
@@ -146,21 +156,28 @@ class ContactForm7 {
 			'post_status'    => 'any',
 		];
 
-		if ( ! empty( $args['form_id'] ) ) {
-			$form_id = intval( $args['form_id'] );
-			$form    = \WPCF7_ContactForm::get_instance( $form_id );
-			if ( $form ) {
-				// Flamingo stores channel as taxonomy term matching the form slug.
-				$query['channel'] = $form->name();
+		// form_id absent, 0 or empty means every form.
+		$form    = null;
+		$form_id = self::whole_number( $args['form_id'] ?? 0 );
+		if ( null === $form_id ) {
+			throw new \Exception( 'form_id must be a positive integer.' );
+		}
+		if ( $form_id > 0 ) {
+			$form = \WPCF7_ContactForm::get_instance( $form_id );
+			if ( ! $form ) {
+				throw new \Exception( 'Contact Form 7 form not found: ' . (int) $form_id );
 			}
+			// Flamingo stores channel as taxonomy term matching the form slug.
+			$query['channel'] = $form->name();
 		}
 
 		$messages = \Flamingo_Inbound_Message::find( $query );
 		$total    = (int) \Flamingo_Inbound_Message::count( $query );
 
-		$out = [];
+		$reveal = Form_Entry_Privacy::reveal_list( 'contact-form-7', $form ? (int) $form->id() : 0, 'list' );
+		$out    = [];
 		foreach ( $messages as $msg ) {
-			$out[] = self::format_submission( $msg );
+			$out[] = self::format_submission( $msg, $reveal );
 		}
 
 		return [
@@ -207,8 +224,8 @@ class ContactForm7 {
 				'basetype'   => $tag->basetype,
 				'required'   => method_exists( $tag, 'is_required' ) ? (bool) $tag->is_required() : false,
 				'is_input'   => in_array( $tag->basetype, $input_types, true ),
-				'labels'     => is_array( $tag->labels ) ? array_values( $tag->labels ) : [],
-				'values'     => is_array( $tag->values ) ? array_values( $tag->values ) : [],
+				'labels'     => is_array( $tag->labels ) ? Form_Entry_Privacy::form_text( array_values( $tag->labels ) ) : [],
+				'values'     => is_array( $tag->values ) ? Form_Entry_Privacy::form_text( array_values( $tag->values ) ) : [],
 				'options'    => is_array( $tag->options ) ? array_values( $tag->options ) : [],
 			];
 		}
@@ -219,30 +236,161 @@ class ContactForm7 {
 		}
 
 		return $summary + [
-			'form_template' => (string) $form->prop( 'form' ),
+			'form_template' => self::hide_in_template( (string) $form->prop( 'form' ) ),
 			'field_count'   => count( array_filter( $tags, function ( $t ) { return $t['is_input']; } ) ),
 			'fields'        => $tags,
 			'messages'      => $messages,
 		];
 	}
 
-	private static function format_submission( $msg ) {
+	/**
+	 * One stored message. Sender details and personal fields are null and named
+	 * in masked_fields unless the site lets them through.
+	 */
+	private static function format_submission( $msg, array $reveal ) {
 		$post_id  = $msg->id();
 		$post     = $post_id ? get_post( $post_id ) : null;
 		$posted   = $post ? $post->post_date_gmt : null;
+		$channel  = (string) ( $msg->channel ?? '' );
+		$types    = self::field_types( $channel );
+		$masked   = [];
+
+		$hidden = [];
+		$sender = [];
+		foreach ( [ 'from', 'from_name', 'from_email' ] as $key ) {
+			if ( Form_Entry_Privacy::reveals( $reveal, $key ) ) {
+				$sender[ $key ] = $msg->$key ?? '';
+			} else {
+				$sender[ $key ] = null;
+				$masked[]       = $key;
+				$hidden[]       = $msg->$key ?? '';
+			}
+		}
+
+		$fields = [];
+		foreach ( ( is_array( $msg->fields ?? null ) ? $msg->fields : [] ) as $name => $value ) {
+			// A field the form no longer defines (or a message whose form is gone) has no known type: masked.
+			$type = null !== $types && isset( $types[ (string) $name ] ) ? $types[ (string) $name ] : 'unknown';
+			$row  = Form_Entry_Privacy::field( (string) $name, '', $type, $value, $reveal );
+			$fields[ $name ] = $row['value'];
+			if ( $row['masked'] ) {
+				$masked[] = (string) $name;
+				$hidden[] = $value;
+			}
+		}
 
 		return [
 			'id'               => (int) $post_id,
-			'channel'          => $msg->channel ?? '',
-			'subject'          => $msg->subject ?? '',
-			'from'             => $msg->from ?? '',
-			'from_name'        => $msg->from_name ?? '',
-			'from_email'       => $msg->from_email ?? '',
-			'fields'           => is_array( $msg->fields ?? null ) ? $msg->fields : [],
+			'channel'          => $channel,
+			'subject'          => self::masked_subject( (string) ( $msg->subject ?? '' ), $hidden, $reveal ),
+		] + $sender + [
+			'fields'           => $fields,
+			'masked_fields'    => $masked,
 			'spam'             => ! empty( $msg->spam ),
 			'submitted_at'     => $posted,
 			'submitted_at_iso' => self::to_iso( $posted ),
 		];
+	}
+
+	/**
+	 * The mail subject with the values of masked fields and sender details
+	 * replaced, then email addresses and phone numbers hidden.
+	 */
+	private static function masked_subject( $subject, array $hidden, array $reveal ) {
+		$values = [];
+		array_walk_recursive( $hidden, static function ( $v ) use ( &$values ) {
+			if ( is_scalar( $v ) && strlen( trim( (string) $v ) ) >= 2 ) {
+				$values[] = trim( (string) $v );
+			}
+		} );
+		usort( $values, static function ( $a, $b ) {
+			return strlen( $b ) - strlen( $a );
+		} );
+		foreach ( array_unique( $values ) as $v ) {
+			$subject = str_ireplace( $v, '[hidden]', $subject );
+		}
+		return Form_Entry_Privacy::free_text( $subject, $reveal );
+	}
+
+	/**
+	 * Field name => CF7 field type for the form a Flamingo channel belongs to,
+	 * or null when no form has that channel.
+	 *
+	 * @param string $channel Flamingo channel (the form's slug).
+	 * @return array<string,string>|null
+	 */
+	private static function field_types( $channel ) {
+		static $cache = [];
+		if ( '' === $channel ) {
+			return null;
+		}
+		if ( ! array_key_exists( $channel, $cache ) ) {
+			$cache[ $channel ] = null;
+			$forms             = \WPCF7_ContactForm::find( [ 'name' => $channel, 'posts_per_page' => 1 ] );
+			if ( $forms ) {
+				$cache[ $channel ] = [];
+				foreach ( $forms[0]->scan_form_tags() as $tag ) {
+					if ( '' !== (string) $tag->name ) {
+						$cache[ $channel ][ (string) $tag->name ] = (string) $tag->basetype;
+					}
+				}
+			}
+		}
+		return $cache[ $channel ];
+	}
+
+	/**
+	 * The form template with email addresses and phone numbers hidden in its
+	 * text and in the quoted labels and choices of its tags. Tag names and
+	 * options (min:, max:, maxlength: and the like) are left as written, and
+	 * everything outside a hidden span stays exactly as stored.
+	 */
+	private static function hide_in_template( $template ) {
+		$out  = '';
+		$last = 0;
+		if ( preg_match_all( '/\[[^\[\]]*\]/', $template, $tags, PREG_OFFSET_CAPTURE ) ) {
+			foreach ( $tags[0] as $tag ) {
+				$out .= Form_Entry_Privacy::form_text( substr( $template, $last, $tag[1] - $last ) );
+				$out .= preg_replace_callback(
+					'/"[^"]*"|\'[^\']*\'|[^\s"\']+/',
+					static function ( $m ) {
+						$part = $m[0];
+						if ( '"' === $part[0] || "'" === $part[0] ) {
+							return Form_Entry_Privacy::form_text( $part );
+						}
+						return Form_Entry_Privacy::hide_emails( $part, false );
+					},
+					$tag[0]
+				);
+				$last = $tag[1] + strlen( $tag[0] );
+			}
+		}
+		return $out . Form_Entry_Privacy::form_text( (string) substr( $template, $last ) );
+	}
+
+	/**
+	 * A whole number from a tool argument: an integer, an integral float or a
+	 * string of digits; '' and null count as 0. Null for anything else
+	 * (arrays, booleans, signs, fractions, text).
+	 */
+	private static function whole_number( $value ) {
+		if ( null === $value || '' === $value ) {
+			return 0;
+		}
+		if ( is_float( $value ) ) {
+			if ( $value < 0 || $value > PHP_INT_MAX || floor( $value ) !== $value ) {
+				return null;
+			}
+			$value = (int) $value;
+		}
+		if ( is_int( $value ) ) {
+			return $value >= 0 ? $value : null;
+		}
+		if ( is_string( $value ) && preg_match( '/^\d{1,19}$/', $value ) ) {
+			$n = Form_Entry_Privacy::positive_int( $value );
+			return ( $n > 0 || '' === ltrim( $value, '0' ) ) ? $n : null;
+		}
+		return null;
 	}
 
 	private static function to_iso( $mysql_datetime ) {

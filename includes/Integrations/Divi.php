@@ -504,7 +504,7 @@ class Divi {
 			],
 			[
 				'name'        => 'divi_clone_page',
-				'description' => 'Duplicate a Divi page/post (D4 shortcode, D5 blocks, or mixed) as a new draft. Preserves all _et_pb_* meta, regenerates D5 clientIds, validates D4 shortcode structure before write. 72h undo deletes the created post.',
+				'description' => 'Duplicate a Divi page/post (D4 shortcode, D5 blocks, or mixed) as a new draft. Preserves all _et_pb_* meta, regenerates D5 clientIds, validates D4 shortcode structure before write. Undo (for ' . \Royal_MCP\MCP\Undo_Store::window_label() . ') deletes the created post.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -517,7 +517,7 @@ class Divi {
 			],
 			[
 				'name'        => 'divi_replace_image',
-				'description' => 'Swap an image URL across every image-bearing Divi element on a post — module src, background_image, D5 image block URLs, gallery entries. Dual-format (D4 shortcodes + D5 blocks + mixed). Validates result. 72h undo restores prior content + meta.',
+				'description' => 'Swap an image URL across every image-bearing Divi element on a post — module src, background_image, D5 image block URLs, gallery entries. Dual-format (D4 shortcodes + D5 blocks + mixed). Validates result. Undo (for ' . \Royal_MCP\MCP\Undo_Store::window_label() . ') restores prior content + meta.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -531,7 +531,7 @@ class Divi {
 			],
 			[
 				'name'        => 'divi_import_template',
-				'description' => 'Apply an et_pb_layout library entry to a target page. mode=merge appends (top or bottom); mode=replace overwrites (with backup meta stamp). Dual-format aware — logs warning on target/template format mismatch. 72h undo restores prior post_content.',
+				'description' => 'Apply an et_pb_layout library entry to a target page. mode=merge appends (top or bottom); mode=replace overwrites (with backup meta stamp). Dual-format aware — logs warning on target/template format mismatch. Undo (for ' . \Royal_MCP\MCP\Undo_Store::window_label() . ') restores prior post_content.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [

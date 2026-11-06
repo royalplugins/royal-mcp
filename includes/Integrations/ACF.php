@@ -68,7 +68,7 @@ class ACF {
 			],
 			[
 				'name'        => 'acf_update_field',
-				'description' => 'Update an ACF field value on a post. Accepts the field name (or field key) and a value matching the field type — scalar for text/number/select-single, array for repeater rows / flexible content / select-multi, post ID for post_object/relationship, attachment ID for image/file. ACF stores it correctly per field type.',
+				'description' => 'Update an ACF field value on a post. Accepts the field name (or field key) and a value matching the field type — scalar for text/number/select-single, array for repeater rows / flexible content / select-multi, post ID for post_object/relationship, attachment ID for image/file. ACF stores it correctly per field type. Updates the modified date of the post.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -209,12 +209,25 @@ class ACF {
 					&& ! current_user_can( 'edit_post_meta', $post_id, $meta_key ) ) {
 					throw new \Exception( 'You do not have permission to write that field.' );
 				}
-				$result = update_field( $field_name, $args['value'], $post_id );
+				$meta_before = self::post_meta_fingerprint( $post_id );
+				$result      = update_field( $field_name, $args['value'], $post_id );
+				$warnings    = [];
 				if ( false === $result ) {
-					throw new \Exception( 'Failed to update ACF field "' . esc_html( $field_name ) . '" on post ' . esc_html( (string) $post_id ) );
+					// update_field() also returns false when a stored value did not change: the group,
+					// repeater or flexible content row itself, or a value that was already there.
+					// Fail only when nothing was written and the field does not hold the value now.
+					if ( self::post_meta_fingerprint( $post_id ) === $meta_before ) {
+						if ( ! self::field_holds( $field_name, $post_id, $args['value'] ) ) {
+							throw new \Exception( 'Failed to update ACF field "' . esc_html( $field_name ) . '" on post ' . esc_html( (string) $post_id ) );
+						}
+						$warnings[] = 'No-op: the field already held this value.';
+					}
+				}
+				if ( ! $warnings ) {
+					\Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
 				}
 				$updated = get_field_object( $field_name, $post_id, true, true );
-				return [
+				$out     = [
 					'post_id'    => $post_id,
 					'field_name' => $updated['name'] ?? $field_name,
 					'field_key'  => $updated['key'] ?? '',
@@ -222,6 +235,10 @@ class ACF {
 					'value'      => self::redact_field( is_array( $updated ) ? $updated : [], self::flatten_value( $updated['value'] ?? null ) ),
 					'success'    => true,
 				];
+				if ( $warnings ) {
+					$out['warnings'] = $warnings;
+				}
+				return $out;
 
 			case 'acf_get_field_groups':
 				// discovery of registered field groups is editor-tier
@@ -384,5 +401,116 @@ class ACF {
 		}
 		// Anything else (object that isn't WP_*, resource, etc.) — JSON-safe cast.
 		return is_object( $value ) ? get_object_vars( $value ) : null;
+	}
+
+	/**
+	 * Hash of the custom fields stored on a post, read fresh from the database. The editor's lock
+	 * and last-editor marks are left out: an open editor refreshes them on its own.
+	 */
+	private static function post_meta_fingerprint( $post_id ) {
+		wp_cache_delete( (int) $post_id, 'post_meta' );
+		$meta = (array) get_post_meta( (int) $post_id );
+		unset( $meta['_edit_lock'], $meta['_edit_last'] );
+		return md5( (string) maybe_serialize( $meta ) );
+	}
+
+	/**
+	 * Whether the field's stored (unformatted) value already equals the requested one, keys and
+	 * order included. Sub-fields may be sent by name or by key; a group compares only the
+	 * sub-fields sent. Flexible content and anything not understood count as "not equal".
+	 */
+	private static function field_holds( $field_name, $post_id, $requested ) {
+		$field = function_exists( 'acf_maybe_get_field' ) ? acf_maybe_get_field( $field_name, $post_id, false ) : false;
+		if ( ! is_array( $field ) ) {
+			return false;
+		}
+		$want = self::normalize_for_field( $requested, $field );
+		$have = self::normalize_for_field( get_field( $field_name, $post_id, false ), $field );
+		if ( null === $want || null === $have ) {
+			return false;
+		}
+		if ( 'group' === ( $field['type'] ?? '' ) && is_array( $want ) && is_array( $have ) ) {
+			foreach ( $want as $k => $v ) {
+				if ( ! array_key_exists( $k, $have ) || $have[ $k ] !== $v ) {
+					return false;
+				}
+			}
+			return true;
+		}
+		return $want === $have;
+	}
+
+	/**
+	 * A value in one comparable shape for its field: sub-field names mapped to keys, scalars as
+	 * strings (empty values as ''), lists kept in order. Null when the shape is not understood.
+	 */
+	private static function normalize_for_field( $value, array $field, $depth = 0 ) {
+		if ( $depth > 10 ) {
+			return null;
+		}
+		$type = (string) ( $field['type'] ?? '' );
+		if ( 'flexible_content' === $type || 'clone' === $type ) {
+			return null;
+		}
+		if ( 'group' === $type || 'repeater' === $type ) {
+			if ( null === $value || '' === $value || false === $value ) {
+				return [];
+			}
+			if ( ! is_array( $value ) ) {
+				return null;
+			}
+			$subs = [];
+			foreach ( (array) ( $field['sub_fields'] ?? [] ) as $sub ) {
+				if ( is_array( $sub ) && ! empty( $sub['key'] ) ) {
+					$subs[ (string) $sub['key'] ] = $sub;
+					if ( ! empty( $sub['name'] ) ) {
+						$subs[ (string) $sub['name'] ] = $sub;
+					}
+				}
+			}
+			$row = static function ( $r ) use ( $subs, $depth ) {
+				if ( ! is_array( $r ) ) {
+					return null;
+				}
+				$out = [];
+				foreach ( $r as $k => $v ) {
+					if ( ! isset( $subs[ (string) $k ] ) ) {
+						return null;
+					}
+					$n = self::normalize_for_field( $v, $subs[ (string) $k ], $depth + 1 );
+					if ( null === $n ) {
+						return null;
+					}
+					$out[ (string) $subs[ (string) $k ]['key'] ] = $n;
+				}
+				return $out;
+			};
+			if ( 'group' === $type ) {
+				return $row( $value );
+			}
+			$rows = [];
+			foreach ( array_values( $value ) as $r ) {
+				$n = $row( $r );
+				if ( null === $n ) {
+					return null;
+				}
+				$rows[] = $n;
+			}
+			return $rows;
+		}
+		if ( is_array( $value ) ) {
+			$out = [];
+			foreach ( $value as $k => $v ) {
+				if ( is_array( $v ) || is_object( $v ) ) {
+					return null;
+				}
+				$out[ $k ] = null === $v || false === $v ? '' : ( true === $v ? '1' : (string) $v );
+			}
+			return $out;
+		}
+		if ( is_object( $value ) ) {
+			return null;
+		}
+		return null === $value || false === $value ? '' : ( true === $value ? '1' : (string) $value );
 	}
 }

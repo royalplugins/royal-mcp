@@ -143,13 +143,14 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_update_order_status',
-				'description' => 'Update WooCommerce order status. Optional note may contain safe HTML — displayed in the WC admin order timeline.',
+				'description' => 'Update WooCommerce order status. Optional note may contain safe HTML — displayed in the WC admin order timeline. WooCommerce sends its usual customer and admin emails for the new status, and stock notifications when the change moves stock; pass send_emails=false to send none of these for this change (its undo sends none either).',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
-						'id'     => [ 'type' => 'integer', 'description' => 'Order ID' ],
-						'status' => [ 'type' => 'string', 'description' => 'New status (pending, processing, completed, on-hold, cancelled, failed). Refunds are made in WooCommerce, not here.' ],
-						'note'   => [ 'type' => 'string', 'description' => 'Optional order note. May contain safe HTML (links, formatting).' ],
+						'id'          => [ 'type' => 'integer', 'description' => 'Order ID' ],
+						'status'      => [ 'type' => 'string', 'description' => 'New status (pending, processing, completed, on-hold, cancelled, failed). Refunds are made in WooCommerce, not here.' ],
+						'note'        => [ 'type' => 'string', 'description' => 'Optional order note. May contain safe HTML (links, formatting).' ],
+						'send_emails' => [ 'type' => 'boolean', 'description' => 'Default true: WooCommerce sends its usual emails for this status change. false: no WooCommerce emails for this change only (customer and admin order emails, stock notifications).' ],
 					],
 					'required'   => [ 'id', 'status' ],
 				],
@@ -882,7 +883,8 @@ class WooCommerce {
 					'summary' => sprintf( 'Delete the product %d created by this operation.', $product_id ),
 					'target'  => [ 'product_id' => (int) $product_id ],
 					'pre_op_state' => [
-						'created_by_op' => true,
+						'created_by_op'       => true,
+						'created_fingerprint' => self::undo_fingerprint( 'product', $product_id ),
 					],
 				]);
 				$cp_product_url = get_permalink( $product_id );
@@ -948,14 +950,14 @@ class WooCommerce {
 					$p = wc_get_product( $up_product_id );
 					if ( ! $p ) return null;
 					switch ( $arg_key ) {
-						case 'name':              return (string) $p->get_name();
-						case 'description':       return (string) $p->get_description();
-						case 'short_description': return (string) $p->get_short_description();
-						case 'sku':               return (string) $p->get_sku();
-						case 'status':            return (string) $p->get_status();
-						case 'regular_price':     return (string) $p->get_regular_price();
-						case 'sale_price':        return (string) $p->get_sale_price();
-						case 'stock_quantity':    return (int) $p->get_stock_quantity();
+						case 'name':              return (string) $p->get_name( 'edit' );
+						case 'description':       return (string) $p->get_description( 'edit' );
+						case 'short_description': return (string) $p->get_short_description( 'edit' );
+						case 'sku':               return (string) $p->get_sku( 'edit' );
+						case 'status':            return (string) $p->get_status( 'edit' );
+						case 'regular_price':     return (string) $p->get_regular_price( 'edit' );
+						case 'sale_price':        return (string) $p->get_sale_price( 'edit' );
+						case 'stock_quantity':    return (int) $p->get_stock_quantity( 'edit' );
 					}
 					return null;
 				};
@@ -970,7 +972,7 @@ class WooCommerce {
 				}
                 $up_manage_stock_before = null;
                 if ( array_key_exists( 'stock_quantity', $up_requested ) ) {
-                    $up_manage_stock_before = (bool) $up_product->get_manage_stock();
+                    $up_manage_stock_before = (bool) $up_product->get_manage_stock( 'edit' );
                 }
 
 				// Execute — same setter path as before, preserving the
@@ -1103,20 +1105,35 @@ class WooCommerce {
 				}
 				// WC status column is stored as 'wc-<status>'; get_status() strips
 				// the prefix so both prior and new values compare cleanly.
-				$os_prior = $os_order->get_status();
+				$os_prior = $os_order->get_status( 'edit' );
 				// WC_Order::add_order_note() already applies wp_kses_post
 				// internally; sanitize_text_field was both redundant AND lossy
 				// (stripped support-URL links from notes). Explicit wp_kses_post
 				// here matches WC behavior + keeps the tool self-documenting.
 				$os_note  = ! empty( $args['note'] ) ? wp_kses_post( $args['note'] ) : '';
-				$os_order->update_status( $os_new, $os_note );
+				$os_send  = true;
+				if ( array_key_exists( 'send_emails', $args ) && null !== $args['send_emails'] ) {
+					$os_send = ( is_scalar( $args['send_emails'] ) && ! ( is_string( $args['send_emails'] ) && '' === trim( $args['send_emails'] ) ) ) ? filter_var( $args['send_emails'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE ) : null;
+					if ( null === $os_send ) {
+						return Envelope::error( 'invalid_args', 'send_emails must be true or false.', [ 'field' => 'send_emails' ] );
+					}
+				}
+				if ( $os_send ) {
+					$os_order->update_status( $os_new, $os_note );
+				} else {
+					self::without_order_emails(
+						static function () use ( $os_order, $os_new, $os_note ) {
+							$os_order->update_status( $os_new, $os_note );
+						}
+					);
+				}
 
 				// Re-read AFTER-state via a fresh instance — update_status may
 				// short-circuit if the new status matches current (WC returns
 				// early without re-emitting hooks). Re-fetching gives us the
 				// authoritative post-op state regardless.
 				$os_fresh   = wc_get_order( $os_order_id );
-				$os_actual  = $os_fresh ? $os_fresh->get_status() : '';
+				$os_actual  = $os_fresh ? $os_fresh->get_status( 'edit' ) : '';
 
 				$os_diff = \Royal_MCP\MCP\Support\WriteVerifier::diff(
 					[ 'status' => $os_new ],
@@ -1139,6 +1156,7 @@ class WooCommerce {
 					'pre_op_state' => [
 						'prior_status'   => $os_prior,
 						'applied_status' => $os_actual,
+						'send_emails'    => $os_send,
 					],
 				]);
 
@@ -1147,6 +1165,7 @@ class WooCommerce {
 						'id'           => $os_order_id,
 						'status'       => $os_actual,
 						'prior_status' => $os_prior,
+						'send_emails'  => $os_send,
 					],
 					\Royal_MCP\MCP\Support\WriteVerifier::response_partial( $os_diff )
 				);
@@ -1283,8 +1302,9 @@ class WooCommerce {
 					'summary' => sprintf( 'Delete the order %d created by this operation.%s', $new_order->get_id(), $co_email_sent ? ' Note: New Order email was already sent and cannot be recalled.' : '' ),
 					'target'  => [ 'order_id' => (int) $new_order->get_id() ],
 					'pre_op_state' => [
-						'created_by_op' => true,
-						'email_sent'    => $co_email_sent,
+						'created_by_op'       => true,
+						'email_sent'          => $co_email_sent,
+						'created_fingerprint' => self::undo_fingerprint( 'order', $new_order->get_id() ),
 					],
 				]);
 				return \Royal_MCP\MCP\Support\Envelope::success(
@@ -1367,7 +1387,7 @@ class WooCommerce {
 							$sanitized = ( $k === 'email' ) ? sanitize_email( (string) $args['billing'][ $k ] ) : sanitize_text_field( (string) $args['billing'][ $k ] );
 							$uo_requested[ "billing.$k" ] = $sanitized;
 							$getter                       = 'get_billing_' . $k;
-							$uo_before[ "billing.$k" ]    = (string) $uo_order->$getter();
+							$uo_before[ "billing.$k" ]    = (string) $uo_order->$getter( 'edit' );
 						}
 					}
 				}
@@ -1376,13 +1396,13 @@ class WooCommerce {
 						if ( array_key_exists( $k, $args['shipping'] ) ) {
 							$uo_requested[ "shipping.$k" ] = sanitize_text_field( (string) $args['shipping'][ $k ] );
 							$getter                        = 'get_shipping_' . $k;
-							$uo_before[ "shipping.$k" ]    = (string) $uo_order->$getter();
+							$uo_before[ "shipping.$k" ]    = (string) $uo_order->$getter( 'edit' );
 						}
 					}
 				}
 				if ( array_key_exists( 'customer_note', $args ) ) {
 					$uo_requested['customer_note'] = wp_kses_post( (string) $args['customer_note'] );
-					$uo_before['customer_note']    = (string) $uo_order->get_customer_note();
+					$uo_before['customer_note']    = (string) $uo_order->get_customer_note( 'edit' );
 				}
 				if ( ! empty( $args['status'] ) ) {
 					$uo_refusal = self::order_status_change_refusal( $uo_order );
@@ -1395,7 +1415,7 @@ class WooCommerce {
 						return Envelope::error( 'invalid_args', sprintf( 'Invalid order status "%s". Allowed: %s. Refunds are made in WooCommerce so the payment gateway is refunded.', $uo_new_status, implode( ', ', $uo_allowed ) ), [ 'received' => $uo_new_status, 'allowed' => $uo_allowed ] );
 					}
 					$uo_requested['status'] = $uo_new_status;
-					$uo_before['status']    = $uo_order->get_status();
+					$uo_before['status']    = $uo_order->get_status( 'edit' );
 				}
 
 				// Execute — preserve existing behavior including the one-way
@@ -1464,14 +1484,14 @@ class WooCommerce {
 				foreach ( array_keys( $uo_requested ) as $arg_key ) {
 					if ( strpos( $arg_key, 'billing.' ) === 0 ) {
 						$getter = 'get_billing_' . substr( $arg_key, 8 );
-						$uo_actual[ $arg_key ] = (string) $uo_fresh->$getter();
+						$uo_actual[ $arg_key ] = (string) $uo_fresh->$getter( 'edit' );
 					} elseif ( strpos( $arg_key, 'shipping.' ) === 0 ) {
 						$getter = 'get_shipping_' . substr( $arg_key, 9 );
-						$uo_actual[ $arg_key ] = (string) $uo_fresh->$getter();
+						$uo_actual[ $arg_key ] = (string) $uo_fresh->$getter( 'edit' );
 					} elseif ( $arg_key === 'customer_note' ) {
-						$uo_actual[ $arg_key ] = (string) $uo_fresh->get_customer_note();
+						$uo_actual[ $arg_key ] = (string) $uo_fresh->get_customer_note( 'edit' );
 					} elseif ( $arg_key === 'status' ) {
-						$uo_actual[ $arg_key ] = $uo_fresh->get_status();
+						$uo_actual[ $arg_key ] = $uo_fresh->get_status( 'edit' );
 					}
 				}
 
@@ -1675,7 +1695,8 @@ class WooCommerce {
 					'summary' => sprintf( 'Delete the variation %d created by this operation and re-sync parent product %d.', $cv_new_id, $cv_parent_id ),
 					'target'  => [ 'variation_id' => (int) $cv_new_id, 'product_id' => $cv_parent_id ],
 					'pre_op_state' => [
-						'created_by_op' => true,
+						'created_by_op'       => true,
+						'created_fingerprint' => self::undo_fingerprint( 'variation', $cv_new_id ),
 					],
 				]);
 				return \Royal_MCP\MCP\Support\Envelope::success(
@@ -1729,19 +1750,19 @@ class WooCommerce {
 					$v = wc_get_product( $uv_var_id );
 					if ( ! $v ) return null;
 					switch ( $arg_key ) {
-						case 'regular_price':      return (string) $v->get_regular_price();
-						case 'sale_price':         return (string) $v->get_sale_price();
-						case 'sku':                return (string) $v->get_sku();
-						case 'status':             return (string) $v->get_status();
+						case 'regular_price':      return (string) $v->get_regular_price( 'edit' );
+						case 'sale_price':         return (string) $v->get_sale_price( 'edit' );
+						case 'sku':                return (string) $v->get_sku( 'edit' );
+						case 'status':             return (string) $v->get_status( 'edit' );
 						case 'manage_stock':       return (bool)   $v->get_manage_stock();
 						case 'stock_quantity':     return (int)    $v->get_stock_quantity();
-						case 'stock_status':       return (string) $v->get_stock_status();
-						case 'weight':             return (string) $v->get_weight();
-						case 'description':        return (string) $v->get_description();
-						case 'image_id':           return (int)    $v->get_image_id();
-						case 'dimensions.length':  return (string) $v->get_length();
-						case 'dimensions.width':   return (string) $v->get_width();
-						case 'dimensions.height':  return (string) $v->get_height();
+						case 'stock_status':       return (string) $v->get_stock_status( 'edit' );
+						case 'weight':             return (string) $v->get_weight( 'edit' );
+						case 'description':        return (string) $v->get_description( 'edit' );
+						case 'image_id':           return (int)    $v->get_image_id( 'edit' );
+						case 'dimensions.length':  return (string) $v->get_length( 'edit' );
+						case 'dimensions.width':   return (string) $v->get_width( 'edit' );
+						case 'dimensions.height':  return (string) $v->get_height( 'edit' );
 					}
 					return null;
 				};
@@ -1755,7 +1776,7 @@ class WooCommerce {
 				// json_encode compare avoids key-order false silent_modifies.
 				$uv_attrs_before_json = null;
 				if ( isset( $args['attributes'] ) ) {
-					$uv_attrs_before_json = wp_json_encode( $uv_var->get_attributes() );
+					$uv_attrs_before_json = wp_json_encode( $uv_var->get_attributes( 'edit' ) );
 				}
 				$price_error = self::price_fields_error( $args, $uv_var->get_regular_price( 'edit' ), $uv_var->get_sale_price( 'edit' ) );
 				if ( '' !== $price_error ) {
@@ -1790,6 +1811,10 @@ class WooCommerce {
 				];
 				if ( $uv_attrs_before_json !== null ) {
 					$uv_undo_pre['attributes_before_json'] = $uv_attrs_before_json;
+					$uv_attrs_after = wc_get_product( $uv_var_id );
+					if ( $uv_attrs_after ) {
+						$uv_undo_pre['attributes_after_json'] = (string) wp_json_encode( $uv_attrs_after->get_attributes( 'edit' ) );
+					}
 				}
 				$uv_undo_envelope = \Royal_MCP\MCP\Undo_Store::store([
 					'op'      => 'wc_update_variation',
@@ -1840,21 +1865,21 @@ class WooCommerce {
 				if ( $dv_force ) {
 					$dv_full = [
 						'parent_id'      => $dv_parent_id,
-						'regular_price'  => (string) $dv_var->get_regular_price(),
-						'sale_price'     => (string) $dv_var->get_sale_price(),
-						'sku'            => (string) $dv_var->get_sku(),
-						'status'         => (string) $dv_var->get_status(),
-						'manage_stock'   => (bool)   $dv_var->get_manage_stock(),
-						'stock_quantity' => (int)    $dv_var->get_stock_quantity(),
-						'stock_status'   => (string) $dv_var->get_stock_status(),
-						'weight'         => (string) $dv_var->get_weight(),
-						'length'         => (string) $dv_var->get_length(),
-						'width'          => (string) $dv_var->get_width(),
-						'height'         => (string) $dv_var->get_height(),
-						'description'    => (string) $dv_var->get_description(),
-						'image_id'       => (int)    $dv_var->get_image_id(),
-						'attributes_json' => (string) wp_json_encode( $dv_var->get_attributes() ),
-						'menu_order'     => (int)    $dv_var->get_menu_order(),
+						'regular_price'  => (string) $dv_var->get_regular_price( 'edit' ),
+						'sale_price'     => (string) $dv_var->get_sale_price( 'edit' ),
+						'sku'            => (string) $dv_var->get_sku( 'edit' ),
+						'status'         => (string) $dv_var->get_status( 'edit' ),
+						'manage_stock'   => (bool)   $dv_var->get_manage_stock( 'edit' ),
+						'stock_quantity' => (int)    $dv_var->get_stock_quantity( 'edit' ),
+						'stock_status'   => (string) $dv_var->get_stock_status( 'edit' ),
+						'weight'         => (string) $dv_var->get_weight( 'edit' ),
+						'length'         => (string) $dv_var->get_length( 'edit' ),
+						'width'          => (string) $dv_var->get_width( 'edit' ),
+						'height'         => (string) $dv_var->get_height( 'edit' ),
+						'description'    => (string) $dv_var->get_description( 'edit' ),
+						'image_id'       => (int)    $dv_var->get_image_id( 'edit' ),
+						'attributes_json' => (string) wp_json_encode( $dv_var->get_attributes( 'edit' ) ),
+						'menu_order'     => (int)    $dv_var->get_menu_order( 'edit' ),
 					];
 				}
 
@@ -1967,23 +1992,23 @@ class WooCommerce {
 					            'stock_status', 'weight', 'length', 'width', 'height', 'description', 'image_id' ] as $f ) {
 						if ( ! array_key_exists( $f, $data ) && ! isset( $data['dimensions'][ $f ] ) ) continue;
 						switch ( $f ) {
-							case 'regular_price':  $prior[ $f ] = (string) $variation->get_regular_price(); break;
-							case 'sale_price':     $prior[ $f ] = (string) $variation->get_sale_price(); break;
-							case 'sku':            $prior[ $f ] = (string) $variation->get_sku(); break;
-							case 'status':         $prior[ $f ] = (string) $variation->get_status(); break;
-							case 'manage_stock':   $prior[ $f ] = (bool)   $variation->get_manage_stock(); break;
-							case 'stock_quantity': $prior[ $f ] = (int)    $variation->get_stock_quantity(); break;
-							case 'stock_status':   $prior[ $f ] = (string) $variation->get_stock_status(); break;
-							case 'weight':         $prior[ $f ] = (string) $variation->get_weight(); break;
-							case 'length':         $prior[ $f ] = (string) $variation->get_length(); break;
-							case 'width':          $prior[ $f ] = (string) $variation->get_width(); break;
-							case 'height':         $prior[ $f ] = (string) $variation->get_height(); break;
-							case 'description':    $prior[ $f ] = (string) $variation->get_description(); break;
-							case 'image_id':       $prior[ $f ] = (int)    $variation->get_image_id(); break;
+							case 'regular_price':  $prior[ $f ] = (string) $variation->get_regular_price( 'edit' ); break;
+							case 'sale_price':     $prior[ $f ] = (string) $variation->get_sale_price( 'edit' ); break;
+							case 'sku':            $prior[ $f ] = (string) $variation->get_sku( 'edit' ); break;
+							case 'status':         $prior[ $f ] = (string) $variation->get_status( 'edit' ); break;
+							case 'manage_stock':   $prior[ $f ] = (bool)   $variation->get_manage_stock( 'edit' ); break;
+							case 'stock_quantity': $prior[ $f ] = (int)    $variation->get_stock_quantity( 'edit' ); break;
+							case 'stock_status':   $prior[ $f ] = (string) $variation->get_stock_status( 'edit' ); break;
+							case 'weight':         $prior[ $f ] = (string) $variation->get_weight( 'edit' ); break;
+							case 'length':         $prior[ $f ] = (string) $variation->get_length( 'edit' ); break;
+							case 'width':          $prior[ $f ] = (string) $variation->get_width( 'edit' ); break;
+							case 'height':         $prior[ $f ] = (string) $variation->get_height( 'edit' ); break;
+							case 'description':    $prior[ $f ] = (string) $variation->get_description( 'edit' ); break;
+							case 'image_id':       $prior[ $f ] = (int)    $variation->get_image_id( 'edit' ); break;
 						}
 					}
 					if ( isset( $data['attributes'] ) ) {
-						$prior['attributes_json'] = (string) wp_json_encode( $variation->get_attributes() );
+						$prior['attributes_json'] = (string) wp_json_encode( $variation->get_attributes( 'edit' ) );
 					}
 					self::apply_variation_fields( $variation, $data );
 					$variation->save();
@@ -2008,21 +2033,21 @@ class WooCommerce {
 					// Full snapshot (matches wc_delete_variation force pattern)
 					$row = [
 						'original_id'    => $var_id_int,
-						'regular_price'  => (string) $variation->get_regular_price(),
-						'sale_price'     => (string) $variation->get_sale_price(),
-						'sku'            => (string) $variation->get_sku(),
-						'status'         => (string) $variation->get_status(),
-						'manage_stock'   => (bool)   $variation->get_manage_stock(),
-						'stock_quantity' => (int)    $variation->get_stock_quantity(),
-						'stock_status'   => (string) $variation->get_stock_status(),
-						'weight'         => (string) $variation->get_weight(),
-						'length'         => (string) $variation->get_length(),
-						'width'          => (string) $variation->get_width(),
-						'height'         => (string) $variation->get_height(),
-						'description'    => (string) $variation->get_description(),
-						'image_id'       => (int)    $variation->get_image_id(),
-						'attributes_json' => (string) wp_json_encode( $variation->get_attributes() ),
-						'menu_order'     => (int)    $variation->get_menu_order(),
+						'regular_price'  => (string) $variation->get_regular_price( 'edit' ),
+						'sale_price'     => (string) $variation->get_sale_price( 'edit' ),
+						'sku'            => (string) $variation->get_sku( 'edit' ),
+						'status'         => (string) $variation->get_status( 'edit' ),
+						'manage_stock'   => (bool)   $variation->get_manage_stock( 'edit' ),
+						'stock_quantity' => (int)    $variation->get_stock_quantity( 'edit' ),
+						'stock_status'   => (string) $variation->get_stock_status( 'edit' ),
+						'weight'         => (string) $variation->get_weight( 'edit' ),
+						'length'         => (string) $variation->get_length( 'edit' ),
+						'width'          => (string) $variation->get_width( 'edit' ),
+						'height'         => (string) $variation->get_height( 'edit' ),
+						'description'    => (string) $variation->get_description( 'edit' ),
+						'image_id'       => (int)    $variation->get_image_id( 'edit' ),
+						'attributes_json' => (string) wp_json_encode( $variation->get_attributes( 'edit' ) ),
+						'menu_order'     => (int)    $variation->get_menu_order( 'edit' ),
 					];
 					$variation->delete( true );
 					$bv_result['delete'][] = [ 'id' => $var_id, 'deleted' => true ];
@@ -2031,13 +2056,28 @@ class WooCommerce {
 				\WC_Product_Variable::sync( $bv_product );
 				wc_delete_product_transients( $bv_pid );
 
+				// What each touched variation looks like after the batch, so undo can tell
+				// whether any of them was edited since.
+				foreach ( $bv_undo_updated as $bv_k => $bv_entry ) {
+					$bv_now = wc_get_product( $bv_entry['variation_id'] );
+					if ( $bv_now ) {
+						$bv_undo_updated[ $bv_k ]['applied'] = self::variation_values( $bv_now, array_keys( $bv_entry['prior'] ) );
+					}
+				}
+				$bv_created_prints = [];
+				foreach ( $bv_undo_created as $bv_new ) {
+					$bv_created_prints[ $bv_new ] = self::undo_fingerprint( 'variation', $bv_new );
+				}
+
 				// Build undo envelope with all 3 op-type snapshots. Cap 1MB.
 				$bv_undo_envelope = null;
 				$bv_warnings      = [];
 				$bv_undo_payload  = [
-					'created' => $bv_undo_created,
-					'updated' => $bv_undo_updated,
-					'deleted' => $bv_undo_deleted,
+					'created'              => $bv_undo_created,
+					'created_fingerprints' => $bv_created_prints,
+					'updated'              => $bv_undo_updated,
+					'deleted'              => $bv_undo_deleted,
+					'children_after'       => self::variation_child_ids( $bv_pid ),
 				];
 				$bv_op_count = count( $bv_undo_created ) + count( $bv_undo_updated ) + count( $bv_undo_deleted );
 				if ( $bv_op_count === 0 ) {
@@ -2159,6 +2199,7 @@ class WooCommerce {
 					'target'  => [ 'attribute_id' => (int) $cpa_new_id, 'slug' => $cpa_taxonomy ],
 					'pre_op_state' => [
 						'created_by_op' => true,
+						'term_ids'      => self::attribute_term_ids( $cpa_taxonomy ),
 					],
 				]);
 				return \Royal_MCP\MCP\Support\Envelope::success(
@@ -2188,7 +2229,7 @@ class WooCommerce {
 				// mixed numeric+string keys survive the storage round-trip
 				// (WC_Product_Attribute objects don't serialize cleanly via
 				// standard PHP serialize + wp_options blob storage).
-				$spa_before_attrs = $spa_product->get_attributes();
+				$spa_before_attrs = $spa_product->get_attributes( 'edit' );
 				$spa_before_snapshot = self::serialize_product_attributes( $spa_before_attrs );
 				$spa_existing_count  = count( $spa_before_attrs );
 
@@ -2244,7 +2285,8 @@ class WooCommerce {
 						'summary' => sprintf( 'Restore %d prior attribute(s) on product %d.', $spa_existing_count, $spa_pid ),
 						'target'  => [ 'product_id' => $spa_pid ],
 						'pre_op_state' => [
-							'attributes_before' => $spa_before_snapshot,
+							'attributes_before'  => $spa_before_snapshot,
+							'attributes_written' => self::undo_fingerprint( 'attributes', $spa_pid ),
 						],
 					]);
 				}
@@ -2365,7 +2407,8 @@ class WooCommerce {
 					'summary' => sprintf( 'Delete the coupon %d (%s) created by this operation.', (int) $cc_new_id, $cc_code ),
 					'target'  => [ 'coupon_id' => (int) $cc_new_id, 'code' => $cc_code ],
 					'pre_op_state' => [
-						'created_by_op' => true,
+						'created_by_op'       => true,
+						'created_fingerprint' => self::undo_fingerprint( 'coupon', $cc_new_id ),
 					],
 				]);
 				return \Royal_MCP\MCP\Support\Envelope::success(
@@ -2450,24 +2493,24 @@ class WooCommerce {
 				$uc_read = function( $arg_key ) use ( $uc_id ) {
 					$c = new \WC_Coupon( $uc_id );
 					switch ( $arg_key ) {
-						case 'code':                        return (string) $c->get_code();
-						case 'discount_type':               return (string) $c->get_discount_type();
-						case 'amount':                      return (string) $c->get_amount();
-						case 'description':                 return (string) $c->get_description();
-						case 'usage_limit':                 return (int)    $c->get_usage_limit();
-						case 'usage_limit_per_user':        return (int)    $c->get_usage_limit_per_user();
-						case 'limit_usage_to_x_items':      return (int)    $c->get_limit_usage_to_x_items();
-						case 'individual_use':              return (bool)   $c->get_individual_use();
-						case 'free_shipping':               return (bool)   $c->get_free_shipping();
-						case 'exclude_sale_items':          return (bool)   $c->get_exclude_sale_items();
-						case 'minimum_amount':              return (string) $c->get_minimum_amount();
-						case 'maximum_amount':              return (string) $c->get_maximum_amount();
-						case 'date_expires':                $d = $c->get_date_expires(); return $d ? (int) $d->getTimestamp() : null;
-						case 'product_ids':                 return array_values( array_map( 'intval', (array) $c->get_product_ids() ) );
-						case 'excluded_product_ids':        return array_values( array_map( 'intval', (array) $c->get_excluded_product_ids() ) );
-						case 'product_categories':          return array_values( array_map( 'intval', (array) $c->get_product_categories() ) );
-						case 'excluded_product_categories': return array_values( array_map( 'intval', (array) $c->get_excluded_product_categories() ) );
-						case 'email_restrictions':          return array_values( (array) $c->get_email_restrictions() );
+						case 'code':                        return (string) $c->get_code( 'edit' );
+						case 'discount_type':               return (string) $c->get_discount_type( 'edit' );
+						case 'amount':                      return (string) $c->get_amount( 'edit' );
+						case 'description':                 return (string) $c->get_description( 'edit' );
+						case 'usage_limit':                 return (int)    $c->get_usage_limit( 'edit' );
+						case 'usage_limit_per_user':        return (int)    $c->get_usage_limit_per_user( 'edit' );
+						case 'limit_usage_to_x_items':      return (int)    $c->get_limit_usage_to_x_items( 'edit' );
+						case 'individual_use':              return (bool)   $c->get_individual_use( 'edit' );
+						case 'free_shipping':               return (bool)   $c->get_free_shipping( 'edit' );
+						case 'exclude_sale_items':          return (bool)   $c->get_exclude_sale_items( 'edit' );
+						case 'minimum_amount':              return (string) $c->get_minimum_amount( 'edit' );
+						case 'maximum_amount':              return (string) $c->get_maximum_amount( 'edit' );
+						case 'date_expires':                $d = $c->get_date_expires( 'edit' ); return $d ? (int) $d->getTimestamp() : null;
+						case 'product_ids':                 return array_values( array_map( 'intval', (array) $c->get_product_ids( 'edit' ) ) );
+						case 'excluded_product_ids':        return array_values( array_map( 'intval', (array) $c->get_excluded_product_ids( 'edit' ) ) );
+						case 'product_categories':          return array_values( array_map( 'intval', (array) $c->get_product_categories( 'edit' ) ) );
+						case 'excluded_product_categories': return array_values( array_map( 'intval', (array) $c->get_excluded_product_categories( 'edit' ) ) );
+						case 'email_restrictions':          return array_values( (array) $c->get_email_restrictions( 'edit' ) );
 					}
 					return null;
 				};
@@ -2552,26 +2595,26 @@ class WooCommerce {
 				// New coupon ID will differ from original — flagged in summary.
 				$dc_full = null;
 				if ( $dc_force ) {
-					$dc_de = $dc_coupon->get_date_expires();
+					$dc_de = $dc_coupon->get_date_expires( 'edit' );
 					$dc_full = [
-						'code'                        => $dc_coupon->get_code(),
-						'discount_type'               => $dc_coupon->get_discount_type(),
-						'amount'                      => $dc_coupon->get_amount(),
-						'description'                 => $dc_coupon->get_description(),
-						'usage_limit'                 => (int) $dc_coupon->get_usage_limit(),
-						'usage_limit_per_user'        => (int) $dc_coupon->get_usage_limit_per_user(),
-						'limit_usage_to_x_items'      => (int) $dc_coupon->get_limit_usage_to_x_items(),
-						'individual_use'              => (bool) $dc_coupon->get_individual_use(),
-						'free_shipping'               => (bool) $dc_coupon->get_free_shipping(),
-						'exclude_sale_items'          => (bool) $dc_coupon->get_exclude_sale_items(),
-						'minimum_amount'              => (string) $dc_coupon->get_minimum_amount(),
-						'maximum_amount'              => (string) $dc_coupon->get_maximum_amount(),
+						'code'                        => $dc_coupon->get_code( 'edit' ),
+						'discount_type'               => $dc_coupon->get_discount_type( 'edit' ),
+						'amount'                      => $dc_coupon->get_amount( 'edit' ),
+						'description'                 => $dc_coupon->get_description( 'edit' ),
+						'usage_limit'                 => (int) $dc_coupon->get_usage_limit( 'edit' ),
+						'usage_limit_per_user'        => (int) $dc_coupon->get_usage_limit_per_user( 'edit' ),
+						'limit_usage_to_x_items'      => (int) $dc_coupon->get_limit_usage_to_x_items( 'edit' ),
+						'individual_use'              => (bool) $dc_coupon->get_individual_use( 'edit' ),
+						'free_shipping'               => (bool) $dc_coupon->get_free_shipping( 'edit' ),
+						'exclude_sale_items'          => (bool) $dc_coupon->get_exclude_sale_items( 'edit' ),
+						'minimum_amount'              => (string) $dc_coupon->get_minimum_amount( 'edit' ),
+						'maximum_amount'              => (string) $dc_coupon->get_maximum_amount( 'edit' ),
 						'date_expires'                => $dc_de ? (int) $dc_de->getTimestamp() : null,
-						'product_ids'                 => array_values( array_map( 'intval', (array) $dc_coupon->get_product_ids() ) ),
-						'excluded_product_ids'        => array_values( array_map( 'intval', (array) $dc_coupon->get_excluded_product_ids() ) ),
-						'product_categories'          => array_values( array_map( 'intval', (array) $dc_coupon->get_product_categories() ) ),
-						'excluded_product_categories' => array_values( array_map( 'intval', (array) $dc_coupon->get_excluded_product_categories() ) ),
-						'email_restrictions'          => array_values( (array) $dc_coupon->get_email_restrictions() ),
+						'product_ids'                 => array_values( array_map( 'intval', (array) $dc_coupon->get_product_ids( 'edit' ) ) ),
+						'excluded_product_ids'        => array_values( array_map( 'intval', (array) $dc_coupon->get_excluded_product_ids( 'edit' ) ) ),
+						'product_categories'          => array_values( array_map( 'intval', (array) $dc_coupon->get_product_categories( 'edit' ) ) ),
+						'excluded_product_categories' => array_values( array_map( 'intval', (array) $dc_coupon->get_excluded_product_categories( 'edit' ) ) ),
+						'email_restrictions'          => array_values( (array) $dc_coupon->get_email_restrictions( 'edit' ) ),
 					];
 				}
 
@@ -2642,27 +2685,27 @@ class WooCommerce {
 				foreach ( $ect_trashed as $cid ) {
 					$cid_int = (int) $cid;
 					$c = new \WC_Coupon( $cid_int );
-					$de = $c->get_date_expires();
+					$de = $c->get_date_expires( 'edit' );
 					$ect_rows[] = [
 						'original_id'                 => $cid_int,
-						'code'                        => $c->get_code(),
-						'discount_type'               => $c->get_discount_type(),
-						'amount'                      => $c->get_amount(),
-						'description'                 => $c->get_description(),
-						'usage_limit'                 => (int) $c->get_usage_limit(),
-						'usage_limit_per_user'        => (int) $c->get_usage_limit_per_user(),
-						'limit_usage_to_x_items'      => (int) $c->get_limit_usage_to_x_items(),
-						'individual_use'              => (bool) $c->get_individual_use(),
-						'free_shipping'               => (bool) $c->get_free_shipping(),
-						'exclude_sale_items'          => (bool) $c->get_exclude_sale_items(),
-						'minimum_amount'              => (string) $c->get_minimum_amount(),
-						'maximum_amount'              => (string) $c->get_maximum_amount(),
+						'code'                        => $c->get_code( 'edit' ),
+						'discount_type'               => $c->get_discount_type( 'edit' ),
+						'amount'                      => $c->get_amount( 'edit' ),
+						'description'                 => $c->get_description( 'edit' ),
+						'usage_limit'                 => (int) $c->get_usage_limit( 'edit' ),
+						'usage_limit_per_user'        => (int) $c->get_usage_limit_per_user( 'edit' ),
+						'limit_usage_to_x_items'      => (int) $c->get_limit_usage_to_x_items( 'edit' ),
+						'individual_use'              => (bool) $c->get_individual_use( 'edit' ),
+						'free_shipping'               => (bool) $c->get_free_shipping( 'edit' ),
+						'exclude_sale_items'          => (bool) $c->get_exclude_sale_items( 'edit' ),
+						'minimum_amount'              => (string) $c->get_minimum_amount( 'edit' ),
+						'maximum_amount'              => (string) $c->get_maximum_amount( 'edit' ),
 						'date_expires'                => $de ? (int) $de->getTimestamp() : null,
-						'product_ids'                 => array_values( array_map( 'intval', (array) $c->get_product_ids() ) ),
-						'excluded_product_ids'        => array_values( array_map( 'intval', (array) $c->get_excluded_product_ids() ) ),
-						'product_categories'          => array_values( array_map( 'intval', (array) $c->get_product_categories() ) ),
-						'excluded_product_categories' => array_values( array_map( 'intval', (array) $c->get_excluded_product_categories() ) ),
-						'email_restrictions'          => array_values( (array) $c->get_email_restrictions() ),
+						'product_ids'                 => array_values( array_map( 'intval', (array) $c->get_product_ids( 'edit' ) ) ),
+						'excluded_product_ids'        => array_values( array_map( 'intval', (array) $c->get_excluded_product_ids( 'edit' ) ) ),
+						'product_categories'          => array_values( array_map( 'intval', (array) $c->get_product_categories( 'edit' ) ) ),
+						'excluded_product_categories' => array_values( array_map( 'intval', (array) $c->get_excluded_product_categories( 'edit' ) ) ),
+						'email_restrictions'          => array_values( (array) $c->get_email_restrictions( 'edit' ) ),
 					];
 				}
 
@@ -2895,6 +2938,160 @@ class WooCommerce {
 	}
 
 	/**
+	 * A hash of what a product, variation, coupon or order looks like now, or of a product's
+	 * attribute set. A tool stores it with its undo token so the undo can tell whether the item
+	 * was edited since. '' when the item cannot be read.
+	 */
+	/**
+	 * Order meta WooCommerce itself writes during routine processing (emails sent,
+	 * stock and sales recorded, coupon holds, cart hashes, editor locks). Left out of
+	 * the order undo fingerprint so those saves do not count as a later edit.
+	 */
+	const ORDER_BOOKKEEPING_META = [
+		'_new_order_email_sent', '_order_stock_reduced', '_recorded_sales', '_recorded_coupon_usage_counts',
+		'_download_permissions_granted', '_coupon_held_keys', '_coupon_held_keys_for_users', '_cart_hash',
+		'_shipping_hash', '_taxes_hash', '_fees_hash', '_coupons_hash', '_cogs_total_value', '_auto_fulfill_processed',
+		'_debug_log_source_pending_deletion', '_edit_lock', '_edit_last', '_wp_trash_meta_status', '_wp_trash_meta_time',
+	];
+
+	/** IDs of every variation of a product except trashed ones. */
+	public static function variation_child_ids( $product_id ) {
+		$ids = get_posts( [
+			'post_type'        => 'product_variation',
+			'post_parent'      => (int) $product_id,
+			'post_status'      => 'any',
+			'numberposts'      => -1,
+			'fields'           => 'ids',
+			'suppress_filters' => true,
+		] );
+		return array_map( 'intval', (array) $ids );
+	}
+
+	public static function undo_fingerprint( $kind, $id ) {
+		$id = (int) $id;
+		if ( $id <= 0 ) {
+			return '';
+		}
+		switch ( $kind ) {
+			case 'product':
+			case 'variation':
+				$post = get_post( $id );
+				$item = ( $post && function_exists( 'wc_get_product' ) ) ? wc_get_product( $id ) : null;
+				if ( ! $item ) {
+					return '';
+				}
+				$attrs = 'variation' === $kind ? $item->get_attributes( 'edit' ) : self::serialize_product_attributes( $item->get_attributes( 'edit' ) );
+				$parts = [
+					$post->post_modified_gmt, $item->get_name( 'edit' ), $item->get_status( 'edit' ), $item->get_description( 'edit' ),
+					$item->get_short_description( 'edit' ), $item->get_sku( 'edit' ), $item->get_regular_price( 'edit' ), $item->get_sale_price( 'edit' ),
+					$item->get_manage_stock( 'edit' ), $item->get_stock_quantity( 'edit' ), $item->get_stock_status( 'edit' ), $item->get_category_ids( 'edit' ), $attrs,
+				];
+				break;
+			case 'coupon':
+				$post = get_post( $id );
+				if ( ! $post || 'shop_coupon' !== $post->post_type || ! class_exists( '\WC_Coupon' ) ) {
+					return '';
+				}
+				$coupon  = new \WC_Coupon( $id );
+				$expires = $coupon->get_date_expires( 'edit' );
+				$parts   = [
+					$post->post_modified_gmt, $post->post_status, $coupon->get_code( 'edit' ), $coupon->get_amount( 'edit' ), $coupon->get_discount_type( 'edit' ),
+					$coupon->get_description( 'edit' ), $coupon->get_usage_count( 'edit' ), $coupon->get_usage_limit( 'edit' ), $coupon->get_usage_limit_per_user( 'edit' ),
+					$expires ? $expires->getTimestamp() : null, $coupon->get_individual_use( 'edit' ), $coupon->get_free_shipping( 'edit' ), $coupon->get_exclude_sale_items( 'edit' ),
+					$coupon->get_minimum_amount( 'edit' ), $coupon->get_maximum_amount( 'edit' ), $coupon->get_product_ids( 'edit' ), $coupon->get_excluded_product_ids( 'edit' ),
+					$coupon->get_email_restrictions( 'edit' ),
+				];
+				break;
+			case 'order':
+				$order = function_exists( 'wc_get_order' ) ? wc_get_order( $id ) : null;
+				if ( ! $order instanceof \WC_Order ) {
+					return '';
+				}
+				// WooCommerce saves an order again for its own bookkeeping (emails sent,
+				// stock reduced), so the save time is left out: only what a person or
+				// tool changes counts (status, totals, items, customer, addresses).
+				$lines = [];
+				foreach ( $order->get_items( [ 'line_item', 'fee', 'shipping', 'coupon' ] ) as $line_id => $line ) {
+					$lines[] = [ (int) $line_id, $line->get_name( 'edit' ), $line->get_quantity( 'edit' ), is_callable( [ $line, 'get_total' ] ) ? (string) $line->get_total( 'edit' ) : '' ];
+				}
+				$paid = $order->get_date_paid( 'edit' );
+				$meta = [];
+				foreach ( $order->get_meta_data() as $meta_row ) {
+					$meta_key = (string) $meta_row->key;
+					if ( ! in_array( $meta_key, self::ORDER_BOOKKEEPING_META, true ) && 0 !== strpos( $meta_key, '_wc_order_attribution_' ) ) {
+						$meta[] = [ $meta_key, $meta_row->value ];
+					}
+				}
+				usort( $meta, static function ( $a, $b ) { return strcmp( (string) wp_json_encode( $a ), (string) wp_json_encode( $b ) ); } );
+				$parts = [
+					$order->get_status( 'edit' ), $order->get_total( 'edit' ), $order->get_discount_total( 'edit' ), $order->get_shipping_total( 'edit' ),
+					$order->get_total_tax( 'edit' ), $order->get_currency( 'edit' ), $order->get_customer_id( 'edit' ), $order->get_customer_note( 'edit' ),
+					$order->get_payment_method( 'edit' ), $order->get_address( 'billing' ), $order->get_address( 'shipping' ), $lines,
+					count( $order->get_refunds() ), (string) $order->get_total_refunded(), $order->get_transaction_id( 'edit' ),
+					$paid ? $paid->getTimestamp() : null, $order->is_paid(), md5( (string) wp_json_encode( $meta ) ),
+				];
+				break;
+			case 'attributes':
+				$item = function_exists( 'wc_get_product' ) ? wc_get_product( $id ) : null;
+				if ( ! $item ) {
+					return '';
+				}
+				$parts = self::serialize_product_attributes( $item->get_attributes( 'edit' ) );
+				break;
+			default:
+				return '';
+		}
+		return md5( (string) wp_json_encode( $parts ) );
+	}
+
+	/**
+	 * Sorted term IDs an attribute taxonomy holds, read from the database so it also works when
+	 * the taxonomy is not registered in this request.
+	 */
+	public static function attribute_term_ids( $taxonomy ) {
+		global $wpdb;
+		$ids = array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare( "SELECT term_id FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s", (string) $taxonomy ) ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- a live read for the undo check
+		sort( $ids );
+		return $ids;
+	}
+
+	/**
+	 * ID of a coupon that uses this code in any status but trash (WooCommerce's own lookup only
+	 * sees published coupons). 0 when the code is free.
+	 */
+	public static function coupon_code_holder( $code ) {
+		global $wpdb;
+		return (int) $wpdb->get_var( $wpdb->prepare( "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'shop_coupon' AND post_title = %s AND post_status IN ( 'publish', 'draft', 'pending', 'private', 'future' ) ORDER BY ID DESC LIMIT 1", (string) $code ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- a live read for the undo check
+	}
+
+	/**
+	 * Current values of the given batch-update fields on a variation, in the shape the batch
+	 * undo snapshot stores them.
+	 */
+	public static function variation_values( $variation, array $keys ) {
+		$out = [];
+		foreach ( $keys as $f ) {
+			switch ( $f ) {
+				case 'regular_price':   $out[ $f ] = (string) $variation->get_regular_price( 'edit' ); break;
+				case 'sale_price':      $out[ $f ] = (string) $variation->get_sale_price( 'edit' ); break;
+				case 'sku':             $out[ $f ] = (string) $variation->get_sku( 'edit' ); break;
+				case 'status':          $out[ $f ] = (string) $variation->get_status( 'edit' ); break;
+				case 'manage_stock':    $out[ $f ] = (bool)   $variation->get_manage_stock( 'edit' ); break;
+				case 'stock_quantity':  $out[ $f ] = (int)    $variation->get_stock_quantity( 'edit' ); break;
+				case 'stock_status':    $out[ $f ] = (string) $variation->get_stock_status( 'edit' ); break;
+				case 'weight':          $out[ $f ] = (string) $variation->get_weight( 'edit' ); break;
+				case 'length':          $out[ $f ] = (string) $variation->get_length( 'edit' ); break;
+				case 'width':           $out[ $f ] = (string) $variation->get_width( 'edit' ); break;
+				case 'height':          $out[ $f ] = (string) $variation->get_height( 'edit' ); break;
+				case 'description':     $out[ $f ] = (string) $variation->get_description( 'edit' ); break;
+				case 'image_id':        $out[ $f ] = (int)    $variation->get_image_id( 'edit' ); break;
+				case 'attributes_json': $out[ $f ] = (string) wp_json_encode( $variation->get_attributes( 'edit' ) ); break;
+			}
+		}
+		return $out;
+	}
+
+	/**
 	 * Reverse of serialize_product_attributes — rebuild WC_Product_Attribute
 	 * objects from a plain-array snapshot for restore on undo.
 	 */
@@ -2931,6 +3128,70 @@ class WooCommerce {
 			}
 		}
 		return $out;
+	}
+
+	/**
+	 * Run an order status change with every WooCommerce email switched off
+	 * (order emails and stock notifications), and switch them back on
+	 * afterwards, also when it throws.
+	 *
+	 * @param callable $change Makes the status change.
+	 * @return mixed What $change returns.
+	 */
+	public static function without_order_emails( callable $change ) {
+		global $wp_filter;
+		$off     = static function () {
+			return false;
+		};
+		$filters = [];
+		$mailer  = function_exists( 'WC' ) ? WC()->mailer() : null;
+		if ( $mailer ) {
+			foreach ( (array) $mailer->get_emails() as $email ) {
+				if ( is_object( $email ) && ! empty( $email->id ) ) {
+					$filters[] = 'woocommerce_email_enabled_' . $email->id;
+				}
+			}
+		}
+		foreach ( $filters as $filter ) {
+			add_filter( $filter, $off, PHP_INT_MAX );
+		}
+		// WooCommerce's email dispatch (sent now or queued for later) and the stock
+		// notifications that mail directly are detached wherever they are hooked.
+		$callbacks = [ [ 'WC_Emails', 'send_transactional_email' ], [ 'WC_Emails', 'queue_transactional_email' ] ];
+		if ( is_object( $mailer ) ) {
+			foreach ( [ 'low_stock', 'no_stock', 'backorder' ] as $method ) {
+				$callbacks[] = [ $mailer, $method ];
+			}
+		}
+		$detached = [];
+		foreach ( array_keys( (array) $wp_filter ) as $hook ) {
+			foreach ( $callbacks as $callback ) {
+				$priority = has_action( $hook, $callback );
+				if ( false === $priority ) {
+					continue;
+				}
+				$accepted = 1;
+				foreach ( (array) ( $wp_filter[ $hook ]->callbacks[ $priority ] ?? [] ) as $entry ) {
+					if ( isset( $entry['function'] ) && $entry['function'] === $callback ) {
+						$accepted = (int) $entry['accepted_args'];
+						break;
+					}
+				}
+				remove_action( $hook, $callback, $priority );
+				$detached[] = [ $hook, $callback, $priority, $accepted ];
+			}
+		}
+		try {
+			return $change();
+		} finally {
+			foreach ( $filters as $filter ) {
+				remove_filter( $filter, $off, PHP_INT_MAX );
+			}
+			// Only what was detached above is put back, at its own priority and arity.
+			foreach ( $detached as $d ) {
+				add_action( $d[0], $d[1], $d[2], $d[3] );
+			}
+		}
 	}
 
 	/**

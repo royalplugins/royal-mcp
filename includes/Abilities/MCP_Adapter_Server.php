@@ -2,7 +2,7 @@
 /**
  * Registers "royal-mcp-server" with the WordPress MCP Adapter. Enables customers
  * running MCP Adapter to reach Royal MCP tools over MCP Adapter's HTTP transport
- * in addition to our native /wp-json/royal-mcp/mcp endpoint and WP core
+ * in addition to our native /wp-json/royal-mcp/v1/mcp endpoint and WP core
  * /wp-json/wp-abilities/v1/* REST.
  *
  * Named-server registration + explicit ability list. Our abilities set
@@ -24,7 +24,7 @@ class MCP_Adapter_Server {
 	const NAMESPACE_ROUTE  = 'royal-mcp-server/v1';
 	const ROUTE            = 'mcp';
 	const SERVER_NAME      = 'Royal MCP';
-	const SERVER_DESC      = 'Royal MCP — WordPress core operations plus WooCommerce, Elementor, SEO, and cross-plugin abilities. Same handlers as the native /wp-json/royal-mcp/mcp endpoint; MCP Adapter transport is an additional access path, not a replacement.';
+	const SERVER_DESC      = 'Royal MCP — WordPress core operations plus WooCommerce, Elementor, SEO, and cross-plugin abilities. Same handlers as the native /wp-json/royal-mcp/v1/mcp endpoint; MCP Adapter transport is an additional access path, not a replacement.';
 
 	/**
 	 * Fires on mcp_adapter_init (dispatched by MCP Adapter core on its own init).
@@ -65,12 +65,25 @@ class MCP_Adapter_Server {
 		add_filter( 'mcp_adapter_pre_tool_call', array( __CLASS__, 'explain_foreign_refusal' ), PHP_INT_MAX, 4 );
 
 		try {
-			self::create_server( $ability_names );
+			$created = self::create_server( $ability_names );
 		} catch ( \Throwable $e ) {
 			// Older bundled adapter copies don't catch server-construction
 			// errors themselves; skip our server rather than break REST.
+			self::$server_error = 'the MCP Adapter could not create it: ' . $e->getMessage();
 			return;
 		}
+		// Newer adapter versions report a refused server as a WP_Error instead of throwing.
+		if ( is_wp_error( $created ) ) {
+			self::$server_error = 'the MCP Adapter refused it: ' . $created->get_error_message();
+		}
+	}
+
+	/** Why Royal MCP's adapter server could not be created in this request, or ''. */
+	private static $server_error = '';
+
+	/** @return string Why Royal MCP's adapter server could not be created, or '' when it was (or was not attempted). */
+	public static function server_error(): string {
+		return self::$server_error;
 	}
 
 	/**
@@ -145,9 +158,10 @@ class MCP_Adapter_Server {
 		return $copies;
 	}
 
-	private static function create_server( array $ability_names ): void {
+	/** @return mixed The adapter's answer: the server, true, or a WP_Error on newer adapter versions. */
+	private static function create_server( array $ability_names ) {
 		$adapter = \WP\MCP\Core\McpAdapter::instance();
-		$adapter->create_server(
+		return $adapter->create_server(
 			self::SERVER_ID,
 			self::NAMESPACE_ROUTE,
 			self::ROUTE,

@@ -315,10 +315,17 @@ class Seo_Plugin {
 	 * %var% or %var(arg)% (Rank Math) and #tags (AIOSEO). Percent-encoded bytes (%20, %c3%a9)
 	 * are not variables.
 	 */
-	public static function has_template( $value ): bool {
+	public static function has_template( $value, $plugin = '' ): bool {
 		if ( ! is_string( $value ) || '' === $value ) {
 			return false;
 		}
-		return 1 === preg_match( '/%%[a-z0-9_-]+%%|%(?![a-f]{2}%)[a-z_]{2,}(?:\([^)]*\))?%|#(?:post_(?:title|excerpt|content|date|day|month|year|link)|site_(?:title|link)|separator_sa|tagline|taxonomy_(?:title|name)|author_(?:name|first_name|last_name|bio|url)|categories|current_(?:date|day|month|year)|permalink|page_number|archive_(?:title|date)|parent_title|search_term|attachment_caption|custom_field-[a-z0-9_-]+|tax_name-[a-z0-9_-]+)(?![a-z0-9_])/', $value );
+		if ( 1 === preg_match( '/%%[a-z0-9_-]+%%|%(?![a-f]{2}%)[a-z_]{2,}(?:\([^)]*\))?%/', $value ) ) {
+			return true;
+		}
+		// #tag variables belong to All in One SEO only; for another SEO plugin they are plain hashtags.
+		if ( '' !== (string) $plugin && 'aioseo' !== $plugin ) {
+			return false;
+		}
+		return 1 === preg_match( '/#(?:post_(?:title|excerpt|content|date|day|month|year|link)|site_(?:title|link)|separator_sa|tagline|taxonomy_(?:title|name)|author_(?:name|first_name|last_name|bio|url)|categories|current_(?:date|day|month|year)|permalink|page_number|archive_(?:title|date)|parent_title|search_term|attachment_caption|custom_field-[a-z0-9_-]+|tax_name-[a-z0-9_-]+)(?![a-z0-9_])/', $value );
 	}
 }

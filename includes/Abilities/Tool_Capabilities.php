@@ -39,6 +39,7 @@ class Tool_Capabilities {
 			'wp_security_triage'            => 'manage_options',
 			'wp_revoke_preview_links'       => 'edit_posts',
 			'wp_clone_post_as_draft'        => 'edit_posts',
+			'wp_get_php_errors'             => 'manage_options',
 			'wp_get_error_log_tail'         => 'manage_options',
 			'wp_get_cron_schedule'          => 'manage_options',
 			'wp_get_plugins'                => 'activate_plugins',
@@ -51,6 +52,11 @@ class Tool_Capabilities {
 			'wp_get_themes'       => 'switch_themes',
 			'wp_get_active_theme' => 'switch_themes',
 			'wp_get_theme_mods'   => 'edit_theme_options',
+			'wp_get_theme_mod'    => 'edit_theme_options',
+			'wp_get_widget'       => 'edit_theme_options',
+			'wp_get_widgets'      => 'edit_theme_options',
+			'wp_get_sidebars'     => 'edit_theme_options',
+			'wp_update_widget'    => 'edit_theme_options',
 			'wp_update_theme_mod' => 'edit_theme_options',
 			'wp_get_custom_css'   => 'edit_theme_options',
 			'wp_update_custom_css'=> 'edit_theme_options',
@@ -58,6 +64,7 @@ class Tool_Capabilities {
 			// ==================== Core: menus ====================
 			'wp_get_menus'          => 'edit_theme_options',
 			'wp_get_menu_items'     => 'edit_theme_options',
+			'wp_get_menu_item'      => 'edit_theme_options',
 			'wp_create_menu_item'   => 'edit_theme_options',
 			'wp_update_menu_item'   => 'edit_theme_options',
 			'wp_delete_menu_item'   => 'edit_theme_options',
@@ -78,6 +85,7 @@ class Tool_Capabilities {
 			'wp_update_term_meta' => 'manage_categories',
 			'wp_delete_term_meta' => 'manage_categories',
 			'wp_get_terms'        => 'edit_posts', // Server.php:2042 uses edit_posts
+			'wp_get_term'         => 'edit_posts', // term meta only for manage_categories, checked in the handler
 
 			// ==================== Core: media ====================
 			'wp_get_media'             => 'upload_files',
@@ -196,6 +204,12 @@ class Tool_Capabilities {
 		if ( strpos( $tool_name, 'tablepress_' ) === 0 ) return 'tablepress_list_tables';
 		if ( strpos( $tool_name, 'wpcode_' ) === 0 )     return \Royal_MCP\Integrations\WPCode::is_available() ? 'wpcode_edit_snippets' : 'manage_options';
 		if ( strpos( $tool_name, 'complianz_' ) === 0 )  return \Royal_MCP\Integrations\Complianz::cap();
+		if ( strpos( $tool_name, 'relevanssi_' ) === 0 ) return \Royal_MCP\Integrations\Relevanssi::cap_for( $tool_name );
+		// Form entries hold personal data: administrators only.
+		if ( strpos( $tool_name, 'ninjaforms_' ) === 0 ) return 'manage_options';
+		if ( strpos( $tool_name, 'fluentform_' ) === 0 ) return 'manage_options';
+		// Subscriber data and sending: administrators only (each tool also needs MailPoet's own permission).
+		if ( strpos( $tool_name, 'mailpoet_' ) === 0 ) return 'manage_options';
 		if ( strpos( $tool_name, 'snippets_' ) === 0 ) {
 			if ( function_exists( '\Code_Snippets\code_snippets' ) ) {
 				return \Code_Snippets\code_snippets()->get_cap();

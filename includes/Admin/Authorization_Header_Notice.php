@@ -26,17 +26,25 @@ class Authorization_Header_Notice {
     const PROBE_TTL           = 60; // 60 seconds — probe_id must be consumed by the loopback POST that follows.
     const USER_DISMISS_KEY    = 'royal_mcp_auth_header_dismissed';
     const SUPPORT_URL         = 'https://royalplugins.com/support/royal-mcp/authorization-header-stripped.html';
+    const CRON_HOOK           = 'royal_mcp_auth_header_probe';
 
-    public function __construct() {
+    /**
+     * @param bool $hooks Register the admin hooks (false for a one-off probe).
+     */
+    public function __construct( $hooks = true ) {
+        if ( ! $hooks ) {
+            return;
+        }
         add_action( 'admin_init', [ $this, 'maybe_probe' ] );
         add_action( 'admin_notices', [ $this, 'maybe_render_notice' ] );
         add_action( 'admin_init', [ $this, 'maybe_dismiss' ] );
     }
 
     /**
-     * Rate-limited probe. Fires the loopback canary at most once per
-     * TRANSIENT_TTL window per site. Site owners who want to force a re-probe
-     * can delete the transient via WP-CLI or a fresh Royal MCP settings save.
+     * Rate-limited probe. When no result is cached, queue the loopback canary
+     * for WP-Cron instead of running it inside an admin page load; the result
+     * is cached for TRANSIENT_TTL. Site owners who want to force a re-probe
+     * can delete the transient via WP-CLI.
      */
     public function maybe_probe() {
         if ( ! current_user_can( Settings_Page::admin_capability() ) ) {
@@ -45,7 +53,23 @@ class Authorization_Header_Notice {
         if ( is_multisite() && ! is_main_site() ) {
             return;
         }
-        $this->status();
+        if ( false !== get_transient( self::TRANSIENT_KEY ) ) {
+            return;
+        }
+        if ( ! wp_next_scheduled( self::CRON_HOOK ) ) {
+            wp_schedule_single_event( time(), self::CRON_HOOK );
+        }
+    }
+
+    /**
+     * WP-Cron callback: run the canary once and cache the result. Registered on
+     * every request (cron runs outside wp-admin).
+     */
+    public static function run_scheduled_probe() {
+        if ( is_multisite() && ! is_main_site() ) {
+            return;
+        }
+        ( new self( false ) )->status();
     }
 
     /**

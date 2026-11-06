@@ -22,7 +22,7 @@ $royal_mcp_unknown_client_url = $royal_mcp_help_support_urls['unknown_client_id'
 			printf(
 				wp_kses(
 					/* translators: %s: link to Royal MCP Settings page */
-					__( 'Session length defaults to 24 hours and is configurable in %s → Session length (1 hour, 8 hours, or 24 hours). Shorter sessions mean more frequent reconnects but tighter security.', 'royal-mcp' ),
+					__( 'Session length (how long each access token lasts) defaults to 24 hours and is configurable in %s → Session length (1 hour, 8 hours, 24 hours or 7 days). A connected AI client renews its token on its own, so it stays connected until it is revoked or goes 30 days unused; a shorter session means a copied access token stops working sooner.', 'royal-mcp' ),
 					[ 'a' => [ 'href' => [] ] ]
 				),
 				'<a href="' . esc_url( $royal_mcp_help_settings_url ) . '">' . esc_html__( 'Royal MCP → Settings', 'royal-mcp' ) . '</a>'

@@ -25,6 +25,8 @@ class Connected_Clients_Page {
     const REVOKE_ALL_NONCE  = 'royal_mcp_revoke_all_connections_nonce';
     const ACCESS_ACTION     = 'royal_mcp_set_client_access';
     const ACCESS_NONCE      = 'royal_mcp_set_client_access_nonce';
+    const APP_PW_ACTION     = 'royal_mcp_app_password_action';
+    const APP_PW_NONCE      = 'royal_mcp_app_password_action_nonce';
     const SCRIPT_HANDLE     = 'royal-mcp-connected-clients';
 
     public function __construct() {
@@ -33,6 +35,7 @@ class Connected_Clients_Page {
         add_action( 'admin_post_' . self::REVOKE_ACTION, [ $this, 'handle_revoke' ] );
         add_action( 'admin_post_' . self::REVOKE_ALL_ACTION, [ $this, 'handle_revoke_all' ] );
         add_action( 'admin_post_' . self::ACCESS_ACTION, [ $this, 'handle_set_access' ] );
+        add_action( 'admin_post_' . self::APP_PW_ACTION, [ $this, 'handle_app_password' ] );
         add_action( 'admin_enqueue_scripts', [ $this, 'enqueue' ] );
     }
 
@@ -75,6 +78,7 @@ class Connected_Clients_Page {
         $revoked_all = isset( $_GET['revoked_all'] ) ? absint( wp_unslash( $_GET['revoked_all'] ) ) : null;
         $blocked     = ! empty( $_GET['revoke_blocked'] );
         $access_saved = isset( $_GET['access_saved'] ) ? sanitize_text_field( wp_unslash( $_GET['access_saved'] ) ) : '';
+        $app_pw_done  = isset( $_GET['app_password'] ) ? sanitize_key( wp_unslash( $_GET['app_password'] ) ) : '';
         // phpcs:enable WordPress.Security.NonceVerification.Recommended
         $format  = trim( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ) );
         ?>
@@ -193,8 +197,137 @@ class Connected_Clients_Page {
                     </tbody>
                 </table>
             <?php endif; ?>
+            <?php $this->render_app_passwords( $format, $app_pw_done ); ?>
         </div>
         <?php
+    }
+
+    /**
+     * Application Passwords that called Royal MCP tools through the WordPress
+     * Abilities API or an MCP Adapter server.
+     */
+    private function render_app_passwords( $format, $done ) {
+        $rows    = \Royal_MCP\MCP\Support\App_Password_Connections::list_connections();
+        $notices = [
+            'blocked'   => __( 'That Application Password is now blocked from Royal MCP. WordPress keeps it, so other plugins can still use it.', 'royal-mcp' ),
+            'unblocked' => __( 'That Application Password can use Royal MCP again.', 'royal-mcp' ),
+            'deleted'   => __( 'That Application Password was deleted in WordPress.', 'royal-mcp' ),
+            'forgotten' => __( 'That Application Password was removed from this list.', 'royal-mcp' ),
+            'failed'    => __( 'That action did not complete. The Application Password may already have been deleted.', 'royal-mcp' ),
+        ];
+        ?>
+        <h2 style="margin-top:32px;"><?php esc_html_e( 'Application Passwords', 'royal-mcp' ); ?></h2>
+        <p class="description" style="max-width:820px;">
+            <?php esc_html_e( 'Applications that use Royal MCP tools through the WordPress Abilities API or another MCP server sign in with an Application Password. Block stops that password from using Royal MCP; WordPress keeps it. Delete removes the password from WordPress, so it stops working everywhere.', 'royal-mcp' ); ?>
+        </p>
+        <?php if ( isset( $notices[ $done ] ) ) : ?>
+            <div class="notice <?php echo esc_attr( 'failed' === $done ? 'notice-error' : 'notice-success' ); ?> is-dismissible"><p><?php echo esc_html( $notices[ $done ] ); ?></p></div>
+        <?php endif; ?>
+        <?php if ( ! $rows ) : ?>
+            <p><?php esc_html_e( 'No Application Password has used Royal MCP tools yet.', 'royal-mcp' ); ?></p>
+        <?php else : ?>
+            <table class="wp-list-table widefat fixed striped">
+                <thead><tr>
+                    <th><?php esc_html_e( 'User', 'royal-mcp' ); ?></th>
+                    <th><?php esc_html_e( 'Application Password', 'royal-mcp' ); ?></th>
+                    <th><?php esc_html_e( 'First used', 'royal-mcp' ); ?></th>
+                    <th><?php esc_html_e( 'Last used', 'royal-mcp' ); ?></th>
+                    <th><?php esc_html_e( 'Status', 'royal-mcp' ); ?></th>
+                    <th><?php esc_html_e( 'Actions', 'royal-mcp' ); ?></th>
+                </tr></thead>
+                <tbody>
+                <?php foreach ( $rows as $row ) : ?>
+                    <tr>
+                        <td><?php echo esc_html( '' !== $row['user_login'] ? $row['user_login'] : sprintf( /* translators: %d: user ID */ __( 'Deleted user #%d', 'royal-mcp' ), $row['user_id'] ) ); ?></td>
+                        <td><?php echo esc_html( $row['exists'] ? ( '' !== $row['name'] ? $row['name'] : __( '(no name)', 'royal-mcp' ) ) : __( 'Deleted in WordPress', 'royal-mcp' ) ); ?></td>
+                        <td><?php echo $row['first_seen'] ? esc_html( wp_date( $format, $row['first_seen'] ) ) : '&mdash;'; ?></td>
+                        <td><?php echo $row['last_seen'] ? esc_html( wp_date( $format, $row['last_seen'] ) ) : '&mdash;'; ?></td>
+                        <td><?php echo esc_html( $row['blocked'] ? __( 'Blocked', 'royal-mcp' ) : __( 'Allowed', 'royal-mcp' ) ); ?></td>
+                        <td>
+                            <?php
+                            $actions = [ $row['blocked'] ? 'unblock' : 'block' ];
+                            if ( $row['exists'] ) {
+                                $actions[] = 'delete';
+                            } else {
+                                $actions[] = 'forget';
+                            }
+                            $labels = [
+                                'block'   => __( 'Block', 'royal-mcp' ),
+                                'unblock' => __( 'Allow again', 'royal-mcp' ),
+                                'delete'  => __( 'Delete', 'royal-mcp' ),
+                                'forget'  => __( 'Remove from list', 'royal-mcp' ),
+                            ];
+                            foreach ( $actions as $act ) :
+                                ?>
+                                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline;margin:0 6px 0 0;"<?php echo 'delete' === $act ? ' onsubmit="return window.confirm(' . esc_attr( wp_json_encode( __( 'Delete this Application Password in WordPress? Every application using it stops working.', 'royal-mcp' ) ) ) . ');"' : ''; ?>>
+                                    <input type="hidden" name="action" value="<?php echo esc_attr( self::APP_PW_ACTION ); ?>">
+                                    <input type="hidden" name="do" value="<?php echo esc_attr( $act ); ?>">
+                                    <input type="hidden" name="user_id" value="<?php echo esc_attr( (string) $row['user_id'] ); ?>">
+                                    <input type="hidden" name="uuid" value="<?php echo esc_attr( $row['uuid'] ); ?>">
+                                    <?php wp_nonce_field( self::APP_PW_NONCE ); ?>
+                                    <button type="submit" class="button"<?php echo in_array( $act, [ 'block', 'delete' ], true ) ? ' style="color:#b32d2e;"' : ''; ?>><?php echo esc_html( $labels[ $act ] ); ?></button>
+                                </form>
+                            <?php endforeach; ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php endif; ?>
+        <?php
+    }
+
+    /** Block, allow again, delete in WordPress, or drop from the list. */
+    public function handle_app_password() {
+        if ( ! current_user_can( Settings_Page::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from Settings_Page::admin_capability(); the lists are per-site options; deleting also needs edit_user on the owner, checked below
+            wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
+        }
+        check_admin_referer( self::APP_PW_NONCE );
+        $do      = isset( $_POST['do'] ) ? sanitize_key( wp_unslash( $_POST['do'] ) ) : '';
+        $user_id = isset( $_POST['user_id'] ) ? absint( wp_unslash( $_POST['user_id'] ) ) : 0;
+        $uuid    = isset( $_POST['uuid'] ) ? strtolower( sanitize_text_field( wp_unslash( $_POST['uuid'] ) ) ) : '';
+        $page    = admin_url( 'admin.php?page=' . self::MENU_SLUG );
+        $apc     = '\Royal_MCP\MCP\Support\App_Password_Connections';
+        if ( $user_id < 1 || ! $apc::valid_uuid( $uuid ) || ! in_array( $do, [ 'block', 'unblock', 'delete', 'forget' ], true ) ) {
+            wp_die( esc_html__( 'A valid action, user and Application Password are required.', 'royal-mcp' ), '', [ 'response' => 400 ] );
+        }
+        $result = 'failed';
+        if ( 'block' === $do ) {
+            $result = $apc::block( $user_id, $uuid ) ? 'blocked' : 'failed';
+        } elseif ( 'unblock' === $do ) {
+            $result = $apc::unblock( $user_id, $uuid ) ? 'unblocked' : 'failed';
+        } elseif ( 'delete' === $do ) {
+            if ( ! current_user_can( 'edit_user', $user_id ) ) {
+                wp_die( esc_html__( 'You do not have permission to manage this user\'s Application Passwords.', 'royal-mcp' ), '', [ 'response' => 403 ] );
+            }
+            $deleted = $apc::delete_in_wordpress( $user_id, $uuid );
+            $result  = is_wp_error( $deleted ) ? 'failed' : 'deleted';
+        } else {
+            $apc::forget( $user_id, $uuid );
+            $result = 'forgotten';
+        }
+
+        global $wpdb;
+        $current_user = wp_get_current_user();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Intentional direct insert to the logs table.
+        $wpdb->insert(
+            $wpdb->prefix . 'royal_mcp_logs',
+            [
+                'mcp_server'    => 'MCP Server',
+                'action'        => 'app_password:' . $do,
+                'request_data'  => wp_json_encode( [
+                    'user_id'        => (int) $current_user->ID,
+                    'user_login'     => $current_user->user_login,
+                    'target_user_id' => $user_id,
+                    'uuid'           => $uuid,
+                ] ),
+                'response_data' => wp_json_encode( [ 'result' => $result ] ),
+                'status'        => 'failed' === $result ? 'error' : 'success',
+            ],
+            [ '%s', '%s', '%s', '%s', '%s' ]
+        );
+        wp_safe_redirect( add_query_arg( 'app_password', $result, $page ) );
+        exit;
     }
 
     /**
