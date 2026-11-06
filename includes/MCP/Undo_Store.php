@@ -20,6 +20,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Undo_Store {
 
     const OPTION_PREFIX = 'royal_mcp_undo_';
+    const UNREADABLE_OPTION       = 'royal_mcp_undo_unreadable_seen';
+    const UNREADABLE_KEEP_SECONDS = 2592000; // 30 days
     const DEFAULT_TTL   = 259200; // 72 * 3600 seconds (avoid HOUR_IN_SECONDS eval order in const context)
     /** Most changes a change list returns. */
     const CHANGES_LIMIT = 500;
@@ -175,6 +177,42 @@ class Undo_Store {
         $data['undone_at'] = time();
         $data['undone_by'] = (int) get_current_user_id();
         return update_option( self::OPTION_PREFIX . $token, base64_encode( gzcompress( wp_json_encode( $data ), 9 ) ), false );
+    }
+
+    /**
+     * Keep a snapshot open after a partial undo, changed so that it covers
+     * only what is still left to restore.
+     *
+     * Written in one conditional update: it succeeds only while the snapshot
+     * is unused and still restores exactly $expected_pre_op_state, so a
+     * concurrent undo or narrow is never overwritten.
+     *
+     * @param string $token                 Undo token.
+     * @param array  $expected_pre_op_state The pre_op_state the caller read.
+     * @param array  $updates               Snapshot keys to replace (pre_op_state, summary, target, ...).
+     * @return bool True when the snapshot was changed.
+     */
+    public static function narrow( string $token, array $expected_pre_op_state, array $updates ): bool {
+        global $wpdb;
+        if ( ! preg_match( '/^[a-f0-9]{32}$/', $token ) ) {
+            return false;
+        }
+        $name = self::OPTION_PREFIX . $token;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- compare-and-set needs the stored row, not a cached copy
+        $stored = $wpdb->get_var( $wpdb->prepare( "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", $name ) );
+        $data   = is_string( $stored ) ? self::decode( $stored ) : null;
+        if ( null === $data || ! empty( $data['undone_at'] ) ) {
+            return false;
+        }
+        if ( wp_json_encode( $data['pre_op_state'] ?? null ) !== wp_json_encode( $expected_pre_op_state ) ) {
+            return false;
+        }
+        unset( $updates['token'], $updates['user_id'], $updates['created_at'], $updates['expires_at'], $updates['undone_at'], $updates['undone_by'] );
+        $next = base64_encode( gzcompress( wp_json_encode( array_merge( $data, $updates ) ), 9 ) );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- conditional update, cache cleared below
+        $changed = $wpdb->query( $wpdb->prepare( "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value = %s", $next, $name, $stored ) );
+        wp_cache_delete( $name, 'options' );
+        return 1 === $changed;
     }
 
     /**
@@ -444,19 +482,42 @@ class Undo_Store {
                 $prefix
             )
         );
-        $deleted = 0;
+        $deleted    = 0;
+        // Rows this version cannot read (a newer storage format after a downgrade, or damaged data)
+        // are kept until they have been unreadable for longer than any undo window.
+        $unreadable = get_option( self::UNREADABLE_OPTION, [] );
+        $unreadable = is_array( $unreadable ) ? $unreadable : [];
+        $seen       = [];
+        $now        = time();
         foreach ( (array) $option_names as $option_name ) {
             $token = substr( (string) $option_name, strlen( self::OPTION_PREFIX ) );
             if ( ! preg_match( '/^[a-f0-9]{32}$/', $token ) ) {
                 continue; // not a snapshot row
             }
-            // A row that cannot be read is no use to anyone; an expired one is past its window.
             $data = self::decode_row( $token );
-            if ( null === $data || ( isset( $data['expires_at'] ) && (int) $data['expires_at'] < time() ) ) {
-                self::delete( $token );
-                if ( false === get_option( (string) $option_name, false ) ) {
-                    $deleted++;
+            if ( null === $data ) {
+                // Text that is not this version's format may be a newer format: kept 30 days.
+                // Anything else (not text, or empty) is damaged: kept for the normal undo window.
+                $raw   = get_option( (string) $option_name, '' );
+                $keep  = is_string( $raw ) && '' !== $raw ? max( self::UNREADABLE_KEEP_SECONDS, self::ttl_seconds() ) : self::ttl_seconds();
+                $first = isset( $unreadable[ $token ] ) ? (int) $unreadable[ $token ] : $now;
+                if ( $now - $first < $keep ) {
+                    $seen[ $token ] = $first;
+                    continue;
                 }
+            } elseif ( ! isset( $data['expires_at'] ) || (int) $data['expires_at'] >= $now ) {
+                continue;
+            }
+            self::delete( $token );
+            if ( false === get_option( (string) $option_name, false ) ) {
+                $deleted++;
+            }
+        }
+        if ( $seen !== $unreadable ) {
+            if ( [] === $seen ) {
+                delete_option( self::UNREADABLE_OPTION );
+            } else {
+                update_option( self::UNREADABLE_OPTION, $seen, false );
             }
         }
         return $deleted;

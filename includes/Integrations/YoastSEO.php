@@ -967,7 +967,7 @@ class YoastSEO {
 			foreach ( [ 'title' => '_yoast_wpseo_title', 'description' => '_yoast_wpseo_metadesc' ] as $tpl_arg => $tpl_key ) {
 				$tpl_now = (string) get_post_meta( $post_id, $tpl_key, true );
 				if ( isset( $args[ $tpl_arg ] ) && is_string( $args[ $tpl_arg ] ) && '' !== $args[ $tpl_arg ]
-					&& \Royal_MCP\MCP\Support\Seo_Plugin::has_template( $tpl_now ) && ! \Royal_MCP\MCP\Support\Seo_Plugin::has_template( $args[ $tpl_arg ] ) ) {
+					&& \Royal_MCP\MCP\Support\Seo_Plugin::has_template( $tpl_now, 'yoast' ) && ! \Royal_MCP\MCP\Support\Seo_Plugin::has_template( $args[ $tpl_arg ], 'yoast' ) ) {
 					throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'template_overwrite', sprintf( 'Nothing was written. %s holds an SEO template (%s) that Yoast fills in for each page; the new value has no template variables, so it would replace the template with fixed text. Send a value with the template variables, or pass force: true to replace the template.', $tpl_arg, $tpl_now ), [ 'field' => $tpl_arg, 'current_value' => $tpl_now ] );
 				}
 			}
@@ -994,6 +994,15 @@ class YoastSEO {
 		$requested = [];
 		$raw_input = [];
 		$before    = [];
+		$absent    = [];
+		foreach ( array_keys( $field_map ) as $arg_key ) {
+			if ( ! array_key_exists( $arg_key, $args ) ) {
+				continue;
+			}
+			if ( null !== $args[ $arg_key ] && ! is_scalar( $args[ $arg_key ] ) ) {
+				throw new \Exception( sprintf( '%s must be a string. Nothing was written.', esc_html( $arg_key ) ) );
+			}
+		}
 		foreach ( array_keys( $field_map ) as $arg_key ) {
 			if ( ! array_key_exists( $arg_key, $args ) ) {
 				continue;
@@ -1001,6 +1010,9 @@ class YoastSEO {
 			$raw_input[ $arg_key ] = (string) $args[ $arg_key ];
 			$requested[ $arg_key ] = sanitize_text_field( $raw_input[ $arg_key ] );
 			$before[ $arg_key ]    = $read( $arg_key );
+			if ( ! metadata_exists( 'post', $post_id, $field_map[ $arg_key ] ) ) {
+				$absent[] = $arg_key;
+			}
 		}
 
 		// Noop path — no writeable fields passed. Return a valid envelope
@@ -1067,6 +1079,7 @@ class YoastSEO {
 			'pre_op_state' => [
 				'prior_values'   => $before,
 				'applied_values' => $actual,
+				'prior_absent'   => $absent,
 			],
 		] );
 

@@ -60,6 +60,12 @@ class Drafts_Policy {
 		'wp_revoke_preview_links',
 	];
 
+	/**
+	 * Writes that only create or change an email draft: the tool itself refuses
+	 * an email that is not a draft, and its undo keeps it a draft.
+	 */
+	const EMAIL_DRAFT_TOOLS = [ 'mailpoet_save_draft' ];
+
 	/** Tools that create new content, and the argument that sets its status. */
 	const CREATE_TOOLS = [
 		'wp_create_post'            => 'status',
@@ -125,7 +131,7 @@ class Drafts_Policy {
 	 */
 	public static function refusal( $name, array $args, $read_only ) {
 		$name = (string) $name;
-		if ( $read_only || in_array( $name, self::ALWAYS_ALLOWED, true ) ) {
+		if ( $read_only || in_array( $name, self::ALWAYS_ALLOWED, true ) || in_array( $name, self::EMAIL_DRAFT_TOOLS, true ) ) {
 			return null;
 		}
 		if ( 'mcp_undo_last_operation' === $name ) {
@@ -267,6 +273,14 @@ class Drafts_Policy {
 		if ( in_array( $op, [ 'tablepress_create_table', 'tablepress_copy_table', 'elementor_import_template' ], true ) ) {
 			return null;
 		}
+		// An email draft's undo restores or removes the draft and refuses once it is no longer a draft.
+		// Without force it also refuses once the draft changed since; force would discard what a person built.
+		if ( in_array( $op, self::EMAIL_DRAFT_TOOLS, true ) ) {
+			if ( filter_var( $args['force'] ?? false, FILTER_VALIDATE_BOOLEAN ) ) {
+				return 'force would discard changes made to the email draft since, so it is not allowed while drafts-only applies. Undo without force, or ask a person to undo it.';
+			}
+			return null;
+		}
 		if ( ! isset( self::UNDO_CONTENT_OPS[ $op ] ) ) {
 			return sprintf( 'undoing %s changes more than a draft\'s content, so it is not allowed while drafts-only applies.', $op );
 		}
@@ -296,6 +310,7 @@ class Drafts_Policy {
 		return ! $read_only
 			&& 'mcp_undo_last_operation' !== $name
 			&& ! in_array( $name, self::ALWAYS_ALLOWED, true )
+			&& ! in_array( $name, self::EMAIL_DRAFT_TOOLS, true )
 			&& ! array_key_exists( $name, self::CREATE_TOOLS )
 			&& ! array_key_exists( $name, self::EDIT_TOOLS );
 	}

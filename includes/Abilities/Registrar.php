@@ -57,6 +57,10 @@ class Registrar {
 			'snippets_'    => 'code-snippets',
 			'wpcode_'      => 'wpcode',
 			'complianz_'   => 'complianz',
+			'relevanssi_'  => 'relevanssi',
+			'ninjaforms_'  => 'ninja-forms',
+			'fluentform_'  => 'fluent-forms',
+			'mailpoet_'    => 'mailpoet',
 		);
 	}
 
@@ -211,6 +215,9 @@ class Registrar {
 			} catch ( \Throwable $e ) {
 				// Messages are plain text here; the REST layer encodes them. A refusal or a
 				// missing item is the caller's request (400); a PHP error is the site's (500).
+				if ( $e instanceof \Exception && 403 === $e->getCode() && 0 === strpos( $e->getMessage(), 'This Application Password is blocked from Royal MCP.' ) ) {
+					return new \WP_Error( 'royal_mcp_app_password_blocked', $e->getMessage(), array( 'status' => 403 ) );
+				}
 				if ( $e instanceof \Exception && 429 === $e->getCode() && 0 === strpos( $e->getMessage(), 'Rate limit exceeded.' ) ) {
 					return new \WP_Error( 'royal_mcp_rate_limited', wp_strip_all_tags( \Royal_MCP\MCP\Support\Secret_Scrubber::scrub_text( $e->getMessage() ) ), array( 'status' => 429 ) );
 				}

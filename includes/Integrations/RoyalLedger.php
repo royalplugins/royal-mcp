@@ -156,7 +156,7 @@ class RoyalLedger {
 				if ( ! empty( $args['url'] ) ) {
 					$data['url'] = esc_url_raw( $args['url'] );
 				}
-				if ( ! empty( $args['notes'] ) ) {
+				if ( isset( $args['notes'] ) && is_scalar( $args['notes'] ) && '' !== (string) $args['notes'] ) {
 					// Royal Ledger sanitizes notes itself; a second pass here would only remove more.
 					$data['notes'] = is_scalar( $args['notes'] ) ? (string) $args['notes'] : '';
 				}

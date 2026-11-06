@@ -680,6 +680,35 @@ class Server {
         wp_mail( $to, $subject, implode( "\n", $lines ) );
     }
 
+    /**
+     * The sign-in error for a client_id the site does not know. For an application identified by
+     * the address of its client information document, say why that document could not be used.
+     *
+     * @param string $client_id Client identifier from the request.
+     * @param string $reason    Token_Store::cimd_failure_reason().
+     * @return string Plain text.
+     */
+    private function unknown_client_message( $client_id, $reason ) {
+        $address = substr( (string) $client_id, 0, 200 );
+        switch ( $reason ) {
+            case 'fetch_failed':
+                /* translators: %s: address of the application's client information document */
+                return sprintf( __( 'This site could not fetch the application\'s client information document (%s), so the application cannot sign in. Try again in a few minutes. If it keeps failing, the site\'s host may be blocking outgoing requests, or that address is down.', 'royal-mcp' ), $address );
+            case 'rate_limited':
+                return __( 'Too many sign-in attempts from your network in the last few minutes. Wait 10 minutes and try again.', 'royal-mcp' );
+            case 'invalid_document':
+                /* translators: %s: address of the application's client information document */
+                return sprintf( __( 'The application\'s client information document (%s) is not valid: it must list redirect_uris, and any client_id in it must be that same address.', 'royal-mcp' ), $address );
+            case 'rejected':
+                return __( 'The site owner rejected this application, so it cannot sign in.', 'royal-mcp' );
+            case 'disabled':
+                return __( 'This site does not accept applications identified by a web address. Ask the site owner to register the application.', 'royal-mcp' );
+            case 'not_saved':
+                return __( 'This site could not save the application\'s details. Try again in a few minutes.', 'royal-mcp' );
+        }
+        return __( 'Unknown client_id. The application has not been registered.', 'royal-mcp' );
+    }
+
     /* ------------------------------------------------------------------
      *  GET /authorize  — Show consent screen
      * ----------------------------------------------------------------*/
@@ -708,9 +737,10 @@ class Server {
         // Validate client FIRST — never redirect to unvalidated redirect_uri (OAuth 2.1 §4.1.2.1).
         $client = Token_Store::get_client( $client_id );
         if ( ! $client ) {
-            $this->log_event( 'invalid_client', 'Unknown client_id at /authorize.', 400 );
+            $cimd_reason = Token_Store::cimd_failure_reason();
+            $this->log_event( 'invalid_client', '' !== $cimd_reason ? 'Client metadata document not usable at /authorize: ' . $cimd_reason . '.' : 'Unknown client_id at /authorize.', 400 );
             wp_die(
-                esc_html__( 'Unknown client_id. The application has not been registered.', 'royal-mcp' ),
+                esc_html( $this->unknown_client_message( $client_id, $cimd_reason ) ),
                 esc_html__( 'Authorization Error', 'royal-mcp' ),
                 [ 'response' => 400 ]
             );
@@ -832,8 +862,13 @@ class Server {
         $scope                 = isset( $_POST['scope'] ) ? sanitize_text_field( wp_unslash( $_POST['scope'] ) ) : 'mcp:full';
         $action                = isset( $_POST['authorize_action'] ) ? sanitize_text_field( wp_unslash( $_POST['authorize_action'] ) ) : '';
 
-        // User denied.
+        // User denied. Send them back only to an address registered for a known client.
         if ( 'deny' === $action ) {
+            $deny_client = Token_Store::get_client( $client_id );
+            if ( ! $deny_client || '' === $redirect_uri || ! Token_Store::validate_redirect_uri( $redirect_uri, $deny_client ) ) {
+                $this->log_event( 'invalid_request', 'Deny at /authorize (POST) with an unknown client or redirect_uri.', 400 );
+                wp_die( esc_html__( 'Sign-in cancelled. The application or its return address is not registered on this site, so you were not sent back to it.', 'royal-mcp' ), '', [ 'response' => 400 ] );
+            }
             $this->authorize_error( $redirect_uri, $state, 'access_denied', 'The user denied the authorization request.' );
         }
 

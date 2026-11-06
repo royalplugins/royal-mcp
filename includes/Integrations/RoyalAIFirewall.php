@@ -85,13 +85,37 @@ class RoyalAIFirewall {
 			],
 			[
 				'name'        => 'raif_block_all_ai_bots',
-				'description' => 'Panic button: set the per-bot override to "block" for every recognized bot except those marked always_allow. Requires confirm:true.',
+				'description' => 'Panic button: set the per-bot override to "block" for every recognized bot except those marked always_allow. dry_run true lists what would change and needs no confirm; applying requires confirm:true. Each bot keeps its rate limit and paywall URL. Returns blocked_count and results per bot (bot_id, before, after, status, reason) with one undo token that puts every changed bot back.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
-						'confirm' => [ 'type' => 'boolean', 'description' => 'MUST be true — refused silently otherwise.' ],
+						'confirm' => [ 'type' => 'boolean', 'description' => 'MUST be true to apply — refused otherwise.' ],
+						'dry_run' => [ 'type' => 'boolean', 'description' => 'true previews (no confirm needed).' ],
 					],
-					'required'   => [ 'confirm' ],
+				],
+			],
+			[
+				'name'        => 'raif_set_bot_policies',
+				'description' => 'Set the policy for several bots in one call: changes [{bot_id, policy (allow, block, log-only or default), rate_limit_per_min?, paywall_url?}]. A bot keeps its rate limit and paywall URL unless you pass them. dry_run (default true) changes nothing. Applied bot by bot: results [{bot_id, before {action, source, rate_limit_per_min, paywall_url}, after, status (changed, unchanged, would_change, refused), reason?}]; blocking a search engine is refused (raif_search_engine_guard) unless that override is enabled in Royal AI Firewall. One undo token restores every changed bot; a bot changed again since is left as it is and listed as pending, and the token stays valid until undo with force: true restores it.',
+				'inputSchema' => [
+					'type'       => 'object',
+					'required'   => [ 'changes' ],
+					'properties' => [
+						'changes' => [
+							'type'  => 'array',
+							'items' => [
+								'type'       => 'object',
+								'required'   => [ 'bot_id', 'policy' ],
+								'properties' => [
+									'bot_id'             => [ 'type' => 'string' ],
+									'policy'             => [ 'type' => 'string', 'enum' => [ 'allow', 'block', 'log-only', 'default' ] ],
+									'rate_limit_per_min' => [ 'type' => 'integer' ],
+									'paywall_url'        => [ 'type' => 'string' ],
+								],
+							],
+						],
+						'dry_run' => [ 'type' => 'boolean', 'description' => 'Default true (preview). Pass false to apply.' ],
+					],
 				],
 			],
 		];
@@ -126,6 +150,9 @@ class RoyalAIFirewall {
 
 			case 'raif_block_all_ai_bots':
 				return self::block_all_ai_bots( $args );
+
+			case 'raif_set_bot_policies':
+				return self::set_bot_policies( $args );
 
 			default:
 				throw new \Exception( 'Unknown Royal AI Firewall tool: ' . esc_html( $name ) );
@@ -426,6 +453,7 @@ class RoyalAIFirewall {
 			];
 		}
 
+		// The bot keeps its rate limit and paywall URL.
 		$result = \Royal_AI_Firewall\PolicyWriter::apply( $bot_id, $policy, self::kept_extras( self::policy_row( $bot_id ) ) );
 		if ( is_wp_error( $result ) ) {
 			throw new \Exception( esc_html( $result->get_error_message() ) );
@@ -503,17 +531,14 @@ class RoyalAIFirewall {
 	}
 
 	private static function block_all_ai_bots( $args ) {
-		if ( empty( $args['confirm'] ) || true !== filter_var( $args['confirm'], FILTER_VALIDATE_BOOLEAN ) ) {
+		$preview = array_key_exists( 'dry_run', $args ) && ! in_array( $args['dry_run'], [ false, 0, '0', 'false', null, '' ], true );
+		if ( ! $preview && ( empty( $args['confirm'] ) || true !== filter_var( $args['confirm'], FILTER_VALIDATE_BOOLEAN ) ) ) {
 			throw new \Exception( 'confirm must be true to run this destructive operation.' );
 		}
 
-		$catalog = (array) \Royal_AI_Firewall\FingerprintDB::get_all_bots();
-
-		$blocked_count = 0;
-		$skipped       = [];
-		$errors        = [];
-
-		foreach ( $catalog as $bot ) {
+		$changes = [];
+		$skipped = [];
+		foreach ( (array) \Royal_AI_Firewall\FingerprintDB::get_all_bots() as $bot ) {
 			$bot_id = $bot['id'] ?? '';
 			if ( '' === $bot_id ) {
 				continue;
@@ -522,21 +547,26 @@ class RoyalAIFirewall {
 				$skipped[] = $bot_id;
 				continue;
 			}
-
-			$result = \Royal_AI_Firewall\PolicyWriter::apply( $bot_id, 'block', self::kept_extras( self::policy_row( $bot_id ) ) );
-			if ( is_wp_error( $result ) ) {
-				$errors[ $bot_id ] = $result->get_error_message();
-				continue;
-			}
-			$blocked_count++;
+			$changes[] = [ 'bot_id' => $bot_id, 'policy' => 'block' ];
 		}
 
-		return [
-			'blocked_count'         => $blocked_count,
-			'skipped_always_allow'  => $skipped,
-			'errors'                => (object) $errors,
+		list( $results, $undo_items ) = self::apply_policies( $changes, $preview );
+		$errors = [];
+		foreach ( $results as $r ) {
+			if ( 'refused' === $r['status'] ) {
+				$errors[ $r['bot_id'] ] = (string) ( $r['reason'] ?? '' );
+			}
+		}
+		$out = [
+			'dry_run'                 => $preview,
+			'blocked_count'           => count( array_filter( $results, function ( $r ) { return in_array( $r['status'], [ 'changed', 'unchanged', 'would_change' ], true ); } ) ),
+			'changed_count'           => count( array_filter( $results, function ( $r ) { return in_array( $r['status'], [ 'changed', 'would_change' ], true ); } ) ),
+			'skipped_always_allow'    => $skipped,
+			'errors'                  => (object) $errors,
 			'previous_global_default' => (string) get_option( 'raif_default_policy', 'log-only' ),
+			'results'                 => $results,
 		];
+		return self::policies_reply( $preview ? sprintf( '[dry-run] %d bot(s) would be blocked.', $out['changed_count'] ) : sprintf( 'Blocked %d bot(s).', $out['changed_count'] ), $out, $undo_items );
 	}
 
 	/** The bot's stored override row, or null. */
@@ -562,6 +592,182 @@ class RoyalAIFirewall {
 			'rate_limit_per_min' => ( is_array( $row ) && null !== $row['rate_limit_per_min'] ) ? (int) $row['rate_limit_per_min'] : null,
 			'paywall_url'        => is_array( $row ) ? (string) ( $row['paywall_url'] ?? '' ) : '',
 		];
+	}
+
+	/** A bot's policy as reported: action, source, rate limit, paywall. */
+	private static function state_of( $bot_def, $row ) {
+		if ( is_array( $row ) ) {
+			return [
+				'action'             => (string) $row['action'],
+				'source'             => 'per-bot',
+				'rate_limit_per_min' => null !== $row['rate_limit_per_min'] ? (int) $row['rate_limit_per_min'] : null,
+				'paywall_url'        => isset( $row['paywall_url'] ) && '' !== $row['paywall_url'] ? (string) $row['paywall_url'] : null,
+			];
+		}
+		return [
+			'action'             => self::derive_default_action( $bot_def, (string) get_option( 'raif_default_policy', 'log-only' ) ),
+			'source'             => 'default',
+			'rate_limit_per_min' => null,
+			'paywall_url'        => null,
+		];
+	}
+
+	private static function set_bot_policies( $args ) {
+		$changes = $args['changes'] ?? null;
+		if ( ! is_array( $changes ) || [] === $changes || count( $changes ) > 100 || array_keys( $changes ) !== range( 0, count( $changes ) - 1 ) ) {
+			throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', 'changes must be a list of 1 to 100 items like {"bot_id": "openai-gptbot", "policy": "block"}.' );
+		}
+		$seen = [];
+		foreach ( $changes as $i => $c ) {
+			if ( ! is_array( $c ) || ! isset( $c['bot_id'], $c['policy'] ) || ! is_string( $c['bot_id'] ) || ! in_array( $c['policy'], [ 'allow', 'block', 'log-only', 'default' ], true ) ) {
+				throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', sprintf( 'changes[%d] needs bot_id and policy (allow, block, log-only or default).', $i ) );
+			}
+			if ( array_diff( array_keys( $c ), [ 'bot_id', 'policy', 'rate_limit_per_min', 'paywall_url' ] ) ) {
+				throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', sprintf( 'changes[%d] has unknown fields.', $i ) );
+			}
+			if ( isset( $c['rate_limit_per_min'] ) && ! ( is_int( $c['rate_limit_per_min'] ) && $c['rate_limit_per_min'] >= 1 && $c['rate_limit_per_min'] <= 10000 ) ) {
+				throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', sprintf( 'changes[%d].rate_limit_per_min must be a whole number from 1 to 10000.', $i ) );
+			}
+			if ( isset( $c['paywall_url'] ) && ( ! is_string( $c['paywall_url'] ) || '' === esc_url_raw( $c['paywall_url'] ) ) ) {
+				throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', sprintf( 'changes[%d].paywall_url must be a URL.', $i ) );
+			}
+			// Compared after cleaning, the way each bot id is applied below.
+			$seen_id = sanitize_key( $c['bot_id'] );
+			if ( isset( $seen[ $seen_id ] ) ) {
+				throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', sprintf( '%s is listed twice.', $seen_id ) );
+			}
+			$seen[ $seen_id ] = true;
+		}
+		$preview = ! ( array_key_exists( 'dry_run', $args ) && in_array( $args['dry_run'], [ false, 0, '0', 'false' ], true ) );
+		list( $results, $undo_items ) = self::apply_policies( $changes, $preview );
+		$changed = count( array_filter( $results, function ( $r ) { return in_array( $r['status'], [ 'changed', 'would_change' ], true ); } ) );
+		$refused = count( array_filter( $results, function ( $r ) { return 'refused' === $r['status']; } ) );
+		return self::policies_reply(
+			$preview ? sprintf( '[dry-run] %d bot(s) would change; %d refused.', $changed, $refused ) : sprintf( '%d bot(s) changed; %d refused.', $changed, $refused ),
+			[ 'dry_run' => $preview, 'changed_count' => $changed, 'refused_count' => $refused, 'results' => $results ],
+			$undo_items
+		);
+	}
+
+	/**
+	 * Apply (or preview) policy changes bot by bot.
+	 *
+	 * @return array [ results, undo items ]
+	 */
+	private static function apply_policies( array $changes, $preview ) {
+		$results    = [];
+		$undo_items = [];
+		$guard_off  = '1' === (string) get_option( 'raif_allow_search_engine_block', '0' );
+		foreach ( $changes as $c ) {
+			$bot_id = sanitize_key( (string) $c['bot_id'] );
+			$bot    = \Royal_AI_Firewall\FingerprintDB::get_bot_by_id( $bot_id );
+			if ( null === $bot ) {
+				$results[] = [ 'bot_id' => $bot_id, 'status' => 'refused', 'reason' => 'unknown_bot' ];
+				continue;
+			}
+			$row    = self::policy_row( $bot_id );
+			$before = self::state_of( $bot, $row );
+			$policy = (string) $c['policy'];
+			if ( 'default' === $policy ) {
+				$after = self::state_of( $bot, null );
+			} else {
+				$kept  = self::kept_extras( $row );
+				$after = [
+					'action'             => $policy,
+					'source'             => 'per-bot',
+					'rate_limit_per_min' => array_key_exists( 'rate_limit_per_min', $c ) ? (int) $c['rate_limit_per_min'] : $kept['rate_limit_per_min'],
+					'paywall_url'        => array_key_exists( 'paywall_url', $c ) ? esc_url_raw( (string) $c['paywall_url'] ) : ( '' !== $kept['paywall_url'] ? $kept['paywall_url'] : null ),
+				];
+			}
+			$item = [ 'bot_id' => $bot_id, 'name' => (string) ( $bot['name'] ?? $bot_id ), 'before' => $before, 'after' => $after ];
+			if ( $before === $after ) {
+				$results[] = $item + [ 'status' => 'unchanged' ];
+				continue;
+			}
+			if ( 'block' === $policy && ! empty( $bot['always_allow'] ) && ! $guard_off ) {
+				$results[] = $item + [ 'status' => 'refused', 'reason' => 'raif_search_engine_guard' ];
+				continue;
+			}
+			if ( $preview ) {
+				$results[] = $item + [ 'status' => 'would_change' ];
+				continue;
+			}
+			if ( 'default' === $policy ) {
+				global $wpdb;
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- the same delete Royal AI Firewall's own screen does
+				$wpdb->delete( $wpdb->prefix . ROYAL_AI_FIREWALL_TABLE_POLICY, [ 'bot_id' => $bot_id ], [ '%s' ] );
+				do_action( 'raif_policy_override_cleared', $bot_id );
+			} else {
+				$done = \Royal_AI_Firewall\PolicyWriter::apply( $bot_id, $policy, [ 'rate_limit_per_min' => $after['rate_limit_per_min'], 'paywall_url' => (string) $after['paywall_url'] ] );
+				if ( is_wp_error( $done ) ) {
+					$results[] = $item + [ 'status' => 'refused', 'reason' => $done->get_error_code() ];
+					continue;
+				}
+			}
+			$results[]    = $item + [ 'status' => 'changed' ];
+			$undo_items[] = [ 'bot_id' => $bot_id, 'prior_row' => $row, 'after_row' => self::policy_row( $bot_id ) ];
+		}
+		return [ $results, $undo_items ];
+	}
+
+	private static function policies_reply( $text, array $struct, array $undo_items ) {
+		$undo = null;
+		if ( ! $struct['dry_run'] && $undo_items ) {
+			$undo = \Royal_MCP\MCP\Undo_Store::store( [
+				'op'           => 'raif_set_bot_policies',
+				'summary'      => sprintf( 'Restore the policy of %d bot(s).', count( $undo_items ) ),
+				'target'       => [ 'bot_ids' => array_column( $undo_items, 'bot_id' ) ],
+				'pre_op_state' => [ 'items' => $undo_items ],
+			] );
+		} elseif ( ! $struct['dry_run'] ) {
+			$struct['undo']        = null;
+			$struct['undo_reason'] = 'nothing_changed';
+		}
+		return \Royal_MCP\MCP\Support\Envelope::success( $text, $struct, $undo );
+	}
+
+	/**
+	 * Put bots back as they were before a policy change; a bot changed again
+	 * since is left as it is.
+	 *
+	 * @return array [ restored bot ids, skipped [ {bot_id, reason} ] ]
+	 */
+	public static function undo_policies( array $items, $force = false ) {
+		global $wpdb;
+		$restored = [];
+		$skipped  = [];
+		$same     = function ( $a, $b ) {
+			if ( null === $a || null === $b ) {
+				return null === $a && null === $b;
+			}
+			return (string) $a['action'] === (string) $b['action'] && (string) $a['rate_limit_per_min'] === (string) $b['rate_limit_per_min'] && (string) $a['paywall_url'] === (string) $b['paywall_url'];
+		};
+		foreach ( $items as $it ) {
+			$bot_id = sanitize_key( (string) ( $it['bot_id'] ?? '' ) );
+			if ( '' === $bot_id ) {
+				continue;
+			}
+			$now = self::policy_row( $bot_id );
+			if ( ! $force && ! $same( $now, $it['after_row'] ?? null ) ) {
+				$skipped[] = [ 'bot_id' => $bot_id, 'reason' => 'edited_since_write' ];
+				continue;
+			}
+			$prior = $it['prior_row'] ?? null;
+			if ( null === $prior ) {
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- the same delete Royal AI Firewall's own screen does
+				$wpdb->delete( $wpdb->prefix . ROYAL_AI_FIREWALL_TABLE_POLICY, [ 'bot_id' => $bot_id ], [ '%s' ] );
+				do_action( 'raif_policy_override_cleared', $bot_id );
+			} else {
+				\Royal_AI_Firewall\PolicyWriter::apply( $bot_id, (string) $prior['action'], [
+					'rate_limit_per_min' => null !== $prior['rate_limit_per_min'] ? (int) $prior['rate_limit_per_min'] : null,
+					'paywall_url'        => (string) ( $prior['paywall_url'] ?? '' ),
+					'policy_source'      => (string) ( $prior['policy_source'] ?? '' ),
+					'auto_reason'        => (string) ( $prior['auto_reason'] ?? '' ),
+				] );
+			}
+			$restored[] = $bot_id;
+		}
+		return [ $restored, $skipped ];
 	}
 
 	/**

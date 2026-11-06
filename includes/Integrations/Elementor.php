@@ -197,6 +197,7 @@ class Elementor {
 						'target_post_id'   => [ 'type' => 'integer', 'description' => 'Page or post to insert the template into. Must be Elementor-edited (has _elementor_data) OR completely empty (will be seeded).' ],
 						'position'         => [ 'type' => 'string', 'enum' => [ 'top', 'bottom', 'after_element' ], 'description' => 'Where to insert. Default bottom.' ],
 						'after_element_id' => [ 'type' => 'string', 'description' => 'Required when position="after_element". Element id (from elementor_get_page_outline) to insert immediately after.' ],
+						'include_unpublished' => [ 'type' => 'boolean', 'description' => 'Default false: only published or private templates are applied. true also applies a draft, pending or scheduled template (never one in the trash).' ],
 					],
 					'required'   => [ 'template_id', 'target_post_id' ],
 				],
@@ -567,6 +568,21 @@ class Elementor {
 		if ( ! \Royal_MCP\MCP\Support\Post_Access::can_read_content( $template_id ) ) {
 			throw new \Exception( 'read_post capability required on template.' );
 		}
+		// Only published (or private) library templates unless the caller asks for an unpublished one;
+		// a template in the trash is never applied.
+		$template_status = (string) $template_post->post_status;
+		if ( in_array( $template_status, [ 'trash', 'auto-draft' ], true )
+			|| ( ! in_array( $template_status, [ 'publish', 'private' ], true ) && true !== filter_var( $args['include_unpublished'] ?? false, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE ) ) ) {
+			return \Royal_MCP\MCP\Support\Envelope::error(
+				'template_not_published',
+				'trash' === $template_status
+					? sprintf( 'Template %d is in the trash. Nothing was written; restore it first.', $template_id )
+					: ( 'auto-draft' === $template_status
+						? sprintf( 'Template %d is an unsaved auto-draft, not a template yet. Nothing was written; save it in Elementor first.', $template_id )
+						: sprintf( 'Template %d is %s, not published. Nothing was written. Pass include_unpublished: true to apply it anyway.', $template_id, $template_status ) ),
+				[ 'template_id' => $template_id, 'status' => $template_status ]
+			);
+		}
 
 		// Load template _elementor_data.
 		$template_data = get_post_meta( $template_id, '_elementor_data', true );
@@ -649,6 +665,8 @@ class Elementor {
 			update_post_meta( $target_post_id, '_elementor_edit_mode', 'builder' );
 			$edit_mode_seeded = true;
 		}
+		Elementor_Atomic::clear_post_cache( $target_post_id );
+		\Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $target_post_id );
 
 		// Collect top-level inserted element ids for the response.
 		$inserted_ids = [];
@@ -1205,6 +1223,8 @@ class Elementor {
 		self::refuse_if_stored_markup_would_be_removed( $post_id );
 		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $updated ) ) ) );
 		Elementor_Atomic::clear_post_cache( $post_id );
+		// Same save signal and modified date as Royal MCP's other post writes.
+		\Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
 
 		// Sync attachment postmeta only when the caller explicitly opted in.
 		// Blast-radius awareness: a single attachment used across many pages
@@ -1532,6 +1552,7 @@ class Elementor {
 		self::refuse_if_stored_markup_would_be_removed( $post_id );
 		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $updated ) ) ) );
 		Elementor_Atomic::clear_post_cache( $post_id );
+		\Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
 
 		$undo_envelope = self::build_elementor_data_undo(
 			'elementor_replace_image',
@@ -2156,6 +2177,7 @@ class Elementor {
 		self::refuse_if_stored_markup_would_be_removed( $post_id );
 		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $tree ) ) ) );
 		Elementor_Atomic::clear_post_cache( $post_id );
+		\Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
 
 		$notice = ! empty( $args['settings'] ) && in_array( $widget_type, self::$curated_widget_types, true )
 			? 'Raw settings supplied for a curated widget_type — curated params were ignored. To use curated, omit the settings parameter.'

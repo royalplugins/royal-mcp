@@ -558,7 +558,7 @@ final class Secret_Scrubber {
 						$flags |= JSON_PRETTY_PRINT;
 					}
 					$json = wp_json_encode( $walked, $flags );
-					return false === $json ? self::hidden() : $json;
+					return false === $json ? self::hidden() : self::restore_bigints( $json, $s );
 				}
 			}
 
@@ -635,6 +635,43 @@ final class Secret_Scrubber {
 			return false;
 		}
 		return null;
+	}
+
+	/**
+	 * Integers too large for PHP come back from json_decode as strings. Put back as numbers only
+	 * the values that were bare numbers in the original: the scalar tokens of the original and of
+	 * the rewritten JSON are matched one to one, in order (decode and encode keep keys and order),
+	 * and a token is restored only when it was a bare integer there and is the same digits here.
+	 *
+	 * @param string $json     Rewritten JSON.
+	 * @param string $original JSON as it was read.
+	 * @return string
+	 */
+	private static function restore_bigints( $json, $original ) {
+		$rx = '/"(?:[^"\\\\]|\\\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null/';
+		if ( ! preg_match( '/(?<![\w.+-])-?\d{19,}(?![\w.])/', $original ) ) {
+			return $json;
+		}
+		if ( ! preg_match_all( $rx, $original, $in ) || ! preg_match_all( $rx, $json, $out, PREG_OFFSET_CAPTURE ) ) {
+			return $json;
+		}
+		if ( count( $in[0] ) !== count( $out[0] ) ) {
+			return $json;
+		}
+		$result = '';
+		$pos    = 0;
+		foreach ( $out[0] as $i => $tok ) {
+			list( $text, $at ) = $tok;
+			$was = (string) $in[0][ $i ];
+			$result .= substr( $json, $pos, $at - $pos );
+			$pos     = $at + strlen( $text );
+			if ( preg_match( '/^-?\d{19,}$/', $was ) && '"' . $was . '"' === $text ) {
+				$result .= $was;
+			} else {
+				$result .= $text;
+			}
+		}
+		return $result . substr( $json, $pos );
 	}
 
 	private static function looks_serialized( $s ) {

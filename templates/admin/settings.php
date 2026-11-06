@@ -552,6 +552,41 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                         </tr>
                         <tr>
                             <th scope="row">
+                                <?php esc_html_e('Tools browser agents can use', 'royal-mcp'); ?>
+                            </th>
+                            <td>
+                                <?php
+                                $rmcp_webmcp_tools = \Royal_MCP\MCP\Server::webmcp_switchable_tools();
+                                $rmcp_webmcp_off   = \Royal_MCP\MCP\Server::webmcp_disabled_tools();
+                                ?>
+                                <input type="hidden" name="royal_mcp_settings[webmcp_tools_form]" value="1">
+                                <details>
+                                    <summary>
+                                        <?php
+                                        printf(
+                                            /* translators: 1: tools switched on, 2: tools listed */
+                                            esc_html__( '%1$d of %2$d tools that change the site are on for browser agents', 'royal-mcp' ),
+                                            (int) ( count( $rmcp_webmcp_tools ) - count( array_intersect_key( $rmcp_webmcp_off, array_flip( $rmcp_webmcp_tools ) ) ) ),
+                                            (int) count( $rmcp_webmcp_tools )
+                                        );
+                                        ?>
+                                    </summary>
+                                    <div style="columns:3 220px;margin-top:8px;">
+                                        <?php foreach ( $rmcp_webmcp_tools as $rmcp_webmcp_tool ) : ?>
+                                            <label style="display:block;break-inside:avoid;">
+                                                <input type="checkbox" name="royal_mcp_settings[webmcp_allowed_tools][]" value="<?php echo esc_attr( $rmcp_webmcp_tool ); ?>" <?php checked( ! isset( $rmcp_webmcp_off[ $rmcp_webmcp_tool ] ) ); ?>>
+                                                <code><?php echo esc_html( $rmcp_webmcp_tool ); ?></code>
+                                            </label>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </details>
+                                <p class="description">
+                                    <?php esc_html_e('Every tool is on unless you untick it here. An unticked tool is refused for browser agents and other AI tools that use your browser login, including through the WordPress Abilities API. AI clients that sign in with OAuth, an API key or an Application Password are not affected. Read-only tools are always available, and tools that make several changes in one call are switched separately.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
                                 <label for="abilities_registration_enabled"><?php esc_html_e('Register tools with the WordPress Abilities API', 'royal-mcp'); ?></label>
                             </th>
                             <td>
@@ -565,6 +600,24 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                 </label>
                                 <p class="description">
                                     <?php esc_html_e('When on (the default), other MCP servers on this site, such as a page builder\'s, can find Royal MCP tools through the WordPress Abilities API. Turn off to keep each server\'s tools separate. Needs WordPress 6.9 or later.', 'royal-mcp'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="record_php_errors"><?php esc_html_e('Record PHP fatal errors', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[record_php_errors]"
+                                           id="record_php_errors"
+                                           value="1"
+                                           <?php checked( '0' !== (string) get_option( \Royal_MCP\Integrations\Php_Errors::SETTING, '1' ) ); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When on (the default), Royal MCP keeps the last 50 distinct PHP fatal errors on this site, with credentials hidden and no request data, so AI clients can read them with wp_get_php_errors even when the debug log is off.', 'royal-mcp'); ?>
                                 </p>
                             </td>
                         </tr>
@@ -891,7 +944,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                 <?php endforeach; ?>
                             </select>
                             <p class="description">
-                                <?php esc_html_e('How long an AI client stays connected before it must sign in again. Applies to new sessions; existing sessions keep their original length.', 'royal-mcp'); ?>
+                                <?php esc_html_e('How long each access token lasts. A connected AI client renews it on its own, so it stays connected until you revoke it or it goes 30 days unused. Applies to new sessions; existing sessions keep their original length.', 'royal-mcp'); ?>
                             </p>
                             <p class="description">
                                 <a href="<?php echo esc_url( admin_url( 'admin.php?page=royal-mcp-connected-clients' ) ); ?>"><?php esc_html_e('See who is connected, and revoke one client or all of them, on the Connected Clients screen', 'royal-mcp'); ?></a>

@@ -422,6 +422,16 @@ class Core {
 					'home_url'            => array( 'type' => 'string' ),
 				),
 			),
+			'wp_get_php_errors' => array(
+				'type'       => 'object',
+				'properties' => array(
+					'capture_enabled' => array( 'type' => 'boolean' ),
+					'captured_since'  => array( 'type' => array( 'string', 'null' ) ),
+					'errors'          => array( 'type' => 'array' ),
+					'paused_plugins'  => array( 'type' => 'array' ),
+					'paused_themes'   => array( 'type' => 'array' ),
+				),
+			),
 			'wp_get_error_log_tail' => array(
 				'type'       => 'object',
 				'properties' => array(
@@ -804,6 +814,7 @@ class Core {
 				'status' => array( 'type' => 'string' ),
 				'url'    => array( 'type' => 'string' ),
 				'date'   => array( 'type' => 'string' ),
+				'modified' => array( 'type' => array( 'string', 'null' ) ),
 				'content_length' => array( 'type' => 'integer' ),
 			),
 		);

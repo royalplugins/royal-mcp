@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.5.14
+ * Version: 1.5.15
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -41,7 +41,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 }
 
 // Define plugin constants.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.14' );
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.15' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -143,6 +143,8 @@ class Royal_MCP_Plugin {
         add_action('init', [$this, 'ensure_cleanup_scheduled'], 20);
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'cleanup_expired']);
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Undo_Store::class, 'cleanup_expired']);
+        // A newsletter scheduled through Royal MCP is paused when MailPoet's recipient count at send time is clearly above the confirmed one.
+        add_filter('mailpoet_sending_queue_subscribers_to_process', [\Royal_MCP\Integrations\MailPoet::class, 'guard_scheduled_send'], 10, 3);
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Protocol_Counter::class, 'cleanup_expired']);
 
         // sessions cleanup rides on the same daily cron action.
@@ -159,9 +161,17 @@ class Royal_MCP_Plugin {
         // A new password signs the user out of every AI client they connected.
         add_action('after_password_reset', [\Royal_MCP\OAuth\Token_Store::class, 'revoke_on_password_reset'], 10, 1);
         add_action('wp_set_password', [\Royal_MCP\OAuth\Token_Store::class, 'revoke_on_password_set'], 10, 2);
+        // Authorization-header canary queued by the admin notice; runs from WP-Cron, never in a page load.
+        add_action(\Royal_MCP\Admin\Authorization_Header_Notice::CRON_HOOK, [\Royal_MCP\Admin\Authorization_Header_Notice::class, 'run_scheduled_probe']);
+
+        // Changing or clearing the static client id in Settings ends that client's sign-ins.
+        add_action('update_option_royal_mcp_settings', [\Royal_MCP\OAuth\Token_Store::class, 'on_settings_updated'], 10, 2);
 
         // Add plugin action links (Settings, Docs)
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), [$this, 'add_action_links']);
+
+        // PHP fatal errors recorded for wp_get_php_errors (setting under Settings > Advanced).
+        \Royal_MCP\Integrations\Php_Errors::register();
 
         // Elementor MCP module coexistence notice — render callback checks detection.
         \Royal_MCP\Integrations\Elementor_Coexistence::register_hooks();
@@ -526,6 +536,7 @@ class Royal_MCP_Plugin {
     public function deactivate() {
         // Clear scheduled events.
         wp_clear_scheduled_hook( 'royal_mcp_token_cleanup' );
+        wp_clear_scheduled_hook( 'royal_mcp_auth_header_probe' );
 
         // Flush rewrite rules
         flush_rewrite_rules();
@@ -836,8 +847,8 @@ class Royal_MCP_Plugin {
     /**
      * Re-register OAuth + /mcp alias rewrites and flush WordPress's cached
      * rewrite_rules option when the stored rewrite-version lags the plugin
-     * version. Runs at admin_init so the flush happens on the next admin
-     * page load an upgrader visits, without cost on frontend requests.
+     * version. Runs on init (priority 99) on any request, after every rule is
+     * registered; once the stored version is current it only compares two strings.
      */
     public function maybe_flush_rewrites() {
         if ( get_option( 'royal_mcp_rewrite_version' ) === ROYAL_MCP_VERSION ) {

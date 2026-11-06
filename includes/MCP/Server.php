@@ -28,6 +28,10 @@ use Royal_MCP\Integrations\TablePress as TablePressIntegration;
 use Royal_MCP\Integrations\CodeSnippets as CodeSnippetsIntegration;
 use Royal_MCP\Integrations\Complianz as ComplianzIntegration;
 use Royal_MCP\Integrations\WPCode as WPCodeIntegration;
+use Royal_MCP\Integrations\Relevanssi as RelevanssiIntegration;
+use Royal_MCP\Integrations\NinjaForms as NinjaFormsIntegration;
+use Royal_MCP\Integrations\MailPoet as MailPoetIntegration;
+use Royal_MCP\Integrations\FluentForms as FluentFormsIntegration;
 use Royal_MCP\Integrations\Elementor_Coexistence;
 
 if (!defined('ABSPATH')) {
@@ -251,6 +255,53 @@ class Server {
     public static function drafts_only_mode() {
         $settings = get_option( 'royal_mcp_settings', [] );
         return is_array( $settings ) && ! empty( $settings['drafts_only_mode'] );
+    }
+
+    /**
+     * Tools an admin switched off for browser agents (WebMCP), as a name => true set.
+     * Every tool is on unless it is listed here.
+     */
+    public static function webmcp_disabled_tools() {
+        $settings = get_option( 'royal_mcp_settings', [] );
+        $list     = is_array( $settings ) && isset( $settings['webmcp_disabled_tools'] ) && is_array( $settings['webmcp_disabled_tools'] ) ? $settings['webmcp_disabled_tools'] : [];
+        return array_fill_keys( array_filter( array_map( 'strval', $list ), 'strlen' ), true );
+    }
+
+    /**
+     * Tools that can change the site, including ones other plugins add: the ones
+     * the browser-agent list can switch off. Read-only tools are always available.
+     */
+    public static function webmcp_switchable_tools() {
+        $names = [];
+        $builtin = self::builtin_tool_names();
+        foreach ( (array) ( new self() )->get_all_tools() as $tool ) {
+            $tool_name = is_array( $tool ) ? (string) ( $tool['name'] ?? '' ) : '';
+            if ( '' === $tool_name || 'execute_tool' === $tool_name ) {
+                continue;
+            }
+            // A tool's own hint wins; Royal MCP's tools use its annotations; any other tool counts as one that can change the site.
+            if ( isset( $tool['annotations']['readOnlyHint'] ) ) {
+                $read_only = true === $tool['annotations']['readOnlyHint'];
+            } else {
+                $read_only = isset( $builtin[ $tool_name ] ) && ! empty( self::annotations_for( $tool_name )['readOnlyHint'] );
+            }
+            if ( ! $read_only ) {
+                $names[ $tool_name ] = true;
+            }
+        }
+        $names = array_keys( $names );
+        sort( $names );
+        return $names;
+    }
+
+    /**
+     * Whether this request signed in with the browser's login cookie (no
+     * Application Password): calls from a page, such as a browser agent using
+     * the Abilities API or an MCP server on this site.
+     */
+    private static function signed_in_with_browser_cookie() {
+        return defined( 'LOGGED_IN_COOKIE' ) && ! empty( $_COOKIE[ LOGGED_IN_COOKIE ] ) // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- presence check only
+            && '' === \Royal_MCP\MCP\Support\App_Password_Connections::current_uuid();
     }
 
     public static function read_only_mode() {
@@ -1152,6 +1203,136 @@ class Server {
     }
 
     /**
+     * The refusal an undo returns when its target changed after the tracked write. Nothing is
+     * changed and the token is kept, so the caller can look first and then undo again with
+     * force: true.
+     */
+    /**
+     * A version or requirement string from an update offer: text and numbers only, so a malformed
+     * offer (an array or object) reads as "unknown" instead of "Array".
+     *
+     * @param mixed $value Raw field from the update data.
+     * @return string|null
+     */
+    private static function offer_text( $value ) {
+        if ( ! is_scalar( $value ) || is_bool( $value ) ) {
+            return null;
+        }
+        $value = trim( (string) $value );
+        return '' === $value ? null : $value;
+    }
+
+    /**
+     * What a post looks like after a tracked write (title, content, excerpt,
+     * status and last change), so its undo can tell whether it was edited since.
+     */
+    public static function post_undo_fingerprint( $post_id ) {
+        clean_post_cache( (int) $post_id );
+        $post = get_post( (int) $post_id );
+        if ( ! $post ) {
+            return '';
+        }
+        return md5( (string) wp_json_encode( [ (string) $post->post_title, (string) $post->post_content, (string) $post->post_excerpt, (string) $post->post_status, (string) $post->post_modified_gmt ] ) );
+    }
+
+    /**
+     * The delete tool an undo acts as when undoing removes or trashes what the
+     * operation created, or '' when it does not.
+     */
+    private static function undo_delete_tool( array $snapshot ) {
+        $op     = (string) ( $snapshot['op'] ?? '' );
+        $target = isset( $snapshot['target'] ) && is_array( $snapshot['target'] ) ? $snapshot['target'] : [];
+        $pre    = isset( $snapshot['pre_op_state'] ) && is_array( $snapshot['pre_op_state'] ) ? $snapshot['pre_op_state'] : [];
+        switch ( $op ) {
+            case 'wp_create_post_trash':
+            case 'elementor_clone_page':
+            case 'elementor_import_template':
+            case 'divi_clone_page':
+                $pid  = (int) ( $target['post_id'] ?? ( $pre['created_post_id'] ?? ( $target['created_post_id'] ?? 0 ) ) );
+                $type = (string) ( $target['post_type'] ?? ( $pid > 0 ? get_post_type( $pid ) : '' ) );
+                return 'page' === $type ? 'wp_delete_page' : 'wp_delete_post';
+            case 'wp_create_menu_item':
+                return 'wp_delete_menu_item';
+            case 'wp_update_post':
+                // Block inserts are stored as a post content restore; undoing one removes the inserted blocks.
+                return 'wp_insert_blocks' === ( $pre['original_op'] ?? '' ) ? 'wp_delete_block' : '';
+            case 'elementor_add_widget':
+                return 'elementor_delete_widget';
+            case 'wp_create_comment':
+                return 'wp_delete_comment';
+            case 'wp_add_post_meta':
+                return 'wp_delete_post_meta';
+            case 'wc_create_variation':
+                return 'wc_delete_variation';
+            case 'wc_create_coupon':
+                return 'wc_delete_coupon';
+            case 'wc_batch_update_variations':
+                return ! empty( $pre['created'] ) ? 'wc_delete_variation' : '';
+        }
+        return '';
+    }
+
+    private static function undo_drift_refusal( $what_changed, $force_does = 'restore the earlier state anyway', array $extra = [] ) {
+        return new \Royal_MCP\MCP\Support\Tool_Refusal( 'edited_since_write', sprintf( 'Cannot undo: %s The undo token stays valid: undo again with force: true to %s.', $what_changed, $force_does ), $extra );
+    }
+
+    /**
+     * Content, author, date, post, status, meta and reply count of a comment, so undoing its
+     * creation can tell whether it changed since. '' when the comment is gone.
+     */
+    private static function comment_undo_fingerprint( $comment_id ) {
+        $comment = get_comment( (int) $comment_id );
+        if ( ! $comment ) {
+            return '';
+        }
+        $replies = (int) get_comments( [ 'parent' => (int) $comment_id, 'count' => true, 'status' => 'any' ] );
+        $meta    = get_comment_meta( (int) $comment_id );
+        return md5( (string) wp_json_encode( [
+            $comment->comment_content, $comment->comment_author, $comment->comment_author_email, $comment->comment_author_url,
+            $comment->comment_date_gmt, (int) $comment->comment_post_ID, $comment->comment_approved, $replies,
+            md5( (string) wp_json_encode( is_array( $meta ) ? $meta : [] ) ),
+        ] ) );
+    }
+
+    /**
+     * What a widget looks like now (its sidebar and settings as the widgets endpoint returns
+     * them), so its undo can tell whether it changed since. '' when it cannot be read.
+     */
+    /**
+     * A multi-widget's stored settings: [widget object, number, settings or null when none are stored].
+     *
+     * @param string $widget_id Widget id such as block-3.
+     * @return array
+     */
+    private static function widget_stored_instance( $widget_id ) {
+        global $wp_widget_factory;
+        if ( ! preg_match( '/^(.+)-(\d+)$/', (string) $widget_id, $m ) || ! ( $wp_widget_factory instanceof \WP_Widget_Factory ) ) {
+            return [ null, 0, null ];
+        }
+        $object = $wp_widget_factory->get_widget_object( $m[1] );
+        if ( ! $object instanceof \WP_Widget ) {
+            return [ null, 0, null ];
+        }
+        $number   = (int) $m[2];
+        $settings = $object->get_settings();
+        return [ $object, $number, ( is_array( $settings ) && array_key_exists( $number, $settings ) && is_array( $settings[ $number ] ) ) ? $settings[ $number ] : null ];
+    }
+
+    private static function widget_undo_hash( $widget_id ) {
+        $request = new \WP_REST_Request( 'GET', '/wp/v2/widgets/' . $widget_id );
+        $request->set_param( 'context', 'edit' );
+        $response = rest_do_request( $request );
+        if ( $response->is_error() ) {
+            return '';
+        }
+        $data = $response->get_data();
+        if ( ! is_array( $data ) ) {
+            return '';
+        }
+        return md5( (string) wp_json_encode( [ $data['sidebar'] ?? null, $data['instance'] ?? null ] ) );
+    }
+
+    /**
      * Build a read-after-write response for wp_update_post / wp_update_page.
      *
      * Reads the post back from DB post-mutation so the response reflects stored values.
@@ -1430,7 +1611,7 @@ class Server {
     private function get_builtin_tools() {
         $tools = [
             // Posts (supports custom post types)
-            ['name' => 'wp_get_posts', 'description' => 'Get WordPress posts (supports custom post types). Each item includes content_length (bytes of stored post_content) so you can size-check before fetching — on page-builder sites a short page can still carry a very large body.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of posts (max 100)'], 'search' => ['type' => 'string', 'description' => 'Search term'], 'status' => ['type' => 'string', 'description' => 'Post status (publish, draft, etc)'], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post). Use wp_get_post_types to discover available types'], 'include' => ['type' => 'array', 'items' => ['type' => 'integer'], 'maxItems' => 100, 'description' => 'Up to 100 post IDs. Returns exactly those posts (any status you can read, trashed posts included) in this order; per_page and search are ignored.'], 'with_content' => ['type' => 'boolean', 'description' => 'When true, each item adds content_text (content with shortcodes and tags removed, whitespace collapsed, at most 3000 characters) and content_truncated.']]]],
+            ['name' => 'wp_get_posts', 'description' => 'Get WordPress posts (supports custom post types). Each item includes date (publish date, site local time), modified (last change, ISO 8601 UTC) and content_length (bytes of stored post_content) so you can size-check before fetching — on page-builder sites a short page can still carry a very large body. Sort with orderby / order; use modified_after to find posts edited recently. Content edits, Royal MCP custom-field tools, ACF field writes (acf_update_field) and Elementor writes update modified; other plugins changing only custom fields may leave it unchanged.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of posts (max 100)'], 'search' => ['type' => 'string', 'description' => 'Search term'], 'status' => ['type' => 'string', 'description' => 'Post status (publish, draft, etc)'], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post). Use wp_get_post_types to discover available types'], 'include' => ['type' => 'array', 'items' => ['type' => 'integer'], 'maxItems' => 100, 'description' => 'Up to 100 post IDs. Returns exactly those posts (any status you can read, trashed posts included) in this order; per_page, search, orderby, order and modified_after are ignored (invalid values are still refused).'], 'orderby' => ['type' => 'string', 'enum' => ['date', 'modified', 'title', 'menu_order', 'id'], 'description' => 'Sort field (default date, the publish date). modified sorts by the last change.'], 'order' => ['type' => 'string', 'enum' => ['asc', 'desc'], 'description' => 'asc or desc. Default: asc (A to Z) for orderby title, desc for every other sort.'], 'modified_after' => ['type' => 'string', 'description' => 'Only items last modified after this moment: a date (2026-11-01) or date and time (2026-11-01T09:30:00Z). No timezone means UTC.'], 'with_content' => ['type' => 'boolean', 'description' => 'When true, each item adds content_text (content with shortcodes and tags removed, whitespace collapsed, at most 3000 characters) and content_truncated.']]]],
             ['name' => 'wp_get_post', 'description' => 'Get single post by ID (any post type)', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID']], 'required' => ['id']]],
             ['name' => 'wp_create_post', 'description' => 'Create new post (supports custom post types). Combine status="future" with date to schedule. Excerpt may contain safe HTML (same allow-list as post content). Backslashes (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) are stored as sent.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule. Past dates auto-publish with that timestamp.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'categories' => ['type' => 'array', 'items' => ['type' => 'integer']], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post)'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to assign as the post author. Defaults to the authenticated MCP user (admin). Use wp_get_users to discover available author IDs.']], 'required' => ['title', 'content']]],
             ['name' => 'wp_clone_post_as_draft', 'description' => 'Copy a post, page or other public content item you can edit into a new draft owned by you: title, content, excerpt, parent, order, comment settings, password, page template, featured image, the terms you may assign and custom fields that are not protected. The original is not changed. Use it to prepare changes to published content (required in drafts-only mode), then edit the copy. Builder pages use elementor_clone_page or divi_clone_page, which also copy the layout; products are copied in WooCommerce. Undo moves the copy to the trash.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'ID of the post to copy'], 'title' => ['type' => 'string', 'description' => 'Title for the copy (default: the original title)']], 'required' => ['id']]],
@@ -1441,7 +1622,7 @@ class Server {
             ['name' => 'wp_count_posts', 'description' => 'Get post counts by status', 'inputSchema' => ['type' => 'object', 'properties' => ['post_type' => ['type' => 'string', 'description' => 'Post type (post, page, etc)']]]],
 
             // Pages
-            ['name' => 'wp_get_pages', 'description' => 'List WordPress pages. Returns id, title, status, URL, and content_length (bytes of stored content — size-check before fetching) for each. Filter by parent to walk the page hierarchy.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of pages (default 10, max 100)'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID — returns only direct children of this page'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'pending', 'private', 'future', 'any'], 'description' => 'publish (default), one status, or any (every status you can read except trash), so a draft you just created can be found.']]]],
+            ['name' => 'wp_get_pages', 'description' => 'List WordPress pages. Returns id, title, status, URL, date (publish date, site local time), modified (last change, ISO 8601 UTC) and content_length (bytes of stored content — size-check before fetching) for each. Filter by parent to walk the page hierarchy; sort with orderby / order; use modified_after to find pages edited recently. Content edits, Royal MCP custom-field tools, ACF field writes and Elementor writes update modified; other plugins changing only custom fields may leave it unchanged.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of pages (default 10, max 100)'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID — returns only direct children of this page'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'pending', 'private', 'future', 'any'], 'description' => 'publish (default), one status, or any (every status you can read except trash), so a draft you just created can be found.'], 'orderby' => ['type' => 'string', 'enum' => ['date', 'modified', 'title', 'menu_order', 'id'], 'description' => 'Sort field. Without orderby or modified_after, pages are listed by title A to Z.'], 'order' => ['type' => 'string', 'enum' => ['asc', 'desc'], 'description' => 'asc or desc. Default when orderby is given: asc (A to Z) for title, desc for every other sort.'], 'modified_after' => ['type' => 'string', 'description' => 'Only items last modified after this moment: a date (2026-11-01) or date and time (2026-11-01T09:30:00Z). No timezone means UTC.']]]],
             ['name' => 'wp_get_page', 'description' => 'Get single page by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Page ID']], 'required' => ['id']]],
             ['name' => 'wp_create_page', 'description' => 'Create new page. Combine status="future" with date to schedule. Excerpt (via wp_update_post_meta on _excerpt or via wp_create_post fallback) may contain safe HTML.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule.'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID']], 'required' => ['title', 'content']]],
             ['name' => 'wp_update_page', 'description' => 'Update existing page. Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional page excerpt. May contain safe HTML.'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as page author.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling pages. Lower = earlier in navigation.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent page ID (0 = top-level). Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Page password. Empty string removes protection.']], 'required' => ['id']]],
@@ -1471,6 +1652,7 @@ class Server {
             ['name' => 'wp_get_taxonomies', 'description' => 'Get all registered public taxonomies (built-in plus custom taxonomies registered by themes/plugins like product_cat, brand, etc.). Returns the taxonomy slug, label, hierarchical flag, and which post types it applies to.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
 
             // Term Meta (for SEO-plugin tag/category meta — Yoast, Rank Math, AIOSEO)
+            ['name' => 'wp_get_term', 'description' => 'Get one term by ID and taxonomy: id, name, slug, description, count, parent and link. Term meta comes back in meta (sensitive values redacted) when you can manage categories; otherwise meta_included is false. A term that does not exist and a term in another taxonomy give the same error.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Term ID.'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to (e.g. category, post_tag, product_cat).']], 'required' => ['id', 'taxonomy']]],
             ['name' => 'wp_get_term_meta', 'description' => 'Get term meta data. Useful for reading tag/category SEO meta stored by Yoast, Rank Math, or AIOSEO before editing it.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string', 'description' => 'Specific meta key. Omit to return all meta for the term.']], 'required' => ['term_id']]],
             ['name' => 'wp_update_term_meta', 'description' => 'Update term meta data. Common keys for SEO plugins: Yoast uses _yoast_wpseo_title / _yoast_wpseo_metadesc; Rank Math uses rank_math_title / rank_math_description; AIOSEO uses _aioseo_title / _aioseo_description. String values may contain safe HTML (same allow-list as post content). Use the royal_mcp_meta_value_sanitizer filter to customize per meta key.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null']]], 'required' => ['term_id', 'key', 'value']]],
             ['name' => 'wp_delete_term_meta', 'description' => 'Delete term meta data (every value of the key). The reply carries an undo token that puts the deleted values back.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['term_id', 'key']]],
@@ -1500,6 +1682,7 @@ class Server {
             ['name' => 'wp_security_triage', 'description' => 'Read-only security check for a site you suspect was compromised. Reports facts only, never secrets: must-use plugins and drop-ins (file, name, version, modified date) and anything else in mu-plugins; plugin folders and loose PHP files in the plugins folder that WordPress does not list as plugins; every plugin with its folder and main-file modified dates; users holding capabilities beyond their role (id, short login hash, role, extra capabilities, registration date; no emails or logins) and the administrator count; whether named options exist (present + count only, never names beyond your pattern or values); leftovers in wp-content/upgrade. Pass since (a date) to flag anything installed, changed or registered after it, plugin_names to look for published indicator plugin slugs, option_patterns for published database indicators. Ends with the indicators found and a summary that never says the site is clean: "No indicators found among the checks run". Filesystem walks stop at 5,000 files or 3 seconds per check and mark results partial. Requires manage_options (network admin on multisite).', 'inputSchema' => ['type' => 'object', 'properties' => ['since' => ['type' => 'string', 'description' => 'Optional date (2026-10-17 or 2026-10-17T00:00:00Z): flag plugins, must-use plugins, drop-ins and upgrade leftovers changed after it, and count administrators registered after it.'], 'option_patterns' => ['type' => 'array', 'maxItems' => 20, 'items' => ['type' => 'string'], 'description' => 'Up to 20 option names or patterns with one * at the start or end (e.g. *_sync_token), at least 6 characters besides the *. Each returns present and count only.'], 'plugin_names' => ['type' => 'array', 'maxItems' => 50, 'items' => ['type' => 'string'], 'description' => 'Up to 50 plugin slugs or folder names from a published advisory; each is looked for among registered, unregistered, must-use and drop-in files.'], 'checks' => ['type' => 'array', 'items' => ['type' => 'string', 'enum' => ['mu_plugins', 'unregistered_plugin_folders', 'plugins', 'users', 'option_patterns', 'upgrade_folder']], 'description' => 'Optional subset of checks to run. Default: all.']]]],
             ['name' => 'wp_get_mcp_coexistence', 'description' => 'Report what else on this site speaks MCP and who answers the addresses MCP clients and AI crawlers read: other MCP servers and hubs (Elementor MCP and its switch, the WordPress MCP Adapter and which plugin bundles it, Angie, and any active plugin that is an MCP server), the plugin answering /.well-known/oauth-authorization-server, /.well-known/oauth-protected-resource, /.well-known/mcp/server-card.json, /llms.txt and robots.txt (with the AI bots it blocks), whether Royal MCP tools can be reached through another server, and the sign-in path an AI app follows to reach Royal MCP (who answers each step, with a fix when another plugin does). Read-only; loads each address from the site, so it takes a few seconds. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_get_site_status', 'description' => 'One-shot site diagnostic. Returns WordPress version, PHP version, MySQL/MariaDB version, active plugin count, active theme details, memory limit, max upload size, timezone, WP_DEBUG_LOG state, disk free space, install age, and site/home URLs. Use this at the start of a debugging or environment-inspection conversation instead of piecing it together from wp_get_site_info + wp_get_plugins + wp_get_active_theme. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'wp_get_php_errors', 'description' => 'PHP fatal errors on this site, recorded as they happen (with or without the debug log), and the plugins and themes WordPress paused after a fatal error. Each error: message (credentials hidden), file (relative to the WordPress folder), line, plugin_slug or theme_slug, count, first_seen, last_seen; the last 50 distinct errors are kept. capture_enabled says whether recording is on (Settings > Advanced). No request data is stored. Read-only. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => ['since' => ['type' => 'string', 'description' => 'ISO time: only errors last seen after it.'], 'limit' => ['type' => 'integer', 'description' => '1-50, default 50.']]]],
             ['name' => 'wp_get_error_log_tail', 'description' => 'Read the tail of wp-content/debug.log. Returns the last N lines (default 100, max 1000), optionally filtered by a case-insensitive substring. Automatically caps file read at last 1MB to prevent memory blowup on huge logs (truncated=true when this happens). Returns status="disabled" with instructions when WP_DEBUG_LOG is not enabled in wp-config.php. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => ['lines' => ['type' => 'integer', 'description' => 'Number of lines to return from the tail (default 100, max 1000).'], 'filter' => ['type' => 'string', 'description' => 'Optional case-insensitive substring filter applied before the last-N slice (e.g. "Fatal error", "Deprecated", a plugin slug).']]]],
             ['name' => 'wp_get_cron_schedule', 'description' => 'Enumerate scheduled wp_cron events. Returns each event with hook name, next run (unix + ISO 8601), seconds until next run, is_overdue flag, recurrence (hourly / twicedaily / daily / custom + interval in seconds), and args. Sorted by next-run ascending so overdue events come first. Useful for diagnosing missed schedules, plugin cron conflicts, or unfired hooks. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'royal_mcp_connection_health', 'description' => 'Diagnostic probe for the current MCP connection. Returns MCP endpoint route, authentication method used by this request (api-key or oauth-bearer), OAuth access token time-to-live in seconds (null for api-key), current MCP session ID, active MCP capabilities negotiated at initialize, plus a builders block with active-flag booleans for Divi / Elementor / Gutenberg so agents can branch on which page-builder is installed without probing for it. No arguments. Call at connection start to confirm setup, or when diagnosing 401/403/404 issues. Any authenticated caller.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -1507,7 +1690,7 @@ class Server {
             ['name' => 'get_tool_info', 'description' => 'Return the full inputSchema (and, when available, an example invocation) for a single tool named in tool_name. Pairs with discover_tools + execute_tool for the compact discovery flow.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name (e.g. "wp_update_post").']], 'required' => ['tool_name']]],
             ['name' => 'execute_tool', 'description' => 'Pass-through dispatcher for the compact discovery flow. Invokes the tool named in tool_name with the arguments in arguments — semantically identical to a direct tools/call for that tool. Useful when the client only advertised the routing tools via X-MCP-Profile: compact but still wants to invoke a specific underlying tool without renegotiating the profile.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name to invoke.'], 'arguments' => ['type' => 'object', 'description' => 'Arguments object forwarded to the underlying tool. Same shape you\'d pass in tools/call.']], 'required' => ['tool_name']]],
             ['name' => 'wp_verify_rendered_page', 'description' => 'Post-write verification tool. Fetches the actual rendered HTML that WordPress serves at a URL via a loopback request and returns the response status, a subset of response headers (content-type, cache-control, x-cache), the page title, meta description, first h1, counts of script and stylesheet link tags, robots_meta (content of <meta name="robots">, null when absent), x_robots_tag (the X-Robots-Tag header, null when absent), redirect_chain ([{url, status}] for each redirect followed, up to 5; [] when none — response_status is the final status), tls_valid (whether the https certificate verifies; null for http), and (when include_body_excerpt is true) a 500-char excerpt of the page body. Optional selector arg reports whether an id/class selector is present in the served HTML. Use after any write that changes content, theme, or options to catch page-builder caches, object caches, or edge caches serving stale HTML even when the DB write returned success. Rate-limited to 10 calls per minute per URL; the redirect hops within one call are not counted separately. Requires read on the target post/page or manage_options. URL must belong to the current WordPress site.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Absolute URL on this site to fetch (must match home_url() origin).'], 'selector' => ['type' => 'string', 'description' => 'Optional #id or .class selector to check for presence in the rendered HTML.'], 'include_body_excerpt' => ['type' => 'boolean', 'description' => 'When true, include a 500-char excerpt of the <body> in the response. Default false.']], 'required' => ['url']]],
-            ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, the block tools (wp_insert_blocks, wp_replace_block, wp_move_block, wp_delete_block, wp_replace_text_in_blocks, wp_update_block_attributes, wp_update_synced_pattern), wp_create_post, wp_create_page and wp_clone_post_as_draft (undo moves the new post to the trash), wp_update_post, wp_update_post_meta, wp_add_post_meta, wp_delete_post_meta, wp_delete_post, wp_delete_page, wp_delete_media (when it moves the item to the media trash), wp_restore_revision, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_term_meta, wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, yoast_update_meta (aliases wp_update_seo_meta), wp_update_widget, the comment tools (wp_create_comment, wp_delete_comment, wp_approve_comment, wp_spam_comment, wp_trash_comment), the WooCommerce writes (products, variations, orders, order notes, attributes, coupons), the Elementor write tools (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_apply_template_to_page, elementor_rebuild_post_content) and the Divi write tools (divi_replace_image, divi_clone_page, divi_import_template). Tokens live ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Restore may be refused with a drift error if the target was modified between the tracked write and this undo call (protects downstream writes from silent clobber). Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).'], 'force' => ['type' => 'boolean', 'description' => 'Elementor page undos (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_apply_template_to_page) are refused with edited_since_write when the page has been edited since, and undos of wp_delete_post_meta / wp_delete_term_meta when the key has a value again; the token stays valid. Pass force: true to restore the earlier version anyway, removing those later edits. Default false.']], 'required' => ['token']]],
+            ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, the block tools (wp_insert_blocks, wp_replace_block, wp_move_block, wp_delete_block, wp_replace_text_in_blocks, wp_update_block_attributes, wp_update_synced_pattern), wp_create_post, wp_create_page and wp_clone_post_as_draft (undo moves the new post to the trash), wp_update_post, wp_update_post_meta, wp_add_post_meta, wp_delete_post_meta, wp_delete_post, wp_delete_page, wp_delete_media (when it moves the item to the media trash), wp_restore_revision, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_term_meta, wp_create_menu and wp_create_menu_item (undo deletes the new menu or item), wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, yoast_update_meta (aliases wp_update_seo_meta), wp_update_widget, the comment tools (wp_create_comment, wp_delete_comment, wp_approve_comment, wp_spam_comment, wp_trash_comment), the WooCommerce writes (products, variations, orders, order notes, attributes, coupons), the Redirection writes (redirection_create_redirect deletes the new redirect, redirection_update_redirect restores it as it was), the Relevanssi writes (relevanssi_reindex_post puts the earlier index entry back, relevanssi_update_synonyms and relevanssi_add_stopword restore the earlier list), the MailPoet writes (mailpoet_save_subscriber and mailpoet_set_subscriber_lists restore the subscriber\'s earlier details and lists, or delete a subscriber the call added; mailpoet_save_draft restores the earlier draft, or deletes a draft the call created), the TablePress writes (tablepress_create_table and tablepress_copy_table delete the new table, tablepress_update_cells restores the earlier cells), snippets_update_metadata (restores the snippet\'s earlier name, description and tags), the Complianz writes (complianz_update_banner_text and complianz_update_cookie_description restore the earlier texts), the Royal AI Firewall writes (raif_set_bot_policies and raif_block_all_ai_bots restore the earlier bot policies), the Elementor write tools (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_apply_template_to_page, elementor_rebuild_post_content) and the Divi write tools (divi_replace_image, divi_clone_page, divi_import_template). Tokens live ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Most undos are refused with edited_since_write if the target was modified between the tracked write and this undo call (protects later edits from a silent overwrite; see force). These restore without that check: the undos that recreate a permanently deleted item (wp_delete_term, wp_delete_post / wp_delete_page / wp_delete_media with force, wp_delete_comment with force, WooCommerce permanent deletes), wc_add_order_note and divi_clone_page. For a browser agent (WebMCP), these undos delete what their operation created and are refused while the matching delete tool is switched off for browser agents: wp_create_post, wp_create_page, wp_clone_post_as_draft, elementor_clone_page, elementor_import_template and divi_clone_page (wp_delete_post, or wp_delete_page for a page), wp_insert_blocks (wp_delete_block), elementor_add_widget (elementor_delete_widget, where that tool exists), wp_create_menu_item (wp_delete_menu_item), wp_create_comment (wp_delete_comment), wp_add_post_meta (wp_delete_post_meta), wc_create_variation and the variations a wc_batch_update_variations call created (wc_delete_variation), and wc_create_coupon (wc_delete_coupon); a browser agent cannot undo wp_create_menu with force. Other undos are not tied to a delete tool. Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).'], 'force' => ['type' => 'boolean', 'description' => 'These undos are refused with edited_since_write when the target changed after the tracked write, and accept force: the post content undos (wp_update_post, wp_restore_revision and the block tools), wp_create_post, wp_create_page and wp_clone_post_as_draft, post and page trash, post and term meta updates, wp_add_post_meta, wp_delete_post_meta, wp_delete_term_meta, wp_update_media, wp_update_term, menus and menu items (wp_create_menu, wp_create_menu_item, wp_update_menu_item, wp_delete_menu_item, wp_reorder_menu_items), wp_update_option, the WooCommerce writes (products, variations, batch variation updates, product attributes and attribute creation, orders and order status, coupons, emptying the coupon trash), the comment tools (wp_create_comment, wp_approve_comment, wp_spam_comment, wp_trash_comment, wp_delete_comment to the trash), wp_update_seo_meta / yoast_update_meta, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_widget, the Elementor write tools (an Elementor undo is also refused while an editor is open on the page), divi_replace_image and divi_import_template, the Redirection writes, the MailPoet writes, the Relevanssi writes and raif_set_bot_policies / raif_block_all_ai_bots (bots changed since are skipped, the others restored). Nothing is changed and the token stays valid; pass force: true to restore anyway, removing those later edits (an item the operation created is deleted with them; undoing wp_create_menu deletes the menu with its items). An item already out of the trash is left as it is and the token is closed; coupons whose code another coupon uses now are skipped while the others are recreated; a batch variation undo leaves off a SKU another product uses now and reports it. The other undos that check for later edits (the TablePress writes, snippets_update_metadata and the Complianz writes) refuse with an error and cannot be forced, and recreating a deleted term or coupon is refused while another term or coupon has its slug or code. Default false.']], 'required' => ['token']]],
             ['name' => 'mcp_list_recent_changes', 'description' => 'List the changes made through Royal MCP that can still be reviewed: every undo-tracked write from the last ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' by the same WordPress user (administrators can pass all_users for every user\'s), newest first. Each row has the time, the tool, what it changed (target_label), what undo would restore (undo_summary), which connection made it (AI client, API key, another MCP server or a browser agent), whether it was undone, and the undo token while undo is still possible. Pass a change_id to mcp_get_change for the before and after values. Changes older than ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' are not kept.', 'inputSchema' => ['type' => 'object', 'properties' => ['limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 100, 'description' => 'Rows to return (default 20, max 100).'], 'tool' => ['type' => 'string', 'description' => 'Only changes made by this tool, for example wp_update_post.'], 'include_undone' => ['type' => 'boolean', 'description' => 'Include changes that were already undone (default true).'], 'all_users' => ['type' => 'boolean', 'description' => 'Administrators only: list every user\'s changes (each row names its user; undo tokens only for your own changes). Default false.']]]],
             ['name' => 'mcp_get_change', 'description' => 'Show one change field by field: the value before the change, the value the change wrote, and the value now, plus a line diff for post content, CSS and page-builder data. Flags fields that were changed again since, which undo would refuse. Takes a change_id from mcp_list_recent_changes, or the undo token from the original tool response. A change older than ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' reports status "expired".', 'inputSchema' => ['type' => 'object', 'properties' => ['change_id' => ['type' => 'string', 'description' => 'change_id from mcp_list_recent_changes, or the undo token from the tool response that made the change.']], 'required' => ['change_id']]],
             ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page). Each result includes content_length (bytes of stored content) for size triage.', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'pending', 'private', 'future', 'any'], 'description' => 'publish (default), one status, or any (every status you can read except trash), so a draft you just created can be found.']], 'required' => ['query']]],
@@ -1519,6 +1702,7 @@ class Server {
 
             // Menus
             ['name' => 'wp_get_menus', 'description' => 'List all registered navigation menus (nav_menu taxonomy). Returns id, name, slug, count (items in the menu) and locations (the theme menu locations it is assigned to) for each. Use wp_get_menu_items to enumerate items within a specific menu.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'wp_get_menu_item', 'description' => 'Get one menu item by ID: the fields wp_get_menu_items returns (id, title, url, parent, order, type, object, object_id, target) plus menu_id, attr_title, description, classes, xfn and status. Use it before wp_update_menu_item.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_item_id' => ['type' => 'integer', 'description' => 'Menu item ID.']], 'required' => ['menu_item_id']]],
             ['name' => 'wp_get_menu_items', 'description' => 'Get the items of a menu: id, title, url, parent, order, type (custom, post_type or taxonomy), object (the post type or taxonomy), object_id and target. A post_type or taxonomy item keeps the link of what it points to, so only a custom item\'s url can be changed.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_id' => ['type' => 'integer']], 'required' => ['menu_id']]],
             ['name' => 'wp_create_menu', 'description' => 'Create a new WordPress navigation menu. Wraps wp_create_nav_menu(). Returns the new menu_id which can then be passed to wp_create_menu_item / wp_reorder_menu_items. Use this on a site that has no menus yet so the menu-item tools have a menu to write into. Requires edit_theme_options capability. Returns WP_Error on duplicate menu name. Undo deletes the menu while it is still empty.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string', 'description' => 'Display name for the new menu. Must be unique among existing menus.']], 'required' => ['name']]],
             ['name' => 'wp_create_menu_item', 'description' => 'Create a menu item in a navigation menu. On a site with no menus, call wp_create_menu first to obtain a menu_id. Requires edit_theme_options capability. Undo deletes the item while it is unchanged.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'url' => ['type' => 'string', 'description' => 'External URL (leave empty if linking to a post/page via object_id)'], 'object_id' => ['type' => 'integer', 'description' => 'ID of the post or term the item links to'], 'object_type' => ['type' => 'string', 'description' => 'custom (default, needs url), any post type (post, page, product…) or any taxonomy (category, post_tag, product_cat…)'], 'parent_id' => ['type' => 'integer', 'description' => 'Parent menu item ID for nested items (0 = top level)'], 'position' => ['type' => 'integer', 'description' => 'Position in menu order (default: end)'], 'target' => ['type' => 'string', 'enum' => ['_self', '_blank'], 'description' => 'Link target']], 'required' => ['menu_id', 'title']]],
@@ -1532,10 +1716,12 @@ class Server {
 
             // Theme & Appearance
             ['name' => 'wp_get_active_theme', 'description' => 'Get the active theme with name, version, parent (if child theme), and screenshot URL', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'wp_get_theme_mod', 'description' => 'Get one customizer setting (theme mod) of the active theme by name: whether it is set (exists), its value (sensitive values redacted) and whether wp_update_theme_mod may change it (writable: theme writes are switched on and the mod is in the allowlist).', 'inputSchema' => ['type' => 'object', 'properties' => ['mod_name' => ['type' => 'string', 'description' => 'Theme mod name, as listed by wp_get_theme_mods.']], 'required' => ['mod_name']]],
             ['name' => 'wp_get_theme_mods', 'description' => 'Get all customizer settings (theme_mods) for the active theme', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_update_theme_mod', 'description' => 'Update a single theme customizer setting. Requires the "Allow AI to modify theme appearance" admin toggle AND the mod name must be in the allowlist (extend via the royal_mcp_writable_theme_mods filter).', 'inputSchema' => ['type' => 'object', 'properties' => ['mod_name' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'New value (any JSON type compatible with set_theme_mod)']], 'required' => ['mod_name', 'value']]],
             ['name' => 'wp_get_custom_css', 'description' => 'Get the active theme\'s custom CSS', 'inputSchema' => ['type' => 'object', 'properties' => ['theme_slug' => ['type' => 'string', 'description' => 'Theme slug (defaults to active theme)']]]],
             ['name' => 'wp_update_custom_css', 'description' => 'Update the active theme\'s custom CSS (the whole stylesheet). CSS is filtered through wp_kses (script tags stripped). Requires the "Allow AI to modify theme appearance" admin toggle and unfiltered_html capability. dry_run true returns allowed, the refusal reason, current_sha256 and byte counts, changing nothing. expected_sha256 (sha256 of the CSS you read) refuses with expected_mismatch when the CSS changed since. Refusal codes: insufficient_caps, unfiltered_html_required, theme_writes_off, expected_mismatch, field_dropped (the CSS is put back). When the prior CSS is over the 1 MB undo limit the reply says undo_available false, undo_reason snapshot_too_large.', 'inputSchema' => ['type' => 'object', 'properties' => ['css' => ['type' => 'string'], 'theme_slug' => ['type' => 'string', 'description' => 'Theme slug (defaults to active theme)'], 'expected_sha256' => ['type' => 'string', 'description' => 'sha256 (hex) of the current CSS as you read it.'], 'dry_run' => ['type' => 'boolean', 'description' => 'true previews (default false).']], 'required' => ['css']]],
+            ['name' => 'wp_get_widget', 'description' => 'Get one widget instance by ID (for example text-2 or block-3), shaped like one item of wp_get_widgets: id, id_base, sidebar, instance settings, and for block widgets the parsed blocks. Use it before wp_update_widget.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string', 'description' => 'Widget ID as returned by wp_get_widgets.']], 'required' => ['id']]],
             ['name' => 'wp_get_widgets', 'description' => 'List widget instances. Uses the WordPress core /wp/v2/widgets REST endpoint in edit context so both rendered output AND full instance payload are returned uniformly for classic and block widgets. Classic widgets: instance carries the widget-specific settings (text, title, filter, etc.). Block widgets: instance.raw.content carries the raw block markup, and a blocks field is added with the parsed block tree for structured inspection. Omit sidebar to return widgets across ALL sidebars including wp_inactive_widgets (orphaned widgets from prior themes — these have rendered:"" and produce no front-end output). Filter by a specific sidebar ID (discover IDs via wp_get_sidebars) to scope results; a non-existent sidebar ID returns an empty array, not an error.', 'inputSchema' => ['type' => 'object', 'properties' => ['sidebar' => ['type' => 'string', 'description' => 'Optional sidebar ID to filter by. Omit to return widgets across all sidebars (includes wp_inactive_widgets).']]]],
             ['name' => 'wp_get_sidebars', 'description' => 'List registered sidebars (widget areas) on the active theme with their IDs, names, description, and status. Use to discover sidebar IDs before calling wp_get_widgets or wp_update_widget.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_update_widget', 'description' => 'Update a widget instance by ID. Requires the "Allow AI to modify theme appearance" admin toggle AND edit_theme_options capability. Uses WordPress core /wp/v2/widgets so classic and block widgets are handled uniformly. Pass the id returned by wp_get_widgets. Response includes a ' . \Royal_MCP\MCP\Undo_Store::window_adjective() . ' undo token that restores the prior widget instance via mcp_undo_last_operation. Backslashes (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) are stored as sent.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string', 'description' => 'Widget ID (e.g. text-2, block-15)'], 'sidebar' => ['type' => 'string', 'description' => 'Sidebar ID to place the widget in (omit to leave unchanged)'], 'instance' => ['type' => 'object', 'additionalProperties' => true, 'description' => 'Widget instance data. For classic widgets, pass the settings as {raw: {…}} as wp_get_widgets returns them; Royal MCP encodes them for widgets that only take the encoded form.'], 'form_data' => ['type' => 'string', 'description' => 'Serialized form data (classic widgets alternative to instance)']], 'required' => ['id']]],
@@ -1601,6 +1787,10 @@ class Server {
         $tools = array_merge( $tools, CodeSnippetsIntegration::get_tools() );
         $tools = array_merge( $tools, ComplianzIntegration::get_tools() );
         $tools = array_merge( $tools, WPCodeIntegration::get_tools() );
+        $tools = array_merge( $tools, RelevanssiIntegration::get_tools() );
+        $tools = array_merge( $tools, NinjaFormsIntegration::get_tools() );
+        $tools = array_merge( $tools, FluentFormsIntegration::get_tools() );
+        $tools = array_merge( $tools, MailPoetIntegration::get_tools() );
         $tools = array_merge( $tools, W3TCIntegration::get_tools() );
         $tools = array_merge( $tools, DuplicatorIntegration::get_tools() );
         $tools = array_merge( $tools, BuddyPressIntegration::get_tools() );
@@ -1671,6 +1861,62 @@ class Server {
             return [ 'publish', 'draft', 'pending', 'private', 'future' ];
         }
         return in_array( $status, [ 'publish', 'draft', 'pending', 'private', 'future' ], true ) ? $status : 'publish';
+    }
+
+    /**
+     * orderby / order / modified_after for the post and page lists, checked against
+     * allowlists. Returns [ WP_Query orderby key or '', 'ASC' / 'DESC' or '', modified_after
+     * as a 'Y-m-d H:i:s' GMT string or '' ].
+     */
+    private static function listing_sort( array $args ) {
+        $map     = [ 'date' => 'date', 'modified' => 'modified', 'title' => 'title', 'menu_order' => 'menu_order', 'id' => 'ID' ];
+        $orderby = '';
+        if ( isset( $args['orderby'] ) && '' !== $args['orderby'] ) {
+            $key = is_string( $args['orderby'] ) ? strtolower( trim( $args['orderby'] ) ) : '';
+            if ( ! isset( $map[ $key ] ) ) {
+                throw new \Exception( 'orderby must be one of: date, modified, title, menu_order, id.' );
+            }
+            $orderby = $map[ $key ];
+        }
+        $order = '';
+        if ( isset( $args['order'] ) && '' !== $args['order'] ) {
+            $order = is_string( $args['order'] ) ? strtoupper( trim( $args['order'] ) ) : '';
+            if ( ! in_array( $order, [ 'ASC', 'DESC' ], true ) ) {
+                throw new \Exception( 'order must be asc or desc.' );
+            }
+        }
+        $after = '';
+        if ( isset( $args['modified_after'] ) && '' !== $args['modified_after'] ) {
+            $raw = is_string( $args['modified_after'] ) ? strtoupper( trim( $args['modified_after'] ) ) : '';
+            $m   = [];
+            $ok  = (bool) preg_match( '/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d{1,7})?)?(Z|[+-]\d{2}:?\d{2})?$/', $raw, $m );
+            if ( $ok ) {
+                $ok = checkdate( (int) $m[2], (int) $m[3], (int) $m[1] )
+                    && ( empty( $m[4] ) || ( (int) $m[4] < 24 && (int) $m[5] < 60 && ( empty( $m[6] ) || (int) $m[6] < 60 ) ) );
+            }
+            // Fractions of a second do not change the filter; drop them before parsing.
+            $clean = (string) preg_replace( '/\.\d+/', '', $raw );
+            $ts    = $ok ? strtotime( ! empty( $m[7] ) ? $clean : str_replace( 'T', ' ', $clean ) . ' UTC' ) : false;
+            if ( false === $ts ) {
+                throw new \Exception( 'modified_after must be a date (2026-11-01) or date and time (2026-11-01T09:30:00Z).' );
+            }
+            $after = gmdate( 'Y-m-d H:i:s', $ts );
+        }
+        return [ $orderby, $order, $after ];
+    }
+
+    /** Last-modified time of a post as ISO 8601 UTC, or null when it has none. */
+    private static function modified_iso( $p ) {
+        $gmt = (string) $p->post_modified_gmt;
+        if ( '' === $gmt || 0 === strpos( $gmt, '0000-00-00' ) ) {
+            $local = (string) $p->post_modified;
+            if ( '' === $local || 0 === strpos( $local, '0000-00-00' ) ) {
+                return null;
+            }
+            $gmt = get_gmt_from_date( $local );
+        }
+        $ts = strtotime( $gmt . ' UTC' );
+        return false === $ts ? null : gmdate( 'Y-m-d\TH:i:s\Z', $ts );
     }
 
     /**
@@ -2676,6 +2922,18 @@ class Server {
             }
         }
 
+        // Browser agents see which tools the admin switched off for them.
+        if ( 'cookie-session' === $this->request_auth_method ) {
+            $webmcp_off = self::webmcp_disabled_tools();
+            if ( $webmcp_off ) {
+                foreach ( $tools as $i => $tool ) {
+                    if ( isset( $webmcp_off[ (string) ( $tool['name'] ?? '' ) ] ) ) {
+                        $tools[ $i ]['_meta']['royal-mcp/webmcp_off'] = true;
+                    }
+                }
+            }
+        }
+
         $body = [ 'tools' => $tools ];
         if ( null !== $page['next'] ) {
             $body['nextCursor'] = $page['next'];
@@ -2855,6 +3113,10 @@ class Server {
             'snippets_'            => [ 'Code Snippets', [ CodeSnippetsIntegration::class, 'is_available' ] ],
             'complianz_'           => [ 'Complianz', [ ComplianzIntegration::class, 'is_available' ] ],
             'wpcode_'              => [ 'WPCode', [ WPCodeIntegration::class, 'is_available' ] ],
+            'relevanssi_'          => [ 'Relevanssi', [ RelevanssiIntegration::class, 'is_available' ] ],
+            'ninjaforms_'          => [ 'Ninja Forms', [ NinjaFormsIntegration::class, 'is_available' ] ],
+            'fluentform_'          => [ 'Fluent Forms', [ FluentFormsIntegration::class, 'is_available' ] ],
+            'mailpoet_'            => [ 'MailPoet', [ MailPoetIntegration::class, 'is_available' ] ],
         ];
 
         /**
@@ -3373,6 +3635,9 @@ class Server {
             'wp_get_cron_schedule', 'wp_get_error_log_tail', 'wp_get_php_errors', 'wp_get_widgets', 'wp_update_widget', 'mcp_get_change',
             'solid_list_events', 'wordfence_get_blocked_requests', 'wordfence_get_failed_logins', 'raif_get_recent_hits',
             'wpcode_get_snippet', 'wpcode_list_snippets', 'wpcode_get_snippet_status', 'snippets_get', 'snippets_list', 'snippets_recently_active',
+            'rl_get_costs', 'rl_create_cost', 'rl_get_renewals', 'rl_get_keys',
+            'wp_get_term', 'wp_get_theme_mod', 'wp_get_widget',
+            'relevanssi_get_index_status', 'relevanssi_list_top_searches', 'relevanssi_list_zero_hit_searches', 'relevanssi_update_synonyms', 'relevanssi_add_stopword',
         ];
         /**
          * Filter the tools whose replies get the strict credential checks on free text.
@@ -3769,6 +4034,9 @@ class Server {
 
         $request_meta = [
             'tool'            => (string) $tool_name,
+            'user_id'         => (int) get_current_user_id(),
+            'auth'            => (string) $this->request_auth_method,
+            'client_id'       => null !== $this->request_client_id ? (string) $this->request_client_id : '',
             'arg_keys'        => is_array($args) ? array_keys($args) : [],
             'access_level'    => $this->connection_access_level()[0],
             'route'           => (string) $this->request_route,
@@ -3920,6 +4188,7 @@ class Server {
             'wp_set_featured_image',
             'mcp_undo_last_operation',
             'raif_set_bot_policy',
+            'raif_set_bot_policies',
             'raif_block_all_ai_bots',
             'fc_clear_cache',
             'fc_purge_url',
@@ -3960,11 +4229,25 @@ class Server {
         // Calls through the WordPress Abilities API and MCP Adapter servers share
         // the native endpoint's per-minute ceiling, counted per signed-in user.
         if ( 'abilities' === $route ) {
+            // Application Passwords an admin blocked on Connected Clients are refused; the rest are listed there.
+            \Royal_MCP\MCP\Support\App_Password_Connections::check_and_record();
+            // The browser-agent list applies to calls made with the login cookie on this route too.
+            if ( isset( self::webmcp_disabled_tools()[ $name ] ) && self::signed_in_with_browser_cookie() && ! $this->tool_is_read_only( $name ) ) {
+                throw new \Exception( sprintf( '%s is switched off for browser agents (WebMCP) in Royal MCP settings.', esc_html( $name ) ) );
+            }
             $rate_uid   = (int) get_current_user_id();
             $rate_check = $this->check_rate_limit( $rate_uid > 0 ? 'user:' . $rate_uid : 'abilities-ip:' . self::resolve_client_ip(), 'abilities' );
             if ( true !== $rate_check ) {
                 $rate_data = $rate_check instanceof \WP_REST_Response ? (array) $rate_check->get_data() : [];
-                throw new \Exception( (string) ( $rate_data['error']['message'] ?? 'Rate limit exceeded.' ), 429 );
+                $rate_msg  = (string) ( $rate_data['error']['message'] ?? 'Rate limit exceeded.' );
+                $previous_route      = $this->request_route;
+                $this->request_route = 'abilities';
+                try {
+                    $this->log_tool_call( $name, $args, 'error', $rate_msg, microtime( true ) );
+                } finally {
+                    $this->request_route = $previous_route;
+                }
+                throw new \Exception( $rate_msg, 429 );
             }
         }
         $previous_route      = $this->request_route;
@@ -4115,6 +4398,11 @@ class Server {
                 throw new \Exception( $conn_who . ' limited to drafts in Royal MCP: ' . $conn_refusal );
             }
         }
+        // Browser agents (WebMCP): tools the admin switched off for them.
+        // A tool that has since become read-only is no longer refused (the list holds tools that change the site).
+        if ( 'cookie-session' === $this->request_auth_method && isset( self::webmcp_disabled_tools()[ (string) $name ] ) && ! $this->tool_is_read_only( (string) $name ) ) {
+            throw new \Exception( sprintf( '%s is switched off for browser agents (WebMCP) in Royal MCP settings.', esc_html( (string) $name ) ) );
+        }
         \Royal_MCP\MCP\Undo_Store::set_context( (string) $this->request_auth_method, (string) $this->request_route, (string) $this->request_client_id );
         // Fire SiteVault pre-op backup hook for every destructive tool.
         // Non-blocking + fire-and-forget — see SiteVault_Hook::maybe_fire
@@ -4172,6 +4460,16 @@ class Server {
                     }
                     $query_args['post_status'] = $requested_status;
                 }
+                list( $gp_orderby, $gp_order, $gp_after ) = self::listing_sort( $args );
+                if ( '' !== $gp_orderby || '' !== $gp_order ) {
+                    $gp_ob = '' !== $gp_orderby ? $gp_orderby : 'date';
+                    $gp_od = '' !== $gp_order ? $gp_order : ( 'title' === $gp_ob ? 'ASC' : 'DESC' );
+                    // ID as the tie-breaker keeps pages of results stable.
+                    $query_args['orderby'] = 'ID' === $gp_ob ? [ 'ID' => $gp_od ] : [ $gp_ob => $gp_od, 'ID' => $gp_od ];
+                }
+                if ( '' !== $gp_after ) {
+                    $query_args['date_query'] = [ [ 'column' => 'post_modified_gmt', 'after' => $gp_after, 'inclusive' => false ] ];
+                }
                 // include: exactly these posts (up to 100), in this order, any
                 // status the caller may read; per_page and search are ignored.
                 $gp_include = [];
@@ -4224,6 +4522,7 @@ class Server {
                         'type' => $p->post_type,
                         'url' => get_permalink($p),
                         'date' => $p->post_date,
+                        'modified' => self::modified_iso($p),
                         'content_length' => $gp_withheld ? 0 : strlen((string) $p->post_content),
                         'featured_media' => $thumb_id,
                         'featured_media_url' => $thumb_id > 0 ? ( wp_get_attachment_url( $thumb_id ) ?: null ) : null,
@@ -4548,6 +4847,7 @@ class Server {
                 if ( array_key_exists( 'featured_media', $args ) ) {
                     $up_undo_pre['prior_featured_id'] = (int) $up_prior_featured_id;
                 }
+                $up_undo_pre['written_fingerprint'] = self::post_undo_fingerprint( $post_id );
                 $up_undo_envelope = \Royal_MCP\MCP\Undo_Store::store([
                     'op'      => 'wp_update_post',
                     'summary' => sprintf( 'Restore post %d to prior state (%d field(s)%s).',
@@ -4664,7 +4964,37 @@ class Server {
                 }
                 $page_args = ['number' => max(1, min(intval($args['per_page'] ?? 10), 100)), 'post_status' => self::listing_statuses($args['status'] ?? 'publish')];
                 if (!empty($args['parent'])) $page_args['parent'] = intval($args['parent']);
-                $pages = array_values(array_filter((array) get_pages($page_args), static function ($p) {
+                list( $pg_orderby, $pg_order, $pg_after ) = self::listing_sort( $args );
+                if ( '' !== $pg_after ) {
+                    // get_pages() has no date filter, so this case runs the same list through get_posts().
+                    $pg_ob    = '' !== $pg_orderby ? $pg_orderby : 'title';
+                    $pg_od    = '' !== $pg_order ? $pg_order : ( '' !== $pg_orderby && 'title' !== $pg_orderby ? 'DESC' : 'ASC' );
+                    $pg_query = [
+                        'post_type'   => 'page',
+                        'post_status' => $page_args['post_status'],
+                        'numberposts' => $page_args['number'],
+                        'orderby'     => 'ID' === $pg_ob ? [ 'ID' => $pg_od ] : [ $pg_ob => $pg_od, 'ID' => $pg_od ],
+                        'date_query'  => [ [ 'column' => 'post_modified_gmt', 'after' => $pg_after, 'inclusive' => false ] ],
+                    ];
+                    if ( isset( $page_args['parent'] ) ) {
+                        $pg_query['post_parent'] = $page_args['parent'];
+                    }
+                    $pg_found = get_posts( $pg_query );
+                } else {
+                    if ( '' !== $pg_orderby || '' !== $pg_order ) {
+                        $pg_cols = [ 'date' => 'post_date', 'modified' => 'post_modified', 'title' => 'post_title', 'menu_order' => 'menu_order', 'ID' => 'ID' ];
+                        $page_args['sort_column'] = '' !== $pg_orderby ? $pg_cols[ $pg_orderby ] : 'post_title';
+                        $page_args['sort_order']  = '' !== $pg_order ? $pg_order : ( '' !== $pg_orderby && 'title' !== $pg_orderby ? 'DESC' : 'ASC' );
+                        // A flat list in the requested order; the tree walk would drop child pages whose parent is not in the result.
+                        $page_args['hierarchical'] = 0;
+                    }
+                    if ( ! isset( $page_args['parent'] ) ) {
+                        // A flat list, title A to Z: the tree walk would drop child pages whose parent is outside the first per_page.
+                        $page_args['hierarchical'] = 0;
+                    }
+                    $pg_found = get_pages( $page_args );
+                }
+                $pages = array_values(array_filter((array) $pg_found, static function ($p) {
                     return 'publish' === $p->post_status || current_user_can('read_post', $p->ID);
                 }));
                 return array_map(function($p) {
@@ -4675,6 +5005,8 @@ class Server {
                         'url' => get_permalink($p),
                         'status' => $p->post_status,
                         'parent' => $p->post_parent,
+                        'date' => $p->post_date,
+                        'modified' => self::modified_iso($p),
                         'content_length' => $this->content_withheld($p) ? 0 : strlen((string) $p->post_content),
                         'featured_media' => $thumb_id,
                         'featured_media_url' => $thumb_id > 0 ? ( wp_get_attachment_url( $thumb_id ) ?: null ) : null,
@@ -5630,6 +5962,45 @@ class Server {
                 }
                 return ['taxonomy' => $taxonomy, 'count' => (int) $count];
 
+            case 'wp_get_term':
+                if (!current_user_can('edit_posts')) {
+                    throw new \Exception('You do not have permission to read terms.');
+                }
+                $gt1_taxonomy = isset($args['taxonomy']) && is_string($args['taxonomy']) ? sanitize_key($args['taxonomy']) : '';
+                $gt1_id       = \Royal_MCP\MCP\Support\Form_Entry_Privacy::positive_int($args['id'] ?? null);
+                if ($gt1_taxonomy === '' || $gt1_id <= 0) {
+                    throw new \Exception('A term id and a taxonomy slug are required.');
+                }
+                $gt1_tax = get_taxonomy($gt1_taxonomy);
+                // Non-public taxonomies only for users who can manage their terms, as in wp_get_terms.
+                if (!$gt1_tax || (!$gt1_tax->public && empty($gt1_tax->show_in_rest) && !current_user_can($gt1_tax->cap->manage_terms))) {
+                    throw new \Exception('Unknown taxonomy: ' . esc_html($gt1_taxonomy) . '. Use wp_get_taxonomies to list available taxonomies.');
+                }
+                $gt1_term = get_term($gt1_id, $gt1_taxonomy);
+                if (!$gt1_term instanceof \WP_Term) {
+                    throw new \Exception('Term not found in that taxonomy.');
+                }
+                $gt1_link = get_term_link($gt1_term);
+                $gt1_out  = [
+                    'taxonomy' => $gt1_taxonomy,
+                    'term'     => [
+                        'id'          => (int) $gt1_term->term_id,
+                        'name'        => $gt1_term->name,
+                        'slug'        => $gt1_term->slug,
+                        'description' => $gt1_term->description,
+                        'count'       => (int) $gt1_term->count,
+                        'parent'      => (int) $gt1_term->parent,
+                        'link'        => is_wp_error($gt1_link) ? null : (string) $gt1_link,
+                    ],
+                ];
+                // Term meta needs the same capability as wp_get_term_meta.
+                if (current_user_can('manage_categories')) {
+                    $gt1_out['meta'] = $this->redact_sensitive_keys((array) get_term_meta($gt1_id));
+                } else {
+                    $gt1_out['meta_included'] = false;
+                }
+                return $gt1_out;
+
             case 'wp_get_term_meta':
                 $term_id = intval($args['term_id']);
                 if (!get_term($term_id)) throw new \Exception('Term not found');
@@ -5666,6 +6037,8 @@ class Server {
                 $tmeta_value = self::filter_meta_value($args['value'], $tmeta_key, $term_id, 'wp_update_term_meta');
 
                 $tmeta_before = get_term_meta($term_id, $tmeta_key, true);
+                // A key that did not exist before is removed again on undo, not left empty.
+                $tmeta_existed = metadata_exists('term', $term_id, $tmeta_key);
 
                 $tmeta_result = update_term_meta($term_id, $tmeta_key, wp_slash($tmeta_value));
 
@@ -5694,6 +6067,7 @@ class Server {
                         'pre_op_state' => [
                             'prior_value'   => $tmeta_before,
                             'applied_value' => $tmeta_actual,
+                            'existed'       => $tmeta_existed,
                         ],
                     ]);
                 }
@@ -5852,7 +6226,8 @@ class Server {
                     'summary' => sprintf( 'Remove the comment %d created by this operation on post %d.', $cc_new_id, $comment_post_id ),
                     'target'  => [ 'comment_id' => $cc_new_id, 'post_id' => $comment_post_id ],
                     'pre_op_state' => [
-                        'created_by_op' => true,
+                        'created_by_op'       => true,
+                        'created_fingerprint' => self::comment_undo_fingerprint( $cc_new_id ),
                     ],
                 ]);
 
@@ -6205,6 +6580,8 @@ class Server {
                 // Snapshot prior value BEFORE the write for both undo (restore
                 // target) and INVARIANTS §11 verify (silent-drop detection).
                 $before_value = get_post_meta($post_id, $meta_key, true);
+                // A key that did not exist before is removed again on undo, not left empty.
+                $before_existed = metadata_exists('post', $post_id, $meta_key);
 
                 // Execute the write.
                 $result = update_post_meta($post_id, $meta_key, wp_slash($meta_value));
@@ -6242,6 +6619,7 @@ class Server {
                         'pre_op_state' => [
                             'prior_value'   => $before_value,   // for restore
                             'applied_value' => $actual_value,   // for drift-detection at undo time
+                            'existed'       => $before_existed, // false: undo deletes the key
                         ],
                     ]);
                 }
@@ -6447,7 +6825,7 @@ class Server {
                     $core_updates = get_site_transient( 'update_core' );
                     $core_offer   = null;
                     foreach ( (array) ( is_object( $core_updates ) ? ( $core_updates->updates ?? [] ) : [] ) as $o ) {
-                        if ( is_object( $o ) && 'upgrade' === ( $o->response ?? '' ) && ! empty( $o->current ) ) {
+                        if ( is_object( $o ) && 'upgrade' === ( $o->response ?? '' ) && null !== self::offer_text( $o->current ?? null ) ) {
                             $core_offer = $o;
                             break;
                         }
@@ -6455,7 +6833,7 @@ class Server {
                     $site_info['core_update'] = [
                         'current'            => (string) get_bloginfo( 'version' ),
                         'update_available'   => null !== $core_offer,
-                        'new_version'        => null !== $core_offer ? (string) $core_offer->current : null,
+                        'new_version'        => null !== $core_offer ? self::offer_text( $core_offer->current ) : null,
                         'updates_checked_at' => is_object( $core_updates ) && ! empty( $core_updates->last_checked ) ? gmdate( 'Y-m-d\TH:i:s\Z', (int) $core_updates->last_checked ) : null,
                     ];
                 }
@@ -6937,6 +7315,9 @@ class Server {
             // tail wp-content/debug.log for AI-driven diagnosis.
             // Manage_options gate: log lines routinely contain paths + stack traces
             // + occasionally sensitive tokens that shouldn't reach read-tier callers.
+            case 'wp_get_php_errors':
+                return \Royal_MCP\Integrations\Php_Errors::report( is_array( $args ) ? $args : [] );
+
             case 'wp_get_error_log_tail':
                 if (!current_user_can('manage_options')) {
                     throw new \Exception('You do not have permission to read the error log.');
@@ -7355,6 +7736,45 @@ class Server {
                     ];
                 }, $items);
 
+            case 'wp_get_menu_item':
+                if (!current_user_can('edit_theme_options')) {
+                    throw new \Exception('You do not have permission to read menu items.');
+                }
+                $gmi_id   = \Royal_MCP\MCP\Support\Form_Entry_Privacy::positive_int($args['menu_item_id'] ?? null);
+                $gmi_post = $gmi_id > 0 ? get_post($gmi_id) : null;
+                if (!$gmi_post || 'nav_menu_item' !== $gmi_post->post_type) {
+                    throw new \Royal_MCP\MCP\Support\Tool_Refusal('menu_item_not_found', 'Menu item not found.', [ 'menu_item_id' => $gmi_id ]);
+                }
+                $gmi       = wp_setup_nav_menu_item($gmi_post);
+                $gmi_menus = wp_get_post_terms($gmi_id, 'nav_menu', ['fields' => 'ids']);
+                $gmi_menu  = (!empty($gmi_menus) && !is_wp_error($gmi_menus)) ? (int) $gmi_menus[0] : 0;
+                // The position as wp_get_menu_items numbers it (1-based within the menu).
+                if ($gmi_menu > 0) {
+                    foreach ((array) wp_get_nav_menu_items($gmi_menu) as $gmi_row) {
+                        if ((int) $gmi_row->ID === $gmi_id) {
+                            $gmi->menu_order = $gmi_row->menu_order;
+                            break;
+                        }
+                    }
+                }
+                return [
+                    'id'          => (int) $gmi->ID,
+                    'title'       => $gmi->title,
+                    'url'         => $gmi->url,
+                    'parent'      => $gmi->menu_item_parent,
+                    'order'       => $gmi->menu_order,
+                    'type'        => (string) $gmi->type,
+                    'object'      => (string) $gmi->object,
+                    'object_id'   => (int) $gmi->object_id,
+                    'target'      => (string) $gmi->target,
+                    'menu_id'     => $gmi_menu,
+                    'attr_title'  => (string) $gmi->attr_title,
+                    'description' => (string) $gmi->description,
+                    'classes'     => array_values(array_filter(array_map('strval', (array) $gmi->classes), 'strlen')),
+                    'xfn'         => (string) $gmi->xfn,
+                    'status'      => (string) $gmi_post->post_status,
+                ];
+
             case 'wp_create_menu':
                 if (!current_user_can('edit_theme_options')) {
                     throw new \Exception('edit_theme_options capability required.');
@@ -7565,7 +7985,7 @@ class Server {
                     throw new \Exception( esc_html( $mi_merged->get_error_message() ) );
                 }
                 // WordPress unslashes what it saves, so backslashes in titles and URLs need slashing first.
-                $mi_res = wp_update_nav_menu_item( $mi_menu_id, $mi_item_id, wp_slash( $mi_merged ) );
+                $mi_res = $this->save_menu_item_keep_order( $mi_menu_id, $mi_item_id, $mi_merged );
                 if ( is_wp_error( $mi_res ) ) throw new \Exception( esc_html( $mi_res->get_error_message() ) );
                 clean_post_cache( $mi_item_id );
 
@@ -7588,7 +8008,7 @@ class Server {
                     if ( array_key_exists( 'target', $mi_before ) )    $mi_back['menu-item-target']    = (string) $mi_before['target'];
                     $mi_back_args = $this->build_safe_menu_item_args( $mi_item_id, $mi_back );
                     if ( ! is_wp_error( $mi_back_args ) ) {
-                        wp_update_nav_menu_item( $mi_menu_id, $mi_item_id, wp_slash( $mi_back_args ) );
+                        $this->save_menu_item_keep_order( $mi_menu_id, $mi_item_id, $mi_back_args );
                         clean_post_cache( $mi_item_id );
                     }
                     throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'field_dropped', $mi_dropped->getMessage() . ' The item was put back as it was.', [ 'menu_item_id' => $mi_item_id ] );
@@ -7600,8 +8020,11 @@ class Server {
                     'summary' => sprintf( 'Restore %d field(s) on menu item %d.', count( $mi_before ), $mi_item_id ),
                     'target'  => [ 'menu_item_id' => $mi_item_id, 'menu_id' => $mi_menu_id ],
                     'pre_op_state' => [
-                        'prior_values'   => $mi_before,
-                        'applied_values' => $mi_actual,
+                        'prior_values'     => $mi_before,
+                        'applied_values'   => $mi_actual,
+                        // The item's place in the menu, restored on undo even when position was not passed.
+                        'prior_position'   => (int) $mi_current['position'],
+                        'applied_position' => (int) $mi_read( 'position' ),
                     ],
                 ]);
 
@@ -7738,12 +8161,25 @@ class Server {
                     $position++;
                 }
 
+                // The order the write left, so undo can tell whether items moved since.
+                $applied_state = [];
+                foreach (array_keys($pre_op_state) as $applied_id) {
+                    clean_post_cache((int) $applied_id);
+                    $applied_post = get_post((int) $applied_id);
+                    if ($applied_post) {
+                        $applied_state[(int) $applied_id] = [
+                            'menu_order'       => (int) $applied_post->menu_order,
+                            'menu_item_parent' => (int) get_post_meta((int) $applied_id, '_menu_item_menu_item_parent', true),
+                        ];
+                    }
+                }
                 // Persist the snapshot and build the undo envelope.
                 $undo_envelope = \Royal_MCP\MCP\Undo_Store::store([
                     'op'      => 'wp_reorder_menu_items',
                     'summary' => sprintf('Restore menu "%s" (%d items) to prior order', $menu_obj->name, count($pre_op_state)),
                     'target'  => ['menu_id' => $menu_id, 'menu_name' => $menu_obj->name],
                     'pre_op_state' => $pre_op_state,
+                    'applied_state' => $applied_state,
                 ]);
 
                 $reorder_struct = ['menu_id' => $menu_id, 'count' => count($reordered), 'reordered' => $reordered];
@@ -8041,7 +8477,7 @@ class Server {
                     'changes'      => $lrc_rows,
                     'count'        => count($lrc_rows),
                     'total'        => $lrc_total,
-                    'window_hours' => \Royal_MCP\MCP\Support\Change_View::WINDOW_HOURS,
+                    'window_hours' => \Royal_MCP\MCP\Undo_Store::ttl_hours(),
                 ];
 
             case 'mcp_get_change':
@@ -8095,8 +8531,61 @@ class Server {
                     'restored_to' => isset($undo_snapshot['pre_op_state']) ? array_keys((array) $undo_snapshot['pre_op_state']) : [],
                 ];
                 $undo_force = filter_var( $args['force'] ?? false, FILTER_VALIDATE_BOOLEAN );
+                // A browser agent may not delete through undo what the site owner switched off deleting for it.
+                if ( 'cookie-session' === $this->request_auth_method || ( 'abilities' === $this->request_route && self::signed_in_with_browser_cookie() ) ) {
+                    $undo_delete_tool = self::undo_delete_tool( $undo_snapshot );
+                    if ( '' !== $undo_delete_tool && isset( self::webmcp_disabled_tools()[ $undo_delete_tool ] ) ) {
+                        throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'tool_switched_off', sprintf( 'Cannot undo: undoing %1$s deletes what it created, and %2$s is switched off for browser agents (WebMCP) in Royal MCP settings. The undo token stays valid for another connection.', esc_html( (string) $undo_op ), esc_html( $undo_delete_tool ) ), [ 'tool' => $undo_delete_tool ] );
+                    }
+                    // Forcing this undo deletes the menu with every item in it, including items a person added.
+                    if ( 'wp_create_menu' === $undo_op && $undo_force ) {
+                        throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'force_not_allowed', 'Cannot undo with force: it would delete the menu together with every item in it, which browser agents (WebMCP) may not do. Undo without force once the menu is empty, or from another connection. The undo token stays valid.' );
+                    }
+                }
 
                 switch ($undo_op) {
+                    case 'raif_set_bot_policies':
+                        if ( ! current_user_can( is_multisite() ? 'manage_network_options' : 'manage_options' ) ) {
+                            throw new \Exception('manage_options capability required to undo this operation.');
+                        }
+                        if ( ! class_exists( '\Royal_AI_Firewall\PolicyWriter' ) ) {
+                            throw new \Exception('Royal AI Firewall is not active.');
+                        }
+                        $rp_items = (array) ( $undo_snapshot['pre_op_state']['items'] ?? [] );
+                        list( $rp_done, $rp_skipped ) = \Royal_MCP\Integrations\RoyalAIFirewall::undo_policies( $rp_items, $undo_force );
+                        if ( ! $rp_done && $rp_skipped ) {
+                            throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'edited_since_write', 'Cannot undo: every bot was changed again after this operation. The undo token stays valid: undo again with force: true to restore them anyway.', [ 'skipped' => $rp_skipped, 'pending_bot_ids' => array_column( $rp_skipped, 'bot_id' ) ] );
+                        }
+                        $rp_pending = array_column( $rp_skipped, 'bot_id' );
+                        if ( $rp_pending ) {
+                            // The token stays open for the bots left as they are; it now restores only those.
+                            $rp_left = array_values( array_filter( $rp_items, static function ( $it ) use ( $rp_pending ) {
+                                return in_array( sanitize_key( (string) ( $it['bot_id'] ?? '' ) ), $rp_pending, true );
+                            } ) );
+                            $rp_before = (array) ( $undo_snapshot['partial_undo']['restored_bot_ids'] ?? [] );
+                            $rp_open   = \Royal_MCP\MCP\Undo_Store::narrow( $undo_token, (array) $undo_snapshot['pre_op_state'], [
+                                'pre_op_state' => array_merge( (array) $undo_snapshot['pre_op_state'], [ 'items' => $rp_left ] ),
+                                'summary'      => sprintf( 'Restore the policy of %d bot(s) a partial undo left as they are.', count( $rp_pending ) ),
+                                'target'       => [ 'bot_ids' => $rp_pending ],
+                                'partial_undo' => [ 'at' => time(), 'restored_bot_ids' => array_values( array_unique( array_merge( $rp_before, $rp_done ) ) ) ],
+                            ] );
+                            return \Royal_MCP\MCP\Support\Envelope::success(
+                                sprintf(
+                                    'Restored the policy of %1$d bot(s); %2$d changed since were left as they are (%3$s). %4$s',
+                                    count( $rp_done ),
+                                    count( $rp_pending ),
+                                    esc_html( implode( ', ', $rp_pending ) ),
+                                    $rp_open ? 'The undo token stays valid for them: undo again with force: true to restore them too.' : 'The undo token could not be kept open for them because it was used or changed at the same time; check mcp_list_recent_changes.'
+                                ),
+                                [ 'undone' => false, 'partial' => true, 'op' => $undo_op, 'restored' => false, 'restored_bot_ids' => $rp_done, 'pending_bot_ids' => $rp_pending, 'skipped' => $rp_skipped, 'token_still_valid' => $rp_open ]
+                            );
+                        }
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return \Royal_MCP\MCP\Support\Envelope::success(
+                            sprintf( 'Restored the policy of %d bot(s).', count( $rp_done ) ),
+                            [ 'undone' => true, 'op' => $undo_op, 'restored' => true, 'restored_bot_ids' => $rp_done, 'pending_bot_ids' => [], 'skipped' => [] ]
+                        );
+
                     case 'wp_create_menu':
                         if (!current_user_can('edit_theme_options')) {
                             throw new \Exception('edit_theme_options capability required to undo this operation.');
@@ -8106,8 +8595,8 @@ class Server {
                         if ( ! $cmu_menu ) {
                             throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'already_removed', 'The menu no longer exists.' );
                         }
-                        if ( (int) $cmu_menu->count > 0 ) {
-                            throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'edited_since_write', sprintf( 'Cannot undo: menu %d has %d item(s) now. Delete them first, or keep the menu.', $cmu_id, (int) $cmu_menu->count ) );
+                        if ( (int) $cmu_menu->count > 0 && ! $undo_force ) {
+                            throw self::undo_drift_refusal( sprintf( 'menu %d has %d item(s) now.', $cmu_id, (int) $cmu_menu->count ), 'delete the menu and its items anyway' );
                         }
                         $cmu_del = wp_delete_nav_menu( $cmu_id );
                         if ( is_wp_error( $cmu_del ) || ! $cmu_del ) {
@@ -8127,8 +8616,8 @@ class Server {
                         }
                         $cmi_saved = (array) ( $undo_snapshot['pre_op_state']['saved'] ?? [] );
                         $cmi_now   = wp_setup_nav_menu_item( $cmi_post );
-                        if ( ( $cmi_saved['title'] ?? null ) !== (string) $cmi_now->title || ( $cmi_saved['url'] ?? null ) !== (string) $cmi_now->url ) {
-                            throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'edited_since_write', sprintf( 'Cannot undo: menu item %d was changed after it was created.', $cmi_id ) );
+                        if ( ! $undo_force && ( ( $cmi_saved['title'] ?? null ) !== (string) $cmi_now->title || ( $cmi_saved['url'] ?? null ) !== (string) $cmi_now->url ) ) {
+                            throw self::undo_drift_refusal( sprintf( 'menu item %d was changed after it was created.', $cmi_id ), 'delete it anyway' );
                         }
                         wp_delete_post( $cmi_id, true );
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
@@ -8144,6 +8633,23 @@ class Server {
                             : [];
                         if (empty($pre_op)) {
                             throw new \Exception('Undo snapshot has no pre_op_state to restore.');
+                        }
+                        $reo_applied = isset( $undo_snapshot['applied_state'] ) && is_array( $undo_snapshot['applied_state'] ) ? $undo_snapshot['applied_state'] : [];
+                        if ( $reo_applied && ! $undo_force ) {
+                            $reo_drifted = [];
+                            foreach ( $reo_applied as $reo_id => $reo_was ) {
+                                $reo_post = get_post( (int) $reo_id );
+                                if ( ! $reo_post || 'nav_menu_item' !== $reo_post->post_type ) {
+                                    continue;
+                                }
+                                $reo_parent = (int) get_post_meta( (int) $reo_id, '_menu_item_menu_item_parent', true );
+                                if ( (int) $reo_post->menu_order !== (int) ( $reo_was['menu_order'] ?? 0 ) || $reo_parent !== (int) ( $reo_was['menu_item_parent'] ?? 0 ) ) {
+                                    $reo_drifted[] = (int) $reo_id;
+                                }
+                            }
+                            if ( $reo_drifted ) {
+                                throw self::undo_drift_refusal( sprintf( 'menu item(s) %s moved after this reorder.', implode( ', ', $reo_drifted ) ), 'restore the earlier order anyway', [ 'menu_item_ids' => $reo_drifted ] );
+                            }
                         }
                         $restored_count = 0;
                         $undo_skipped   = [];
@@ -8210,21 +8716,34 @@ class Server {
                         // Drift-detection — if the current value on disk isn't
                         // what our tracked op wrote, a subsequent write mutated
                         // it. Refuse rather than clobber that later write.
+                        // The key did not exist before the write: undo removes it.
+                        $undo_meta_absent = array_key_exists( 'existed', $undo_meta_pre ) && false === $undo_meta_pre['existed'];
                         wp_cache_delete( $undo_meta_pid, 'post_meta' );
                         $undo_current = get_post_meta( $undo_meta_pid, $undo_meta_key, true );
                         $undo_applied = $undo_meta_pre['applied_value'] ?? null;
-                        if ( $undo_current !== $undo_applied ) {
-                            throw new \Exception('Cannot undo: post meta value was modified after the tracked operation. Current value differs from what was written. Investigate before retrying or use SiteVault to restore a full-site snapshot.');
+                        $undo_meta_rows_changed = $undo_meta_absent && 1 !== count( (array) get_post_meta( $undo_meta_pid, $undo_meta_key, false ) );
+                        if ( ( $undo_current !== $undo_applied || $undo_meta_rows_changed ) && ! $undo_force ) {
+                            throw self::undo_drift_refusal( sprintf( '%s on post %d changed after this operation wrote it.', esc_html( $undo_meta_key ), $undo_meta_pid ) );
                         }
-                        update_post_meta( $undo_meta_pid, $undo_meta_key, wp_slash( $undo_meta_pre['prior_value'] ) );
-                        wp_cache_delete( $undo_meta_pid, 'post_meta' );
-                        if ( get_post_meta( $undo_meta_pid, $undo_meta_key, true ) !== $undo_meta_pre['prior_value'] ) {
-                            throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'not_restored', sprintf( 'Cannot undo: the site refused the write to %s on post %d, so it was not restored. The undo token stays valid.', $undo_meta_key, $undo_meta_pid ) );
+                        if ( $undo_meta_absent ) {
+                            delete_post_meta( $undo_meta_pid, $undo_meta_key );
+                            wp_cache_delete( $undo_meta_pid, 'post_meta' );
+                            if ( metadata_exists( 'post', $undo_meta_pid, $undo_meta_key ) ) {
+                                throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'not_restored', sprintf( 'Cannot undo: the site refused to remove %s from post %d, so it was not restored. The undo token stays valid.', $undo_meta_key, $undo_meta_pid ) );
+                            }
+                        } else {
+                            update_post_meta( $undo_meta_pid, $undo_meta_key, wp_slash( $undo_meta_pre['prior_value'] ) );
+                            wp_cache_delete( $undo_meta_pid, 'post_meta' );
+                            if ( get_post_meta( $undo_meta_pid, $undo_meta_key, true ) !== $undo_meta_pre['prior_value'] ) {
+                                throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'not_restored', sprintf( 'Cannot undo: the site refused the write to %s on post %d, so it was not restored. The undo token stays valid.', $undo_meta_key, $undo_meta_pid ) );
+                            }
                         }
                         // One-shot: consume the token so the undo can't be replayed.
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
                         return \Royal_MCP\MCP\Support\Envelope::success(
-                            sprintf( 'Restored %s on post %d to prior value.', $undo_meta_key, $undo_meta_pid ),
+                            $undo_meta_absent
+                                ? sprintf( 'Removed %s from post %d (it did not exist before).', $undo_meta_key, $undo_meta_pid )
+                                : sprintf( 'Restored %s on post %d to prior value.', $undo_meta_key, $undo_meta_pid ),
                             [
                                 'undone'   => true,
                                 'op'       => $undo_op,
@@ -8307,17 +8826,30 @@ class Server {
                         if ( ! array_key_exists( 'prior_value', $undo_tmeta_pre ) ) {
                             throw new \Exception('Undo snapshot has no prior_value to restore.');
                         }
+                        // The key did not exist before the write: undo removes it.
+                        $undo_tmeta_absent = array_key_exists( 'existed', $undo_tmeta_pre ) && false === $undo_tmeta_pre['existed'];
                         wp_cache_delete( $undo_tmeta_tid, 'term_meta' );
                         $undo_tmeta_current = get_term_meta( $undo_tmeta_tid, $undo_tmeta_key, true );
                         $undo_tmeta_applied = $undo_tmeta_pre['applied_value'] ?? null;
-                        if ( $undo_tmeta_current !== $undo_tmeta_applied ) {
-                            throw new \Exception('Cannot undo: term meta value was modified after the tracked operation. Current value differs from what was written. Investigate before retrying or use SiteVault to restore a full-site snapshot.');
+                        $undo_tmeta_rows_changed = $undo_tmeta_absent && 1 !== count( (array) get_term_meta( $undo_tmeta_tid, $undo_tmeta_key, false ) );
+                        if ( ( $undo_tmeta_current !== $undo_tmeta_applied || $undo_tmeta_rows_changed ) && ! $undo_force ) {
+                            throw self::undo_drift_refusal( sprintf( '%s on term %d changed after this operation wrote it.', esc_html( $undo_tmeta_key ), $undo_tmeta_tid ) );
                         }
-                        update_term_meta( $undo_tmeta_tid, $undo_tmeta_key, wp_slash( $undo_tmeta_pre['prior_value'] ) );
-                        wp_cache_delete( $undo_tmeta_tid, 'term_meta' );
+                        if ( $undo_tmeta_absent ) {
+                            delete_term_meta( $undo_tmeta_tid, $undo_tmeta_key );
+                            wp_cache_delete( $undo_tmeta_tid, 'term_meta' );
+                            if ( metadata_exists( 'term', $undo_tmeta_tid, $undo_tmeta_key ) ) {
+                                throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'not_restored', sprintf( 'Cannot undo: the site refused to remove %s from term %d, so it was not restored. The undo token stays valid.', $undo_tmeta_key, $undo_tmeta_tid ) );
+                            }
+                        } else {
+                            update_term_meta( $undo_tmeta_tid, $undo_tmeta_key, wp_slash( $undo_tmeta_pre['prior_value'] ) );
+                            wp_cache_delete( $undo_tmeta_tid, 'term_meta' );
+                        }
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
                         return \Royal_MCP\MCP\Support\Envelope::success(
-                            sprintf( 'Restored %s on term %d to prior value.', $undo_tmeta_key, $undo_tmeta_tid ),
+                            $undo_tmeta_absent
+                                ? sprintf( 'Removed %s from term %d (it did not exist before).', $undo_tmeta_key, $undo_tmeta_tid )
+                                : sprintf( 'Restored %s on term %d to prior value.', $undo_tmeta_key, $undo_tmeta_tid ),
                             [
                                 'undone'   => true,
                                 'op'       => $undo_op,
@@ -8360,11 +8892,8 @@ class Server {
                                 case 'description': $mcurrent = (string) $mundo_media->post_content; break;
                                 case 'alt_text':    $mcurrent = (string) get_post_meta( $undo_mid, '_wp_attachment_image_alt', true ); break;
                             }
-                            if ( $mcurrent !== $mapplied ) {
-                                throw new \Exception( sprintf(
-                                    'Cannot undo: media field %s was modified after the tracked operation. Current value differs from what was written. Investigate before retrying or use SiteVault to restore a full-site snapshot.',
-                                    esc_html( $mfield )
-                                ) );
+                            if ( $mcurrent !== $mapplied && ! $undo_force ) {
+                                throw self::undo_drift_refusal( sprintf( 'media field %s on media %d changed after this operation wrote it.', esc_html( $mfield ), $undo_mid ) );
                             }
                         }
                         // Restore. Batch post-column restores in one wp_update_post.
@@ -8427,11 +8956,8 @@ class Server {
                                 case 'description': $tcurrent = (string) $tundo_term->description; break;
                                 case 'parent':      $tcurrent = (int)    $tundo_term->parent;      break;
                             }
-                            if ( $tcurrent !== $tapplied ) {
-                                throw new \Exception( sprintf(
-                                    'Cannot undo: term field %s was modified after the tracked operation. Current value differs from what was written. Investigate before retrying or use SiteVault to restore a full-site snapshot.',
-                                    esc_html( $tfield )
-                                ) );
+                            if ( $tcurrent !== $tapplied && ! $undo_force ) {
+                                throw self::undo_drift_refusal( sprintf( 'term field %s on term %d changed after this operation wrote it.', esc_html( $tfield ), $undo_tid ) );
                             }
                         }
                         // Restore in a single wp_update_term call.
@@ -8473,6 +8999,10 @@ class Server {
                         }
                         $spa_pre = ( isset( $undo_snapshot['pre_op_state'] ) && is_array( $undo_snapshot['pre_op_state'] ) ) ? $undo_snapshot['pre_op_state'] : [];
                         $spa_snap = ( isset( $spa_pre['attributes_before'] ) && is_array( $spa_pre['attributes_before'] ) ) ? $spa_pre['attributes_before'] : [];
+                        $spa_written = (string) ( $spa_pre['attributes_written'] ?? '' );
+                        if ( '' !== $spa_written && ! $undo_force && \Royal_MCP\Integrations\WooCommerce::undo_fingerprint( 'attributes', $undo_spa_pid ) !== $spa_written ) {
+                            throw self::undo_drift_refusal( sprintf( 'the attributes of product %d changed after this operation set them.', $undo_spa_pid ) );
+                        }
                         // Empty snapshot is legal (product had zero attributes
                         // before) — restore an empty set.
                         $spa_restored = \Royal_MCP\Integrations\WooCommerce::deserialize_product_attributes_public( $spa_snap );
@@ -8512,12 +9042,113 @@ class Server {
                         $bv_undo_updated = ( isset( $bv_undo_pre['updated'] ) && is_array( $bv_undo_pre['updated'] ) ) ? $bv_undo_pre['updated'] : [];
                         $bv_undo_deleted = ( isset( $bv_undo_pre['deleted'] ) && is_array( $bv_undo_pre['deleted'] ) ) ? $bv_undo_pre['deleted'] : [];
 
+                        // The deleted half: a SKU another product holds now cannot be recreated
+                        // (it is left off with force), and a variation added since with the same
+                        // attributes counts as a later edit. All checked before anything is written.
+                        $bv_children_after = isset( $bv_undo_pre['children_after'] ) && is_array( $bv_undo_pre['children_after'] ) ? array_map( 'intval', $bv_undo_pre['children_after'] ) : null;
+                        $bv_created_ids    = array_map( 'intval', $bv_undo_created );
+                        $bv_sku_taken      = [];
+                        $bv_attr_taken     = [];
+                        $bv_added_since    = null === $bv_children_after ? [] : array_diff( \Royal_MCP\Integrations\WooCommerce::variation_child_ids( $undo_bv_pid ), $bv_children_after, $bv_created_ids );
+                        foreach ( $bv_undo_deleted as $bv_row ) {
+                            if ( ! is_array( $bv_row ) ) {
+                                continue;
+                            }
+                            $bv_orig = (int) ( $bv_row['original_id'] ?? 0 );
+                            $bv_row_attrs = ! empty( $bv_row['attributes_json'] ) ? json_decode( (string) $bv_row['attributes_json'], true ) : null;
+                            if ( is_array( $bv_row_attrs ) && $bv_row_attrs ) {
+                                foreach ( $bv_added_since as $bv_new_child ) {
+                                    $bv_child = wc_get_product( (int) $bv_new_child );
+                                    if ( $bv_child && (array) $bv_child->get_attributes( 'edit' ) == $bv_row_attrs ) {
+                                        $bv_attr_taken[] = [ 'original_id' => $bv_orig, 'matching_variation_id' => (int) $bv_new_child ];
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        // SKUs once the undo is done: updated variations go back to their earlier SKU
+                        // (freeing the one they hold now), created variations are deleted, deleted ones
+                        // come back. A SKU conflicts only when something outside that picture holds it.
+                        $bv_upd_prior_sku = [];
+                        foreach ( $bv_undo_updated as $bv_entry ) {
+                            $bv_upd_id = (int) ( $bv_entry['variation_id'] ?? 0 );
+                            if ( $bv_upd_id > 0 && isset( $bv_entry['prior']['sku'] ) ) {
+                                $bv_upd_prior_sku[ $bv_upd_id ] = (string) $bv_entry['prior']['sku'];
+                            }
+                        }
+                        $bv_claims = [];
+                        foreach ( $bv_upd_prior_sku as $bv_upd_id => $bv_upd_sku ) {
+                            if ( '' !== $bv_upd_sku ) {
+                                $bv_claims[ 'u' . $bv_upd_id ] = [ $bv_upd_sku, $bv_upd_id, [ 'variation_id' => $bv_upd_id ] ];
+                            }
+                        }
+                        foreach ( $bv_undo_deleted as $bv_row ) {
+                            if ( is_array( $bv_row ) && isset( $bv_row['sku'] ) && '' !== (string) $bv_row['sku'] ) {
+                                $bv_orig = (int) ( $bv_row['original_id'] ?? 0 );
+                                $bv_claims[ $bv_orig ] = [ (string) $bv_row['sku'], 0, [ 'original_id' => $bv_orig ] ];
+                            }
+                        }
+                        $bv_claimed = [];
+                        foreach ( $bv_claims as $bv_key => $bv_claim ) {
+                            list( $bv_sku, $bv_self, $bv_label ) = $bv_claim;
+                            $bv_holder = (int) wc_get_product_id_by_sku( $bv_sku );
+                            $bv_free   = $bv_holder <= 0 || $bv_holder === $bv_self || in_array( $bv_holder, $bv_created_ids, true )
+                                || ( isset( $bv_upd_prior_sku[ $bv_holder ] ) && $bv_upd_prior_sku[ $bv_holder ] !== $bv_sku );
+                            if ( ! $bv_free || isset( $bv_claimed[ $bv_sku ] ) ) {
+                                $bv_sku_taken[ $bv_key ] = array_merge( $bv_label, [ 'sku' => $bv_sku, 'taken_by' => $bv_free ? (int) $bv_claimed[ $bv_sku ] : $bv_holder ] );
+                                continue;
+                            }
+                            $bv_claimed[ $bv_sku ] = $bv_self;
+                        }
+                        if ( ( $bv_sku_taken || $bv_attr_taken ) && ! $undo_force ) {
+                            $bv_why = [];
+                            if ( $bv_sku_taken ) {
+                                $bv_why[] = sprintf( '%d SKU(s) this undo would put back are used by another product now (%s)', count( $bv_sku_taken ), esc_html( implode( ', ', wp_list_pluck( $bv_sku_taken, 'sku' ) ) ) );
+                            }
+                            if ( $bv_attr_taken ) {
+                                $bv_why[] = sprintf( '%d variation(s) with the same attributes as deleted ones were added since', count( $bv_attr_taken ) );
+                            }
+                            throw self::undo_drift_refusal(
+                                implode( ' and ', $bv_why ) . '.',
+                                'restore anyway (a SKU another product uses is left off)',
+                                [ 'sku_conflicts' => array_values( $bv_sku_taken ), 'attribute_matches' => $bv_attr_taken ]
+                            );
+                        }
+
+                        // Refuse (token kept) when a variation this batch created or updated was
+                        // edited since, unless the caller forces the restore.
+                        if ( ! $undo_force ) {
+                            $bv_prints  = ( isset( $bv_undo_pre['created_fingerprints'] ) && is_array( $bv_undo_pre['created_fingerprints'] ) ) ? $bv_undo_pre['created_fingerprints'] : [];
+                            $bv_drifted = [];
+                            foreach ( $bv_undo_created as $bv_new_id ) {
+                                $bv_print = (string) ( $bv_prints[ (int) $bv_new_id ] ?? '' );
+                                $bv_now   = \Royal_MCP\Integrations\WooCommerce::undo_fingerprint( 'variation', (int) $bv_new_id );
+                                if ( '' !== $bv_print && '' !== $bv_now && $bv_now !== $bv_print ) {
+                                    $bv_drifted[] = (int) $bv_new_id;
+                                }
+                            }
+                            foreach ( $bv_undo_updated as $bv_entry ) {
+                                $bv_var_id  = (int) ( $bv_entry['variation_id'] ?? 0 );
+                                $bv_applied = ( isset( $bv_entry['applied'] ) && is_array( $bv_entry['applied'] ) ) ? $bv_entry['applied'] : null;
+                                $bv_var_now = ( null !== $bv_applied && $bv_var_id > 0 && get_post( $bv_var_id ) ) ? wc_get_product( $bv_var_id ) : null;
+                                if ( $bv_var_now && \Royal_MCP\Integrations\WooCommerce::variation_values( $bv_var_now, array_keys( $bv_applied ) ) !== $bv_applied ) {
+                                    $bv_drifted[] = $bv_var_id;
+                                }
+                            }
+                            if ( $bv_drifted ) {
+                                throw self::undo_drift_refusal( sprintf( 'variation(s) %s changed after this batch wrote them.', implode( ', ', $bv_drifted ) ), 'restore the earlier state anyway', [ 'variation_ids' => $bv_drifted ] );
+                            }
+                        }
+
                         $bv_undo_result = [
                             'created_deleted'  => 0,
                             'updated_restored' => 0,
                             'deleted_recreated' => [],
                             'skipped'          => [],
                         ];
+                        if ( $bv_sku_taken ) {
+                            $bv_undo_result['sku_skipped'] = array_values( $bv_sku_taken );
+                        }
 
                         // Reverse the CREATE ops → delete the created variations
                         foreach ( $bv_undo_created as $new_id ) {
@@ -8532,6 +9163,15 @@ class Server {
                             if ( $obj ) {
                                 $obj->delete( true );
                                 $bv_undo_result['created_deleted']++;
+                            }
+                        }
+
+                        // Clear the SKUs that change first, so SKUs swapped inside the batch can go back.
+                        foreach ( $bv_upd_prior_sku as $bv_upd_id => $bv_upd_sku ) {
+                            $bv_clear = isset( $bv_sku_taken[ 'u' . $bv_upd_id ] ) ? null : wc_get_product( $bv_upd_id );
+                            if ( $bv_clear && $bv_clear->is_type( 'variation' ) && (string) $bv_clear->get_sku( 'edit' ) !== $bv_upd_sku ) {
+                                $bv_clear->set_sku( '' );
+                                $bv_clear->save();
                             }
                         }
 
@@ -8551,7 +9191,16 @@ class Server {
                                 switch ( $f ) {
                                     case 'regular_price':  $var->set_regular_price( (string) $v ); break;
                                     case 'sale_price':     $var->set_sale_price( (string) $v ); break;
-                                    case 'sku':            $var->set_sku( (string) $v ); break;
+                                    case 'sku':
+                                        if ( isset( $bv_sku_taken[ 'u' . $var_id ] ) ) {
+                                            break;
+                                        }
+                                        try {
+                                            $var->set_sku( (string) $v );
+                                        } catch ( \WC_Data_Exception $bv_sku_error ) {
+                                            $bv_undo_result['sku_skipped'][] = [ 'variation_id' => $var_id, 'sku' => (string) $v, 'reason' => $bv_sku_error->getMessage() ];
+                                        }
+                                        break;
                                     case 'status':         $var->set_status( (string) $v ); break;
                                     case 'manage_stock':   $var->set_manage_stock( (bool) $v ); break;
                                     case 'stock_quantity': $var->set_stock_quantity( (int) $v ); break;
@@ -8580,7 +9229,13 @@ class Server {
                             $var->set_parent_id( $undo_bv_pid );
                             if ( isset( $row['regular_price'] ) )  $var->set_regular_price( (string) $row['regular_price'] );
                             if ( isset( $row['sale_price'] ) )     $var->set_sale_price( (string) $row['sale_price'] );
-                            if ( isset( $row['sku'] ) )            $var->set_sku( (string) $row['sku'] );
+                            if ( isset( $row['sku'] ) && ! isset( $bv_sku_taken[ $orig_id ] ) ) {
+                                try {
+                                    $var->set_sku( (string) $row['sku'] );
+                                } catch ( \WC_Data_Exception $bv_sku_error ) {
+                                    $bv_undo_result['sku_skipped'][] = [ 'original_id' => $orig_id, 'sku' => (string) $row['sku'], 'reason' => $bv_sku_error->getMessage() ];
+                                }
+                            }
                             if ( isset( $row['status'] ) )         $var->set_status( (string) $row['status'] );
                             if ( isset( $row['manage_stock'] ) )   $var->set_manage_stock( (bool) $row['manage_stock'] );
                             if ( isset( $row['stock_quantity'] ) ) $var->set_stock_quantity( (int) $row['stock_quantity'] );
@@ -8618,12 +9273,13 @@ class Server {
                             $bv_undo_result
                         );
                         return \Royal_MCP\MCP\Support\Envelope::success(
-                            sprintf( 'Reversed batch on product %d: %d created→deleted, %d updated→restored, %d deleted→recreated%s.',
+                            sprintf( 'Reversed batch on product %d: %d created→deleted, %d updated→restored, %d deleted→recreated%s%s.',
                                 $undo_bv_pid,
                                 $bv_undo_result['created_deleted'],
                                 $bv_undo_result['updated_restored'],
                                 count( $bv_undo_result['deleted_recreated'] ),
-                                count( $bv_undo_result['skipped'] ) > 0 ? sprintf( ' (%d skipped)', count( $bv_undo_result['skipped'] ) ) : ''
+                                count( $bv_undo_result['skipped'] ) > 0 ? sprintf( ' (%d skipped)', count( $bv_undo_result['skipped'] ) ) : '',
+                                ! empty( $bv_undo_result['sku_skipped'] ) ? sprintf( '; %d SKU(s) left off because another product uses them now', count( $bv_undo_result['sku_skipped'] ) ) : ''
                             ),
                             $bv_undo_struct
                         );
@@ -8643,10 +9299,14 @@ class Server {
                             throw new \Exception('delete_product capability required to undo this operation.');
                         }
                         if ( $dvt_post->post_status !== 'trash' ) {
-                            throw new \Exception( sprintf(
-                                'Cannot undo: variation is not in trash (current status: %s). Someone likely acted on it after the tracked trash.',
-                                esc_html( $dvt_post->post_status )
-                            ) );
+                            if ( ! $undo_force ) {
+                                throw self::undo_drift_refusal( sprintf( 'variation %d is no longer in the trash (status now: %s).', $undo_dvt_id, esc_html( $dvt_post->post_status ) ), 'close the token without changing anything, as there is nothing in the trash to restore' );
+                            }
+                            \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                            return \Royal_MCP\MCP\Support\Envelope::success(
+                                sprintf( 'Nothing to restore: variation %d is already out of the trash (status: %s).', $undo_dvt_id, esc_html( $dvt_post->post_status ) ),
+                                [ 'undone' => true, 'op' => $undo_op, 'target' => $dvt_target, 'restored' => false, 'reason' => 'not_in_trash' ]
+                            );
                         }
                         wp_untrash_post( $undo_dvt_id );
                         if ( $undo_dvt_pid > 0 && class_exists( '\WC_Product_Variable' ) ) {
@@ -8726,10 +9386,14 @@ class Server {
                             throw new \Exception('edit_shop_coupon capability required to undo this operation.');
                         }
                         if ( $dct_post->post_status !== 'trash' ) {
-                            throw new \Exception( sprintf(
-                                'Cannot undo: coupon is not in trash (current status: %s).',
-                                esc_html( $dct_post->post_status )
-                            ) );
+                            if ( ! $undo_force ) {
+                                throw self::undo_drift_refusal( sprintf( 'coupon %d is no longer in the trash (status now: %s).', $undo_dct_id, esc_html( $dct_post->post_status ) ), 'close the token without changing anything, as there is nothing in the trash to restore' );
+                            }
+                            \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                            return \Royal_MCP\MCP\Support\Envelope::success(
+                                sprintf( 'Nothing to restore: coupon %d is already out of the trash (status: %s).', $undo_dct_id, esc_html( $dct_post->post_status ) ),
+                                [ 'undone' => true, 'op' => $undo_op, 'target' => $dct_target, 'restored' => false, 'reason' => 'not_in_trash' ]
+                            );
                         }
                         wp_untrash_post( $undo_dct_id );
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
@@ -8811,12 +9475,29 @@ class Server {
                         if ( ! class_exists( '\WC_Coupon' ) ) {
                             throw new \Exception('WooCommerce is no longer active — cannot recreate coupons.');
                         }
+                        // A code another coupon uses now is not recreated: two coupons with one code
+                        // would hide the newer one. Refuse (token kept) unless forced, and with force
+                        // recreate the rest and report those rows as skipped.
+                        $ect_taken = [];
+                        foreach ( $ect_rows as $row ) {
+                            $ect_taken_by = ( is_array( $row ) && ! empty( $row['code'] ) ) ? \Royal_MCP\Integrations\WooCommerce::coupon_code_holder( (string) $row['code'] ) : 0;
+                            if ( $ect_taken_by ) {
+                                $ect_taken[] = [ 'code' => (string) $row['code'], 'original_id' => (int) ( $row['original_id'] ?? 0 ), 'taken_by' => $ect_taken_by ];
+                            }
+                        }
+                        if ( $ect_taken && ! $undo_force ) {
+                            throw self::undo_drift_refusal(
+                                sprintf( '%d deleted coupon code(s) are used by another coupon now: %s.', count( $ect_taken ), esc_html( implode( ', ', wp_list_pluck( $ect_taken, 'code' ) ) ) ),
+                                'recreate the other coupons and skip those codes',
+                                [ 'conflicts' => $ect_taken ]
+                            );
+                        }
                         $ect_recreated = [];
                         $ect_skipped   = [];
                         foreach ( $ect_rows as $row ) {
                             if ( ! is_array( $row ) || empty( $row['code'] ) ) continue;
                             // Skip codes that have been re-created since delete
-                            if ( wc_get_coupon_id_by_code( (string) $row['code'] ) ) {
+                            if ( \Royal_MCP\Integrations\WooCommerce::coupon_code_holder( (string) $row['code'] ) ) {
                                 $ect_skipped[] = [ 'code' => (string) $row['code'], 'original_id' => (int) $row['original_id'], 'reason' => 'code_already_exists' ];
                                 continue;
                             }
@@ -8882,6 +9563,10 @@ class Server {
                         if ( ! current_user_can( 'delete_product', $undo_cp_id ) ) {
                             throw new \Exception('delete_product capability required to undo this operation.');
                         }
+                        $cp_print = (string) ( $undo_snapshot['pre_op_state']['created_fingerprint'] ?? '' );
+                        if ( '' !== $cp_print && ! $undo_force && \Royal_MCP\Integrations\WooCommerce::undo_fingerprint( 'product', $undo_cp_id ) !== $cp_print ) {
+                            throw self::undo_drift_refusal( sprintf( 'product %d was edited after it was created, and undo would delete it with those edits.', $undo_cp_id ), 'delete it anyway' );
+                        }
                         if ( function_exists( 'wc_get_product' ) ) {
                             $cp_prod = wc_get_product( $undo_cp_id );
                             if ( $cp_prod ) $cp_prod->delete( true );
@@ -8915,6 +9600,10 @@ class Server {
                         if ( ! current_user_can( 'edit_shop_orders' ) ) {
                             throw new \Exception('edit_shop_orders capability required to undo this operation.');
                         }
+                        $co_print = (string) ( $undo_snapshot['pre_op_state']['created_fingerprint'] ?? '' );
+                        if ( '' !== $co_print && ! $undo_force && \Royal_MCP\Integrations\WooCommerce::undo_fingerprint( 'order', $undo_co_id ) !== $co_print ) {
+                            throw self::undo_drift_refusal( sprintf( 'order %d was changed after it was created (status, items, totals, payment, refunds, order details or customer details), and undo would delete it with those changes.', $undo_co_id ), 'delete it anyway, together with its payment and refund records' );
+                        }
                         $co_order->delete( true );  // HPOS-aware hard delete
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
                         return \Royal_MCP\MCP\Support\Envelope::success(
@@ -8939,6 +9628,10 @@ class Server {
                         }
                         if ( ! current_user_can( 'delete_product', $undo_cv_id ) ) {
                             throw new \Exception('delete_product capability required to undo this operation.');
+                        }
+                        $cv_print = (string) ( $undo_snapshot['pre_op_state']['created_fingerprint'] ?? '' );
+                        if ( '' !== $cv_print && ! $undo_force && \Royal_MCP\Integrations\WooCommerce::undo_fingerprint( 'variation', $undo_cv_id ) !== $cv_print ) {
+                            throw self::undo_drift_refusal( sprintf( 'variation %d was edited after it was created, and undo would delete it with those edits.', $undo_cv_id ), 'delete it anyway' );
                         }
                         if ( function_exists( 'wc_get_product' ) ) {
                             $cv_var = wc_get_product( $undo_cv_id );
@@ -8975,6 +9668,10 @@ class Server {
                         if ( ! current_user_can( 'manage_woocommerce' ) || ! current_user_can( 'delete_shop_coupon', $undo_cc_id ) ) {
                             throw new \Exception('delete_shop_coupon capability required to undo this operation.');
                         }
+                        $cc_print = (string) ( $undo_snapshot['pre_op_state']['created_fingerprint'] ?? '' );
+                        if ( '' !== $cc_print && ! $undo_force && \Royal_MCP\Integrations\WooCommerce::undo_fingerprint( 'coupon', $undo_cc_id ) !== $cc_print ) {
+                            throw self::undo_drift_refusal( sprintf( 'coupon %d was edited or used after it was created, and undo would delete it with those changes.', $undo_cc_id ), 'delete it anyway' );
+                        }
                         // Route through WC_Coupon::delete so WC's own coupon-code
                         // cache (wc_get_coupon_id_by_code) invalidates via the
                         // woocommerce_delete_coupon action. Plain wp_delete_post
@@ -9003,6 +9700,23 @@ class Server {
                         }
                         if ( ! current_user_can( 'manage_product_terms' ) ) {
                             throw new \Exception('manage_product_terms capability required to undo this operation.');
+                        }
+                        // Deleting the attribute deletes its terms too, so refuse (token kept) when
+                        // its terms changed after it was created, unless forced.
+                        $cpa_terms = $undo_snapshot['pre_op_state']['term_ids'] ?? null;
+                        $cpa_slug  = (string) ( $cpa_target['slug'] ?? '' );
+                        if ( is_array( $cpa_terms ) && '' !== $cpa_slug && ! $undo_force ) {
+                            $cpa_terms     = array_map( 'intval', $cpa_terms );
+                            $cpa_terms_now = \Royal_MCP\Integrations\WooCommerce::attribute_term_ids( $cpa_slug );
+                            $cpa_added     = array_diff( $cpa_terms_now, $cpa_terms );
+                            $cpa_removed   = array_diff( $cpa_terms, $cpa_terms_now );
+                            if ( $cpa_added || $cpa_removed ) {
+                                throw self::undo_drift_refusal(
+                                    sprintf( 'the terms of attribute %d changed after it was created (%d added, %d removed), and deleting the attribute deletes its current terms too.', $undo_cpa_id, count( $cpa_added ), count( $cpa_removed ) ),
+                                    'delete it and its terms anyway',
+                                    [ 'added_term_ids' => array_values( $cpa_added ), 'removed_term_ids' => array_values( $cpa_removed ) ]
+                                );
+                            }
                         }
                         $cpa_ok = wc_delete_attribute( $undo_cpa_id );
                         if ( ! $cpa_ok ) {
@@ -9035,6 +9749,13 @@ class Server {
                         $dmi_menu_obj = $undo_dmi_mid > 0 ? wp_get_nav_menu_object( $undo_dmi_mid ) : null;
                         if ( ! $dmi_menu_obj ) {
                             throw new \Exception('Parent menu no longer exists — cannot recreate menu item.');
+                        }
+                        if ( ! $undo_force ) {
+                            foreach ( (array) wp_get_nav_menu_items( $undo_dmi_mid, [ 'post_status' => 'any' ] ) as $dmi_other ) {
+                                if ( (string) $dmi_other->title === (string) ( $dmi_row['title'] ?? '' ) && (string) $dmi_other->url === (string) ( $dmi_row['url'] ?? '' ) ) {
+                                    throw self::undo_drift_refusal( sprintf( 'menu %d has an item with the same title and link again (item %d).', $undo_dmi_mid, (int) $dmi_other->db_id ), 'recreate the deleted item anyway', [ 'menu_item_id' => (int) $dmi_other->db_id ] );
+                                }
+                            }
                         }
                         // Recreate via wp_update_nav_menu_item with menu-item-* args.
                         // Pass menu_item_id=0 to create a new item.
@@ -9159,8 +9880,8 @@ class Server {
                             throw new \Exception( sprintf( 'Post %d is already in the trash.', $undo_cpt_id ) );
                         }
                         $cpt_was = (string) ( $undo_snapshot['pre_op_state']['modified_gmt'] ?? '' );
-                        if ( '' !== $cpt_was && $cpt_was !== (string) $cpt_post->post_modified_gmt ) {
-                            throw new \Exception( sprintf( 'Cannot undo: post %d was edited after it was created. Trash it with wp_delete_post if it should still go.', $undo_cpt_id ) );
+                        if ( '' !== $cpt_was && $cpt_was !== (string) $cpt_post->post_modified_gmt && ! $undo_force ) {
+                            throw self::undo_drift_refusal( sprintf( 'post %d was edited after it was created.', $undo_cpt_id ), 'move it to the trash anyway', [ 'post_id' => $undo_cpt_id ] );
                         }
                         self::trash_post_or_refuse( $cpt_post );
                         clean_post_cache( $undo_cpt_id );
@@ -9189,10 +9910,14 @@ class Server {
                             throw new \Exception('delete_post capability required to undo this operation.');
                         }
                         if ( $dpt_post->post_status !== 'trash' ) {
-                            throw new \Exception( sprintf(
-                                'Cannot undo: post is not in trash (current status: %s). Someone likely acted on it after the tracked trash.',
-                                esc_html( $dpt_post->post_status )
-                            ) );
+                            if ( ! $undo_force ) {
+                                throw self::undo_drift_refusal( sprintf( 'post %d is no longer in the trash (status now: %s).', $undo_dpt_id, esc_html( $dpt_post->post_status ) ), 'close the token without changing anything, as there is nothing in the trash to restore' );
+                            }
+                            \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                            return \Royal_MCP\MCP\Support\Envelope::success(
+                                sprintf( 'Nothing to restore: post %d is already out of the trash (status: %s).', $undo_dpt_id, esc_html( $dpt_post->post_status ) ),
+                                [ 'undone' => true, 'op' => $undo_op, 'target' => $dpt_target, 'restored' => false, 'reason' => 'not_in_trash' ]
+                            );
                         }
                         wp_untrash_post( $undo_dpt_id );
                         clean_post_cache( $undo_dpt_id );
@@ -9295,6 +10020,10 @@ class Server {
                         if ( empty( $up_undo_prior ) ) {
                             throw new \Exception('Undo snapshot has no prior_values to restore.');
                         }
+                        $up_undo_written = (string) ( $up_undo_pre['written_fingerprint'] ?? '' );
+                        if ( '' !== $up_undo_written && ! $undo_force && self::post_undo_fingerprint( $undo_up_pid ) !== $up_undo_written ) {
+                            throw self::undo_drift_refusal( sprintf( 'post %d was edited after this operation, so undoing it would also remove those later edits.', $undo_up_pid ), 'restore the earlier version anyway', [ 'post_id' => $undo_up_pid ] );
+                        }
                         // Rebuild the update array from prior_values. edit_date=true
                         // is required for post_date restore (see forward-path
                         // scheduling handler comment).
@@ -9380,30 +10109,30 @@ class Server {
                         }
                         $uv_undo_read = function( $arg_key ) use ( $uv_undo_var ) {
                             switch ( $arg_key ) {
-                                case 'regular_price':      return (string) $uv_undo_var->get_regular_price();
-                                case 'sale_price':         return (string) $uv_undo_var->get_sale_price();
-                                case 'sku':                return (string) $uv_undo_var->get_sku();
-                                case 'status':             return (string) $uv_undo_var->get_status();
-                                case 'manage_stock':       return (bool)   $uv_undo_var->get_manage_stock();
-                                case 'stock_quantity':     return (int)    $uv_undo_var->get_stock_quantity();
-                                case 'stock_status':       return (string) $uv_undo_var->get_stock_status();
-                                case 'weight':             return (string) $uv_undo_var->get_weight();
-                                case 'description':        return (string) $uv_undo_var->get_description();
-                                case 'image_id':           return (int)    $uv_undo_var->get_image_id();
-                                case 'dimensions.length':  return (string) $uv_undo_var->get_length();
-                                case 'dimensions.width':   return (string) $uv_undo_var->get_width();
-                                case 'dimensions.height':  return (string) $uv_undo_var->get_height();
+                                case 'regular_price':      return (string) $uv_undo_var->get_regular_price( 'edit' );
+                                case 'sale_price':         return (string) $uv_undo_var->get_sale_price( 'edit' );
+                                case 'sku':                return (string) $uv_undo_var->get_sku( 'edit' );
+                                case 'status':             return (string) $uv_undo_var->get_status( 'edit' );
+                                case 'manage_stock':       return (bool)   $uv_undo_var->get_manage_stock( 'edit' );
+                                case 'stock_quantity':     return (int)    $uv_undo_var->get_stock_quantity( 'edit' );
+                                case 'stock_status':       return (string) $uv_undo_var->get_stock_status( 'edit' );
+                                case 'weight':             return (string) $uv_undo_var->get_weight( 'edit' );
+                                case 'description':        return (string) $uv_undo_var->get_description( 'edit' );
+                                case 'image_id':           return (int)    $uv_undo_var->get_image_id( 'edit' );
+                                case 'dimensions.length':  return (string) $uv_undo_var->get_length( 'edit' );
+                                case 'dimensions.width':   return (string) $uv_undo_var->get_width( 'edit' );
+                                case 'dimensions.height':  return (string) $uv_undo_var->get_height( 'edit' );
                             }
                             return null;
                         };
                         foreach ( $uv_undo_apply as $arg_key => $applied ) {
                             $current = $uv_undo_read( $arg_key );
-                            if ( $current !== $applied ) {
-                                throw new \Exception( sprintf(
-                                    'Cannot undo: variation field %s was modified after the tracked operation. Current value differs from what was written. Investigate before retrying or use SiteVault to restore.',
-                                    esc_html( $arg_key )
-                                ) );
+                            if ( $current !== $applied && ! $undo_force ) {
+                                throw self::undo_drift_refusal( sprintf( 'variation field %s changed after this operation wrote it.', esc_html( $arg_key ) ) );
                             }
+                        }
+                        if ( isset( $uv_undo_pre['attributes_after_json'] ) && ! $undo_force && (string) wp_json_encode( $uv_undo_var->get_attributes( 'edit' ) ) !== (string) $uv_undo_pre['attributes_after_json'] ) {
+                            throw self::undo_drift_refusal( sprintf( 'the attributes of variation %d changed after this operation wrote them.', $undo_uv_id ) );
                         }
                         foreach ( $uv_undo_prior as $arg_key => $prior ) {
                             switch ( $arg_key ) {
@@ -9473,34 +10202,31 @@ class Server {
                         $uc_undo_read = function( $arg_key ) use ( $undo_uc_id ) {
                             $c = new \WC_Coupon( $undo_uc_id );
                             switch ( $arg_key ) {
-                                case 'code':                        return (string) $c->get_code();
-                                case 'discount_type':               return (string) $c->get_discount_type();
-                                case 'amount':                      return (string) $c->get_amount();
-                                case 'description':                 return (string) $c->get_description();
-                                case 'usage_limit':                 return (int)    $c->get_usage_limit();
-                                case 'usage_limit_per_user':        return (int)    $c->get_usage_limit_per_user();
-                                case 'limit_usage_to_x_items':      return (int)    $c->get_limit_usage_to_x_items();
-                                case 'individual_use':              return (bool)   $c->get_individual_use();
-                                case 'free_shipping':               return (bool)   $c->get_free_shipping();
-                                case 'exclude_sale_items':          return (bool)   $c->get_exclude_sale_items();
-                                case 'minimum_amount':              return (string) $c->get_minimum_amount();
-                                case 'maximum_amount':              return (string) $c->get_maximum_amount();
-                                case 'date_expires':                $d = $c->get_date_expires(); return $d ? (int) $d->getTimestamp() : null;
-                                case 'product_ids':                 return array_values( array_map( 'intval', (array) $c->get_product_ids() ) );
-                                case 'excluded_product_ids':        return array_values( array_map( 'intval', (array) $c->get_excluded_product_ids() ) );
-                                case 'product_categories':          return array_values( array_map( 'intval', (array) $c->get_product_categories() ) );
-                                case 'excluded_product_categories': return array_values( array_map( 'intval', (array) $c->get_excluded_product_categories() ) );
-                                case 'email_restrictions':          return array_values( (array) $c->get_email_restrictions() );
+                                case 'code':                        return (string) $c->get_code( 'edit' );
+                                case 'discount_type':               return (string) $c->get_discount_type( 'edit' );
+                                case 'amount':                      return (string) $c->get_amount( 'edit' );
+                                case 'description':                 return (string) $c->get_description( 'edit' );
+                                case 'usage_limit':                 return (int)    $c->get_usage_limit( 'edit' );
+                                case 'usage_limit_per_user':        return (int)    $c->get_usage_limit_per_user( 'edit' );
+                                case 'limit_usage_to_x_items':      return (int)    $c->get_limit_usage_to_x_items( 'edit' );
+                                case 'individual_use':              return (bool)   $c->get_individual_use( 'edit' );
+                                case 'free_shipping':               return (bool)   $c->get_free_shipping( 'edit' );
+                                case 'exclude_sale_items':          return (bool)   $c->get_exclude_sale_items( 'edit' );
+                                case 'minimum_amount':              return (string) $c->get_minimum_amount( 'edit' );
+                                case 'maximum_amount':              return (string) $c->get_maximum_amount( 'edit' );
+                                case 'date_expires':                $d = $c->get_date_expires( 'edit' ); return $d ? (int) $d->getTimestamp() : null;
+                                case 'product_ids':                 return array_values( array_map( 'intval', (array) $c->get_product_ids( 'edit' ) ) );
+                                case 'excluded_product_ids':        return array_values( array_map( 'intval', (array) $c->get_excluded_product_ids( 'edit' ) ) );
+                                case 'product_categories':          return array_values( array_map( 'intval', (array) $c->get_product_categories( 'edit' ) ) );
+                                case 'excluded_product_categories': return array_values( array_map( 'intval', (array) $c->get_excluded_product_categories( 'edit' ) ) );
+                                case 'email_restrictions':          return array_values( (array) $c->get_email_restrictions( 'edit' ) );
                             }
                             return null;
                         };
                         foreach ( $uc_undo_apply as $arg_key => $applied ) {
                             $current = $uc_undo_read( $arg_key );
-                            if ( $current !== $applied ) {
-                                throw new \Exception( sprintf(
-                                    'Cannot undo: coupon field %s was modified after the tracked operation. Current value differs from what was written. Investigate before retrying or use SiteVault to restore.',
-                                    esc_html( $arg_key )
-                                ) );
+                            if ( $current !== $applied && ! $undo_force ) {
+                                throw self::undo_drift_refusal( sprintf( 'coupon field %s changed after this operation wrote it.', esc_html( $arg_key ) ) );
                             }
                         }
                         foreach ( $uc_undo_prior as $arg_key => $prior ) {
@@ -9571,24 +10297,21 @@ class Server {
                         }
                         $up_undo_read = function( $arg_key ) use ( $up_undo_product ) {
                             switch ( $arg_key ) {
-                                case 'name':              return (string) $up_undo_product->get_name();
-                                case 'description':       return (string) $up_undo_product->get_description();
-                                case 'short_description': return (string) $up_undo_product->get_short_description();
-                                case 'sku':               return (string) $up_undo_product->get_sku();
-                                case 'status':            return (string) $up_undo_product->get_status();
-                                case 'regular_price':     return (string) $up_undo_product->get_regular_price();
-                                case 'sale_price':        return (string) $up_undo_product->get_sale_price();
-                                case 'stock_quantity':    return (int) $up_undo_product->get_stock_quantity();
+                                case 'name':              return (string) $up_undo_product->get_name( 'edit' );
+                                case 'description':       return (string) $up_undo_product->get_description( 'edit' );
+                                case 'short_description': return (string) $up_undo_product->get_short_description( 'edit' );
+                                case 'sku':               return (string) $up_undo_product->get_sku( 'edit' );
+                                case 'status':            return (string) $up_undo_product->get_status( 'edit' );
+                                case 'regular_price':     return (string) $up_undo_product->get_regular_price( 'edit' );
+                                case 'sale_price':        return (string) $up_undo_product->get_sale_price( 'edit' );
+                                case 'stock_quantity':    return (int) $up_undo_product->get_stock_quantity( 'edit' );
                             }
                             return null;
                         };
                         foreach ( $up_undo_apply as $arg_key => $applied ) {
                             $current = $up_undo_read( $arg_key );
-                            if ( $current !== $applied ) {
-                                throw new \Exception( sprintf(
-                                    'Cannot undo: product field %s was modified after the tracked operation. Current value differs from what was written. Investigate before retrying or use SiteVault to restore.',
-                                    esc_html( $arg_key )
-                                ) );
+                            if ( $current !== $applied && ! $undo_force ) {
+                                throw self::undo_drift_refusal( sprintf( 'product field %s changed after this operation wrote it.', esc_html( $arg_key ) ) );
                             }
                         }
                         // Restore per-field via WC setters.
@@ -9650,23 +10373,20 @@ class Server {
                         $uo_undo_read = function( $arg_key ) use ( $uo_undo_order ) {
                             if ( strpos( $arg_key, 'billing.' ) === 0 ) {
                                 $g = 'get_billing_' . substr( $arg_key, 8 );
-                                return (string) $uo_undo_order->$g();
+                                return (string) $uo_undo_order->$g( 'edit' );
                             }
                             if ( strpos( $arg_key, 'shipping.' ) === 0 ) {
                                 $g = 'get_shipping_' . substr( $arg_key, 9 );
-                                return (string) $uo_undo_order->$g();
+                                return (string) $uo_undo_order->$g( 'edit' );
                             }
-                            if ( $arg_key === 'customer_note' ) return (string) $uo_undo_order->get_customer_note();
-                            if ( $arg_key === 'status' )        return $uo_undo_order->get_status();
+                            if ( $arg_key === 'customer_note' ) return (string) $uo_undo_order->get_customer_note( 'edit' );
+                            if ( $arg_key === 'status' )        return $uo_undo_order->get_status( 'edit' );
                             return null;
                         };
                         foreach ( $uo_undo_apply as $arg_key => $applied ) {
                             $current = $uo_undo_read( $arg_key );
-                            if ( $current !== $applied ) {
-                                throw new \Exception( sprintf(
-                                    'Cannot undo: order field %s was modified after the tracked operation. Current value differs from what was written. Investigate before retrying or use SiteVault to restore.',
-                                    esc_html( $arg_key )
-                                ) );
+                            if ( $current !== $applied && ! $undo_force ) {
+                                throw self::undo_drift_refusal( sprintf( 'order field %s changed after this operation wrote it.', esc_html( $arg_key ) ) );
                             }
                         }
                         // Restore per-field via WC's own setters.
@@ -9727,17 +10447,24 @@ class Server {
                         if ( $os_undo_prior === '' ) {
                             throw new \Exception('Undo snapshot has no prior_status to restore.');
                         }
-                        $os_undo_current = $os_undo_order->get_status();
-                        if ( $os_undo_current !== $os_undo_applied ) {
-                            throw new \Exception('Cannot undo: order status was modified after the tracked operation. Current status differs from what was set. Investigate before retrying or use SiteVault to restore.');
+                        $os_undo_current = $os_undo_order->get_status( 'edit' );
+                        if ( $os_undo_current !== $os_undo_applied && ! $undo_force ) {
+                            throw self::undo_drift_refusal( sprintf( 'the order status changed after this operation set it (now: %s).', esc_html( $os_undo_current ) ) );
                         }
                         // Restore + explicit note so the audit trail records
                         // that the reverse transition was a Royal MCP undo, not
                         // a customer/moderator action.
-                        $os_undo_order->update_status(
-                            $os_undo_prior,
-                            sprintf( 'Reverted by Royal MCP undo (was %s).', $os_undo_applied )
-                        );
+                        $os_undo_note = sprintf( 'Reverted by Royal MCP undo (was %s).', $os_undo_applied );
+                        // A change made without emails is walked back without emails too.
+                        if ( false === ( $os_undo_pre['send_emails'] ?? true ) ) {
+                            \Royal_MCP\Integrations\WooCommerce::without_order_emails(
+                                static function () use ( $os_undo_order, $os_undo_prior, $os_undo_note ) {
+                                    $os_undo_order->update_status( $os_undo_prior, $os_undo_note );
+                                }
+                            );
+                        } else {
+                            $os_undo_order->update_status( $os_undo_prior, $os_undo_note );
+                        }
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
                         return \Royal_MCP\MCP\Support\Envelope::success(
                             sprintf( 'Restored order %d status from %s back to %s.', $undo_os_id, $os_undo_applied, $os_undo_prior ),
@@ -9813,13 +10540,20 @@ class Server {
                             throw new \Exception('Undo snapshot has no prior_status to restore.');
                         }
                         $cs_current = self::normalize_comment_status_column( $cs_comment->comment_approved );
-                        if ( $cs_current !== $cs_applied ) {
-                            throw new \Exception('Cannot undo: comment status was modified after the tracked operation. Current status differs from what was set. Investigate before retrying or use SiteVault to restore.');
+                        if ( $cs_current === $cs_prior ) {
+                            \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                            return \Royal_MCP\MCP\Support\Envelope::success(
+                                sprintf( 'Nothing to restore: comment %d is already %s.', $undo_cs_id, $cs_current ),
+                                [ 'undone' => true, 'op' => $undo_op, 'target' => $cs_target, 'restored' => false, 'reason' => 'already_at_prior', 'new_status' => $cs_current ]
+                            );
+                        }
+                        if ( $cs_current !== $cs_applied && ! $undo_force ) {
+                            throw self::undo_drift_refusal( sprintf( 'the comment status changed after this operation set it (now: %s).', esc_html( $cs_current ) ) );
                         }
                         // Coming OUT of trash requires wp_untrash_comment;
                         // wp_set_comment_status can put a comment INTO trash
                         // but not restore from _wp_trash_meta_status.
-                        if ( $cs_applied === 'trash' ) {
+                        if ( $cs_current === 'trash' ) {
                             $cs_ok = wp_untrash_comment( $undo_cs_id );
                             if ( ! $cs_ok ) throw new \Exception('wp_untrash_comment failed on undo.');
                             // untrash restores to _wp_trash_meta_status; if that
@@ -9836,7 +10570,7 @@ class Server {
                         clean_comment_cache( $undo_cs_id );
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
                         return \Royal_MCP\MCP\Support\Envelope::success(
-                            sprintf( 'Restored comment %d status from %s back to %s.', $undo_cs_id, $cs_applied, $cs_prior ),
+                            sprintf( 'Restored comment %d status from %s back to %s.', $undo_cs_id, $cs_current, $cs_prior ),
                             [
                                 'undone'       => true,
                                 'op'           => $undo_op,
@@ -9872,6 +10606,10 @@ class Server {
                         if ( ! current_user_can( 'edit_comment', $undo_cc_id ) ) {
                             throw new \Exception('edit_comment capability required to undo this operation.');
                         }
+                        $cc_print = (string) ( $undo_snapshot['pre_op_state']['created_fingerprint'] ?? '' );
+                        if ( '' !== $cc_print && ! $undo_force && self::comment_undo_fingerprint( $undo_cc_id ) !== $cc_print ) {
+                            throw self::undo_drift_refusal( sprintf( 'comment %d was edited, moderated or replied to after it was created, and undo would delete it with those changes.', $undo_cc_id ), 'delete it anyway' );
+                        }
                         // Hard-delete the created row.
                         $cc_ok = wp_delete_comment( $undo_cc_id, true );
                         if ( ! $cc_ok ) {
@@ -9903,10 +10641,14 @@ class Server {
                         }
                         $dct_current = self::normalize_comment_status_column( $dct_comment->comment_approved );
                         if ( $dct_current !== 'trash' ) {
-                            throw new \Exception( sprintf(
-                                'Cannot undo: comment is not in trash (current status: %s). Someone likely acted on it after the tracked delete.',
-                                esc_html( $dct_current )
-                            ) );
+                            if ( ! $undo_force ) {
+                                throw self::undo_drift_refusal( sprintf( 'comment %d is no longer in the trash (status now: %s).', $undo_dct_id, esc_html( $dct_current ) ), 'close the token without changing anything, as there is nothing in the trash to restore' );
+                            }
+                            \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                            return \Royal_MCP\MCP\Support\Envelope::success(
+                                sprintf( 'Nothing to restore: comment %d is already out of the trash (status: %s).', $undo_dct_id, esc_html( $dct_current ) ),
+                                [ 'undone' => true, 'op' => $undo_op, 'target' => $dct_target, 'restored' => false, 'reason' => 'not_in_trash' ]
+                            );
                         }
                         $dct_pre = ( isset( $undo_snapshot['pre_op_state'] ) && is_array( $undo_snapshot['pre_op_state'] ) ) ? $undo_snapshot['pre_op_state'] : [];
                         $dct_prior = (string) ( $dct_pre['prior_status'] ?? 'approve' );
@@ -9995,13 +10737,14 @@ class Server {
                             }
                             return null;
                         };
+                        if ( array_key_exists( 'prior_position', $mi_pre ) && ! array_key_exists( 'position', $mi_prior ) ) {
+                            $mi_prior['position'] = (int) $mi_pre['prior_position'];
+                            $mi_apply['position'] = (int) ( $mi_pre['applied_position'] ?? $mi_pre['prior_position'] );
+                        }
                         foreach ( $mi_apply as $mf => $mapplied ) {
                             $mcur = $mi_read_undo( $mf );
-                            if ( $mcur !== $mapplied ) {
-                                throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'edited_since_write', sprintf(
-                                    'Cannot undo: menu item field %s was modified after the tracked operation. Current value differs from what was written. Investigate before retrying.',
-                                    esc_html( $mf )
-                                ) );
+                            if ( $mcur !== $mapplied && ! $undo_force ) {
+                                throw self::undo_drift_refusal( sprintf( 'menu item field %s on item %d changed after this operation wrote it.', esc_html( $mf ), $undo_mi_id ) );
                             }
                         }
                         // Restore via same merge+update path.
@@ -10013,7 +10756,7 @@ class Server {
                         if ( array_key_exists( 'target', $mi_prior ) )    $mi_overrides['menu-item-target']    = (string) $mi_prior['target'];
                         $mi_merged_undo = $this->build_safe_menu_item_args( $undo_mi_id, $mi_overrides );
                         if ( is_wp_error( $mi_merged_undo ) ) throw new \Exception( esc_html( $mi_merged_undo->get_error_message() ) );
-                        $mi_res_undo = wp_update_nav_menu_item( $undo_mi_mid, $undo_mi_id, wp_slash( $mi_merged_undo ) );
+                        $mi_res_undo = $this->save_menu_item_keep_order( $undo_mi_mid, $undo_mi_id, $mi_merged_undo );
                         if ( is_wp_error( $mi_res_undo ) ) throw new \Exception( esc_html( $mi_res_undo->get_error_message() ) );
                         clean_post_cache( $undo_mi_id );
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
@@ -10075,18 +10818,29 @@ class Server {
                         // Drift-detection — per-field current vs applied.
                         foreach ( $undo_seo_apply as $arg_key => $applied ) {
                             $current = $undo_seo_read( $arg_key );
-                            if ( $current !== $applied ) {
-                                throw new \Exception( sprintf(
-                                    'Cannot undo: SEO field %s was modified after the tracked operation. Current value differs from what was written. Investigate before retrying or use SiteVault to restore.',
-                                    esc_html( $arg_key )
-                                ) );
+                            if ( $current !== $applied && ! $undo_force ) {
+                                throw self::undo_drift_refusal( sprintf( 'SEO field %s on post %d was changed after this write.', esc_html( (string) $arg_key ), $undo_seo_pid ), 'restore the earlier values anyway' );
                             }
                         }
+                        // Fields that had no stored value before the write are removed, not set to ''.
+                        $undo_seo_absent = ( isset( $undo_seo_pre['prior_absent'] ) && is_array( $undo_seo_pre['prior_absent'] ) ) ? array_map( 'strval', $undo_seo_pre['prior_absent'] ) : [];
+                        // Exact stored values from before the write; only this adapter's own keys are written back.
+                        $undo_seo_raw     = ( isset( $undo_seo_pre['prior_raw'] ) && is_array( $undo_seo_pre['prior_raw'] ) ) ? $undo_seo_pre['prior_raw'] : [];
+                        $undo_seo_rawkeys = array_merge( array_values( $undo_seo_field_map ), [ '_yoast_wpseo_meta-robots-noindex', 'rank_math_robots', '_aioseo_noindex', '_seopress_robots_index', '_seobolt_robots_noindex' ] );
                         // Restore per-field using the same adapter-branched logic.
                         foreach ( $undo_seo_prior as $arg_key => $prior ) {
                             if ( $arg_key === 'slug' ) {
                                 $upd_slug = wp_update_post( [ 'ID' => $undo_seo_pid, 'post_name' => wp_slash( (string) $prior ) ], true );
                                 if ( is_wp_error( $upd_slug ) ) throw new \Exception( 'Slug restore failed: ' . esc_html( $upd_slug->get_error_message() ) );
+                                continue;
+                            }
+                            $raw_prior = $undo_seo_raw[ $arg_key ] ?? null;
+                            if ( is_array( $raw_prior ) && isset( $raw_prior['key'] ) && in_array( (string) $raw_prior['key'], $undo_seo_rawkeys, true ) ) {
+                                if ( empty( $raw_prior['exists'] ) ) {
+                                    delete_post_meta( $undo_seo_pid, (string) $raw_prior['key'] );
+                                } else {
+                                    update_post_meta( $undo_seo_pid, (string) $raw_prior['key'], wp_slash( $raw_prior['value'] ) );
+                                }
                                 continue;
                             }
                             if ( $arg_key === 'noindex' ) {
@@ -10115,7 +10869,11 @@ class Server {
                             }
                             $mk = $undo_seo_field_map[ $arg_key ] ?? '';
                             if ( $mk !== '' ) {
-                                update_post_meta( $undo_seo_pid, $mk, wp_slash( (string) $prior ) );
+                                if ( in_array( (string) $arg_key, $undo_seo_absent, true ) ) {
+                                    delete_post_meta( $undo_seo_pid, $mk );
+                                } else {
+                                    update_post_meta( $undo_seo_pid, $mk, wp_slash( (string) $prior ) );
+                                }
                             }
                         }
                         wp_cache_delete( $undo_seo_pid, 'post_meta' );
@@ -10147,8 +10905,8 @@ class Server {
                         wp_cache_delete( $undo_opt_name, 'options' );
                         $oundo_current = get_option( $undo_opt_name );
                         $oundo_applied = $oundo_pre['applied_value'] ?? null;
-                        if ( $oundo_current !== $oundo_applied ) {
-                            throw new \Exception('Cannot undo: option value was modified after the tracked operation. Current value differs from what was written. Investigate before retrying or use SiteVault to restore a full-site snapshot.');
+                        if ( $oundo_current !== $oundo_applied && ! $undo_force ) {
+                            throw self::undo_drift_refusal( sprintf( 'option %s changed after this operation wrote it.', esc_html( $undo_opt_name ) ) );
                         }
                         // If the option didn't exist before the write we did,
                         // remove the row entirely rather than storing our
@@ -10185,8 +10943,8 @@ class Server {
                         $tmundo_all    = (array) get_theme_mods();
                         $tmundo_current = array_key_exists( $undo_tm_name, $tmundo_all ) ? $tmundo_all[ $undo_tm_name ] : null;
                         $tmundo_applied = $tmundo_pre['applied_value'] ?? null;
-                        if ( $tmundo_current !== $tmundo_applied ) {
-                            throw new \Exception('Cannot undo: theme mod was modified after the tracked operation. Current value differs from what was written. Investigate before retrying.');
+                        if ( $tmundo_current !== $tmundo_applied && ! $undo_force ) {
+                            throw self::undo_drift_refusal( sprintf( 'theme mod %s changed after this operation wrote it.', esc_html( $undo_tm_name ) ) );
                         }
                         if ( empty( $tmundo_pre['existed_before'] ) ) {
                             // Mod didn't exist before — remove_theme_mod is the only
@@ -10223,8 +10981,8 @@ class Server {
                         }
                         $cundo_current = (string) wp_get_custom_css( $undo_css_theme );
                         $cundo_applied = (string) ( $cundo_pre['applied_css'] ?? '' );
-                        if ( $cundo_current !== $cundo_applied ) {
-                            throw new \Royal_MCP\MCP\Support\Tool_Refusal('edited_since_write', 'Cannot undo: custom CSS was modified after the tracked operation. Current value differs from what was written. Investigate before retrying or use SiteVault to restore.');
+                        if ( $cundo_current !== $cundo_applied && ! $undo_force ) {
+                            throw self::undo_drift_refusal( sprintf( 'the custom CSS of theme %s changed after this operation wrote it.', esc_html( $undo_css_theme ) ) );
                         }
                         $cundo_res = wp_update_custom_css_post( (string) $cundo_pre['prior_css'], [ 'stylesheet' => $undo_css_theme ] );
                         if ( is_wp_error( $cundo_res ) ) throw new \Exception( esc_html( $cundo_res->get_error_message() ) );
@@ -10250,8 +11008,8 @@ class Server {
                         }
                         $plundo_current = (string) get_option( 'permalink_structure', '' );
                         $plundo_applied = (string) ( $plundo_pre['applied_structure'] ?? '' );
-                        if ( $plundo_current !== $plundo_applied ) {
-                            throw new \Exception('Cannot undo: permalink structure was modified after the tracked operation. Current value differs from what was written. Investigate before retrying.');
+                        if ( $plundo_current !== $plundo_applied && ! $undo_force ) {
+                            throw self::undo_drift_refusal( sprintf( 'the permalink structure changed after this operation set it (now: %s).', '' !== $plundo_current ? esc_html( $plundo_current ) : 'plain' ) );
                         }
                         $plundo_prior = (string) $plundo_pre['prior_structure'];
                         // Restore via the same code path as the original op —
@@ -10311,8 +11069,8 @@ class Server {
                         }
                         $undo_add_current = maybe_unserialize( $undo_add_current_row->meta_value );
                         $undo_add_applied = $undo_add_pre['added_value'] ?? null;
-                        if ( $undo_add_current !== $undo_add_applied ) {
-                            throw new \Exception('Cannot undo: meta row was modified after the tracked add. Deleting would clobber a subsequent update. Investigate before retrying or use SiteVault to restore a full-site snapshot.');
+                        if ( $undo_add_current !== $undo_add_applied && ! $undo_force ) {
+                            throw self::undo_drift_refusal( sprintf( 'the %s value added to post %d changed after it was added.', esc_html( $undo_add_key ), $undo_add_pid ), 'delete it anyway' );
                         }
                         $delete_ok = delete_metadata_by_mid( 'post', $undo_add_mid );
                         wp_cache_delete( $undo_add_pid, 'post_meta' );
@@ -10345,15 +11103,31 @@ class Server {
                         if ( $uw_pre === null ) {
                             throw new \Exception('Undo snapshot missing prior widget state.');
                         }
+                        $uw_written = (string) ( $undo_snapshot['pre_op_state']['written_hash'] ?? '' );
+                        if ( '' !== $uw_written && ! $undo_force && self::widget_undo_hash( $uw_widget_id ) !== $uw_written ) {
+                            throw self::undo_drift_refusal( sprintf( 'widget %s changed after this operation wrote it (settings or sidebar).', esc_html( $uw_widget_id ) ) );
+                        }
                         $uw_undo_req = new \WP_REST_Request( 'PUT', '/wp/v2/widgets/' . $uw_widget_id );
                         foreach ( [ 'sidebar', 'instance', 'form_data' ] as $k ) {
-                            if ( array_key_exists( $k, $uw_pre ) ) {
+                            if ( isset( $uw_pre[ $k ] ) ) { // A widget with no settings class reads back a null instance; only its sidebar moves.
                                 $uw_undo_req->set_param( $k, $uw_pre[ $k ] );
                             }
                         }
                         $uw_undo_resp = rest_do_request( $uw_undo_req );
                         if ( $uw_undo_resp->is_error() ) {
                             throw new \Exception( 'Undo restore failed: ' . esc_html( $uw_undo_resp->as_error()->get_error_message() ) );
+                        }
+                        // A widget's own update merges into the current settings; replace them with the stored prior settings.
+                        $uw_prior_settings = $undo_snapshot['pre_op_state']['prior_settings'] ?? null;
+                        if ( is_array( $uw_prior_settings ) ) {
+                            list( $uw_obj, $uw_num ) = self::widget_stored_instance( $uw_widget_id );
+                            if ( $uw_obj ) {
+                                $uw_all = (array) $uw_obj->get_settings();
+                                if ( ! array_key_exists( $uw_num, $uw_all ) || $uw_all[ $uw_num ] !== $uw_prior_settings ) {
+                                    $uw_all[ $uw_num ] = $uw_prior_settings;
+                                    $uw_obj->save_settings( $uw_all );
+                                }
+                            }
                         }
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
                         return \Royal_MCP\MCP\Support\Envelope::success(
@@ -10385,15 +11159,25 @@ class Server {
                         if ( $el_pre === null ) {
                             throw new \Exception('Undo snapshot missing prior _elementor_data.');
                         }
+                        // An editor open on the page now would overwrite the restore on its next save.
+                        if ( ! $undo_force ) {
+                            $el_session = \Royal_MCP\MCP\Support\Builder_Safety::detect_active_editor_session( $el_pid );
+                            if ( ! empty( $el_session['active'] ) ) {
+                                throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'builder_session_active', sprintf( 'Cannot undo: an editor is open on post %d right now, and its next save would overwrite the undo. Nothing was changed and the undo token stays valid: undo again after the editor is closed, or with force: true.', $el_pid ), [ 'post_id' => $el_pid, 'builder_session' => $el_session ] );
+                            }
+                        }
                         // Restoring the whole page would also remove edits made after this
                         // operation: refuse (token kept) unless the caller forces it.
                         $el_written = (string) ( $undo_snapshot['pre_op_state']['written_sha256'] ?? '' );
                         if ( '' !== $el_written && ! $undo_force
                             && ! hash_equals( $el_written, hash( 'sha256', (string) get_post_meta( $el_pid, '_elementor_data', true ) ) ) ) {
-                            throw new \Exception( sprintf( 'edited_since_write: post %d has been edited since this operation, so undoing it would also remove those later edits. The undo token stays valid: undo again with force: true to restore the earlier version anyway.', $el_pid ) );
+                            throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'edited_since_write', sprintf( 'edited_since_write: post %d has been edited since this operation, so undoing it would also remove those later edits. The undo token stays valid: undo again with force: true to restore the earlier version anyway.', $el_pid ), [ 'post_id' => $el_pid ] );
                         }
                         update_post_meta( $el_pid, '_elementor_data', wp_slash( is_string( $el_pre ) ? $el_pre : (string) wp_json_encode( $el_pre ) ) );
                         clean_post_cache( $el_pid );
+                        // The page's rendered cache and CSS were built from the content being replaced.
+                        \Royal_MCP\Integrations\Elementor_Atomic::clear_post_cache( $el_pid );
+                        \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $el_pid );
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
                         return \Royal_MCP\MCP\Support\Envelope::success(
                             sprintf( 'Restored prior _elementor_data on post %d.', $el_pid ),
@@ -10432,6 +11216,13 @@ class Server {
                         if ( ! current_user_can( 'delete_post', $ec_pre ) ) {
                             throw new \Exception('delete_post capability required to undo this operation.');
                         }
+                        // An editor open on the page now would overwrite the restore on its next save.
+                        if ( ! $undo_force ) {
+                            $ec_session = \Royal_MCP\MCP\Support\Builder_Safety::detect_active_editor_session( $ec_pre );
+                            if ( ! empty( $ec_session['active'] ) ) {
+                                throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'builder_session_active', sprintf( 'Cannot undo: an editor is open on post %d right now, and its next save would bring the deleted post back. Nothing was changed and the undo token stays valid: undo again after the editor is closed, or with force: true.', $ec_pre ), [ 'post_id' => $ec_pre, 'builder_session' => $ec_session ] );
+                            }
+                        }
                         $ec_print = (string) ( $undo_snapshot['pre_op_state']['created_fingerprint'] ?? '' );
                         if ( '' !== $ec_print && ! $undo_force && \Royal_MCP\Integrations\Elementor::created_fingerprint( $ec_pre ) !== $ec_print ) {
                             throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'edited_since_write', sprintf( 'Cannot undo: the %s (post %d) was edited after it was created, and undo would delete those edits. The undo token stays valid: undo again with force: true to delete it anyway.', $ec_what, $ec_pre ) );
@@ -10466,6 +11257,13 @@ class Server {
                             ? $undo_snapshot['pre_op_state']
                             : [];
                         $rc_prior_content = isset( $rc_pre['prior_content'] ) ? (string) $rc_pre['prior_content'] : '';
+                        // An editor open on the page now would overwrite the restore on its next save.
+                        if ( ! $undo_force ) {
+                            $rc_session = \Royal_MCP\MCP\Support\Builder_Safety::detect_active_editor_session( $rc_pid );
+                            if ( ! empty( $rc_session['active'] ) ) {
+                                throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'builder_session_active', sprintf( 'Cannot undo: an editor is open on post %d right now, and its next save would overwrite the undo. Nothing was changed and the undo token stays valid: undo again after the editor is closed, or with force: true.', $rc_pid ), [ 'post_id' => $rc_pid, 'builder_session' => $rc_session ] );
+                            }
+                        }
                         wp_update_post( [
                             'ID'           => $rc_pid,
                             'post_content' => wp_slash( $rc_prior_content ),
@@ -10505,7 +11303,7 @@ class Server {
                         if ( '' !== $dv_written && ! $undo_force ) {
                             clean_post_cache( $dv_pid );
                             if ( ! hash_equals( $dv_written, hash( 'sha256', (string) get_post_field( 'post_content', $dv_pid, 'raw' ) ) ) ) {
-                                throw new \Exception( sprintf( 'edited_since_write: post %d has been edited since this operation, so undoing it would also remove those later edits. The undo token stays valid: undo again with force: true to restore the earlier version anyway.', $dv_pid ) );
+                                throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'edited_since_write', sprintf( 'edited_since_write: post %d has been edited since this operation, so undoing it would also remove those later edits. The undo token stays valid: undo again with force: true to restore the earlier version anyway.', $dv_pid ), [ 'post_id' => $dv_pid ] );
                             }
                         }
                         wp_update_post( [
@@ -10555,6 +11353,12 @@ class Server {
                             ]
                         );
 
+                    case 'redirection_create_redirect':
+                    case 'redirection_update_redirect':
+                        $red_undone = RedirectionIntegration::undo( $undo_snapshot, $undo_force );
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return $red_undone;
+
                     case 'tablepress_create_table':
                     case 'tablepress_copy_table':
                     case 'tablepress_update_cells':
@@ -10572,6 +11376,20 @@ class Server {
                         $cmplz_undone = ComplianzIntegration::undo( $undo_snapshot );
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
                         return $cmplz_undone;
+
+                    case 'relevanssi_reindex_post':
+                    case 'relevanssi_update_synonyms':
+                    case 'relevanssi_add_stopword':
+                        $rlv_undone = RelevanssiIntegration::undo( $undo_snapshot, $undo_force );
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return $rlv_undone;
+
+                    case 'mailpoet_save_subscriber':
+                    case 'mailpoet_set_subscriber_lists':
+                    case 'mailpoet_save_draft':
+                        $mp_undone = MailPoetIntegration::undo( $undo_snapshot, $undo_force );
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return $mp_undone;
 
                     default:
                         return \Royal_MCP\MCP\Support\Envelope::error(
@@ -10633,12 +11451,12 @@ class Server {
                         'requires_wp'    => ( $data['RequiresWP'] ?? '' ) !== '' ? (string) $data['RequiresWP'] : null,
                         'requires_php'   => ( $data['RequiresPHP'] ?? '' ) !== '' ? (string) $data['RequiresPHP'] : null,
                         'modified_at'    => $modified_at( WP_PLUGIN_DIR . '/' . $path ),
-                        'tested_up_to'   => is_object( $info ) && ! empty( $info->tested ) ? (string) $info->tested : null,
-                        'update_available'    => null !== $waiting && ! empty( $waiting->new_version ),
-                        'new_version'         => null !== $waiting && ! empty( $waiting->new_version ) ? (string) $waiting->new_version : null,
-                        'update_tested_up_to' => null !== $waiting && ! empty( $waiting->tested ) ? (string) $waiting->tested : null,
-                        'update_requires_php' => null !== $waiting && ! empty( $waiting->requires_php ) ? (string) $waiting->requires_php : null,
-                        'update_requires_wp'  => null !== $waiting && ! empty( $waiting->requires ) ? (string) $waiting->requires : null,
+                        'tested_up_to'   => is_object( $info ) ? self::offer_text( $info->tested ?? null ) : null,
+                        'update_available'    => null !== $waiting && null !== self::offer_text( $waiting->new_version ?? null ),
+                        'new_version'         => null !== $waiting ? self::offer_text( $waiting->new_version ?? null ) : null,
+                        'update_tested_up_to' => null !== $waiting ? self::offer_text( $waiting->tested ?? null ) : null,
+                        'update_requires_php' => null !== $waiting ? self::offer_text( $waiting->requires_php ?? null ) : null,
+                        'update_requires_wp'  => null !== $waiting ? self::offer_text( $waiting->requires ?? null ) : null,
                         'auto_update'         => $auto_on && in_array( $path, $auto_list, true ),
                     ];
                 }
@@ -10709,10 +11527,10 @@ class Server {
                         'version' => $theme->get('Version'),
                         'active' => ($slug === $active),
                         'author' => $theme->get('Author'),
-                        'update_available'    => null !== $waiting && ! empty( $waiting['new_version'] ),
-                        'new_version'         => null !== $waiting && ! empty( $waiting['new_version'] ) ? (string) $waiting['new_version'] : null,
-                        'update_requires_php' => null !== $waiting && ! empty( $waiting['requires_php'] ) ? (string) $waiting['requires_php'] : null,
-                        'update_requires_wp'  => null !== $waiting && ! empty( $waiting['requires'] ) ? (string) $waiting['requires'] : null,
+                        'update_available'    => null !== $waiting && null !== self::offer_text( $waiting['new_version'] ?? null ),
+                        'new_version'         => null !== $waiting ? self::offer_text( $waiting['new_version'] ?? null ) : null,
+                        'update_requires_php' => null !== $waiting ? self::offer_text( $waiting['requires_php'] ?? null ) : null,
+                        'update_requires_wp'  => null !== $waiting ? self::offer_text( $waiting['requires'] ?? null ) : null,
                         'auto_update'         => $auto_on && in_array( (string) $slug, $auto_list, true ),
                     ];
                 }
@@ -10748,6 +11566,26 @@ class Server {
                 }
                 $mods = get_theme_mods();
                 return $this->redact_sensitive_keys(is_array($mods) ? $mods : []);
+
+            case 'wp_get_theme_mod':
+                if (!current_user_can('edit_theme_options')) {
+                    throw new \Exception('You do not have permission to read theme mods.');
+                }
+                $gtm_name = isset($args['mod_name']) && is_string($args['mod_name']) ? \Royal_MCP\MCP\Support\SafeText::field($args['mod_name']) : '';
+                if ('' === $gtm_name) {
+                    throw new \Exception('mod_name is required.');
+                }
+                $gtm_all      = get_theme_mods();
+                $gtm_all      = is_array($gtm_all) ? $gtm_all : [];
+                $gtm_exists   = array_key_exists($gtm_name, $gtm_all);
+                $gtm_settings = get_option('royal_mcp_settings', []);
+                $gtm_writable = apply_filters('royal_mcp_writable_theme_mods', []);
+                return [
+                    'mod_name' => $gtm_name,
+                    'exists'   => $gtm_exists,
+                    'value'    => $gtm_exists ? $this->redact_sensitive_keys($gtm_all[$gtm_name], $gtm_name) : null,
+                    'writable' => is_array($gtm_settings) && !empty($gtm_settings['allow_theme_writes']) && is_array($gtm_writable) && in_array($gtm_name, $gtm_writable, true),
+                ];
 
             case 'wp_update_theme_mod':
                 if (!current_user_can('edit_theme_options')) {
@@ -11000,6 +11838,29 @@ class Server {
                 }
                 return $widgets;
 
+            case 'wp_get_widget':
+                if (!current_user_can('edit_theme_options')) {
+                    throw new \Exception('edit_theme_options capability required to read widgets.');
+                }
+                $gw_id = isset($args['id']) && is_string($args['id']) ? trim($args['id']) : '';
+                if ('' === $gw_id || strlen($gw_id) > 200 || !preg_match('/^[A-Za-z0-9_-]+$/', $gw_id)) {
+                    throw new \Exception('A widget id is required, for example text-2 or block-3. Use wp_get_widgets to list them.');
+                }
+                $gw_request = new \WP_REST_Request('GET', '/wp/v2/widgets/' . $gw_id);
+                $gw_request->set_param('context', 'edit');
+                $gw_response = rest_do_request($gw_request);
+                if ($gw_response->is_error()) {
+                    throw new \Royal_MCP\MCP\Support\Tool_Refusal('widget_not_found', 'Widget not found: ' . $gw_id . '. Use wp_get_widgets to list them.', [ 'id' => $gw_id ]);
+                }
+                $gw = $gw_response->get_data();
+                if (!is_array($gw)) {
+                    throw new \Exception('The widget could not be read.');
+                }
+                if (($gw['id_base'] ?? '') === 'block' && !empty($gw['instance']['raw']['content']) && function_exists('parse_blocks')) {
+                    $gw['blocks'] = parse_blocks((string) $gw['instance']['raw']['content']);
+                }
+                return self::widget_for_client($gw);
+
             case 'wp_get_sidebars':
                 if (!current_user_can('edit_theme_options')) {
                     throw new \Exception('edit_theme_options capability required to list sidebars.');
@@ -11035,6 +11896,8 @@ class Server {
                 $uw_get_resp = rest_do_request($uw_get_req);
                 $uw_prior = null;
                 $uw_prior_sidebar = null;
+                // The stored settings as they are, so undo can put them back exactly.
+                $uw_prior_settings = self::widget_stored_instance($widget_id)[2];
                 if (!$uw_get_resp->is_error()) {
                     $uw_prior_full = $uw_get_resp->get_data();
                     if (is_array($uw_prior_full)) {
@@ -11091,7 +11954,10 @@ class Server {
                             'op'      => 'wp_update_widget',
                             'summary' => sprintf('Restore widget %s to prior instance state', $widget_id),
                             'target'  => ['widget_id' => $widget_id, 'prior_sidebar' => $uw_prior_sidebar],
-                            'pre_op_state' => ['prior' => $uw_prior],
+                            'pre_op_state' => array_merge(
+                                ['prior' => $uw_prior, 'written_hash' => self::widget_undo_hash($widget_id)],
+                                is_array($uw_prior_settings) ? ['prior_settings' => $uw_prior_settings] : []
+                            ),
                         ]);
                     }
                 }
@@ -11271,13 +12137,25 @@ class Server {
 
                 // A stored SEO template (%%title%% %%sep%%, %title%, #post_title) replaced by plain text would freeze
                 // the rendered words in place of the template; refuse unless the caller says so.
-                $seo_tpl = static function ( $v ) { return \Royal_MCP\MCP\Support\Seo_Plugin::has_template( $v ); };
+                $seo_tpl = static function ( $v ) use ( $detected ) { return \Royal_MCP\MCP\Support\Seo_Plugin::has_template( $v, (string) $detected ); };
                 if ( ! filter_var( $args['force'] ?? false, FILTER_VALIDATE_BOOLEAN ) ) {
                     foreach ( array_intersect_key( $seo_requested, array_flip( \Royal_MCP\MCP\Support\Seo_Plugin::TEMPLATE_FIELDS ) ) as $tpl_key => $tpl_value ) {
                         if ( is_string( $tpl_value ) && '' !== $tpl_value && $seo_tpl( $seo_before[ $tpl_key ] ?? '' ) && ! $seo_tpl( $tpl_value ) ) {
                             throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'template_overwrite', sprintf( 'Nothing was written. %s holds an SEO template (%s) that the SEO plugin fills in for each page; the new value has no template variables, so it would replace the template with fixed text. Send a value with the template variables, or pass force: true to replace the template.', $tpl_key, (string) $seo_before[ $tpl_key ] ), [ 'field' => $tpl_key, 'current_value' => (string) $seo_before[ $tpl_key ] ] );
                         }
                     }
+                }
+
+                // Exact stored value (or absence) of each meta key about to change, for undo.
+                $seo_noindex_keys = [ 'yoast' => '_yoast_wpseo_meta-robots-noindex', 'rankmath' => 'rank_math_robots', 'aioseo' => '_aioseo_noindex', 'seopress' => '_seopress_robots_index', 'seobolt' => '_seobolt_robots_noindex' ];
+                $seo_prior_raw    = [];
+                foreach ( array_keys( $seo_before ) as $raw_arg ) {
+                    $raw_key = 'noindex' === $raw_arg ? ( $seo_noindex_keys[ $detected ] ?? '' ) : ( 'slug' === $raw_arg ? '' : (string) ( $field_map[ $raw_arg ] ?? '' ) );
+                    if ( '' === $raw_key ) {
+                        continue;
+                    }
+                    $raw_exists = metadata_exists( 'post', $post_id, $raw_key );
+                    $seo_prior_raw[ $raw_arg ] = [ 'key' => $raw_key, 'exists' => $raw_exists, 'value' => $raw_exists ? get_post_meta( $post_id, $raw_key, true ) : null ];
                 }
 
                 // Execute — per-adapter write branches, unchanged from original logic.
@@ -11346,6 +12224,7 @@ class Server {
                         'pre_op_state' => [
                             'prior_values'   => $seo_before,
                             'applied_values' => $seo_actual,
+                            'prior_raw'      => $seo_prior_raw,
                         ],
                     ] );
                 }
@@ -11786,7 +12665,7 @@ class Server {
                         'op'           => 'wp_update_post',
                         'summary'      => sprintf( 'Put post %d back as it was before revision %d was restored.', (int) $revision->post_parent, $revision_id ),
                         'target'       => [ 'post_id' => (int) $revision->post_parent ],
-                        'pre_op_state' => [ 'prior_values' => $rr_prior ],
+                        'pre_op_state' => [ 'prior_values' => $rr_prior, 'written_fingerprint' => self::post_undo_fingerprint( (int) $revision->post_parent ) ],
                     ] );
                 }
                 return \Royal_MCP\MCP\Support\Envelope::success(
@@ -11926,6 +12805,18 @@ class Server {
                 if ( strpos( $name, 'bp_' ) === 0 ) {
                     return BuddyPressIntegration::execute_tool( $name, $args );
                 }
+                if ( strpos( $name, 'relevanssi_' ) === 0 ) {
+                    return RelevanssiIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'ninjaforms_' ) === 0 ) {
+                    return NinjaFormsIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'fluentform_' ) === 0 ) {
+                    return FluentFormsIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'mailpoet_' ) === 0 ) {
+                    return MailPoetIntegration::execute_tool( $name, $args );
+                }
 
                 throw new \Exception('Unknown tool: ' . esc_html($name));
         }
@@ -11964,7 +12855,7 @@ class Server {
             'menu-item-target'      => (string) ($existing->target ?? ''),
             'menu-item-classes'     => (string) $classes,
             'menu-item-xfn'         => (string) ($existing->xfn ?? ''),
-            'menu-item-status'      => 'publish',
+            'menu-item-status'      => '' !== (string) $post->post_status ? (string) $post->post_status : 'publish',
         ];
         // Destructive-operation guardrail: refuse if the caller explicitly
         // passed an empty value for a destructive-relevant field that's
@@ -11987,6 +12878,33 @@ class Server {
             }
         }
         return array_merge($base, $overrides);
+    }
+
+    /**
+     * Save a menu item and keep its menu_order exactly as given in $args.
+     *
+     * wp_update_nav_menu_item() reads position 0 as "append to the end of the menu", which
+     * would move an item at position 0 although the caller did not ask to move it.
+     *
+     * @param int   $menu_id Menu term id.
+     * @param int   $item_id Menu item id.
+     * @param array $args    Full menu-item-* args, unslashed.
+     * @return int|\WP_Error
+     */
+    private function save_menu_item_keep_order( $menu_id, $item_id, array $args ) {
+        $result = wp_update_nav_menu_item( $menu_id, $item_id, wp_slash( $args ) );
+        if ( is_wp_error( $result ) || ! isset( $args['menu-item-position'] ) ) {
+            return $result;
+        }
+        $order = (int) $args['menu-item-position'];
+        clean_post_cache( $item_id );
+        $saved = get_post( $item_id );
+        if ( $saved && (int) $saved->menu_order !== $order ) {
+            global $wpdb;
+            $wpdb->update( $wpdb->posts, [ 'menu_order' => $order ], [ 'ID' => (int) $item_id ], [ '%d' ], [ '%d' ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- one column on one row; the post cache is cleared next
+            clean_post_cache( $item_id );
+        }
+        return $result;
     }
 
     /**
@@ -12064,33 +12982,137 @@ class Server {
      *
      * @return array [file bytes, filename with an extension]
      */
-    private function download_media($url, $filename, $images_only) {
+    /**
+     * Whether an IPv4 or IPv6 address is public: not private, loopback, link-local, unique-local,
+     * shared (carrier-grade NAT), benchmarking or reserved. An IPv6 address that carries an IPv4 one
+     * (mapped, translated, compatible, NAT64, 6to4) is judged by the IPv4 address inside it; Teredo
+     * and local-use NAT64 addresses are refused because the address they reach cannot be checked.
+     */
+    private static function is_public_ip($ip) {
+        $ip = trim((string) $ip, '[]');
+        if (!filter_var($ip, FILTER_VALIDATE_IP)) {
+            return false;
+        }
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            $n = ip2long($ip);
+            if (false === $n || 0x64400000 === ($n & 0xFFC00000) || 0xC6120000 === ($n & 0xFFFE0000)) {
+                return false; // 100.64.0.0/10, 198.18.0.0/15
+            }
+            return (bool) filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
+        }
+        $packed = @inet_pton($ip);
+        if (false === $packed || 16 !== strlen($packed)) {
+            return false;
+        }
+        if ($packed === str_repeat("\0", 16) || $packed === str_repeat("\0", 15) . "\1") {
+            return false; // :: and ::1
+        }
+        $head = substr($packed, 0, 12);
+        if ($head === str_repeat("\0", 10) . "\xff\xff" || $head === str_repeat("\0", 8) . "\xff\xff\0\0" || $head === str_repeat("\0", 12) || $head === "\x00\x64\xff\x9b" . str_repeat("\0", 8)) {
+            $v4 = inet_ntop(substr($packed, 12));
+            return false !== $v4 && self::is_public_ip($v4);
+        }
+        if ("\x20\x02" === substr($packed, 0, 2)) {
+            $v4 = inet_ntop(substr($packed, 2, 4));
+            return false !== $v4 && self::is_public_ip($v4);
+        }
+        if ("\x20\x01\x00\x00" === substr($packed, 0, 4) || "\x00\x64\xff\x9b\x00\x01" === substr($packed, 0, 6)) {
+            return false;
+        }
+        $first = ord($packed[0]);
+        // fc00::/7 unique-local, fe80::/10 link-local, fec0::/10 site-local, ff00::/8 multicast.
+        if (0xfc === ($first & 0xfe) || 0xff === $first || (0xfe === $first && 0x80 === (ord($packed[1]) & 0xc0)) || (0xfe === $first && 0xc0 === (ord($packed[1]) & 0xc0))) {
+            return false;
+        }
+        return (bool) filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
+    }
+
+    /**
+     * Check one address the download is about to request: https (http only for a local host on
+     * the first request), and every IPv4 and IPv6 address the host resolves to is public.
+     *
+     * @return array [ host, first checked address or '' for a local host ]
+     */
+    private static function check_download_url($url, $first_request) {
         $parts = wp_parse_url($url);
-        if (empty($parts['scheme']) || empty($parts['host'])) {
-            throw new \Exception('URL must include scheme and host.');
+        if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+            throw new \Exception($first_request ? 'URL must include scheme and host.' : 'The link redirected to an address without a scheme and host.');
         }
         $scheme = strtolower($parts['scheme']);
         $host   = strtolower($parts['host']);
-        $is_local_host = in_array($host, ['localhost', '127.0.0.1', '::1'], true);
+        $bare   = trim($host, '[]');
+        $is_local_host = $first_request && in_array($host, ['localhost', '127.0.0.1'], true);
         if ($scheme !== 'https' && !($scheme === 'http' && $is_local_host)) {
-            throw new \Exception('Only https:// URLs are allowed.');
+            throw new \Exception($first_request ? 'Only https:// URLs are allowed.' : 'The link redirected to a non-https address; nothing was downloaded.');
         }
-        // Resolve and block private/reserved IPs.
-        if (!$is_local_host) {
-            $ips = @gethostbynamel($host);
-            if (empty($ips)) throw new \Exception('Could not resolve host.');
-            foreach ($ips as $ip) {
-                if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                    throw new \Exception('URL resolves to a blocked address range.');
+        if ($is_local_host) {
+            return [$bare, ''];
+        }
+        if (filter_var($bare, FILTER_VALIDATE_IP)) {
+            $ips = [$bare];
+        } else {
+            // IPv4 and IPv6 answers alike: the download may connect over either.
+            $ips = (array) @gethostbynamel($bare);
+            if (function_exists('dns_get_record') && defined('DNS_AAAA')) {
+                foreach ((array) @dns_get_record($bare, DNS_AAAA) as $aaaa) {
+                    if (is_array($aaaa) && !empty($aaaa['ipv6'])) {
+                        $ips[] = (string) $aaaa['ipv6'];
+                    }
                 }
             }
+            $ips = array_values(array_filter($ips));
         }
-        // Fetch.
-        $response = wp_safe_remote_get($url, [
-            'timeout'             => 10,
-            'redirection'         => 3,
-            'limit_response_size' => 20 * 1024 * 1024, // 20 MB
-        ]);
+        if (empty($ips)) throw new \Exception('Could not resolve host.');
+        foreach ($ips as $ip) {
+            if (!self::is_public_ip($ip)) {
+                throw new \Exception($first_request ? 'URL resolves to a blocked address range.' : 'The link redirected to an address in a blocked range; nothing was downloaded.');
+            }
+        }
+        return [$bare, (string) $ips[0]];
+    }
+
+    private function download_media($url, $filename, $images_only) {
+        $parts = wp_parse_url($url);
+        // Redirects are followed here, not by the HTTP client, so every hop gets the same checks,
+        // and the connection is pinned to the address that was checked (curl transport).
+        $current = (string) $url;
+        $response = null;
+        for ($hop = 0; $hop <= 3; $hop++) {
+            list($pin_host, $pin_ip) = self::check_download_url($current, 0 === $hop);
+            $pin = static function ($handle, $r, $request_url) use ($pin_host, $pin_ip) {
+                if ('' === $pin_ip || !defined('CURLOPT_RESOLVE')) {
+                    return;
+                }
+                $port = (int) (wp_parse_url($request_url, PHP_URL_PORT) ?: ('http' === strtolower((string) wp_parse_url($request_url, PHP_URL_SCHEME)) ? 80 : 443));
+                $addr = false !== strpos($pin_ip, ':') ? '[' . $pin_ip . ']' : $pin_ip;
+                curl_setopt($handle, CURLOPT_RESOLVE, [$pin_host . ':' . $port . ':' . $addr]);
+            };
+            add_action('http_api_curl', $pin, 10, 3);
+            try {
+                $response = wp_safe_remote_get($current, [
+                    'timeout'             => 10,
+                    'redirection'         => 0,
+                    'limit_response_size' => 20 * 1024 * 1024, // 20 MB
+                ]);
+            } finally {
+                remove_action('http_api_curl', $pin, 10);
+            }
+            if (is_wp_error($response)) {
+                break;
+            }
+            $hop_code = (int) wp_remote_retrieve_response_code($response);
+            $location = wp_remote_retrieve_header($response, 'location');
+            if (is_array($location)) {
+                $location = (string) end($location);
+            }
+            if ($hop_code < 300 || $hop_code >= 400 || '' === trim((string) $location)) {
+                break;
+            }
+            if (3 === $hop) {
+                throw new \Exception('The link redirected more than 3 times; use the final address of the file.');
+            }
+            $current = \WP_Http::make_absolute_url(trim((string) $location), $current);
+        }
         if (is_wp_error($response)) throw new \Exception(esc_html(self::download_error_message($response)));
         $code = wp_remote_retrieve_response_code($response);
         if ($code < 200 || $code >= 300) throw new \Exception('Download failed with HTTP ' . intval($code) . self::http_status_hint((int) $code) . '.');
@@ -12903,6 +13925,7 @@ class Server {
             'wp_restore_revision',
             'wp_update_media',
             'wp_create_menu', 'wp_create_menu_item',
+            'raif_set_bot_policies', 'raif_block_all_ai_bots',
             'wp_update_menu_item', 'wp_delete_menu_item',
             'wp_reorder_menu_items',
             // Block tools
@@ -12925,7 +13948,13 @@ class Server {
             // TablePress and Code Snippets reversible writes
             'tablepress_create_table', 'tablepress_copy_table', 'tablepress_update_cells',
             'snippets_update_metadata',
+            // Redirection reversible writes
+            'redirection_create_redirect', 'redirection_update_redirect',
             'complianz_update_banner_text', 'complianz_update_cookie_description',
+            // Relevanssi reversible writes
+            'relevanssi_reindex_post', 'relevanssi_update_synonyms', 'relevanssi_add_stopword',
+            // MailPoet reversible writes
+            'mailpoet_save_subscriber', 'mailpoet_set_subscriber_lists', 'mailpoet_save_draft',
             // Elementor reversible writes
             'elementor_replace_text', 'elementor_replace_image',
             'elementor_add_widget', 'elementor_delete_widget',
@@ -12934,7 +13963,7 @@ class Server {
             'elementor_clone_page', 'elementor_clone_template',
             'elementor_import_template', 'elementor_apply_template_to_page',
             'elementor_apply_template_advanced',
-            'elementor_rebuild_post_content', 'elementor_rebuild_post_content_bulk',
+            'elementor_rebuild_post_content',
             'elementor_manage_elements', 'elementor_manage_global_classes',
             'elementor_manage_global_variable',
             'elementor_save_template_with_conditions',

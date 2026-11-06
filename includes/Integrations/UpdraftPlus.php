@@ -202,19 +202,15 @@ class UpdraftPlus {
 	}
 
 	/**
-	 * Read the state of a specific backup by nonce.
+	 * Read the state of a specific backup.
 	 *
-	 * ensure_backup_exists throws if the nonce is not present in the
-	 * history — real backups always create their history entry before the
-	 * jobdata option starts writing, so the in-progress branch only fires
-	 * when BOTH the history entry and a non-finished jobdata option exist.
-	 * A jobdata option without a history entry means the backup either
-	 * hasn't started registering yet or the history entry was manually
-	 * removed; either way, "backup not found" is the right response.
+	 * A backup that is still running has a job record but usually no
+	 * history entry yet, so a job record that is not finished is reported
+	 * as in progress without looking at the history. Otherwise the backup
+	 * must be in the history.
 	 */
 	private static function handle_get_backup_status( $args ) {
-		$nonce  = self::resolve_nonce( $args );
-		$backup = self::ensure_backup_exists( $nonce );
+		$nonce = self::resolve_nonce( $args );
 
 		$jobdata = get_option( 'updraft_jobdata_' . $nonce );
 		if ( is_array( $jobdata ) && isset( $jobdata['jobstatus'] ) && $jobdata['jobstatus'] !== 'finished' ) {
@@ -234,6 +230,7 @@ class UpdraftPlus {
 			];
 		}
 
+		$backup    = self::ensure_backup_exists( $nonce );
 		$formatted = self::format_backup_entry(
 			isset( $backup['timestamp'] ) ? (int) $backup['timestamp'] : 0,
 			$backup
@@ -269,7 +266,18 @@ class UpdraftPlus {
 
 		$label = sanitize_text_field( (string) ( $args['label'] ?? '' ) );
 
-		$req_entities  = (array) ( $args['entities'] ?? [] );
+		$req_entities = $args['entities'] ?? [];
+		if ( is_string( $req_entities ) ) {
+			$req_entities = [ $req_entities ];
+		}
+		if ( ! is_array( $req_entities ) ) {
+			throw new \Exception( 'entities must be a list of strings.' );
+		}
+		foreach ( $req_entities as $entity ) {
+			if ( ! is_string( $entity ) ) {
+				throw new \Exception( 'entities must be a list of strings (db, plugins, themes, uploads, others, mu-plugins).' );
+			}
+		}
 		$allowed       = [ 'db', 'plugins', 'themes', 'uploads', 'others', 'mu-plugins' ];
 		$file_entities = [ 'plugins', 'themes', 'uploads', 'others', 'mu-plugins' ];
 
@@ -444,7 +452,7 @@ class UpdraftPlus {
 			// A backup still running is not in the history yet: its job record is.
 			global $wpdb;
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-			$jobs = $wpdb->get_col( $wpdb->prepare( "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s LIMIT 200", $wpdb->esc_like( 'updraft_jobdata_' ) . '%' ) );
+			$jobs = $wpdb->get_col( $wpdb->prepare( "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s ORDER BY option_id DESC", $wpdb->esc_like( 'updraft_jobdata_' ) . '%' ) );
 			foreach ( (array) $jobs as $job ) {
 				$nonce = substr( (string) $job, strlen( 'updraft_jobdata_' ) );
 				if ( '' !== $nonce && hash_equals( self::backup_id( $nonce ), $id ) ) {
@@ -479,7 +487,7 @@ class UpdraftPlus {
 		}
 		$backup = \UpdraftPlus_Backup_History::get_backup_set_by_nonce( $nonce );
 		if ( ! is_array( $backup ) || empty( $backup ) ) {
-			throw new \Exception( 'Backup not found: ' . esc_html( $nonce ) );
+			throw new \Exception( 'Backup not found: ' . esc_html( self::backup_id( $nonce ) ) );
 		}
 		return $backup;
 	}

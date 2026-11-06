@@ -100,6 +100,9 @@ class Well_Known_Notice {
             return;
         }
 
+        // Shown on development sites too: it describes this site's plugins, not its host.
+        $this->render_adapter_copies_notice();
+
         if ( $this->is_dev_host() ) {
             return;
         }
@@ -784,6 +787,51 @@ class Well_Known_Notice {
                 <a href="<?php echo esc_url( $dismiss_url ); ?>" class="button-link" style="margin-left: 1rem;">
                     <?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?>
                 </a>
+            </p>
+        </div>
+        <?php
+    }
+
+    /**
+     * Why Royal MCP's server on the WordPress MCP Adapter stays off on this
+     * site, or '' when nothing is wrong. Only mixed adapter copies can be seen
+     * on an admin page: the adapter builds its servers during REST requests, so
+     * wp_get_mcp_coexistence names a server that failed to build.
+     */
+    public static function adapter_copies_problem() {
+        if ( ! class_exists( '\Royal_MCP\Abilities\MCP_Adapter_Server' ) || ! class_exists( '\WP\MCP\Core\McpAdapter' ) ) {
+            return '';
+        }
+        $copies = \Royal_MCP\Abilities\MCP_Adapter_Server::loaded_copies();
+        if ( count( $copies ) > 1 ) {
+            return sprintf(
+                /* translators: 1: number of copies, 2: where each copy comes from */
+                __( 'The WordPress MCP Adapter is loaded from %1$d copies (%2$s), so its versions are mixed. Royal MCP keeps its server on the MCP Adapter off until only one copy is active.', 'royal-mcp' ),
+                count( $copies ),
+                implode( ', ', array_values( array_unique( $copies ) ) )
+            );
+        }
+        return '';
+    }
+
+    /** One-line notice when the MCP Adapter classes come from more than one copy. */
+    private function render_adapter_copies_notice() {
+        $problem = self::adapter_copies_problem();
+        if ( '' === $problem ) {
+            return;
+        }
+        ?>
+        <div class="notice notice-warning royal-mcp-adapter-copies-notice">
+            <p>
+                <strong><?php esc_html_e( 'Royal MCP:', 'royal-mcp' ); ?></strong>
+                <?php echo esc_html( $problem ); ?>
+                <?php
+                printf(
+                    /* translators: %s: Royal MCP endpoint address */
+                    esc_html__( 'Royal MCP\'s own endpoint at %s is unaffected; AI apps connected there keep working.', 'royal-mcp' ),
+                    '<code>' . esc_html( rest_url( 'royal-mcp/v1/mcp' ) ) . '</code>'
+                );
+                ?>
             </p>
         </div>
         <?php

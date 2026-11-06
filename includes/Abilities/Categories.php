@@ -132,6 +132,22 @@ class Categories {
 				'label'       => __( 'Royal MCP: Complianz', 'royal-mcp' ),
 				'description' => __( 'Complianz consent setup: status, cookies, services, banner texts and legal documents; change banner texts and cookie descriptions.', 'royal-mcp' ),
 			),
+			'relevanssi'    => array(
+				'label'       => __( 'Royal MCP: Relevanssi', 'royal-mcp' ),
+				'description' => __( 'Relevanssi search: search the site, index status, top and zero-hit searches (totals only), re-index a post, synonyms and stopwords.', 'royal-mcp' ),
+			),
+			'ninja-forms'   => array(
+				'label'       => __( 'Royal MCP: Ninja Forms', 'royal-mcp' ),
+				'description' => __( 'Ninja Forms forms, fields and submissions, read only; personal fields masked.', 'royal-mcp' ),
+			),
+			'fluent-forms'  => array(
+				'label'       => __( 'Royal MCP: Fluent Forms', 'royal-mcp' ),
+				'description' => __( 'Fluent Forms forms, fields and entries, read only; personal fields masked.', 'royal-mcp' ),
+			),
+			'mailpoet'      => array(
+				'label'       => __( 'Royal MCP: MailPoet', 'royal-mcp' ),
+				'description' => __( 'MailPoet lists and subscribers, newsletter drafts, test sends, guarded scheduling and sent-email statistics.', 'royal-mcp' ),
+			),
 		);
 	}
 

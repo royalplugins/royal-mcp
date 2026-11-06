@@ -288,6 +288,7 @@ class Coexistence_Check {
 			'other_mcp_servers' => $servers,
 			'shared_addresses'  => $addresses,
 			'abilities'         => self::ability_exposure( $servers ),
+			'plugin_abilities'  => self::plugin_abilities(),
 			'discovery'         => self::discovery_chain( true ),
 		];
 	}
@@ -330,6 +331,10 @@ class Coexistence_Check {
 				count( $copies ),
 				implode( ', ', array_values( array_unique( $copies ) ) )
 			);
+		}
+		$adapter_error = $adapter ? \Royal_MCP\Abilities\MCP_Adapter_Server::server_error() : '';
+		if ( '' !== $adapter_error ) {
+			$adapter_detail .= '; the Royal MCP adapter server is off because ' . sanitize_text_field( $adapter_error ) . ' (its own endpoint is unaffected)';
 		}
 		$out[] = [ 'id' => 'mcp-adapter', 'name' => 'WordPress MCP Adapter', 'active' => $adapter, 'detail' => $adapter_detail ];
 
@@ -692,6 +697,64 @@ class Coexistence_Check {
 		return $out;
 	}
 
+	/**
+	 * Whether tool calls through the Abilities API can land in the Activity Log. Every registered
+	 * ability runs through Royal MCP's own handler, which writes a row per call; that needs the log table.
+	 */
+	private static function activity_log_ready() {
+		global $wpdb;
+		$table = $wpdb->prefix . 'royal_mcp_logs';
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- one schema read
+		return $table === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) );
+	}
+
+	/**
+	 * Ability names other plugins register for a plugin Royal MCP also has tools for,
+	 * by name prefix: the plugin and Royal MCP's matching tools.
+	 */
+	const OVERLAPPING_ABILITIES = [
+		'mailpoet/' => [ 'plugin' => 'MailPoet', 'royal_mcp_tools' => 'mailpoet_*' ],
+	];
+
+	/**
+	 * Abilities a plugin registers itself that cover the same plugin as Royal MCP's
+	 * tools. Clients connected through the WordPress MCP Adapter can list both; each
+	 * is a separate tool and a call runs only the one the client picked.
+	 *
+	 * @param string[]|null $names Registered ability names (read when null).
+	 * @return array[]
+	 */
+	public static function plugin_abilities( $names = null ) {
+		if ( null === $names ) {
+			$names = [];
+			if ( function_exists( 'wp_get_abilities' ) ) {
+				foreach ( (array) wp_get_abilities() as $ability ) {
+					if ( is_object( $ability ) && method_exists( $ability, 'get_name' ) ) {
+						$names[] = (string) $ability->get_name();
+					}
+				}
+			}
+		}
+		$out = [];
+		foreach ( (array) $names as $name ) {
+			foreach ( self::OVERLAPPING_ABILITIES as $prefix => $info ) {
+				if ( 0 !== strpos( (string) $name, $prefix ) ) {
+					continue;
+				}
+				if ( ! isset( $out[ $prefix ] ) ) {
+					$out[ $prefix ] = [
+						'plugin'          => $info['plugin'],
+						'abilities'       => [],
+						'royal_mcp_tools' => $info['royal_mcp_tools'],
+						'note'            => sprintf( '%s registers these abilities itself. A client connected through the WordPress MCP Adapter can list them next to Royal MCP\'s %s tools; they are separate tools, Royal MCP neither registers nor calls them, and each call runs only the tool the client picked.', $info['plugin'], $info['royal_mcp_tools'] ),
+					];
+				}
+				$out[ $prefix ]['abilities'][] = (string) $name;
+			}
+		}
+		return array_values( $out );
+	}
+
 	/** Whether Royal MCP tools can be reached through other servers, and whether those calls are logged. */
 	private static function ability_exposure( array $servers ) {
 		$registered = 0;
@@ -714,7 +777,7 @@ class Coexistence_Check {
 		return [
 			'registered'                   => $registered,
 			'reachable_through'            => $registered ? array_values( array_unique( $via ) ) : [],
-			'calls_logged_in_activity_log' => true,
+			'calls_logged_in_activity_log' => $registered > 0 && self::activity_log_ready(),
 		];
 	}
 

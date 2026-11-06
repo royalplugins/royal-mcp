@@ -590,7 +590,7 @@ class Block_Tools {
 			'op'           => 'wp_update_post',
 			'summary'      => sprintf( 'Restore post %d as it was before %s.', $post->ID, $tool ),
 			'target'       => [ 'post_id' => (int) $post->ID, 'post_type' => (string) $post->post_type ],
-			'pre_op_state' => [ 'prior_values' => $prior, 'is_product' => false, 'original_op' => $tool ],
+			'pre_op_state' => [ 'prior_values' => $prior, 'is_product' => false, 'original_op' => $tool, 'written_fingerprint' => \Royal_MCP\MCP\Server::post_undo_fingerprint( (int) $post->ID ) ],
 		] );
 		$revisions = wp_get_post_revisions( (int) $post->ID, [ 'numberposts' => 1, 'fields' => 'ids' ] );
 		$struct    = array_merge( [
@@ -1211,12 +1211,18 @@ class Block_Tools {
 		return [ (string) $find => htmlspecialchars( (string) $replace, ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ];
 	}
 
+	/**
+	 * How many replacements strtr( $text, $forms ) makes: at each position the longest form wins
+	 * and matches never overlap, so a form found inside another form's match is not counted twice.
+	 */
 	private static function count_forms( $text, array $forms ) {
-		$n = 0;
-		foreach ( array_keys( $forms ) as $form ) {
-			$n += substr_count( (string) $text, (string) $form );
+		$keys = array_values( array_filter( array_map( 'strval', array_keys( $forms ) ), 'strlen' ) );
+		if ( ! $keys ) {
+			return 0;
 		}
-		return $n;
+		usort( $keys, static function ( $a, $b ) { return strlen( $b ) - strlen( $a ); } );
+		$n = preg_match_all( '/' . implode( '|', array_map( static function ( $k ) { return preg_quote( $k, '/' ); }, $keys ) ) . '/s', (string) $text );
+		return false === $n ? 0 : (int) $n;
 	}
 
 	/** Whether a block stores markup of its own (the editor validates it). */

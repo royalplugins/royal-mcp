@@ -99,13 +99,19 @@ function royal_mcp_uninstall_site() {
 
     // Scheduled events.
     wp_clear_scheduled_hook('royal_mcp_token_cleanup');
+    wp_clear_scheduled_hook('royal_mcp_auth_header_probe');
 
     // Short-lived data the removed cleanup event would have expired: undo
     // snapshots (72 hours, copies of changed content), and the same session,
     // token and authorization-code rows the daily cleanup removes.
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal_mcp_undo_%'");
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+    $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal\_mcp\_rt\_retry\_%'");
     delete_option( 'royal_mcp_rejected_cimd_clients' );
+    delete_option( 'royal_mcp_mailpoet_send_guard' );
+    delete_option( 'royal_mcp_mailpoet_test_sends' );
+    delete_option( 'royal_mcp_mailpoet_confirmations' );
     $now = gmdate( 'Y-m-d H:i:s' );
     foreach ( array(
         'royal_mcp_sessions'         => 'expires_at < %s',
@@ -128,6 +134,11 @@ function royal_mcp_uninstall_site() {
         delete_option('royal_mcp_settings');
         delete_option('royal_mcp_abilities_registration_enabled');
         delete_option('royal_mcp_client_access');
+        delete_option('royal_mcp_app_password_seen');
+        delete_option('royal_mcp_app_password_blocked');
+        delete_option('royal_mcp_php_errors');
+        delete_option('royal_mcp_php_errors_since');
+        delete_option('royal_mcp_record_php_errors');
         delete_option('royal_mcp_oauth_namespace_clients');
         delete_transient('royal_mcp_issuer_kind_column_failed');
         delete_transient('royal_mcp_rotation_column_failed');
