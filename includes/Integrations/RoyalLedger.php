@@ -17,6 +17,9 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class RoyalLedger {
 
+	/** Royal Ledger's items table, without the site prefix. */
+	const ITEMS_TABLE = 'rledger_items';
+
 	/**
 	 * Check if Royal Ledger is available.
 	 */
@@ -67,17 +70,19 @@ class RoyalLedger {
 			],
 			[
 				'name'        => 'rl_get_renewals',
-				'description' => 'Get upcoming Royal Ledger renewals within N days. Useful for "what subscriptions am I about to be charged for?" queries.',
+				'description' => 'Get Royal Ledger renewals: the next ones by date, or those within N days with days, and overdue ones with include_past_due. Useful for "what subscriptions am I about to be charged for?" queries.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
-						'limit' => [ 'type' => 'integer', 'description' => 'Max renewals to return (default 10)' ],
+						'limit'            => [ 'type' => 'integer', 'description' => 'Max renewals to return (default 10, max 100)' ],
+						'days'             => [ 'type' => 'integer', 'description' => 'Only renewals within this many days from today (0 to 3650).' ],
+						'include_past_due' => [ 'type' => 'boolean', 'description' => 'Also return active items whose renewal date has passed. Default false.' ],
 					],
 				],
 			],
 			[
 				'name'        => 'rl_get_keys',
-				'description' => 'List license keys stored in the Royal Ledger vault. Returns key name, associated cost item, masked preview (first 4 + last 4 chars), and expiry date. RAW DECRYPTED KEYS ARE NEVER RETURNED — that requires logging into the admin.',
+				'description' => 'List license keys stored in the Royal Ledger vault. Returns key name, associated cost item, masked preview (last 4 chars), and expiry date. RAW DECRYPTED KEYS ARE NEVER RETURNED — that requires logging into the admin.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -87,6 +92,37 @@ class RoyalLedger {
 				],
 			],
 		];
+	}
+
+	/**
+	 * Active items to list as renewals, from the tool's window arguments.
+	 *
+	 * @param array $args  Tool arguments.
+	 * @param int   $limit Row limit.
+	 * @return array
+	 * @throws \Royal_MCP\MCP\Support\Tool_Refusal When days is not a whole number in range.
+	 */
+	private static function renewals_in_window( $args, $limit ) {
+		$has_days = array_key_exists( 'days', $args );
+		$past_due = ! empty( $args['include_past_due'] );
+		if ( ! $has_days && ! $past_due ) {
+			return \RLEDGER_Items::get_upcoming_renewals( $limit );
+		}
+		global $wpdb;
+		$table = $wpdb->prefix . self::ITEMS_TABLE;
+		$where = "status = 'active' AND renewal_date IS NOT NULL";
+		if ( ! $past_due ) {
+			$where .= ' AND renewal_date >= CURDATE()';
+		}
+		if ( $has_days ) {
+			$days = $args['days'];
+			if ( ( ! is_int( $days ) && ! ( is_string( $days ) && ctype_digit( $days ) ) ) || (int) $days < 0 || (int) $days > 3650 ) {
+				throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', 'days must be a whole number from 0 to 3650.' );
+			}
+			$where .= $wpdb->prepare( ' AND renewal_date <= DATE_ADD( CURDATE(), INTERVAL %d DAY )', (int) $days );
+		}
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- table from wpdb prefix; $where built above with prepare
+		return (array) $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE {$where} ORDER BY renewal_date ASC LIMIT %d", $limit ) );
 	}
 
 	/**
@@ -172,7 +208,7 @@ class RoyalLedger {
 					throw new \Exception( 'You do not have permission to view Royal Ledger renewal data.' );
 				}
 				$limit  = max(1, min( intval( $args['limit'] ?? 10 ), 100 ));
-				$items  = \RLEDGER_Items::get_upcoming_renewals( $limit );
+				$items  = self::renewals_in_window( $args, $limit );
 				return array_map(
 					function ( $item ) {
 						$days_until = $item->renewal_date ? (int) ( ( strtotime( $item->renewal_date ) - time() ) / DAY_IN_SECONDS ) : null;
@@ -185,6 +221,7 @@ class RoyalLedger {
 							'billing_cycle' => $item->billing_cycle,
 							'renewal_date'  => $item->renewal_date,
 							'days_until'    => $days_until,
+							'past_due'      => null !== $days_until && $item->renewal_date < current_time( 'Y-m-d' ),
 							'url'           => $item->url,
 						];
 					},

@@ -497,7 +497,7 @@ class Change_View {
 				break;
 
 			case 'wp_update_custom_css':
-				$current = (string) wp_get_custom_css( (string) ( $t['theme_slug'] ?? '' ) );
+				$current = Post_Access::read_custom_css( (string) ( $t['theme_slug'] ?? '' ) )[0];
 				$rows[]  = [ 'field' => 'custom_css', 'before' => (string) ( $pre['prior_css'] ?? '' ), 'after' => (string) ( $pre['applied_css'] ?? '' ), 'current' => $current ];
 				$texts['custom_css'] = [ (string) ( $pre['prior_css'] ?? '' ), $current ];
 				break;

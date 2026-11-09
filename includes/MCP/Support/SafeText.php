@@ -33,6 +33,38 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class SafeText {
 
     /**
+     * Text as a reader would take it: percent and entity encodings undone (layered ones too),
+     * invisible and control characters dropped, full-width letters folded to ASCII. For comparing
+     * a value against a known word; the result is never stored.
+     *
+     * @param mixed $text Input value.
+     * @return string
+     */
+    public static function plain_spelling( $text ) : string {
+        $text = is_scalar( $text ) ? (string) $text : '';
+        for ( $i = 0; $i < 4; $i++ ) {
+            $next = html_entity_decode( rawurldecode( $text ), ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+            if ( $next === $text ) {
+                break;
+            }
+            $text = $next;
+        }
+        $text  = (string) preg_replace( '/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $text );
+        $clean = preg_replace( '/[\x{00AD}\x{034F}\x{180E}\x{200B}-\x{200F}\x{202A}-\x{202E}\x{2060}-\x{2064}\x{FEFF}]/u', '', $text );
+        if ( ! is_string( $clean ) ) {
+            return $text; // Not valid UTF-8: only the byte-level steps apply.
+        }
+        return (string) preg_replace_callback(
+            '/[\x{FF01}-\x{FF5E}]/u',
+            static function ( $m ) {
+                $b = $m[0];
+                return chr( ( ( ( ord( $b[0] ) & 0x0F ) << 12 ) | ( ( ord( $b[1] ) & 0x3F ) << 6 ) | ( ord( $b[2] ) & 0x3F ) ) - 0xFEE0 );
+            },
+            $clean
+        );
+    }
+
+    /**
      * HTML that WordPress itself would store for the current user: unchanged for users who may post
      * unfiltered HTML, through wp_kses_post() for everyone else. Filtering an administrator's text
      * up front turns block markup and JSON attributes into broken text.

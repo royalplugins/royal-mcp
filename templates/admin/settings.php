@@ -491,6 +491,47 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                 <?php endif; ?>
                             </td>
                         </tr>
+                        <tr id="rmcp-row-writable-meta">
+                            <th scope="row">
+                                <label for="writable_meta_keys"><?php esc_html_e('Writable protected meta keys', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <?php
+                                $wm_keys = isset($royal_mcp_settings[ \Royal_MCP\MCP\Support\Protected_Meta::SETTING ]) && is_array($royal_mcp_settings[ \Royal_MCP\MCP\Support\Protected_Meta::SETTING ])
+                                    ? array_values(array_filter($royal_mcp_settings[ \Royal_MCP\MCP\Support\Protected_Meta::SETTING ], 'is_string'))
+                                    : [];
+                                ?>
+                                <textarea name="royal_mcp_settings[<?php echo esc_attr(\Royal_MCP\MCP\Support\Protected_Meta::SETTING); ?>]"
+                                          id="writable_meta_keys"
+                                          rows="5"
+                                          class="large-text code"
+                                          placeholder="_et_pb_page_layout&#10;_et_pb_gutter_width"><?php echo esc_textarea(implode("\n", $wm_keys)); ?></textarea>
+                                <p class="description">
+                                    <?php esc_html_e('Hidden meta keys start with an underscore, and WordPress refuses AI changes to them by default. List exact key names here, one per line, to let AI clients change them on posts and terms the connected user can edit. For example, Divi keeps page settings in _et_pb_page_layout and _et_pb_gutter_width. The plugin can\'t tell whether a value is right, so add only keys you understand. Some keys are always refused; they are listed after you save.', 'royal-mcp'); ?>
+                                </p>
+                                <?php if ( \Royal_MCP\Integrations\Divi::is_available() ) : ?>
+                                    <p>
+                                        <button type="button" class="button" id="rmcp-meta-divi-starter" data-keys="<?php echo esc_attr(implode("\n", \Royal_MCP\MCP\Support\Protected_Meta::DIVI_STARTER_KEYS)); ?>"><?php esc_html_e('Add Divi page settings', 'royal-mcp'); ?></button>
+                                    </p>
+                                <?php endif; ?>
+                                <?php
+                                $wm_blocked = $wm_keys ? \Royal_MCP\MCP\Support\Protected_Meta::blocked_entries($wm_keys) : [];
+                                if ( $wm_blocked ) :
+                                    ?>
+                                    <p class="description" id="rmcp-writable-meta-blocked" style="color:#b32d2e;">
+                                        <?php
+                                        echo esc_html(
+                                            sprintf(
+                                                /* translators: %s: comma-separated meta key names */
+                                                __( 'Always refused, so AI clients cannot change them: %s.', 'royal-mcp' ),
+                                                implode( ', ', $wm_blocked )
+                                            )
+                                        );
+                                        ?>
+                                    </p>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
                         <tr>
                             <th scope="row">
                                 <label for="allow_theme_writes"><?php esc_html_e('Allow AI to modify theme appearance', 'royal-mcp'); ?></label>
@@ -505,7 +546,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                     <span class="slider"></span>
                                 </label>
                                 <p class="description">
-                                    <?php esc_html_e('When on, AI clients can edit the theme\'s custom CSS, with scripts stripped. Customizer settings can be changed only once a developer allowlists them with the royal_mcp_writable_theme_mods filter.', 'royal-mcp'); ?>
+                                    <?php esc_html_e('When this is on, AI agents can edit your theme\'s custom CSS, block templates, template parts and global styles. When it\'s off, they can only read them.', 'royal-mcp'); ?>
                                 </p>
                             </td>
                         </tr>

@@ -1209,11 +1209,7 @@ class WooCommerce {
 					}
 				}
 				// Refuse protected meta keys before the order exists, so a refusal leaves nothing behind.
-				foreach ( ( ! empty( $args['meta_data'] ) && is_array( $args['meta_data'] ) ) ? $args['meta_data'] : [] as $co_meta ) {
-					if ( isset( $co_meta['key'] ) && is_protected_meta( sanitize_text_field( (string) $co_meta['key'] ), 'post' ) ) {
-						throw new \Exception( 'Order meta key ' . esc_html( sanitize_text_field( (string) $co_meta['key'] ) ) . ' is protected and cannot be written.' );
-					}
-				}
+				\Royal_MCP\MCP\Support\Protected_Meta::assert_order_meta_args( $args['meta_data'] ?? [] );
 				$new_order = wc_create_order();
 				if ( is_wp_error( $new_order ) ) {
 					throw new \Exception( 'wc_create_order failed: ' . esc_html( $new_order->get_error_message() ) );
@@ -1271,7 +1267,7 @@ class WooCommerce {
 						if ( isset( $meta['key'] ) ) {
 							$order_meta_key = sanitize_text_field( (string) $meta['key'] );
 							// Protected keys (_order_stock_reduced, _order_total ...) are WooCommerce's own state.
-							if ( is_protected_meta( $order_meta_key, 'post' ) ) {
+							if ( \Royal_MCP\MCP\Support\Protected_Meta::is_protected_key( $order_meta_key ) ) {
 								throw new \Exception( 'Order meta key ' . esc_html( $order_meta_key ) . ' is protected and cannot be written.' );
 							}
 							$new_order->update_meta_data( $order_meta_key, $meta['value'] ?? '' );
@@ -1334,6 +1330,7 @@ class WooCommerce {
 				if ( ! current_user_can( 'edit_shop_order', $uo_order_id ) ) {
 					throw new \Exception( 'edit_shop_order capability required on this order.' );
 				}
+				\Royal_MCP\MCP\Support\Protected_Meta::assert_order_meta_args( $args['meta_data'] ?? [] );
 				// Every line item id must belong to this order. Validated up front so a refusal writes nothing.
 				if ( ! empty( $args['line_items'] ) && is_array( $args['line_items'] ) ) {
 					foreach ( $args['line_items'] as $uo_check_item ) {
@@ -1434,7 +1431,7 @@ class WooCommerce {
 						if ( isset( $meta['key'] ) ) {
 							$order_meta_key = sanitize_text_field( (string) $meta['key'] );
 							// Protected keys (_order_stock_reduced, _order_total ...) are WooCommerce's own state.
-							if ( is_protected_meta( $order_meta_key, 'post' ) ) {
+							if ( \Royal_MCP\MCP\Support\Protected_Meta::is_protected_key( $order_meta_key ) ) {
 								throw new \Exception( 'Order meta key ' . esc_html( $order_meta_key ) . ' is protected and cannot be written.' );
 							}
 							$uo_order->update_meta_data( $order_meta_key, $meta['value'] ?? '' );

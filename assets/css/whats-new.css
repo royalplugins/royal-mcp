@@ -109,6 +109,56 @@
     order: 1;
 }
 
+/* Centered milestone slide with confetti */
+.rmcp-wn-slide.is-celebration {
+    display: block;
+    position: relative;
+    overflow: hidden;
+    text-align: center;
+    padding: 44px 28px 40px;
+}
+.rmcp-wn-slide.is-celebration .rmcp-wn-slide-visual,
+.rmcp-wn-slide.is-celebration .rmcp-wn-slide-body {
+    position: relative;
+    z-index: 3;
+}
+.rmcp-wn-slide.is-celebration .rmcp-wn-slide-visual {
+    margin-bottom: 20px;
+}
+.rmcp-wn-slide.is-celebration .rmcp-wn-circle {
+    width: 120px;
+    height: 120px;
+}
+.rmcp-wn-slide.is-celebration .rmcp-wn-big-number {
+    font-size: 60px;
+    margin-bottom: 12px;
+}
+.rmcp-wn-slide.is-celebration h3 {
+    font-size: 24px;
+}
+.rmcp-wn-slide.is-celebration .rmcp-wn-slide-body p:last-of-type {
+    max-width: 480px;
+    margin-left: auto;
+    margin-right: auto;
+}
+.rmcp-wn-confetti-piece {
+    position: absolute;
+    top: -20px;
+    opacity: 0;
+    animation: rmcp-wn-fall 3s linear infinite;
+    pointer-events: none;
+    z-index: 2;
+}
+@keyframes rmcp-wn-fall {
+    0%   { opacity: 0; transform: translate(0, -20px) rotate(0deg); }
+    10%  { opacity: 1; }
+    90%  { opacity: 1; }
+    100% { opacity: 0; transform: translate(var(--drift, 0px), var(--fall, 260px)) rotate(var(--spin, 720deg)); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .rmcp-wn-confetti-piece { display: none; }
+}
+
 .rmcp-wn-slide-visual {
     display: flex;
     align-items: center;
@@ -314,6 +364,9 @@
 }
 
 @media (max-width: 700px) {
+    .rmcp-wn-slide.is-celebration .rmcp-wn-big-number {
+        font-size: 42px;
+    }
     .rmcp-wn-slide,
     .rmcp-wn-slide.is-reversed {
         grid-template-columns: 1fr;

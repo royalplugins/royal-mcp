@@ -209,9 +209,75 @@ class ACF {
 					&& ! current_user_can( 'edit_post_meta', $post_id, $meta_key ) ) {
 					throw new \Exception( 'You do not have permission to write that field.' );
 				}
+				if ( \Royal_MCP\MCP\Support\Protected_Meta::acf_reference_conflict( $post_id, $meta_key ) ) {
+					throw new \Exception( 'This field name collides with a protected key that holds other data on this post, so nothing was written.' );
+				}
 				$meta_before = self::post_meta_fingerprint( $post_id );
-				$result      = update_field( $field_name, $args['value'], $post_id );
-				$warnings    = [];
+				// ACF names the rows it writes from field names and paths, and related fields write to
+				// other posts, users, terms and attachments, so each write is checked as it goes.
+				$refused_refs = [];
+				$write_guard  = static function ( $check, $object_id, $key, $value ) use ( &$refused_refs ) {
+					if ( \Royal_MCP\MCP\Support\Protected_Meta::acf_write_refused( (int) $object_id, $key, $value ) ) {
+						$refused_refs[] = (string) $key;
+						return false;
+					}
+					return $check;
+				};
+				$delete_guard = static function ( $check, $object_id, $key ) use ( &$refused_refs ) {
+					if ( \Royal_MCP\MCP\Support\Protected_Meta::acf_write_refused( (int) $object_id, $key, null, true ) ) {
+						$refused_refs[] = (string) $key;
+						return false;
+					}
+					return $check;
+				};
+				$user_guard   = static function ( $check, $object_id, $key ) use ( &$refused_refs ) {
+					if ( ! current_user_can( 'edit_user', (int) $object_id ) ) {
+						$refused_refs[] = (string) $key;
+						return false;
+					}
+					return $check;
+				};
+				$post_guard   = static function ( $data, $postarr ) use ( $post_id ) {
+					$other = (int) ( $postarr['ID'] ?? 0 );
+					if ( $other > 0 && $other !== (int) $post_id && ! current_user_can( 'edit_post', $other ) ) {
+						throw new \Exception( 'This field would change another item you cannot edit, so it was refused. Other parts of its value may have been saved.' );
+					}
+					return $data;
+				};
+				$term_guard   = static function ( $value ) {
+					foreach ( array_filter( array_map( 'intval', (array) $value ) ) as $term_id ) {
+						if ( ! current_user_can( 'assign_term', $term_id ) ) {
+							throw new \Exception( 'You do not have permission to assign one of these terms, so it was refused. Other parts of the value may have been saved.' );
+						}
+					}
+					return $value;
+				};
+				add_filter( 'update_post_metadata', $write_guard, PHP_INT_MAX, 4 );
+				add_filter( 'add_post_metadata', $write_guard, PHP_INT_MAX, 4 );
+				add_filter( 'delete_post_metadata', $delete_guard, PHP_INT_MAX, 3 );
+				add_filter( 'update_user_metadata', $user_guard, PHP_INT_MAX, 3 );
+				add_filter( 'add_user_metadata', $user_guard, PHP_INT_MAX, 3 );
+				add_filter( 'delete_user_metadata', $user_guard, PHP_INT_MAX, 3 );
+				add_filter( 'wp_insert_post_data', $post_guard, PHP_INT_MAX, 2 );
+				add_filter( 'wp_insert_attachment_data', $post_guard, PHP_INT_MAX, 2 );
+				add_filter( 'acf/update_value/type=taxonomy', $term_guard, 1 );
+				try {
+					$result = update_field( $field_name, $args['value'], $post_id );
+				} finally {
+					remove_filter( 'update_post_metadata', $write_guard, PHP_INT_MAX );
+					remove_filter( 'add_post_metadata', $write_guard, PHP_INT_MAX );
+					remove_filter( 'delete_post_metadata', $delete_guard, PHP_INT_MAX );
+					remove_filter( 'update_user_metadata', $user_guard, PHP_INT_MAX );
+					remove_filter( 'add_user_metadata', $user_guard, PHP_INT_MAX );
+					remove_filter( 'delete_user_metadata', $user_guard, PHP_INT_MAX );
+					remove_filter( 'wp_insert_post_data', $post_guard, PHP_INT_MAX );
+					remove_filter( 'wp_insert_attachment_data', $post_guard, PHP_INT_MAX );
+					remove_filter( 'acf/update_value/type=taxonomy', $term_guard, 1 );
+				}
+				if ( $refused_refs ) {
+					throw new \Exception( 'This field would change a protected key or an item you cannot edit (' . esc_html( implode( ', ', array_unique( $refused_refs ) ) ) . '), which was left unchanged. Other parts of its value may have been saved.' );
+				}
+				$warnings = [];
 				if ( false === $result ) {
 					// update_field() also returns false when a stored value did not change: the group,
 					// repeater or flexible content row itself, or a value that was already there.

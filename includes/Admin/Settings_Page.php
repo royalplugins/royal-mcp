@@ -465,6 +465,15 @@ class Settings_Page {
         }
         $sanitized['writable_options_admin'] = array_values(array_unique($keys));
 
+        // Protected meta keys: exact names only, stored as typed. Blocked entries stay
+        // on the list so the screen can name them, and never open at write time.
+        $meta_list_key = \Royal_MCP\MCP\Support\Protected_Meta::SETTING;
+        if (isset($input[$meta_list_key]) && is_string($input[$meta_list_key])) {
+            $sanitized[$meta_list_key] = \Royal_MCP\MCP\Support\Protected_Meta::parse_list($input[$meta_list_key]);
+        } else {
+            $sanitized[$meta_list_key] = is_array($settings[$meta_list_key] ?? null) ? $settings[$meta_list_key] : [];
+        }
+
         // Sanitize API key.
         // Order matters: the readonly `api_key` field in the settings form posts
         // whatever value is currently rendered on every submit, so the

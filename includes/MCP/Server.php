@@ -90,6 +90,7 @@ class Server {
     private $request_client_id    = null;   // OAuth client_id of the current request, or null
     private $request_route        = 'native'; // 'abilities' when called through the WordPress Abilities API
     private $offered_tool_names   = null; // names left in the royal_mcp_tools list, before endpoint profiles
+    private $offered_tool_schemas = [];   // their input schemas, by tool name
     private $request_token_ttl    = null;   // int seconds until token expiry, or null (api-key never rotates)
     private $request_session_id   = null;   // MCP session ID from Mcp-Session-Id header, or null (no session for pre-initialize)
 
@@ -1151,9 +1152,65 @@ class Server {
         Session_Store::delete_session($session_id);
     }
 
+    /**
+     * One page of attachments the caller may read, as wp_get_media_item answers: an attachment
+     * of a post the caller cannot read stays out. Administrators read every row, so the query
+     * pages for them; for anyone else rows are checked in batches, and offset and numberposts
+     * count readable rows, so a page is only short at the end of the list.
+     */
+    private static function readable_media_page( array $query ) {
+        if ( current_user_can( 'manage_options' ) ) {
+            return get_posts( $query );
+        }
+        $want  = (int) $query['numberposts'];
+        $skip  = (int) $query['offset'];
+        $batch = 200;
+        $from  = 0;
+        $page  = [];
+        $query += [ 'orderby' => [ 'date' => 'DESC', 'ID' => 'DESC' ] ];
+        do {
+            $rows = get_posts( array_merge( $query, [ 'numberposts' => $batch, 'offset' => $from ] ) );
+            foreach ( $rows as $row ) {
+                if ( ! current_user_can( 'read_post', $row->ID ) ) {
+                    continue;
+                }
+                if ( $skip > 0 ) {
+                    $skip--;
+                    continue;
+                }
+                $page[] = $row;
+                if ( count( $page ) >= $want ) {
+                    return $page;
+                }
+            }
+            $from += $batch;
+        } while ( count( $rows ) === $batch );
+        return $page;
+    }
+
+    /**
+     * A core REST read of widgets or sidebars that changes nothing. Core's controllers run
+     * retrieve_widgets() on every read, which saves sidebars_widgets when the theme's sidebars
+     * differ from the stored ones, so the save is held back and the in-memory copy put back.
+     */
+    private static function rest_read_widgets( \WP_REST_Request $request ) {
+        global $sidebars_widgets;
+        $kept = $sidebars_widgets;
+        $hold = static function ( $value, $old_value ) {
+            return $old_value;
+        };
+        add_filter( 'pre_update_option_sidebars_widgets', $hold, PHP_INT_MAX, 2 );
+        try {
+            return rest_do_request( $request );
+        } finally {
+            remove_filter( 'pre_update_option_sidebars_widgets', $hold, PHP_INT_MAX );
+            $sidebars_widgets = $kept;
+        }
+    }
+
     /** Resolve a post identifier from args — accepts `post_id` (canonical) or `id` (alias). */
     private static function resolve_post_id_arg(array $args): int {
-        return intval($args['post_id'] ?? $args['id'] ?? 0);
+        return \Royal_MCP\MCP\Support\Post_Access::post_id_arg($args);
     }
 
     /**
@@ -1233,6 +1290,28 @@ class Server {
             return '';
         }
         return md5( (string) wp_json_encode( [ (string) $post->post_title, (string) $post->post_content, (string) $post->post_excerpt, (string) $post->post_status, (string) $post->post_modified_gmt ] ) );
+    }
+
+    /** Why undoing this operation may not write a theme post now, or null. */
+    private static function undo_theme_refusal( array $snapshot ) {
+        if ( 'wp_update_custom_css' === ( $snapshot['op'] ?? '' ) ) {
+            return \Royal_MCP\MCP\Support\Post_Access::custom_css_refusal();
+        }
+        $target = isset( $snapshot['target'] ) && is_array( $snapshot['target'] ) ? $snapshot['target'] : [];
+        $pre    = isset( $snapshot['pre_op_state'] ) && is_array( $snapshot['pre_op_state'] ) ? $snapshot['pre_op_state'] : [];
+        $types  = [ (string) ( $target['post_type'] ?? '' ), (string) ( $pre['row']['post_type'] ?? '' ) ];
+        foreach ( [ $target['post_id'] ?? 0, $target['id'] ?? 0, $target['created_post_id'] ?? 0, $pre['created_post_id'] ?? 0 ] as $post_id ) {
+            if ( (int) $post_id > 0 ) {
+                $types[] = (string) get_post_type( (int) $post_id );
+            }
+        }
+        foreach ( $types as $type ) {
+            $refusal = \Royal_MCP\MCP\Support\Post_Access::theme_post_refusal( $type );
+            if ( null !== $refusal ) {
+                return $refusal;
+            }
+        }
+        return null;
     }
 
     /**
@@ -1321,7 +1400,7 @@ class Server {
     private static function widget_undo_hash( $widget_id ) {
         $request = new \WP_REST_Request( 'GET', '/wp/v2/widgets/' . $widget_id );
         $request->set_param( 'context', 'edit' );
-        $response = rest_do_request( $request );
+        $response = self::rest_read_widgets( $request );
         if ( $response->is_error() ) {
             return '';
         }
@@ -1338,6 +1417,27 @@ class Server {
      * Reads the post back from DB post-mutation so the response reflects stored values.
      * Text fields skip diff-check (sanitizers always modify); int/enum/password fields participate.
      */
+    /**
+     * The template argument of a page tool, checked against what the theme offers.
+     *
+     * @return string|null Null when the argument was not sent.
+     * @throws \Royal_MCP\MCP\Support\Tool_Refusal When it is not a template the theme offers.
+     */
+    private static function page_template_arg(array $args) {
+        if (!array_key_exists('template', $args)) {
+            return null;
+        }
+        $templates = array_map('strval', array_keys((array) wp_get_theme()->get_page_templates(null, 'page')));
+        $template  = $args['template'];
+        if (!is_string($template) || ('default' !== $template && !in_array($template, $templates, true))) {
+            throw new \Royal_MCP\MCP\Support\Tool_Refusal(
+                'invalid_template',
+                'That is not a page template this theme offers, so nothing was changed. Valid values: ' . implode(', ', array_merge(['default'], $templates)) . '.'
+            );
+        }
+        return $template;
+    }
+
     private static function build_update_response(int $post_id, array $args, array $data, string $message): array {
         $saved_post = get_post($post_id);
         $saved_fields = [];
@@ -1413,26 +1513,20 @@ class Server {
      * @return array Response with id, occurrences, replaced, verified, lengths, message.
      */
     private static function replace_in_post_content(int $post_id, array $args, string $noun): array {
-        // Route the permission check by post type. `custom_css` is a
-        // WordPress-core post type used to store the active theme's custom
-        // CSS; WP gates it behind the `edit_css` meta cap (single-site:
-        // maps to unfiltered_html; multisite: super-admin-only), not a
-        // plain edit_post grant. A raw `edit_post` check fails for admins
-        // who do have edit_css because WP's map_meta_cap routing doesn't
-        // apply to a direct edit_post query on this post type. Every
-        // other post type gets the standard object-level check, which
-        // resolves to edit_page / etc. automatically via map_meta_cap.
+        // Route the permission check by post type. `custom_css` stores the
+        // theme's live stylesheet, so it answers to the same rules as
+        // wp_update_custom_css; a raw edit_post check is false for everyone
+        // on this post type. Every other post type gets the standard
+        // object-level check, which resolves to edit_page / etc. through
+        // map_meta_cap.
         $target_post = get_post($post_id);
         if (!$target_post) {
             throw new \Exception('Post not found.');
         }
-        if ('custom_css' === $target_post->post_type) {
-            if (!current_user_can('edit_css')) {
-                throw new \Exception('You do not have permission to edit the custom CSS.');
-            }
-        } elseif (!current_user_can('edit_post', $post_id)) {
+        if ('custom_css' !== $target_post->post_type && !current_user_can('edit_post', $post_id)) {
             throw new \Exception('You do not have permission to edit this ' . esc_html($noun) . '.');
         }
+        \Royal_MCP\MCP\Support\Post_Access::assert_theme_write((string) $target_post->post_type);
         if (!isset($args['find']) || !is_string($args['find']) || $args['find'] === '') {
             throw new \Exception('find must be a non-empty string.');
         }
@@ -1456,6 +1550,9 @@ class Server {
             // when find === replace (the real call also throws).
             $would_execute   = ( $occurrences > 0 && $find !== $replace );
             $projected_after = $would_execute ? str_replace( $find, $replace, $content ) : $content;
+            if ( $would_execute ) {
+                \Royal_MCP\MCP\Support\Post_Access::assert_theme_write( (string) $target_post->post_type, $projected_after );
+            }
             $find_len        = strlen( $find );
             $replace_len     = strlen( $replace );
             $size_delta      = $would_execute ? ( strlen( $projected_after ) - strlen( $content ) ) : 0;
@@ -1497,6 +1594,7 @@ class Server {
             throw new \Exception('find and replace are identical; nothing to do.');
         }
         $new_content = str_replace($find, $replace, $content);
+        \Royal_MCP\MCP\Support\Post_Access::assert_theme_write((string) $target_post->post_type, $new_content);
         // See wp_create_post for the wp_slash + no-wp_kses_post rationale;
         // kses still applies inside wp_update_post for callers without
         // unfiltered_html, which the verification below surfaces.
@@ -1616,16 +1714,16 @@ class Server {
             ['name' => 'wp_create_post', 'description' => 'Create new post (supports custom post types). Combine status="future" with date to schedule. Excerpt may contain safe HTML (same allow-list as post content). Backslashes (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) are stored as sent.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule. Past dates auto-publish with that timestamp.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'categories' => ['type' => 'array', 'items' => ['type' => 'integer']], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post)'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to assign as the post author. Defaults to the authenticated MCP user (admin). Use wp_get_users to discover available author IDs.']], 'required' => ['title', 'content']]],
             ['name' => 'wp_clone_post_as_draft', 'description' => 'Copy a post, page or other public content item you can edit into a new draft owned by you: title, content, excerpt, parent, order, comment settings, password, page template, featured image, the terms you may assign and custom fields that are not protected. The original is not changed. Use it to prepare changes to published content (required in drafts-only mode), then edit the copy. Builder pages use elementor_clone_page or divi_clone_page, which also copy the layout; products are copied in WooCommerce. Undo moves the copy to the trash.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'ID of the post to copy'], 'title' => ['type' => 'string', 'description' => 'Title for the copy (default: the original title)']], 'required' => ['id']]],
             ['name' => 'wp_update_post', 'description' => 'Update existing post (any post type). Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate. Backslashes (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) are stored as sent.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image (pass 0 to remove)'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as the post author. Use wp_get_users to discover available author IDs.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling posts/pages. Lower = earlier.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent post ID (0 = no parent). Useful for hierarchical CPTs. Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Post password. Empty string removes protection.'], 'comment_status' => ['type' => 'string', 'enum' => ['open', 'closed'], 'description' => 'Allow (open) or disallow (closed) new comments.'], 'ping_status' => ['type' => 'string', 'enum' => ['open', 'closed'], 'description' => 'Allow (open) or disallow (closed) trackbacks / pingbacks.']], 'required' => ['id']]],
-            ['name' => 'wp_replace_in_post', 'description' => 'Find/replace a literal string inside a post\'s content (any post type) without resending the full body. Use for surgical edits to large posts (page-builder content, embedded base64 payloads) where wp_update_post\'s full-content replacement is impractical. Case-sensitive literal match, no regex. All occurrences are replaced. Response includes occurrence count and read-after-write verification. Set dry_run=true to preview the match count without writing; set expected_count to abort unless exactly that many matches exist.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'find' => ['type' => 'string', 'minLength' => 1, 'description' => 'Literal text to find in post_content (case-sensitive, no regex).'], 'replace' => ['type' => 'string', 'description' => 'Literal replacement text. Empty string deletes the matched text.'], 'expected_count' => ['type' => 'integer', 'description' => 'Optional guard: abort without writing unless the number of occurrences equals this value.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Report the occurrence count without writing. Default false.']], 'required' => ['id', 'find', 'replace']]],
+            ['name' => 'wp_replace_in_post', 'description' => 'Find/replace a literal string inside a post\'s content (any post type) without resending the full body. Use for surgical edits to large posts (page-builder content, embedded base64 payloads) where wp_update_post\'s full-content replacement is impractical. Case-sensitive literal match, no regex. All occurrences are replaced. Response includes occurrence count and read-after-write verification. Set dry_run=true to preview the match count without writing; set expected_count to abort unless exactly that many matches exist. A custom_css post needs what wp_update_custom_css needs; refusal codes insufficient_caps, unfiltered_html_required, theme_writes_off.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'find' => ['type' => 'string', 'minLength' => 1, 'description' => 'Literal text to find in post_content (case-sensitive, no regex).'], 'replace' => ['type' => 'string', 'description' => 'Literal replacement text. Empty string deletes the matched text.'], 'expected_count' => ['type' => 'integer', 'description' => 'Optional guard: abort without writing unless the number of occurrences equals this value.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Report the occurrence count without writing. Default false.']], 'required' => ['id', 'find', 'replace']]],
             ['name' => 'wp_get_post_types', 'description' => 'Get all registered public post types (including custom post types)', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
-            ['name' => 'wp_delete_post', 'description' => 'Delete a post of any post type. Without force it moves to the trash and can be undone; if the post cannot be trashed (already in the trash, or the site has the trash turned off) the call is refused and nothing is deleted. force: true deletes permanently.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean', 'description' => 'Skip the trash and delete permanently']], 'required' => ['id']]],
+            ['name' => 'wp_delete_post', 'description' => 'Delete a post of any post type. Without force it moves to the trash and can be undone; if the post cannot be trashed (already in the trash, or the site has the trash turned off) the call is refused and nothing is deleted. force: true deletes permanently. A custom_css post needs what wp_update_custom_css needs; refusal codes insufficient_caps, unfiltered_html_required, theme_writes_off.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean', 'description' => 'Skip the trash and delete permanently']], 'required' => ['id']]],
             ['name' => 'wp_count_posts', 'description' => 'Get post counts by status', 'inputSchema' => ['type' => 'object', 'properties' => ['post_type' => ['type' => 'string', 'description' => 'Post type (post, page, etc)']]]],
 
             // Pages
             ['name' => 'wp_get_pages', 'description' => 'List WordPress pages. Returns id, title, status, URL, date (publish date, site local time), modified (last change, ISO 8601 UTC) and content_length (bytes of stored content — size-check before fetching) for each. Filter by parent to walk the page hierarchy; sort with orderby / order; use modified_after to find pages edited recently. Content edits, Royal MCP custom-field tools, ACF field writes and Elementor writes update modified; other plugins changing only custom fields may leave it unchanged.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of pages (default 10, max 100)'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID — returns only direct children of this page'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'pending', 'private', 'future', 'any'], 'description' => 'publish (default), one status, or any (every status you can read except trash), so a draft you just created can be found.'], 'orderby' => ['type' => 'string', 'enum' => ['date', 'modified', 'title', 'menu_order', 'id'], 'description' => 'Sort field. Without orderby or modified_after, pages are listed by title A to Z.'], 'order' => ['type' => 'string', 'enum' => ['asc', 'desc'], 'description' => 'asc or desc. Default when orderby is given: asc (A to Z) for title, desc for every other sort.'], 'modified_after' => ['type' => 'string', 'description' => 'Only items last modified after this moment: a date (2026-11-01) or date and time (2026-11-01T09:30:00Z). No timezone means UTC.']]]],
             ['name' => 'wp_get_page', 'description' => 'Get single page by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Page ID']], 'required' => ['id']]],
-            ['name' => 'wp_create_page', 'description' => 'Create new page. Combine status="future" with date to schedule. Excerpt (via wp_update_post_meta on _excerpt or via wp_create_post fallback) may contain safe HTML.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule.'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID']], 'required' => ['title', 'content']]],
-            ['name' => 'wp_update_page', 'description' => 'Update existing page. Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional page excerpt. May contain safe HTML.'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as page author.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling pages. Lower = earlier in navigation.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent page ID (0 = top-level). Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Page password. Empty string removes protection.']], 'required' => ['id']]],
+            ['name' => 'wp_create_page', 'description' => 'Create new page. Combine status="future" with date to schedule. Excerpt (via wp_update_post_meta on _excerpt or via wp_create_post fallback) may contain safe HTML.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule.'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID'], 'template' => ['type' => 'string', 'description' => 'Page template: default, or a template filename the theme offers for pages. Anything else is refused and the error lists the valid values.']], 'required' => ['title', 'content']]],
+            ['name' => 'wp_update_page', 'description' => 'Update existing page. Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional page excerpt. May contain safe HTML.'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as page author.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling pages. Lower = earlier in navigation.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent page ID (0 = top-level). Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Page password. Empty string removes protection.'], 'template' => ['type' => 'string', 'description' => 'Page template: default, or a template filename the theme offers for pages. Anything else is refused and the error lists the valid values. The reply carries an undo token that restores the prior template (only the template).']], 'required' => ['id']]],
             ['name' => 'wp_replace_in_page', 'description' => 'Find/replace a literal string inside a page\'s content without resending the full body. Page-typed variant of wp_replace_in_post — same semantics: case-sensitive literal match, all occurrences replaced, dry_run preview, expected_count guard, read-after-write verification.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'find' => ['type' => 'string', 'minLength' => 1, 'description' => 'Literal text to find in the page content (case-sensitive, no regex).'], 'replace' => ['type' => 'string', 'description' => 'Literal replacement text. Empty string deletes the matched text.'], 'expected_count' => ['type' => 'integer', 'description' => 'Optional guard: abort without writing unless the number of occurrences equals this value.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Report the occurrence count without writing. Default false.']], 'required' => ['id', 'find', 'replace']]],
             ['name' => 'wp_delete_page', 'description' => 'Delete page. Without force it moves to the trash; if the page cannot be trashed (already in the trash, or the site has the trash turned off) the call is refused and nothing is deleted. force: true deletes permanently. Either way the reply carries an undo token (untrash, or recreate a permanently deleted page with a new id).', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean', 'description' => 'Skip the trash and delete permanently']], 'required' => ['id']]],
 
@@ -1654,7 +1752,7 @@ class Server {
             // Term Meta (for SEO-plugin tag/category meta — Yoast, Rank Math, AIOSEO)
             ['name' => 'wp_get_term', 'description' => 'Get one term by ID and taxonomy: id, name, slug, description, count, parent and link. Term meta comes back in meta (sensitive values redacted) when you can manage categories; otherwise meta_included is false. A term that does not exist and a term in another taxonomy give the same error.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Term ID.'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to (e.g. category, post_tag, product_cat).']], 'required' => ['id', 'taxonomy']]],
             ['name' => 'wp_get_term_meta', 'description' => 'Get term meta data. Useful for reading tag/category SEO meta stored by Yoast, Rank Math, or AIOSEO before editing it.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string', 'description' => 'Specific meta key. Omit to return all meta for the term.']], 'required' => ['term_id']]],
-            ['name' => 'wp_update_term_meta', 'description' => 'Update term meta data. Common keys for SEO plugins: Yoast uses _yoast_wpseo_title / _yoast_wpseo_metadesc; Rank Math uses rank_math_title / rank_math_description; AIOSEO uses _aioseo_title / _aioseo_description. String values may contain safe HTML (same allow-list as post content). Use the royal_mcp_meta_value_sanitizer filter to customize per meta key.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null']]], 'required' => ['term_id', 'key', 'value']]],
+            ['name' => 'wp_update_term_meta', 'description' => 'Update term meta data. Common keys for SEO plugins: Yoast uses _yoast_wpseo_title / _yoast_wpseo_metadesc; Rank Math uses rank_math_title / rank_math_description; AIOSEO uses _aioseo_title / _aioseo_description. Other protected keys (leading underscore) need an administrator to list them under Royal MCP > Settings > Writable protected meta keys. String values may contain safe HTML (same allow-list as post content). Use the royal_mcp_meta_value_sanitizer filter to customize per meta key.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null']]], 'required' => ['term_id', 'key', 'value']]],
             ['name' => 'wp_delete_term_meta', 'description' => 'Delete term meta data (every value of the key). The reply carries an undo token that puts the deleted values back.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['term_id', 'key']]],
 
             // Comments
@@ -1720,7 +1818,7 @@ class Server {
             ['name' => 'wp_get_theme_mods', 'description' => 'Get all customizer settings (theme_mods) for the active theme', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_update_theme_mod', 'description' => 'Update a single theme customizer setting. Requires the "Allow AI to modify theme appearance" admin toggle AND the mod name must be in the allowlist (extend via the royal_mcp_writable_theme_mods filter).', 'inputSchema' => ['type' => 'object', 'properties' => ['mod_name' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'New value (any JSON type compatible with set_theme_mod)']], 'required' => ['mod_name', 'value']]],
             ['name' => 'wp_get_custom_css', 'description' => 'Get the active theme\'s custom CSS', 'inputSchema' => ['type' => 'object', 'properties' => ['theme_slug' => ['type' => 'string', 'description' => 'Theme slug (defaults to active theme)']]]],
-            ['name' => 'wp_update_custom_css', 'description' => 'Update the active theme\'s custom CSS (the whole stylesheet). CSS is filtered through wp_kses (script tags stripped). Requires the "Allow AI to modify theme appearance" admin toggle and unfiltered_html capability. dry_run true returns allowed, the refusal reason, current_sha256 and byte counts, changing nothing. expected_sha256 (sha256 of the CSS you read) refuses with expected_mismatch when the CSS changed since. Refusal codes: insufficient_caps, unfiltered_html_required, theme_writes_off, expected_mismatch, field_dropped (the CSS is put back). When the prior CSS is over the 1 MB undo limit the reply says undo_available false, undo_reason snapshot_too_large.', 'inputSchema' => ['type' => 'object', 'properties' => ['css' => ['type' => 'string'], 'theme_slug' => ['type' => 'string', 'description' => 'Theme slug (defaults to active theme)'], 'expected_sha256' => ['type' => 'string', 'description' => 'sha256 (hex) of the current CSS as you read it.'], 'dry_run' => ['type' => 'boolean', 'description' => 'true previews (default false).']], 'required' => ['css']]],
+            ['name' => 'wp_update_custom_css', 'description' => 'Update the active theme\'s custom CSS (the whole stylesheet). CSS holding a closing style tag, in any spelling, is refused. Requires the "Allow AI to modify theme appearance" admin toggle and unfiltered_html capability. dry_run true returns allowed, the refusal reason, current_sha256 and byte counts, changing nothing. expected_sha256 (sha256 of the CSS you read) refuses with expected_mismatch when the CSS changed since. Refusal codes: insufficient_caps, unfiltered_html_required, theme_writes_off, css_closes_style, expected_mismatch, field_dropped (the CSS is put back). When the prior CSS is over the 1 MB undo limit the reply says undo_available false, undo_reason snapshot_too_large.', 'inputSchema' => ['type' => 'object', 'properties' => ['css' => ['type' => 'string'], 'theme_slug' => ['type' => 'string', 'description' => 'Theme slug (defaults to active theme)'], 'expected_sha256' => ['type' => 'string', 'description' => 'sha256 (hex) of the current CSS as you read it.'], 'dry_run' => ['type' => 'boolean', 'description' => 'true previews (default false).']], 'required' => ['css']]],
             ['name' => 'wp_get_widget', 'description' => 'Get one widget instance by ID (for example text-2 or block-3), shaped like one item of wp_get_widgets: id, id_base, sidebar, instance settings, and for block widgets the parsed blocks. Use it before wp_update_widget.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string', 'description' => 'Widget ID as returned by wp_get_widgets.']], 'required' => ['id']]],
             ['name' => 'wp_get_widgets', 'description' => 'List widget instances. Uses the WordPress core /wp/v2/widgets REST endpoint in edit context so both rendered output AND full instance payload are returned uniformly for classic and block widgets. Classic widgets: instance carries the widget-specific settings (text, title, filter, etc.). Block widgets: instance.raw.content carries the raw block markup, and a blocks field is added with the parsed block tree for structured inspection. Omit sidebar to return widgets across ALL sidebars including wp_inactive_widgets (orphaned widgets from prior themes — these have rendered:"" and produce no front-end output). Filter by a specific sidebar ID (discover IDs via wp_get_sidebars) to scope results; a non-existent sidebar ID returns an empty array, not an error.', 'inputSchema' => ['type' => 'object', 'properties' => ['sidebar' => ['type' => 'string', 'description' => 'Optional sidebar ID to filter by. Omit to return widgets across all sidebars (includes wp_inactive_widgets).']]]],
             ['name' => 'wp_get_sidebars', 'description' => 'List registered sidebars (widget areas) on the active theme with their IDs, names, description, and status. Use to discover sidebar IDs before calling wp_get_widgets or wp_update_widget.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -1930,7 +2028,7 @@ class Server {
      * fields beyond the size limits; both are reported.
      */
     private function clone_post_as_draft( array $args ) {
-        $source_id = isset( $args['id'] ) ? (int) $args['id'] : (int) ( $args['post_id'] ?? 0 );
+        $source_id = self::resolve_post_id_arg( $args );
         if ( $source_id <= 0 ) {
             throw new \Exception( 'id is required.' );
         }
@@ -2144,7 +2242,9 @@ class Server {
                 }
             }
             try {
-                $this->offered_tool_names = array_fill_keys( array_column( $this->get_tools(), 'name' ), true );
+                $offered_tools              = $this->get_tools();
+                $this->offered_tool_names   = array_fill_keys( array_column( $offered_tools, 'name' ), true );
+                $this->offered_tool_schemas = array_column( $offered_tools, 'inputSchema', 'name' );
             } catch ( \Throwable $e ) {
                 // A filter that fails cannot switch tools off; calls go on as before it was added.
                 $this->offered_tool_names = false;
@@ -3828,6 +3928,63 @@ class Server {
     }
 
     /**
+     * Refuse a write tool call whose id argument is not a whole number. A cast would turn a
+     * list, a boolean, a fraction or "1abc" into a real id and the tool would act on the wrong
+     * object. The id fields come from the tool's input schema, nested fields included, so
+     * every tool is covered. 0 and "" stay valid here: on these fields they mean "none".
+     */
+    private function refuse_malformed_ids( $name, array $args ) {
+        if ( $this->tool_is_read_only( $name, $args ) ) {
+            return;
+        }
+        $this->tool_is_offered( $name );
+        $schema = $this->offered_tool_schemas[ (string) $name ] ?? null;
+        $props  = is_array( $schema ) ? ( $schema['properties'] ?? null ) : null;
+        if ( ! is_array( $props ) ) {
+            return;
+        }
+        // id and post_id are aliases on the post tools, whichever of them the schema names.
+        $post_key = $props['id'] ?? ( $props['post_id'] ?? null );
+        if ( is_array( $post_key ) && 'integer' === ( $post_key['type'] ?? '' ) ) {
+            $props += [ 'id' => $post_key, 'post_id' => $post_key ];
+        }
+        self::refuse_malformed_id_fields( $props, $args );
+    }
+
+    /** One level of refuse_malformed_ids(): integer id fields, every list of whole numbers, then nested objects. */
+    private static function refuse_malformed_id_fields( array $props, array $values ) {
+        foreach ( $props as $key => $prop ) {
+            if ( ! is_array( $prop ) || ! isset( $values[ $key ] ) ) {
+                continue;
+            }
+            $value = $values[ $key ];
+            $type  = $prop['type'] ?? '';
+            $items = isset( $prop['items'] ) && is_array( $prop['items'] ) ? $prop['items'] : [];
+            if ( 'object' === $type && is_array( $value ) && ! empty( $prop['properties'] ) ) {
+                self::refuse_malformed_id_fields( (array) $prop['properties'], $value );
+                continue;
+            }
+            if ( 'array' === $type && ! empty( $items['properties'] ) ) {
+                foreach ( (array) $value as $row ) {
+                    if ( is_array( $row ) ) {
+                        self::refuse_malformed_id_fields( (array) $items['properties'], $row );
+                    }
+                }
+                continue;
+            }
+            $is_list = 'array' === $type && 'integer' === ( $items['type'] ?? '' );
+            if ( ! $is_list && ! ( 'integer' === $type && preg_match( '/(^|_)(ids?|parent|author|featured_media|reassign_to)$/', (string) $key ) ) ) {
+                continue;
+            }
+            foreach ( $is_list ? (array) $value : [ $value ] as $one ) {
+                if ( '' !== $one && null === \Royal_MCP\MCP\Support\Post_Access::id_value( $one ) ) {
+                    throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', sprintf( '%s must be a positive whole number.', esc_html( (string) $key ) ) );
+                }
+            }
+        }
+    }
+
+    /**
      * The code or changeset post type a write tool call would change, or null.
      * Covers the generic post, page, block, meta, term, revision and builder
      * write tools by the argument that names their post.
@@ -3847,12 +4004,9 @@ class Server {
         $name  = (string) $name;
         $posts = [];
         if ( in_array( $name, $by_id, true ) || in_array( $name, $by_post_id, true ) ) {
-            // The handlers read either key, so every post the call names is checked,
-            // and a call whose id and post_id name different posts is refused.
-            $posts = array_values( array_unique( array_filter( [ (int) ( $args['id'] ?? 0 ), (int) ( $args['post_id'] ?? 0 ) ] ) ) );
-            if ( count( $posts ) > 1 ) {
-                throw new \Exception( 'id and post_id name different posts; send only one of them.' );
-            }
+            // The handlers read either key through the same resolver, which refuses a
+            // call whose id and post_id name different posts.
+            $posts = [ self::resolve_post_id_arg( $args ) ];
         } elseif ( 'wp_restore_revision' === $name ) {
             $posts = [ (int) wp_get_post_parent_id( (int) ( $args['revision_id'] ?? 0 ) ) ];
         } elseif ( 'wp_create_post' === $name || 'wp_create_page' === $name ) {
@@ -4328,6 +4482,7 @@ class Server {
      */
     private function run_tool( $name, $args ) {
         do_action( 'royal_mcp_tool_call_start', (string) $name, is_array( $args ) ? $args : [] );
+        \Royal_MCP\MCP\Support\Post_Access::open_write_guard( (string) $name, ! $this->tool_is_read_only( $name, is_array( $args ) ? $args : null ) );
         try {
             $result = $this->execute_tool( $name, $args );
             return apply_filters( 'royal_mcp_tool_call_result', $result, (string) $name, is_array( $args ) ? $args : [] );
@@ -4336,6 +4491,7 @@ class Server {
             $better = apply_filters( 'royal_mcp_tool_call_exception', $e, (string) $name, is_array( $args ) ? $args : [] );
             throw $better instanceof \Exception ? $better : $e;
         } finally {
+            \Royal_MCP\MCP\Support\Post_Access::close_write_guard();
             do_action( 'royal_mcp_tool_call_end', (string) $name );
         }
     }
@@ -4373,6 +4529,7 @@ class Server {
         // Snippet code and pending Customizer settings are changed through their own
         // plugin screens, never through the generic post write tools.
         if ( null !== $this->request_auth_method || 'abilities' === $this->request_route ) {
+            $this->refuse_malformed_ids( $name, is_array( $args ) ? $args : [] );
             $code_type = $this->code_post_write_target( $name, is_array( $args ) ? $args : [] );
             if ( null !== $code_type ) {
                 throw new \Exception( sprintf( '%s cannot change %s posts: they hold code or pending Customizer settings. Use that plugin\'s own screen.', esc_html( (string) $name ), esc_html( $code_type ) ) );
@@ -4587,6 +4744,7 @@ class Server {
                 if (!$pto || !\Royal_MCP\MCP\Support\Post_Access::can_query_type($post_type)) {
                     throw new \Exception('Invalid or non-accessible post type: ' . esc_html($post_type));
                 }
+                \Royal_MCP\MCP\Support\Post_Access::assert_theme_write($post_type, $args['content'] ?? null);
                 // Per-post-type edit + publish capability gate. Without it, a
                 // Subscriber-level OAuth token could create-as-self at
                 // status=publish. The per-PT cap object maps `edit_posts` to
@@ -4696,6 +4854,7 @@ class Server {
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('You do not have permission to edit this post.');
                 }
+                \Royal_MCP\MCP\Support\Post_Access::assert_theme_write((string) $up_existing_post->post_type, $args['content'] ?? null);
                 // Gate elevated status transitions on publish_posts so a
                 // caller with edit_post on their own draft can't silently
                 // flip it to publish/future/private. Matches WP REST behavior.
@@ -4896,6 +5055,7 @@ class Server {
                 }
                 $dp_existing = get_post($dp_pid);
                 if (!$dp_existing) throw new \Exception('Post not found.');
+                \Royal_MCP\MCP\Support\Post_Access::assert_theme_write((string) $dp_existing->post_type);
                 if ('attachment' === $dp_existing->post_type) {
                     throw new \Royal_MCP\MCP\Support\Tool_Refusal('use_wp_delete_media', 'This is a media item. Use wp_delete_media, which handles its files and says whether the delete can be undone.');
                 }
@@ -5044,6 +5204,7 @@ class Server {
                 if (in_array($page_status, ['publish', 'future', 'private'], true) && !current_user_can('publish_pages')) {
                     throw new \Exception('You do not have permission to publish pages.');
                 }
+                $page_template = self::page_template_arg($args);
                 // See wp_create_post above for the wp_slash + no-wp_kses_post rationale.
                 $page_data = [
                     'post_title' => \Royal_MCP\MCP\Support\SafeText::field($args['title']),
@@ -5064,6 +5225,9 @@ class Server {
                 $page_id = wp_insert_post($page_data, true);
                 if (is_wp_error($page_id)) throw new \Exception(esc_html($page_id->get_error_message()));
                 if (!$page_id) throw new \Exception('The page could not be created.');
+                if (null !== $page_template) {
+                    update_post_meta($page_id, '_wp_page_template', $page_template);
+                }
                 // Re-read to surface any silent modifications by WP core hooks.
                 $cpg_saved = get_post($page_id);
                 $cpg_saved_fields = $cpg_saved ? [
@@ -5071,6 +5235,9 @@ class Server {
                     'post_status' => (string) $cpg_saved->post_status,
                     'post_name'   => (string) $cpg_saved->post_name,
                 ] : [];
+                if (null !== $page_template) {
+                    $cpg_saved_fields['template'] = (string) get_post_meta($page_id, '_wp_page_template', true);
+                }
                 return array_merge( [
                     'id'           => $page_id,
                     'message'      => 'Page created successfully',
@@ -5113,6 +5280,10 @@ class Server {
                         throw new \Exception('post_parent page ID not found.');
                     }
                 }
+                $upg_template = self::page_template_arg($args);
+                if (null !== $upg_template) {
+                    \Royal_MCP\MCP\Support\Protected_Meta::assert_no_spelling_clash('_wp_page_template', $page_id);
+                }
                 $data = ['ID' => $page_id];
                 // see wp_update_post: "" preserves existing value.
                 if (isset($args['title']) && $args['title'] !== '') $data['post_title'] = \Royal_MCP\MCP\Support\SafeText::field($args['title']);
@@ -5143,6 +5314,32 @@ class Server {
                 // up in the response payload rather than getting lost.
                 $upg_response     = self::build_update_response($page_id, $args, $data, 'Page updated successfully');
                 $upg_saved_fields = $upg_response['saved_fields'] ?? [];
+                if (null !== $upg_template) {
+                    $upg_before_existed = metadata_exists('post', $page_id, '_wp_page_template');
+                    $upg_before         = get_post_meta($page_id, '_wp_page_template', true);
+                    update_post_meta($page_id, '_wp_page_template', $upg_template);
+                    wp_cache_delete($page_id, 'post_meta');
+                    $upg_saved_fields['template'] = (string) get_post_meta($page_id, '_wp_page_template', true);
+                    if ($upg_saved_fields['template'] !== $upg_template) {
+                        throw new \Exception('The page template could not be saved: the site kept a different value.');
+                    }
+                    $upg_undo = \Royal_MCP\MCP\Undo_Store::store([
+                        'op'           => 'wp_update_post_meta',
+                        'summary'      => sprintf('Restore the page template on page %d.', $page_id),
+                        'target'       => ['post_id' => $page_id, 'meta_key' => '_wp_page_template'],
+                        'pre_op_state' => [
+                            'prior_value'    => $upg_before,
+                            'applied_value'  => $upg_saved_fields['template'],
+                            'existed'        => $upg_before_existed,
+                            'template_param' => true,
+                        ],
+                    ]);
+                    $upg_response['undo_available']  = true;
+                    $upg_response['undo_token']      = (string) $upg_undo['token'];
+                    $upg_response['undo_expires_at'] = (string) $upg_undo['expires_at'];
+                    $upg_response['undo_summary']    = (string) $upg_undo['summary'];
+                    \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger($page_id);
+                }
                 $upg_response['saved_fields'] = $upg_saved_fields;
                 return $upg_response;
 
@@ -5204,7 +5401,8 @@ class Server {
                     // separate ID-only lookups and merge. WP_Meta_Query applies
                     // $wpdb->esc_like() to LIKE values, so % and _ in the search
                     // term are matched literally, not as wildcards.
-                    $media_limit = $media_args['numberposts'];
+                    // Others page through readable rows only, so the lookup leaves room for the rows they cannot read.
+                    $media_limit = current_user_can('manage_options') ? $media_args['numberposts'] : 1000;
                     $meta_ids = get_posts([
                         'post_type'      => 'attachment',
                         'post_status'    => 'inherit',
@@ -5239,7 +5437,7 @@ class Server {
                     $media_args['post__in'] = $media_ids;
                     $media_args['orderby']  = 'post__in';
                 }
-                $media = get_posts($media_args);
+                $media = self::readable_media_page($media_args);
                 return array_map(function($m) {
                     return [
                         'id' => $m->ID,
@@ -5280,6 +5478,9 @@ class Server {
                 }
                 $fm_matches = [];
                 foreach (\Royal_MCP\MCP\Support\Media_Fingerprint::find($fm_url, $fm_sha) as $fm_id) {
+                    if (!current_user_can('read_post', $fm_id)) {
+                        continue;
+                    }
                     $fm_matches[] = array_merge([
                         'id'        => $fm_id,
                         'title'     => get_the_title($fm_id),
@@ -5400,6 +5601,7 @@ class Server {
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('You do not have permission to edit this post.');
                 }
+                \Royal_MCP\MCP\Support\Post_Access::assert_theme_write((string) get_post_type($post_id));
                 // Smart dispatcher: image_url takes precedence when present.
                 if (!empty($args['image_url'])) {
                     if (!current_user_can('upload_files')) {
@@ -5894,6 +6096,7 @@ class Server {
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('You do not have permission to edit this post.');
                 }
+                \Royal_MCP\MCP\Support\Post_Access::assert_theme_write((string) $apt_post->post_type);
                 // Plus the per-taxonomy assign_terms cap.
                 $tax_obj = get_taxonomy($taxonomy);
                 $assign_cap = $tax_obj && !empty($tax_obj->cap->assign_terms) ? $tax_obj->cap->assign_terms : 'edit_posts';
@@ -6033,8 +6236,13 @@ class Server {
                 if (!array_key_exists('value', $args)) {
                     throw new \Exception('A value is required.');
                 }
-                $tmeta_key   = \Royal_MCP\MCP\Support\SafeText::field($args['key']);
+                $tmeta_key   = \Royal_MCP\MCP\Support\Protected_Meta::clean_key($args['key'], 'term');
+                \Royal_MCP\MCP\Support\Protected_Meta::assert_no_spelling_clash($tmeta_key, $term_id, 'term');
+                $tmeta_via_list = \Royal_MCP\MCP\Support\Protected_Meta::assert_term_key($tmeta_key, $term_id);
                 $tmeta_value = self::filter_meta_value($args['value'], $tmeta_key, $term_id, 'wp_update_term_meta');
+                if ($tmeta_via_list) {
+                    \Royal_MCP\MCP\Support\Protected_Meta::assert_value($tmeta_key, $tmeta_value, $term_id, 'term');
+                }
 
                 $tmeta_before = get_term_meta($term_id, $tmeta_key, true);
                 // A key that did not exist before is removed again on undo, not left empty.
@@ -6103,7 +6311,11 @@ class Server {
                     throw new \Exception('You do not have permission to edit this term.');
                 }
                 if (!get_term($term_id)) throw new \Exception('Term not found');
-                $tdel_key = \Royal_MCP\MCP\Support\SafeText::field($args['key']);
+                $tdel_key = \Royal_MCP\MCP\Support\Protected_Meta::clean_key($args['key'], 'term');
+                \Royal_MCP\MCP\Support\Protected_Meta::assert_no_spelling_clash($tdel_key, $term_id, 'term');
+                if (\Royal_MCP\MCP\Support\Protected_Meta::assert_term_key($tdel_key, $term_id)) {
+                    \Royal_MCP\MCP\Support\Protected_Meta::assert_deletable($tdel_key, $term_id, 'term');
+                }
                 global $wpdb;
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- the stored values as saved, for the undo
                 $tdel_prior = $wpdb->get_col( $wpdb->prepare( "SELECT meta_value FROM {$wpdb->termmeta} WHERE term_id = %d AND meta_key = %s ORDER BY meta_id ASC", $term_id, wp_unslash( $tdel_key ) ) );
@@ -6178,6 +6390,7 @@ class Server {
                 if (\Royal_MCP\MCP\Support\Post_Access::content_withheld($comment_target_post)) {
                     throw new \Exception('This post is password protected.');
                 }
+                \Royal_MCP\MCP\Support\Post_Access::assert_theme_write((string) $comment_target_post->post_type);
                 // block commenting on closed/private posts unless the
                 // user has the relevant edit cap on the target post.
                 if ('open' !== $comment_target_post->comment_status
@@ -6559,16 +6772,22 @@ class Server {
                 if (!array_key_exists('value', $args)) {
                     throw new \Exception('A value is required. To remove a key entirely, use wp_delete_post_meta.');
                 }
-                $meta_key   = \Royal_MCP\MCP\Support\SafeText::field($args['key']);
+                $meta_key   = \Royal_MCP\MCP\Support\Protected_Meta::clean_key($args['key']);
+                \Royal_MCP\MCP\Support\Protected_Meta::assert_no_spelling_clash($meta_key, $post_id);
                 // Protected keys (underscore prefix + explicitly-registered
                 // protected meta) require the edit_post_meta cap, which
                 // map_meta_cap resolves through the post type's meta_cap
                 // filter — usually resolves to manage_options for admin data.
+                $meta_via_list = false;
                 if (is_protected_meta($meta_key, 'post')
                     && !current_user_can('edit_post_meta', $post_id, $meta_key)) {
                     // An SEO plugin's own keys: name the tool and field that write them.
                     $seo_route = \Royal_MCP\MCP\Support\Seo_Plugin::protected_meta_message($meta_key, 'edit');
-                    throw new \Exception($seo_route ?? 'You do not have permission to edit this protected meta key.');
+                    if (null !== $seo_route) {
+                        throw new \Exception($seo_route);
+                    }
+                    \Royal_MCP\MCP\Support\Protected_Meta::assert_listed($meta_key);
+                    $meta_via_list = true;
                 }
                 // Elementor's page data holds HTML; without unfiltered_html it is
                 // written only through the Elementor tools, which filter it.
@@ -6576,6 +6795,9 @@ class Server {
                     throw new \Exception('Use the Elementor tools to change Elementor page data.');
                 }
                 $meta_value = self::filter_meta_value($args['value'], $meta_key, $post_id, 'wp_update_post_meta');
+                if ($meta_via_list) {
+                    \Royal_MCP\MCP\Support\Protected_Meta::assert_value($meta_key, $meta_value, $post_id);
+                }
 
                 // Snapshot prior value BEFORE the write for both undo (restore
                 // target) and INVARIANTS §11 verify (silent-drop detection).
@@ -6664,19 +6886,28 @@ class Server {
                 if (!array_key_exists('value', $args)) {
                     throw new \Exception('A value is required.');
                 }
-                $add_key = \Royal_MCP\MCP\Support\SafeText::field($args['key'] ?? '');
+                $add_key = \Royal_MCP\MCP\Support\Protected_Meta::clean_key($args['key'] ?? '');
+                \Royal_MCP\MCP\Support\Protected_Meta::assert_no_spelling_clash($add_key, $post_id);
                 if ($add_key === '') throw new \Exception('A meta key is required.');
                 // Same protected-meta gate as wp_update_post_meta.
+                $add_via_list = false;
                 if (is_protected_meta($add_key, 'post')
                     && !current_user_can('edit_post_meta', $post_id, $add_key)) {
                     // An SEO plugin's own keys: name the tool and field that write them.
                     $seo_route = \Royal_MCP\MCP\Support\Seo_Plugin::protected_meta_message($add_key, 'add');
-                    throw new \Exception($seo_route ?? 'You do not have permission to add this protected meta key.');
+                    if (null !== $seo_route) {
+                        throw new \Exception($seo_route);
+                    }
+                    \Royal_MCP\MCP\Support\Protected_Meta::assert_listed($add_key);
+                    $add_via_list = true;
                 }
                 if (0 === strpos($add_key, '_elementor_') && !current_user_can('unfiltered_html')) {
                     throw new \Exception('Use the Elementor tools to change Elementor page data.');
                 }
                 $add_value  = self::filter_meta_value($args['value'], $add_key, $post_id, 'wp_add_post_meta');
+                if ($add_via_list) {
+                    \Royal_MCP\MCP\Support\Protected_Meta::assert_value($add_key, $add_value, $post_id);
+                }
                 $add_unique = !empty($args['unique']);
                 $add_meta_id = add_post_meta($post_id, $add_key, wp_slash($add_value), $add_unique);
 
@@ -6765,13 +6996,18 @@ class Server {
                     throw new \Exception('You do not have permission to edit meta on this post.');
                 }
                 if (!get_post($post_id)) throw new \Exception('Post not found.');
-                $del_key = \Royal_MCP\MCP\Support\SafeText::field($args['key']);
+                $del_key = \Royal_MCP\MCP\Support\Protected_Meta::clean_key($args['key']);
+                \Royal_MCP\MCP\Support\Protected_Meta::assert_no_spelling_clash($del_key, $post_id);
                 // Same protected-meta gate as wp_update_post_meta.
                 if (is_protected_meta($del_key, 'post')
                     && !current_user_can('edit_post_meta', $post_id, $del_key)) {
                     // An SEO plugin's own keys: name the tool and field that write them.
                     $seo_route = \Royal_MCP\MCP\Support\Seo_Plugin::protected_meta_message($del_key, 'delete');
-                    throw new \Exception($seo_route ?? 'You do not have permission to delete this protected meta key.');
+                    if (null !== $seo_route) {
+                        throw new \Exception($seo_route);
+                    }
+                    \Royal_MCP\MCP\Support\Protected_Meta::assert_listed($del_key);
+                    \Royal_MCP\MCP\Support\Protected_Meta::assert_deletable($del_key, $post_id);
                 }
                 global $wpdb;
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- the stored values as saved, for the undo
@@ -7005,9 +7241,11 @@ class Server {
                 }
                 $et_args = isset( $args['arguments'] ) && is_array( $args['arguments'] ) ? $args['arguments'] : [];
                 // Re-enter the dispatcher with the underlying tool + args.
+                \Royal_MCP\MCP\Support\Post_Access::open_write_guard( (string) $et_name, ! $this->tool_is_read_only( $et_name, $et_args ) );
                 try {
                     return $this->execute_tool( $et_name, $et_args );
                 } finally {
+                    \Royal_MCP\MCP\Support\Post_Access::close_write_guard();
                     // The inner tool armed the pre-change watch under its own name; end it with the call.
                     \Royal_MCP\MCP\Support\SiteVault_Hook::disarm( (string) $et_name );
                 }
@@ -7572,6 +7810,9 @@ class Server {
                 // Gate 2: permanent denylist (overrides allowlist)
                 if ($this->is_denylisted_option($name)) {
                     throw new \Exception('Option is permanently denylisted (its name looks like a credential or a protected setting): ' . esc_html($name));
+                }
+                if (1 === preg_match('/^(?:theme_)?mods_/i', (string) $name)) {
+                    throw new \Exception('Theme mods are not written as options: use wp_update_theme_mod.');
                 }
 
                 // Gate 3: write ⊆ readable INVARIANT — any option that cannot be
@@ -8543,6 +8784,13 @@ class Server {
                     }
                 }
 
+                // An undo writes theme posts like any other tool, so it answers to the same rules.
+                // Nothing is consumed: the token works again once the rules allow it.
+                $undo_theme_refusal = self::undo_theme_refusal( $undo_snapshot );
+                if ( null !== $undo_theme_refusal ) {
+                    throw $undo_theme_refusal;
+                }
+
                 switch ($undo_op) {
                     case 'raif_set_bot_policies':
                         if ( ! current_user_can( is_multisite() ? 'manage_network_options' : 'manage_options' ) ) {
@@ -8704,12 +8952,14 @@ class Server {
                         if ( $undo_meta_pid <= 0 || $undo_meta_key === '' ) {
                             throw new \Exception('Undo snapshot missing post_id or meta_key.');
                         }
-                        if ( ! current_user_can( 'edit_post', $undo_meta_pid ) ) {
-                            throw new \Exception('edit_post capability required to undo this operation.');
-                        }
                         $undo_meta_pre = isset( $undo_snapshot['pre_op_state'] ) && is_array( $undo_snapshot['pre_op_state'] )
                             ? $undo_snapshot['pre_op_state']
                             : [];
+                        // A page template change came through the template parameter, which needs only edit_post.
+                        $undo_meta_template = ! empty( $undo_meta_pre['template_param'] ) && '_wp_page_template' === $undo_meta_key;
+                        if ( ! current_user_can( 'edit_post', $undo_meta_pid ) || ( $undo_meta_template ? \Royal_MCP\MCP\Support\Protected_Meta::has_spelling_clash( $undo_meta_key, $undo_meta_pid ) : ! \Royal_MCP\MCP\Support\Protected_Meta::may_undo( $undo_meta_pid, $undo_meta_key ) ) ) {
+                            throw new \Exception('The capability the original operation needed is required to undo it.');
+                        }
                         if ( ! array_key_exists( 'prior_value', $undo_meta_pre ) ) {
                             throw new \Exception('Undo snapshot has no prior_value to restore.');
                         }
@@ -8762,7 +9012,7 @@ class Server {
                         if ( $dm_id <= 0 || '' === $dm_key || ! $dm_raw ) {
                             throw new \Exception('Undo snapshot missing its target or values.');
                         }
-                        if ( $dm_term ? ! current_user_can( 'edit_term', $dm_id ) : ( ! current_user_can( 'edit_post', $dm_id ) || ( is_protected_meta( $dm_key, 'post' ) && ! current_user_can( 'edit_post_meta', $dm_id, $dm_key ) ) ) ) {
+                        if ( $dm_term ? ( ! current_user_can( 'edit_term', $dm_id ) || ! \Royal_MCP\MCP\Support\Protected_Meta::may_undo( $dm_id, $dm_key, 'term' ) ) : ( ! current_user_can( 'edit_post', $dm_id ) || ! \Royal_MCP\MCP\Support\Protected_Meta::may_undo( $dm_id, $dm_key ) ) ) {
                             throw new \Exception('The capability the original operation needed is required to undo it.');
                         }
                         wp_cache_delete( $dm_id, $dm_term ? 'term_meta' : 'post_meta' );
@@ -8817,8 +9067,8 @@ class Server {
                         if ( $undo_tmeta_tid <= 0 || $undo_tmeta_key === '' ) {
                             throw new \Exception('Undo snapshot missing term_id or meta_key.');
                         }
-                        if ( ! current_user_can( 'edit_term', $undo_tmeta_tid ) ) {
-                            throw new \Exception('edit_term capability required to undo this operation.');
+                        if ( ! current_user_can( 'edit_term', $undo_tmeta_tid ) || ! \Royal_MCP\MCP\Support\Protected_Meta::may_undo( $undo_tmeta_tid, $undo_tmeta_key, 'term' ) ) {
+                            throw new \Exception('The capability the original operation needed is required to undo it.');
                         }
                         $undo_tmeta_pre = isset( $undo_snapshot['pre_op_state'] ) && is_array( $undo_snapshot['pre_op_state'] )
                             ? $undo_snapshot['pre_op_state']
@@ -10972,9 +11222,6 @@ class Server {
                         if ( $undo_css_theme === '' ) {
                             throw new \Exception('Undo snapshot missing theme_slug.');
                         }
-                        if ( ! current_user_can( 'unfiltered_html' ) ) {
-                            throw new \Exception('unfiltered_html capability required to undo this operation.');
-                        }
                         $cundo_pre     = ( isset( $undo_snapshot['pre_op_state'] ) && is_array( $undo_snapshot['pre_op_state'] ) ) ? $undo_snapshot['pre_op_state'] : [];
                         if ( ! array_key_exists( 'prior_css', $cundo_pre ) ) {
                             throw new \Exception('Undo snapshot has no prior_css to restore.');
@@ -10987,15 +11234,19 @@ class Server {
                         $cundo_res = wp_update_custom_css_post( (string) $cundo_pre['prior_css'], [ 'stylesheet' => $undo_css_theme ] );
                         if ( is_wp_error( $cundo_res ) ) throw new \Exception( esc_html( $cundo_res->get_error_message() ) );
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        $cundo_facts = [
+                            'undone'      => true,
+                            'op'          => $undo_op,
+                            'target'      => $cundo_target,
+                            'restored'    => true,
+                            'byte_count'  => strlen( (string) $cundo_pre['prior_css'] ),
+                        ];
+                        if ( \Royal_MCP\MCP\Support\Post_Access::closes_style( (string) $cundo_pre['prior_css'] ) ) {
+                            $cundo_facts['warnings'] = [ 'The restored CSS contains a closing style tag. It was restored because it was already on the site, but a new write with it is refused: remove it with wp_update_custom_css.' ];
+                        }
                         return \Royal_MCP\MCP\Support\Envelope::success(
                             sprintf( 'Restored prior custom CSS for theme %s (%d bytes).', $undo_css_theme, strlen( (string) $cundo_pre['prior_css'] ) ),
-                            [
-                                'undone'      => true,
-                                'op'          => $undo_op,
-                                'target'      => $cundo_target,
-                                'restored'    => true,
-                                'byte_count'  => strlen( (string) $cundo_pre['prior_css'] ),
-                            ]
+                            $cundo_facts
                         );
 
                     case 'wp_update_permalink_structure':
@@ -11041,8 +11292,8 @@ class Server {
                         if ( $undo_add_pid <= 0 || $undo_add_key === '' || $undo_add_mid <= 0 ) {
                             throw new \Exception('Undo snapshot missing post_id, meta_key, or meta_id.');
                         }
-                        if ( ! current_user_can( 'edit_post', $undo_add_pid ) ) {
-                            throw new \Exception('edit_post capability required to undo this operation.');
+                        if ( ! current_user_can( 'edit_post', $undo_add_pid ) || ! \Royal_MCP\MCP\Support\Protected_Meta::may_undo( $undo_add_pid, $undo_add_key ) ) {
+                            throw new \Exception('The capability the original operation needed is required to undo it.');
                         }
                         $undo_add_pre = isset( $undo_snapshot['pre_op_state'] ) && is_array( $undo_snapshot['pre_op_state'] )
                             ? $undo_snapshot['pre_op_state']
@@ -11593,6 +11844,9 @@ class Server {
                 }
                 $mod_name = \Royal_MCP\MCP\Support\SafeText::field($args['mod_name'] ?? '');
                 if (empty($mod_name)) throw new \Exception('mod_name is required.');
+                if ('custom_css_post_id' === strtolower($mod_name)) {
+                    throw new \Exception('custom_css_post_id cannot be changed: use wp_update_custom_css.');
+                }
 
                 // Gate 1: master toggle
                 $rmcp_settings = get_option('royal_mcp_settings', []);
@@ -11677,8 +11931,7 @@ class Server {
                     throw new \Exception('You do not have permission to read custom CSS.');
                 }
                 $theme_slug = isset($args['theme_slug']) ? sanitize_key($args['theme_slug']) : get_stylesheet();
-                $css = wp_get_custom_css($theme_slug);
-                $post = wp_get_custom_css_post($theme_slug);
+                list($css, $post) = \Royal_MCP\MCP\Support\Post_Access::read_custom_css($theme_slug);
                 return [
                     'css'        => (string) $css,
                     'theme_slug' => $theme_slug,
@@ -11693,15 +11946,13 @@ class Server {
                 $css_new = $args['css'] ?? null;
                 if (!is_string($css_new)) throw new \Royal_MCP\MCP\Support\Tool_Refusal('invalid_args', 'css is required and must be a string (send an empty string to clear the custom CSS).');
                 $css_theme = isset($args['theme_slug']) ? sanitize_key($args['theme_slug']) : get_stylesheet();
-                $css_before = (string) wp_get_custom_css( $css_theme );
+                $css_before = \Royal_MCP\MCP\Support\Post_Access::read_custom_css( $css_theme )[0];
                 $css_sha    = hash( 'sha256', $css_before );
-                $css_refusal = null;
-                $rmcp_settings = get_option('royal_mcp_settings', []);
-                if (!current_user_can('unfiltered_html')) {
-                    $css_refusal = [ 'unfiltered_html_required', 'unfiltered_html capability required to update custom CSS.' ];
-                } elseif (empty($rmcp_settings['allow_theme_writes'])) {
-                    $css_refusal = [ 'theme_writes_off', 'Theme writes are disabled. Enable "Allow AI to modify theme appearance" under Royal MCP > Settings.' ];
+                $css_gate    = \Royal_MCP\MCP\Support\Post_Access::custom_css_refusal();
+                if ( null === $css_gate ) {
+                    $css_gate = \Royal_MCP\MCP\Support\Post_Access::style_close_refusal( $css_new );
                 }
+                $css_refusal = null === $css_gate ? null : [ $css_gate->error_code(), $css_gate->getMessage() ];
                 if ( isset( $args['expected_sha256'] ) ) {
                     if ( ! is_string( $args['expected_sha256'] ) || ! preg_match( '/^[a-f0-9]{64}$/i', $args['expected_sha256'] ) ) {
                         throw new \Royal_MCP\MCP\Support\Tool_Refusal('invalid_args', 'expected_sha256 must be the 64-character sha256 (hex) of the CSS as you read it.');
@@ -11747,7 +11998,12 @@ class Server {
                     \Royal_MCP\MCP\Support\WriteVerifier::throw_if_dropped( $css_diff, 'wp_update_custom_css' );
                 } catch ( \Exception $css_dropped ) {
                     // Put the stylesheet back so a refused write changes nothing.
-                    wp_update_custom_css_post( $css_before, [ 'stylesheet' => $css_theme ] );
+                    \Royal_MCP\MCP\Support\Post_Access::open_write_guard( 'mcp_undo_last_operation', true );
+                    try {
+                        wp_update_custom_css_post( $css_before, [ 'stylesheet' => $css_theme ] );
+                    } finally {
+                        \Royal_MCP\MCP\Support\Post_Access::close_write_guard();
+                    }
                     throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'field_dropped', $css_dropped->getMessage() . ' The CSS was put back as it was.', [ 'theme_slug' => $css_theme ] );
                 }
 
@@ -11814,7 +12070,7 @@ class Server {
                 if (!empty($args['sidebar'])) {
                     $request->set_param('sidebar', sanitize_key((string) $args['sidebar']));
                 }
-                $response = rest_do_request($request);
+                $response = self::rest_read_widgets($request);
                 if ($response->is_error()) {
                     throw new \Exception(esc_html($response->as_error()->get_error_message()));
                 }
@@ -11848,7 +12104,7 @@ class Server {
                 }
                 $gw_request = new \WP_REST_Request('GET', '/wp/v2/widgets/' . $gw_id);
                 $gw_request->set_param('context', 'edit');
-                $gw_response = rest_do_request($gw_request);
+                $gw_response = self::rest_read_widgets($gw_request);
                 if ($gw_response->is_error()) {
                     throw new \Royal_MCP\MCP\Support\Tool_Refusal('widget_not_found', 'Widget not found: ' . $gw_id . '. Use wp_get_widgets to list them.', [ 'id' => $gw_id ]);
                 }
@@ -11866,7 +12122,7 @@ class Server {
                     throw new \Exception('edit_theme_options capability required to list sidebars.');
                 }
                 $request = new \WP_REST_Request('GET', '/wp/v2/sidebars');
-                $response = rest_do_request($request);
+                $response = self::rest_read_widgets($request);
                 if ($response->is_error()) {
                     throw new \Exception(esc_html($response->as_error()->get_error_message()));
                 }
@@ -12015,6 +12271,7 @@ class Server {
                         'noindex'        => in_array('noindex', (array) get_post_meta($post_id, 'rank_math_robots', true), true),
                         'og_title'       => (string) get_post_meta($post_id, 'rank_math_facebook_title', true),
                         'og_description' => (string) get_post_meta($post_id, 'rank_math_facebook_description', true),
+                        'canonical'      => (string) get_post_meta($post_id, 'rank_math_canonical_url', true),
                         'slug'           => $slug,
                     ];
                 }
@@ -12070,6 +12327,7 @@ class Server {
                 if (!current_user_can('edit_post', $post_id)) {
                     throw new \Exception('edit_post capability required for this post.');
                 }
+                \Royal_MCP\MCP\Support\Post_Access::assert_theme_write((string) get_post_type($post_id));
                 $detected = $this->detect_seo_plugin();
                 $seo_field_keys = ['title', 'description', 'focus_keyword', 'og_title', 'og_description', 'twitter_title', 'twitter_description', 'twitter_image', 'noindex'];
                 $wants_seo_field = false;
@@ -12652,6 +12910,9 @@ class Server {
                     throw new \Exception('edit_post capability required for the parent post.');
                 }
                 $rr_parent = get_post( (int) $revision->post_parent );
+                if ( $rr_parent ) {
+                    \Royal_MCP\MCP\Support\Post_Access::assert_theme_write( (string) $rr_parent->post_type, (string) $revision->post_content );
+                }
                 $rr_prior  = $rr_parent ? [
                     'post_title'   => (string) $rr_parent->post_title,
                     'post_content' => (string) $rr_parent->post_content,
@@ -12988,15 +13249,15 @@ class Server {
      * (mapped, translated, compatible, NAT64, 6to4) is judged by the IPv4 address inside it; Teredo
      * and local-use NAT64 addresses are refused because the address they reach cannot be checked.
      */
-    private static function is_public_ip($ip) {
+    public static function is_public_ip($ip) {
         $ip = trim((string) $ip, '[]');
         if (!filter_var($ip, FILTER_VALIDATE_IP)) {
             return false;
         }
         if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
             $n = ip2long($ip);
-            if (false === $n || 0x64400000 === ($n & 0xFFC00000) || 0xC6120000 === ($n & 0xFFFE0000)) {
-                return false; // 100.64.0.0/10, 198.18.0.0/15
+            if (false === $n || 0x64400000 === ($n & 0xFFC00000) || 0xC6120000 === ($n & 0xFFFE0000) || 0xC0000000 === ($n & 0xFFFFFF00) || 0xE0000000 === ($n & 0xF0000000)) {
+                return false; // 100.64.0.0/10, 198.18.0.0/15, 192.0.0.0/24, 224.0.0.0/4
             }
             return (bool) filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
         }
@@ -13029,11 +13290,12 @@ class Server {
 
     /**
      * Check one address the download is about to request: https (http only for a local host on
-     * the first request), and every IPv4 and IPv6 address the host resolves to is public.
+     * the first request, or when the caller allows it), and every IPv4 and IPv6 address the host
+     * resolves to is public.
      *
      * @return array [ host, first checked address or '' for a local host ]
      */
-    private static function check_download_url($url, $first_request) {
+    private static function check_download_url($url, $first_request, $allow_http = false) {
         $parts = wp_parse_url($url);
         if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
             throw new \Exception($first_request ? 'URL must include scheme and host.' : 'The link redirected to an address without a scheme and host.');
@@ -13042,8 +13304,8 @@ class Server {
         $host   = strtolower($parts['host']);
         $bare   = trim($host, '[]');
         $is_local_host = $first_request && in_array($host, ['localhost', '127.0.0.1'], true);
-        if ($scheme !== 'https' && !($scheme === 'http' && $is_local_host)) {
-            throw new \Exception($first_request ? 'Only https:// URLs are allowed.' : 'The link redirected to a non-https address; nothing was downloaded.');
+        if ($scheme !== 'https' && !($scheme === 'http' && ($is_local_host || $allow_http))) {
+            throw new \Exception($first_request ? ($allow_http ? 'Only http:// and https:// URLs are allowed.' : 'Only https:// URLs are allowed.') : 'The link redirected to a non-https address; nothing was downloaded.');
         }
         if ($is_local_host) {
             return [$bare, ''];
@@ -13071,14 +13333,14 @@ class Server {
         return [$bare, (string) $ips[0]];
     }
 
-    private function download_media($url, $filename, $images_only) {
+    private function download_media($url, $filename, $images_only, $allow_http = false) {
         $parts = wp_parse_url($url);
         // Redirects are followed here, not by the HTTP client, so every hop gets the same checks,
         // and the connection is pinned to the address that was checked (curl transport).
         $current = (string) $url;
         $response = null;
         for ($hop = 0; $hop <= 3; $hop++) {
-            list($pin_host, $pin_ip) = self::check_download_url($current, 0 === $hop);
+            list($pin_host, $pin_ip) = self::check_download_url($current, 0 === $hop, $allow_http);
             $pin = static function ($handle, $r, $request_url) use ($pin_host, $pin_ip) {
                 if ('' === $pin_ip || !defined('CURLOPT_RESOLVE')) {
                     return;
@@ -13149,6 +13411,25 @@ class Server {
             $filename .= '.' . $ext;
         }
         return [$body, $filename];
+    }
+
+    /**
+     * Bring an image from a public address into the media library, under the address, redirect
+     * and file checks of wp_upload_media_from_url. Plain http is accepted too.
+     *
+     * @param string $url Image address.
+     * @return int|\WP_Error Attachment id.
+     */
+    public static function sideload_public_image($url) {
+        try {
+            $server = new self();
+            list($bytes, $name) = $server->download_media((string) $url, '', true, true);
+            $attachment_id = (int) $server->sideload_media_from_bytes($bytes, $name, '', '', '', true);
+            add_post_meta($attachment_id, '_source_url', wp_slash((string) $url));
+            return $attachment_id;
+        } catch (\Exception $e) {
+            return new \WP_Error('sideload_failed', $e->getMessage());
+        }
     }
 
     /** A failed download in words: redirects, timeouts and refused addresses. */

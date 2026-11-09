@@ -232,6 +232,7 @@ class Elementor {
 					'type'       => 'object',
 					'properties' => [
 						'category' => [ 'type' => 'string', 'description' => 'Optional category to filter by (e.g. "basic", "general", "pro-elements", "woocommerce-elements", "theme-elements").' ],
+						'summary'  => [ 'type' => 'boolean', 'description' => 'Return only widget_type and title for each widget, for a much smaller reply. Default false.' ],
 					],
 				],
 			],
@@ -2782,6 +2783,15 @@ class Elementor {
 				'keywords'    => method_exists( $widget, 'get_keywords' ) ? array_values( (array) $widget->get_keywords() ) : [],
 				'is_atomic'   => ( strpos( $slug, 'a-' ) === 0 || strpos( $slug, 'e-' ) === 0 ),
 			];
+		}
+
+		if ( ! empty( $args['summary'] ) ) {
+			$widgets = array_map(
+				static function ( $widget ) {
+					return [ 'widget_type' => $widget['widget_type'], 'title' => $widget['title'] ];
+				},
+				$widgets
+			);
 		}
 
 		return [

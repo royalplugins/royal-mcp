@@ -270,24 +270,13 @@ class Composers {
 	// ----------------------------------------------------------------------
 
 	/**
-	 * Sideload a remote image URL into the WordPress media library and
-	 * return the attachment ID. Uses WP core's media_sideload_image with
-	 * 'id' return type. Requires the wp-admin/includes/* files to be
-	 * loaded (they typically aren't in a REST context).
+	 * Bring a remote image into the media library, under the same address, redirect and
+	 * file checks as wp_upload_media_from_url.
 	 *
 	 * @return int|\WP_Error attachment_id on success, WP_Error on failure.
 	 */
 	private static function sideload_media( $url ) {
-		if ( ! function_exists( 'media_sideload_image' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/media.php';
-			require_once ABSPATH . 'wp-admin/includes/file.php';
-			require_once ABSPATH . 'wp-admin/includes/image.php';
-		}
-		$result = media_sideload_image( $url, 0, null, 'id' );
-		if ( is_wp_error( $result ) ) {
-			return $result;
-		}
-		return (int) $result;
+		return \Royal_MCP\MCP\Server::sideload_public_image( $url );
 	}
 
 	/**

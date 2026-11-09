@@ -80,12 +80,14 @@ class SiteVault {
 			],
 			[
 				'name'        => 'sv_create_backup',
-				'description' => 'Trigger a new backup (runs asynchronously)',
+				'description' => 'Trigger a new backup (runs asynchronously). With type plugins or themes, plugins or themes can name the folders to back up instead of all of them.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
-						'type' => [ 'type' => 'string', 'description' => 'Backup type', 'enum' => [ 'full', 'database', 'files', 'plugins', 'themes', 'uploads' ] ],
-						'name' => [ 'type' => 'string', 'description' => 'Backup name (optional)' ],
+						'type'    => [ 'type' => 'string', 'description' => 'Backup type', 'enum' => [ 'full', 'database', 'files', 'plugins', 'themes', 'uploads' ] ],
+						'name'    => [ 'type' => 'string', 'description' => 'Backup name (optional)' ],
+						'plugins' => [ 'type' => 'array', 'items' => [ 'type' => 'string' ], 'description' => 'With type plugins: only these folders in the plugins directory, for example ["woocommerce"].' ],
+						'themes'  => [ 'type' => 'array', 'items' => [ 'type' => 'string' ], 'description' => 'With type themes: only these folders in the themes directory.' ],
 					],
 				],
 			],
@@ -160,13 +162,27 @@ class SiteVault {
 					$backup_args['name'] = sanitize_text_field( $args['name'] );
 				}
 
+				$async_class = self::async_backup_class();
+				foreach ( [ 'plugins', 'themes' ] as $folder_key ) {
+					if ( ! array_key_exists( $folder_key, $args ) || [] === $args[ $folder_key ] ) {
+						continue;
+					}
+					if ( ! is_array( $args[ $folder_key ] ) || array_filter( $args[ $folder_key ], static function ( $folder ) { return ! is_string( $folder ); } ) ) {
+						throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', esc_html( $folder_key ) . ' must be a list of folder names.' );
+					}
+					// A version without named folders would back up the whole component and say nothing.
+					if ( null === $async_class || ! method_exists( $async_class, 'named_folders' ) ) {
+						throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'not_supported', 'This version of SiteVault cannot back up named folders. Update SiteVault Pro, or back up the whole component.' );
+					}
+					$backup_args[ $folder_key ] = array_values( $args[ $folder_key ] );
+				}
+
 				// Check if a backup is already running
 				if ( $manager->has_active_backup() ) {
 					throw new \Exception( 'A backup is already in progress. Please wait for it to complete.' );
 				}
 
 				// Use async backup to avoid timeout
-				$async_class = self::async_backup_class();
 				if ( $async_class !== null ) {
 					$backup_id = $async_class::instance()->start_backup( $backup_args );
 				} else {

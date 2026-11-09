@@ -257,9 +257,14 @@ class SolidSecurity {
 		$module      = null;
 		$raw_context = $r->lockout_context ?? '';
 		if ( is_string( $raw_context ) && '' !== $raw_context ) {
-			$decoded = @unserialize( $raw_context );
-			if ( $decoded instanceof \iThemesSecurity\Lib\Lockout\Context && method_exists( $decoded, 'get_lockout_module' ) ) {
-				$module = $decoded->get_lockout_module();
+			// Read as plain data so no object is built from a stored row.
+			$decoded = @unserialize( $raw_context, [ 'allowed_classes' => false ] ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.PHP.DiscouragedPHPFunctions.serialize_unserialize
+			if ( is_object( $decoded ) ) {
+				foreach ( (array) $decoded as $field => $value ) {
+					if ( is_string( $value ) && 'lockout_module' === substr( (string) $field, -14 ) ) {
+						$module = $value;
+					}
+				}
 			}
 		}
 

@@ -181,27 +181,29 @@ class Duplicator {
 	private static function format_package_detail( $row ) {
 		$out = self::format_package_summary( $row );
 
-		// Try to hydrate the full DUP_Package object from the serialized blob
-		// for extra detail (archive size, filenames). Row.package is populated
-		// by Duplicator's own save flow; direct DB inserts leave it empty.
-		$package_obj = null;
+		// Extra detail from the serialized blob, read as plain data so no object
+		// is built from a stored row. Row.package is populated by Duplicator's
+		// own save flow; direct DB inserts leave it empty.
+		$package = null;
 		if ( ! empty( $row->package ) && is_string( $row->package ) ) {
-			$decoded = @unserialize( $row->package );
+			$decoded = @unserialize( $row->package, [ 'allowed_classes' => false ] ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.PHP.DiscouragedPHPFunctions.serialize_unserialize
 			if ( is_object( $decoded ) ) {
-				$package_obj = $decoded;
+				$package = (array) $decoded;
 			}
 		}
 
-		if ( $package_obj ) {
-			if ( method_exists( $package_obj, 'getArchiveSize' ) ) {
-				$out['archive_size_bytes'] = (int) $package_obj->getArchiveSize();
+		if ( $package ) {
+			$archive   = isset( $package['Archive'] ) ? (array) $package['Archive'] : [];
+			$installer = isset( $package['Installer'] ) ? (array) $package['Installer'] : [];
+			if ( isset( $archive['Size'] ) ) {
+				$out['archive_size_bytes'] = (int) $archive['Size'];
 			}
 			// File names are left out: with the package hash in them they are
 			// download links to the whole site and its database.
-			$out['has_archive']   = method_exists( $package_obj, 'getArchiveFilename' ) && '' !== (string) $package_obj->getArchiveFilename();
-			$out['has_installer'] = method_exists( $package_obj, 'getInstallerFilename' ) && '' !== (string) $package_obj->getInstallerFilename();
-			if ( isset( $package_obj->Notes ) ) {
-				$out['notes'] = (string) $package_obj->Notes;
+			$out['has_archive']   = ! empty( $archive['File'] );
+			$out['has_installer'] = ! empty( $installer['File'] );
+			if ( isset( $package['Notes'] ) ) {
+				$out['notes'] = (string) $package['Notes'];
 			}
 		}
 		return $out;
