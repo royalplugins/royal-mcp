@@ -80,6 +80,18 @@ jQuery(document).ready(function($) {
     $('#allow_option_writes').on('change', syncOptionAllowlist);
     syncOptionAllowlist();
 
+    // Adds the Divi key names to the protected meta list; the admin still saves.
+    $('#rmcp-meta-divi-starter').on('click', function() {
+        const $list = $('#writable_meta_keys');
+        const lines = $list.val().split(/\r?\n/).map(function(line) { return line.trim(); }).filter(Boolean);
+        String($(this).data('keys')).split('\n').forEach(function(key) {
+            if (lines.indexOf(key) === -1) {
+                lines.push(key);
+            }
+        });
+        $list.val(lines.join('\n'));
+    });
+
     // Generate OAuth credentials
     $(document).on('click', '.generate-oauth', function(e) {
         e.preventDefault();

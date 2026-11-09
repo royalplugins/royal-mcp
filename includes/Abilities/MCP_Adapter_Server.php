@@ -171,8 +171,21 @@ class MCP_Adapter_Server {
 			array( \WP\MCP\Transport\HttpTransport::class ),
 			null, // error_handler → NullMcpErrorHandler default
 			null, // observability_handler → NullMcpObservabilityHandler default
-			$ability_names // tools (explicit list)
+			$ability_names, // tools (explicit list)
+			array(), // resources
+			array(), // prompts
+			array( __CLASS__, 'transport_allowed' )
 		);
+	}
+
+	/**
+	 * Who may reach this server at all, tool listing included: the site owner's choice
+	 * of who uses tools outside the Royal MCP endpoint.
+	 *
+	 * @return bool
+	 */
+	public static function transport_allowed() {
+		return is_user_logged_in() && \Royal_MCP\MCP\Support\Route_Roles::outside_allowed();
 	}
 
 	/**

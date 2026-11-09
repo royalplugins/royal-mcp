@@ -307,7 +307,9 @@ class ContactForm7 {
 			return strlen( $b ) - strlen( $a );
 		} );
 		foreach ( array_unique( $values ) as $v ) {
-			$subject = str_ireplace( $v, '[hidden]', $subject );
+			$masked  = preg_replace( '/' . preg_quote( $v, '/' ) . '/iu', '[hidden]', $subject );
+			// Text that isn't valid UTF-8 makes the pattern fail; a plain match still hides the value.
+			$subject = null !== $masked ? $masked : str_ireplace( $v, '[hidden]', $subject ); // mb-check-ignore
 		}
 		return Form_Entry_Privacy::free_text( $subject, $reveal );
 	}

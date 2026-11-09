@@ -113,11 +113,22 @@ class Php_Errors {
 		return '(outside WordPress)/' . wp_basename( $path );
 	}
 
+	/**
+	 * $text with every copy of $path replaced, whichever slashes it was written with.
+	 * Only the path changes: the rest of the text, URLs included, stays as it is.
+	 */
+	private static function swap_path( $text, $path, $with ) {
+		$parts   = array_map( static function ( $part ) { return preg_quote( $part, '#' ); }, explode( '/', wp_normalize_path( (string) $path ) ) );
+		$pattern = '#' . implode( '[\\\\/]+', $parts ) . '#' . ( '\\' === DIRECTORY_SEPARATOR ? 'i' : '' );
+		$out     = preg_replace_callback( $pattern, static function () use ( $with ) { return $with; }, (string) $text );
+		return null === $out ? (string) $text : $out;
+	}
+
 	/** A message with the WordPress folder taken out of every path in it. */
-	private static function strip_paths( $message ) {
-		$message = wp_normalize_path( (string) $message );
+	public static function strip_paths( $message ) {
+		$message = (string) $message;
 		foreach ( self::folder_forms( ABSPATH ) as $root ) {
-			$message = '\\' === DIRECTORY_SEPARATOR ? str_ireplace( $root, '', $message ) : str_replace( $root, '', $message );
+			$message = self::swap_path( $message, $root, '' );
 		}
 		return $message;
 	}
@@ -150,12 +161,13 @@ class Php_Errors {
 	/** Add one fatal error to the record (deduplicated by file, line and message). */
 	public static function record( array $e ) {
 		$file = self::relative( $e['file'] ?? '' );
-		// Fatal messages can quote arguments and config values, so credentials are hidden before storing.
-		// The failing file's own path in the message is shown the same way as the file field.
-		$raw     = (string) ( $e['message'] ?? '' );
-		$abs     = wp_normalize_path( (string) ( $e['file'] ?? '' ) );
-		$raw     = '' !== $abs ? str_replace( $abs, $file, wp_normalize_path( $raw ) ) : $raw;
-		$message = self::cut( Secret_Scrubber::scrub_text( self::strip_paths( $raw ), 'strict' ) );
+		// Fatal messages can quote arguments and config values, so credentials are hidden before storing,
+		// on the text as PHP wrote it. The failing file's own path in the message is shown the same way as
+		// the file field.
+		$message = Secret_Scrubber::scrub_text( (string) ( $e['message'] ?? '' ), 'strict' );
+		$abs     = (string) ( $e['file'] ?? '' );
+		$message = '' !== $abs ? self::swap_path( $message, $abs, $file ) : $message;
+		$message = self::cut( self::strip_paths( $message ) );
 		$line    = (int) ( $e['line'] ?? 0 );
 		list( $plugin, $theme ) = self::owner( $e['file'] ?? '' );
 		$key  = md5( $file . '|' . $line . '|' . $message );
@@ -243,7 +255,7 @@ class Php_Errors {
 			if ( is_object( $store ) && method_exists( $store, 'get_all' ) ) {
 				foreach ( (array) $store->get_all() as $slug => $err ) {
 					$msg    = is_array( $err ) ? (string) ( $err['message'] ?? '' ) : '';
-					$rows[] = [ 'slug' => (string) $slug, 'message' => self::cut( Secret_Scrubber::scrub_text( self::strip_paths( $msg ), 'strict' ) ) ];
+					$rows[] = [ 'slug' => (string) $slug, 'message' => self::cut( self::strip_paths( Secret_Scrubber::scrub_text( $msg, 'strict' ) ) ) ];
 				}
 			}
 			return $rows;

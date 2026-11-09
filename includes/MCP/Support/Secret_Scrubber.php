@@ -22,6 +22,12 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 final class Secret_Scrubber {
 
+	/** The word bearer, any separators, and the value after it; an optional word token may sit between. */
+	const BARE_BEARER = '/(?<![a-z0-9])(bearer)(?:[\s:=+,_\-]|%(?:25)?(?:20|09|0a|0d|2b)|%c2%a0|\xC2\xA0|\xE2\x80[\x80-\x8A\xAF]|\xE3\x80\x80|\\\\[nrt]|\\\\u00(?:20|09|0a|0d|a0))+(?:token(?:[\s:=+,_\-]|%(?:25)?(?:20|09|0a|0d|2b)|\xC2\xA0)+)?["\'<]?([a-z0-9._~+\/=:\-]+)/i';
+
+	/** Words long enough to pass for a value that commonly follow the word bearer in a sentence. */
+	const BEARER_PROSE = [ 'authentication', 'authorization', 'authorisation', 'authorized', 'authorised', 'credential', 'credentials', 'instrument', 'instruments', 'certificate', 'certificates', 'document', 'documents', 'security', 'securities', 'required', 'requires', 'challenge', 'challenges', 'receives', 'presents' ];
+
 	const MARKER = '[REDACTED]';
 
 	/** Strings longer than this are scanned as text but not decoded. */
@@ -339,6 +345,11 @@ final class Secret_Scrubber {
 		return $words === count( $parts ) || ( count( $parts ) >= 5 && $words / count( $parts ) >= 0.8 );
 	}
 
+	/** Whether a string is a stored password hash: phpass, bcrypt (also WordPress's prefixed form), crypt or Argon2. */
+	private static function is_password_hash( $value ) {
+		return 1 === preg_match( '/^(?:\$[PHS]\$[.\/0-9A-Za-z]{30,}|(?:\$wp)?\$2[abxy]\$\d{2}\$[.\/0-9A-Za-z]{53}|\$argon2(?:i|d|id)\$\S+|\$[156]\$\S{8,})\z/', trim( (string) $value ) );
+	}
+
 	/** Whether a string, taken whole, looks like a credential by its shape alone. */
 	public static function is_secret_value( $value ) {
 		if ( ! is_string( $value ) ) {
@@ -353,6 +364,9 @@ final class Secret_Scrubber {
 			return true;
 		}
 		if ( preg_match( '/^-----BEGIN [A-Z ]*PRIVATE KEY-----/', $value ) ) {
+			return true;
+		}
+		if ( self::is_password_hash( $value ) ) {
 			return true;
 		}
 		if ( $len < 32 || $len > 4096 ) {
@@ -453,6 +467,9 @@ final class Secret_Scrubber {
 		}
 		if ( is_string( $value ) ) {
 			if ( self::is_identifier_name( $key_hint ) ) {
+				if ( self::is_password_hash( $value ) ) {
+					return self::hidden();
+				}
 				// Hashes, slugs and hook names: opened and scanned, not judged by their own shape.
 				return self::scrub_string( $value, $opts, $depth, false );
 			}
@@ -493,11 +510,13 @@ final class Secret_Scrubber {
 			}
 		}
 
-		// Name/value rows: [ { "name": "api_key", "value": "..." } ], and field
+		// Name/value rows: [ { "name": "api_key", "value": "..." } ], database rows
+		// { "option_name": "...", "option_value": "..." }, and field
 		// definitions whose default is the stored value: { "name": "api_key", "default_value": "..." }.
 		$row_secret = false;
-		foreach ( [ 'name', 'key', 'field', 'param', 'header', 'option' ] as $nk ) {
-			if ( isset( $value[ $nk ] ) && is_string( $value[ $nk ] ) && self::is_secret_name( $value[ $nk ] ) ) {
+		foreach ( [ 'name', 'key', 'field', 'param', 'header', 'option', 'option_name', 'meta_key', 'id' ] as $nk ) {
+			if ( isset( $value[ $nk ] ) && is_string( $value[ $nk ] ) && self::is_secret_name( $value[ $nk ] )
+				&& ( 'id' !== $nk || ! self::is_weak_name( $value[ $nk ] ) ) ) {
 				$row_secret = $value[ $nk ];
 				break;
 			}
@@ -509,7 +528,7 @@ final class Secret_Scrubber {
 
 		$out = [];
 		foreach ( $value as $k => $v ) {
-			if ( false !== $row_secret && is_string( $k ) && in_array( $k, [ 'value', 'val', 'data', 'content', 'secret', 'default', 'default_value' ], true ) ) {
+			if ( false !== $row_secret && is_string( $k ) && in_array( $k, [ 'value', 'val', 'data', 'content', 'secret', 'default', 'default_value', 'option_value', 'meta_value' ], true ) ) {
 				$out[ $k ] = self::value_under_secret_name( $v, $row_secret );
 				continue;
 			}
@@ -724,6 +743,34 @@ final class Secret_Scrubber {
 	}
 
 	/**
+	 * Whether what follows the word bearer is a credential rather than a word of a sentence.
+	 * Anything with a digit or an inner capital is one, and so is a long unbroken word. Words
+	 * joined by hyphens or dots are a phrase unless a piece has too few vowels to be a word.
+	 *
+	 * @param string $value Text after the word.
+	 * @return bool
+	 */
+	private static function is_bearer_value( $value ) {
+		$value = rtrim( $value, '.-_~+/=:' );
+		if ( strlen( $value ) < 8 || in_array( strtolower( $value ), self::BEARER_PROSE, true ) ) {
+			return false;
+		}
+		if ( 1 === preg_match( '/\d|[a-z][A-Z]/', $value ) ) {
+			return true;
+		}
+		$pieces = preg_split( '/[._~\-]+/', $value );
+		if ( count( $pieces ) < 2 ) {
+			return true;
+		}
+		foreach ( $pieces as $piece ) {
+			if ( strlen( $piece ) >= 2 && preg_match_all( '/[aeiouy]/i', $piece ) / strlen( $piece ) < 0.2 ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
 	 * Replace credentials inside free text (logs, dumps, URLs, markup, prose).
 	 *
 	 * @param string   $s    Text.
@@ -745,12 +792,12 @@ final class Secret_Scrubber {
 			$out = self::scrub_text( $s, $mode );
 			return strtr( (string) $out, $held );
 		}
-		// Nothing that could hold a credential: no separator, URL, dump, markup or key prefix.
-		if ( strlen( $s ) < 8 || ! preg_match( '/[:=@\/\["\'<%&]|-----BEGIN|(?:sk|rk)_|whsec_|SG\.|xox|gh[pousr]_|github_pat_|glpat-|AKIA|AIza|ya29\.|key-|EAA|sq0|shp|npm_|eyJ|Basic |[A-Za-z0-9_\-]{40}/', $s ) ) {
+		// Nothing that could hold a credential: no separator, URL, dump, markup, bearer word or key prefix.
+		if ( strlen( $s ) < 8 || ! preg_match( '/[:=@\/\["\'<%&]|(?i:bearer|token[ \t])|-----BEGIN|(?:sk|rk)_|whsec_|SG\.|xox|gh[pousr]_|github_pat_|glpat-|AKIA|AIza|ya29\.|key-|EAA|sq0|shp|npm_|eyJ|Basic |[A-Za-z0-9_\-]{40}/', $s ) ) {
 			return $s;
 		}
 		// A whole string of base64 is data, not text with name=value pairs in it.
-		if ( preg_match( '/^(?:[A-Za-z0-9+\/]{16,}={0,2}|[A-Za-z0-9+\/]{8,}={1,2})$/', $s ) ) {
+		if ( 0 !== stripos( $s, 'bearer' ) && preg_match( '/^(?:[A-Za-z0-9+\/]{16,}={0,2}|[A-Za-z0-9+\/]{8,}={1,2})$/', $s ) ) {
 			return $s;
 		}
 		$strict = 'content' !== $mode;
@@ -765,6 +812,15 @@ final class Secret_Scrubber {
 		$steps[] = [ '/\b((?:x-api-key|x-auth-token|api-key|x-access-token)[ \t]*:[ \t]*"?)[^\s"]{8,}/i', '$1' . $m ];
 		$steps[] = [ '/\b(Basic[ \t]+)[A-Za-z0-9+\/]{12,}={0,2}(?![A-Za-z0-9+\/=])/', '$1' . $m ];
 		if ( $strict ) {
+			// A bare bearer credential in free text, in any case and after any separator.
+			$steps[] = [
+				self::BARE_BEARER,
+				static function ( $x ) use ( $m ) {
+					return self::is_bearer_value( $x[2] ) ? $x[1] . ' ' . $m : $x[0];
+				},
+			];
+			// The word token before a value with letters and digits; prose rarely has one.
+			$steps[] = [ '/(?<![A-Za-z0-9_\-])(token)[ \t]+(?=[A-Za-z0-9._~+\/=\-]*\d)(?=[A-Za-z0-9._~+\/=\-]*[A-Za-z])[A-Za-z0-9._~+\/=\-]{16,}/i', '$1 ' . $m ];
 			$steps[] = [
 				'/\b((?:set-)?cookie[ \t]*:[ \t]*)([^\r\n]+)/i',
 				static function ( $x ) use ( $m ) {
@@ -784,6 +840,22 @@ final class Secret_Scrubber {
 					$url  = substr( $url, 0, -strlen( $tail ) );
 				}
 				return self::scrub_url( $url ) . $tail;
+			},
+		];
+		// The same URL with one slash, the form a path clean-up leaves.
+		$steps[] = [
+			'#\b[a-z][a-z0-9+.\-]{1,15}:/(?!/)[^\s"\'<>\\\\]+#i',
+			static function ( $x ) {
+				$url  = $x[0];
+				$tail = '';
+				if ( preg_match( '/[).,;:!?]+$/', $url, $tm ) ) {
+					$tail = $tm[0];
+					$url  = substr( $url, 0, -strlen( $tail ) );
+				}
+				$at    = strpos( $url, ':/' );
+				$full  = substr( $url, 0, $at ) . '://' . substr( $url, $at + 2 );
+				$clean = self::scrub_url( $full );
+				return ( $clean === $full ? $url : substr( $clean, 0, $at ) . ':/' . substr( $clean, $at + 3 ) ) . $tail;
 			},
 		];
 		$steps[] = [

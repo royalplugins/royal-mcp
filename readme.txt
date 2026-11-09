@@ -4,7 +4,7 @@ Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
 Tested up to: 7.1
-Stable tag: 1.5.15
+Stable tag: 1.5.16
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -282,6 +282,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 10. Royal MCP tool list in ChatGPT after connection
 
 == Changelog ==
+
+= 1.5.16 =
+* Security: Protected meta keys are enforced more strictly; admins can now allow specific keys under Settings, and page tools accept a template.
 
 = 1.5.15 =
 * New: MailPoet tools manage lists, subscribers and newsletter drafts, send tests, read stats, and schedule a send confirmed with the exact recipient count.
@@ -840,6 +843,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release.
 
 == Upgrade Notice ==
+
+= 1.5.16 =
+Security release: protected meta keys are enforced more strictly; recommended for all sites.
 
 = 1.5.15 =
 Form entries now hide personal details by default, and new MailPoet, Relevanssi, Ninja Forms and Fluent Forms tools; recommended for all sites.

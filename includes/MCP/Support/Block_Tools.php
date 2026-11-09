@@ -1326,6 +1326,7 @@ class Block_Tools {
 		if ( ! current_user_can( 'edit_post', $post->ID ) ) {
 			throw new \Exception( 'You do not have permission to edit this post.' );
 		}
+		Post_Access::assert_theme_write( (string) $post->post_type );
 		if ( self::is_elementor_page( $post ) ) {
 			throw new \Exception( 'This page is built with Elementor, which rebuilds its content from its own data, so block changes would be lost. Use the elementor_* tools.' );
 		}

@@ -63,7 +63,7 @@ class Elementor_Atomic {
 		if ( $case_insensitive ) {
 			$out = preg_replace( '/' . preg_quote( $find, '/' ) . '/iu', str_replace( [ '\\', '$' ], [ '\\\\', '\\$' ], $replace ), $subject, -1, $n );
 			if ( null === $out ) {
-				$out = str_ireplace( $find, $replace, $subject, $n );
+				$out = str_ireplace( $find, $replace, $subject, $n ); // mb-check-ignore
 			}
 		} else {
 			$out = str_replace( $find, $replace, $subject, $n );
