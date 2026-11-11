@@ -1380,7 +1380,7 @@ class WooCommerce {
 				$uo_before    = [];
 				if ( ! empty( $args['billing'] ) && is_array( $args['billing'] ) ) {
 					foreach ( $uo_billing_keys as $k ) {
-						if ( array_key_exists( $k, $args['billing'] ) ) {
+						if ( isset( $args['billing'][ $k ] ) && is_scalar( $args['billing'][ $k ] ) ) {
 							$sanitized = ( $k === 'email' ) ? sanitize_email( (string) $args['billing'][ $k ] ) : sanitize_text_field( (string) $args['billing'][ $k ] );
 							$uo_requested[ "billing.$k" ] = $sanitized;
 							$getter                       = 'get_billing_' . $k;
@@ -1390,7 +1390,7 @@ class WooCommerce {
 				}
 				if ( ! empty( $args['shipping'] ) && is_array( $args['shipping'] ) ) {
 					foreach ( $uo_shipping_keys as $k ) {
-						if ( array_key_exists( $k, $args['shipping'] ) ) {
+						if ( isset( $args['shipping'][ $k ] ) && is_scalar( $args['shipping'][ $k ] ) ) {
 							$uo_requested[ "shipping.$k" ] = sanitize_text_field( (string) $args['shipping'][ $k ] );
 							$getter                        = 'get_shipping_' . $k;
 							$uo_before[ "shipping.$k" ]    = (string) $uo_order->$getter( 'edit' );
@@ -1493,6 +1493,13 @@ class WooCommerce {
 				}
 
 				$uo_diff = \Royal_MCP\MCP\Support\WriteVerifier::diff( $uo_requested, $uo_before, $uo_actual );
+				// A field that did not take is named without its values: they are the customer's contact details.
+				$uo_contact_drops = array_values( array_filter( array_keys( (array) ( $uo_diff['silent_drops'] ?? [] ) ), static function ( $field ) {
+					return 0 === strpos( (string) $field, 'billing.' ) || 0 === strpos( (string) $field, 'shipping.' );
+				} ) );
+				if ( $uo_contact_drops ) {
+					throw new \Exception( esc_html( 'wc_update_order: the order was saved but these fields did not take the value sent: ' . implode( ', ', $uo_contact_drops ) . '. Read the order in WooCommerce to see what is stored.' ) );
+				}
 				\Royal_MCP\MCP\Support\WriteVerifier::throw_if_dropped( $uo_diff, 'wc_update_order' );
 
 				// Undo envelope only if reversible fields were touched AND no
@@ -3119,7 +3126,7 @@ class WooCommerce {
 		$allowed = [ 'first_name', 'last_name', 'company', 'address_1', 'address_2', 'city', 'state', 'postcode', 'country', 'email', 'phone' ];
 		$out = [];
 		foreach ( $allowed as $key ) {
-			if ( isset( $address[ $key ] ) ) {
+			if ( isset( $address[ $key ] ) && is_scalar( $address[ $key ] ) ) {
 				$val = (string) $address[ $key ];
 				$out[ $key ] = ( $key === 'email' ) ? sanitize_email( $val ) : sanitize_text_field( $val );
 			}

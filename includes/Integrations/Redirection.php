@@ -167,8 +167,11 @@ class Redirection {
 			throw new \Exception( 'Red_Item::create not available in this Redirection version.' );
 		}
 
-		$source   = sanitize_text_field( $args['source_url'] );
 		$is_regex = self::flag( $args, 'regex' );
+		$source   = self::as_stored_source( sanitize_text_field( $args['source_url'] ), $is_regex );
+		if ( '' === $source ) {
+			throw new \Exception( 'source_url is empty once characters that cannot be kept are removed.' );
+		}
 		if ( $is_regex ) {
 			self::validate_regex_source( $source );
 		}
@@ -530,7 +533,7 @@ class Redirection {
 	 * long to match some addresses. Every page request is matched against it.
 	 */
 	public static function validate_regex_source( $source ) {
-		$pattern = rawurldecode( (string) $source );
+		$pattern = rawurldecode( self::as_stored_source( $source, true ) );
 		if ( strlen( $pattern ) > self::MAX_REGEX_LENGTH ) {
 			throw new \Exception( sprintf( 'Refused: regex sources are limited to %d characters.', self::MAX_REGEX_LENGTH ) );
 		}
@@ -647,6 +650,15 @@ class Redirection {
 		'wp-login.php?redirect_to=%2Fwp-admin%2F&reauth=1', 'wp-login.php?redirect_to=/wp-admin/&reauth=1',
 		'xmlrpc.php', 'wp-json', 'wp-json/', 'wp-json/wp/v2/posts', '?rest_route=/', '?rest_route=/wp/v2/', '?rest_route=/wp/v2/posts',
 		'wp-cron.php', 'wp-cron.php?doing_wp_cron=1',
+		'wp-admin/users.php', 'wp-admin/user-new.php', 'wp-admin/profile.php', 'wp-admin/edit.php', 'wp-admin/post-new.php', 'wp-admin/upload.php',
+		'wp-admin/themes.php', 'wp-admin/customize.php', 'wp-admin/site-editor.php', 'wp-admin/update-core.php', 'wp-admin/plugin-install.php',
+		'wp-admin/options.php', 'wp-admin/options-permalink.php', 'wp-admin/site-health.php', 'wp-admin/admin-post.php', 'wp-admin/async-upload.php',
+		'wp-admin/network/', 'wp-admin/install.php', 'wp-admin/upgrade.php', 'wp-admin/load-scripts.php', 'wp-admin/load-styles.php',
+		'wp-login.php?action=login', 'wp-login.php?action=postpass', 'wp-login.php?action=retrievepassword', 'wp-login.php?action=confirm_admin_email',
+		'wp-login.php?action=confirmaction', 'wp-login.php?action=entered_recovery_mode', 'wp-login.php?wp_lang=en_US',
+		'wp-json/wp/v2/users/me', 'wp-json/wp/v2/pages', 'wp-json/wp/v2/media', 'wp-json/wp/v2/settings', 'wp-json/batch/v1', 'wp-json/wp-abilities/v1/abilities',
+		'wp-json/royal-mcp/v1/mcp', 'wp-json/royal-mcp/v1/oauth/token', 'wp-json/wc/v3/orders', 'wp-json/wc/store/v1/cart', 'wp-json/oembed/1.0/embed',
+		'mcp', 'authorize', 'token', 'register', 'wp-signup.php', 'wp-activate.php', 'wp-comments-post.php', 'wp-trackback.php',
 	);
 
 	/** The paths WordPress answers under: the root, the site address path and the WordPress address path. */
@@ -707,6 +719,43 @@ class Redirection {
 	}
 
 	/**
+	 * A source as Redirection keeps it. Redirection drops invisible and control
+	 * characters when it saves a redirect, so they are dropped here first and
+	 * every check reads the value that will be matched against requests.
+	 *
+	 * @param mixed $source   Source path, URL or pattern.
+	 * @param bool  $is_regex Whether the source is a regular expression.
+	 * @return string '' when nothing usable is left.
+	 */
+	public static function as_stored_source( $source, $is_regex ) {
+		if ( ! is_string( $source ) ) {
+			return '';
+		}
+		$strip = static function ( $text ) {
+			$out = preg_replace( '/[^\PC\s]/u', '', (string) $text );
+			return is_string( $out ) ? $out : '';
+		};
+		$clean = $strip( $source );
+		if ( '' === trim( $clean ) ) {
+			return '';
+		}
+		if ( ! class_exists( '\Red_Item_Sanitize' ) || ! method_exists( '\Red_Item_Sanitize', 'sanitize_url' ) ) {
+			return $clean;
+		}
+		// Redirection also decodes the source, which can uncover more to drop or decode.
+		// Repeat until saving would change nothing, so the checked value is the kept value.
+		$sanitizer = new \Red_Item_Sanitize();
+		for ( $round = 0; $round < 6; $round++ ) {
+			$next = $strip( (string) $sanitizer->sanitize_url( $clean, (bool) $is_regex ) );
+			if ( $next === $clean ) {
+				return $clean;
+			}
+			$clean = $next;
+		}
+		return '';
+	}
+
+	/**
 	 * Refuse a redirect source that matches a protected path, unless the call
 	 * passes allow_protected_source: true. Protected paths sit under the root
 	 * and under the site and WordPress address paths. Plain sources are
@@ -718,7 +767,8 @@ class Redirection {
 		if ( ! empty( $args['allow_protected_source'] ) && true === $args['allow_protected_source'] ) {
 			return;
 		}
-		$hit = '';
+		$hit    = '';
+		$source = self::as_stored_source( $source, (bool) $is_regex );
 		if ( $is_regex ) {
 			$decoded = rawurldecode( (string) $source );
 			if ( preg_match( '/wp[^a-z0-9]{0,6}(admin|login|json|cron)|xmlrpc/', self::pattern_text( $decoded ), $m ) ) {
@@ -739,6 +789,11 @@ class Redirection {
 			}
 		} else {
 			$path = strtolower( rawurldecode( rawurldecode( (string) $source ) ) );
+			// Redirection ends the path at an escaped question mark as well as a plain one.
+			$escaped = strpos( $path, '\\?' );
+			if ( false !== $escaped ) {
+				$path = substr( $path, 0, $escaped );
+			}
 			// Only a source with a scheme is a full URL; anything else (even "//x") is a path.
 			if ( preg_match( '#^[a-z][a-z0-9+.-]*://#', $path ) ) {
 				$parsed = wp_parse_url( $path );

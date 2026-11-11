@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.5.16
+ * Version: 1.5.17
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -41,7 +41,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 }
 
 // Define plugin constants.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.16' );
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.17' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -106,7 +106,7 @@ class Royal_MCP_Plugin {
         // Re-force jsonrpc="2.0" pre-encode; some transformers float-cast it to "2".
         add_filter('rest_pre_echo_response', [$this, 'force_jsonrpc_version'], 999, 3);
 
-        // OAuth 2.0 endpoints (served at domain root, not under /wp-json/).
+        // OAuth 2.1 endpoints (served at domain root, not under /wp-json/).
         add_action('init', [$this, 'register_oauth_rewrites']);
         add_filter('query_vars', [$this, 'register_oauth_query_vars']);
         add_action('parse_request', [$this, 'handle_oauth_request']); // audit:https-at-edge -- TLS is the site's; plain HTTP stays usable for local testing and the settings page says AI clients need HTTPS
@@ -142,6 +142,7 @@ class Royal_MCP_Plugin {
         // ever updated the plugin gets it scheduled on its next request.
         add_action('init', [$this, 'ensure_cleanup_scheduled'], 20);
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\OAuth\Token_Store::class, 'cleanup_expired']);
+        add_action('royal_mcp_token_cleanup', [\Royal_MCP\Admin\Settings_Page::class, 'prune_activity_log']);
         add_action('royal_mcp_token_cleanup', [\Royal_MCP\MCP\Undo_Store::class, 'cleanup_expired']);
         // A newsletter scheduled through Royal MCP is paused when MailPoet's recipient count at send time is clearly above the confirmed one.
         add_filter('mailpoet_sending_queue_subscribers_to_process', [\Royal_MCP\Integrations\MailPoet::class, 'guard_scheduled_send'], 10, 3);
@@ -160,6 +161,8 @@ class Royal_MCP_Plugin {
 
         // A new password signs the user out of every AI client they connected.
         add_action('after_password_reset', [\Royal_MCP\OAuth\Token_Store::class, 'revoke_on_password_reset'], 10, 1);
+        add_action('deleted_user', [\Royal_MCP\OAuth\Token_Store::class, 'revoke_on_user_removed'], 10, 1);
+        add_action('remove_user_from_blog', [\Royal_MCP\OAuth\Token_Store::class, 'revoke_on_removed_from_blog'], 10, 2);
         add_action('wp_set_password', [\Royal_MCP\OAuth\Token_Store::class, 'revoke_on_password_set'], 10, 2);
         // Authorization-header canary queued by the admin notice; runs from WP-Cron, never in a page load.
         add_action(\Royal_MCP\Admin\Authorization_Header_Notice::CRON_HOOK, [\Royal_MCP\Admin\Authorization_Header_Notice::class, 'run_scheduled_probe']);
@@ -406,9 +409,16 @@ class Royal_MCP_Plugin {
         $this->maybe_migrate_api_key_settings();
         $this->maybe_remove_provider_settings();
 
-        if (get_option('royal_mcp_db_version') === ROYAL_MCP_VERSION
-            && $this->required_tables_exist()) {
-            return;
+        if (get_option('royal_mcp_db_version') === ROYAL_MCP_VERSION) {
+            // The tables are looked for twice a day, not on every request.
+            $checked_ago = time() - (int) get_option('royal_mcp_tables_checked_at', 0);
+            if ($checked_ago >= 0 && $checked_ago < 12 * HOUR_IN_SECONDS) {
+                return;
+            }
+            if ($this->required_tables_exist()) {
+                update_option('royal_mcp_tables_checked_at', time(), true);
+                return;
+            }
         }
 
         $last_failed = (int) get_option('royal_mcp_db_upgrade_last_failed_at', 0);
@@ -566,7 +576,7 @@ class Royal_MCP_Plugin {
     }
 
     /* ------------------------------------------------------------------
-     *  OAuth 2.0 rewrite rules & request handling
+     *  OAuth 2.1 rewrite rules & request handling
      * ----------------------------------------------------------------*/
 
     /**
@@ -852,12 +862,50 @@ class Royal_MCP_Plugin {
      */
     public function maybe_flush_rewrites() {
         if ( get_option( 'royal_mcp_rewrite_version' ) === ROYAL_MCP_VERSION ) {
+            $this->maybe_restore_namespace_authorize_rule();
             return;
         }
         // Recorded first so requests arriving during the flush do not flush again.
         update_option( 'royal_mcp_rewrite_version', ROYAL_MCP_VERSION );
         $this->register_oauth_rewrites();
         flush_rewrite_rules( false );
+    }
+
+    /**
+     * Put the namespace issuer's sign-in rule back when the stored rewrite
+     * rules were rebuilt without it. Tried at most once an hour.
+     */
+    private function maybe_restore_namespace_authorize_rule() {
+        if ( '' === (string) get_option( 'permalink_structure' ) || '' === self::namespace_authorize_slug()
+            || self::has_namespace_authorize_rule() || get_transient( 'royal_mcp_authorize_rule_restore' ) ) {
+            return;
+        }
+        set_transient( 'royal_mcp_authorize_rule_restore', 1, HOUR_IN_SECONDS );
+        $this->register_oauth_rewrites();
+        flush_rewrite_rules( false );
+    }
+
+    /**
+     * Send an authorization request that arrived at the namespace address on to the
+     * sign-in page, with the request's own parameters and the namespace issuer's mark.
+     *
+     * @param WP_REST_Request $request Request.
+     * @return WP_REST_Response
+     */
+    public function redirect_namespaced_authorize( $request ) {
+        $target = Royal_MCP\OAuth\Server::marked_authorize_url();
+        $keep   = [];
+        foreach ( (array) $request->get_query_params() as $name => $value ) {
+            if ( ! is_string( $name ) || ! is_string( $value ) || in_array( $name, [ 'rest_route', 'royal_mcp_oauth', Royal_MCP\OAuth\Server::ISSUER_MARK_ARG ], true ) ) {
+                continue;
+            }
+            $keep[ rawurlencode( $name ) ] = rawurlencode( $value );
+        }
+        $response = new WP_REST_Response( null, 302 );
+        $response->header( 'Location', add_query_arg( $keep, $target ) );
+        $response->header( 'Cache-Control', 'no-store' );
+        $response->header( 'X-Frame-Options', 'DENY' );
+        return $response;
     }
 
     /**
@@ -979,8 +1027,13 @@ class Royal_MCP_Plugin {
             exit;
         }
 
-        // Set by the namespace sign-in page's own rule only, never by a query string.
-        Royal_MCP\OAuth\Server::set_issuer_mark( false !== strpos( (string) $wp->matched_query, 'royal_mcp_issuer=namespace' ) );
+        // Set by the namespace sign-in page's own rule, or by the exact mark the
+        // namespace document puts on the shared sign-in address.
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- compared with one fixed value, never stored or printed
+        $issuer_arg = 'authorize' === $action && isset( $_GET[ Royal_MCP\OAuth\Server::ISSUER_MARK_ARG ] ) ? $_GET[ Royal_MCP\OAuth\Server::ISSUER_MARK_ARG ] : '';
+        Royal_MCP\OAuth\Server::set_issuer_mark(
+            false !== strpos( (string) $wp->matched_query, 'royal_mcp_issuer=namespace' ) || 'namespace' === $issuer_arg
+        );
         $oauth_server = new Royal_MCP\OAuth\Server();
         $oauth_server->dispatch( $action, (array) $wp->query_vars );
         // dispatch() calls exit, but just in case:
@@ -1153,6 +1206,13 @@ class Royal_MCP_Plugin {
             'methods'             => [ 'GET', 'POST' ],
             'callback'            => [ $this, 'handle_namespaced_oauth' ],
             'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — OAuth endpoints authenticate the client in the handler
+        ]);
+        // The namespace issuer's sign-in address for sites that do not route its own page:
+        // it sends the browser to the sign-in page, which needs the browser's WordPress session.
+        register_rest_route('royal-mcp/v1', '/oauth/authorize', [
+            'methods'             => 'GET',
+            'callback'            => [ $this, 'redirect_namespaced_authorize' ],
+            'permission_callback' => '__return_true', // @security-ignore WP-AUTH-001 — only redirects to this site's own sign-in page, which authenticates the user
         ]);
         register_rest_route('royal-mcp/v1', '/.well-known/oauth-protected-resource', [
             'methods'             => 'GET',

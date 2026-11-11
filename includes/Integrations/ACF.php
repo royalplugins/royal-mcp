@@ -212,6 +212,8 @@ class ACF {
 				if ( \Royal_MCP\MCP\Support\Protected_Meta::acf_reference_conflict( $post_id, $meta_key ) ) {
 					throw new \Exception( 'This field name collides with a protected key that holds other data on this post, so nothing was written.' );
 				}
+				// Users who may not save unfiltered HTML get the filtering their own edits get.
+				$acf_value   = current_user_can( 'unfiltered_html' ) ? $args['value'] : self::filter_html_deep( $args['value'] );
 				$meta_before = self::post_meta_fingerprint( $post_id );
 				// ACF names the rows it writes from field names and paths, and related fields write to
 				// other posts, users, terms and attachments, so each write is checked as it goes.
@@ -262,7 +264,7 @@ class ACF {
 				add_filter( 'wp_insert_attachment_data', $post_guard, PHP_INT_MAX, 2 );
 				add_filter( 'acf/update_value/type=taxonomy', $term_guard, 1 );
 				try {
-					$result = update_field( $field_name, $args['value'], $post_id );
+					$result = update_field( $field_name, $acf_value, $post_id );
 				} finally {
 					remove_filter( 'update_post_metadata', $write_guard, PHP_INT_MAX );
 					remove_filter( 'add_post_metadata', $write_guard, PHP_INT_MAX );
@@ -278,18 +280,22 @@ class ACF {
 					throw new \Exception( 'This field would change a protected key or an item you cannot edit (' . esc_html( implode( ', ', array_unique( $refused_refs ) ) ) . '), which was left unchanged. Other parts of its value may have been saved.' );
 				}
 				$warnings = [];
+				if ( $acf_value !== $args['value'] && wp_json_encode( $acf_value ) !== wp_json_encode( $args['value'] ) ) {
+					$warnings[] = 'HTML your account may not save was removed from the value before it was stored.';
+				}
+				$html_filtered = (bool) $warnings;
 				if ( false === $result ) {
 					// update_field() also returns false when a stored value did not change: the group,
 					// repeater or flexible content row itself, or a value that was already there.
 					// Fail only when nothing was written and the field does not hold the value now.
 					if ( self::post_meta_fingerprint( $post_id ) === $meta_before ) {
-						if ( ! self::field_holds( $field_name, $post_id, $args['value'] ) ) {
+						if ( ! self::field_holds( $field_name, $post_id, $acf_value ) ) {
 							throw new \Exception( 'Failed to update ACF field "' . esc_html( $field_name ) . '" on post ' . esc_html( (string) $post_id ) );
 						}
 						$warnings[] = 'No-op: the field already held this value.';
 					}
 				}
-				if ( ! $warnings ) {
+				if ( ! $warnings || ( $html_filtered && 1 === count( $warnings ) ) ) {
 					\Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
 				}
 				$updated = get_field_object( $field_name, $post_id, true, true );
@@ -467,6 +473,35 @@ class ACF {
 		}
 		// Anything else (object that isn't WP_*, resource, etc.) — JSON-safe cast.
 		return is_object( $value ) ? get_object_vars( $value ) : null;
+	}
+
+	/**
+	 * A value with every string that holds markup passed through the post-content
+	 * HTML filter. Plain text, numbers, booleans, null and the array shape are kept
+	 * as they are.
+	 *
+	 * @param mixed $value Field value.
+	 * @param int   $depth Nesting level.
+	 * @return mixed
+	 */
+	private static function filter_html_deep( $value, $depth = 0 ) {
+		if ( is_string( $value ) ) {
+			return false !== strpos( $value, '<' ) ? wp_kses_post( $value ) : $value;
+		}
+		if ( is_object( $value ) ) {
+			$value = get_object_vars( $value );
+		}
+		if ( is_array( $value ) ) {
+			if ( $depth > 20 ) {
+				return [];
+			}
+			$out = [];
+			foreach ( $value as $k => $v ) {
+				$out[ $k ] = self::filter_html_deep( $v, $depth + 1 );
+			}
+			return $out;
+		}
+		return $value;
 	}
 
 	/**

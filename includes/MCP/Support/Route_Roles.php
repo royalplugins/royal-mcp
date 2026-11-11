@@ -56,7 +56,16 @@ class Route_Roles {
 		if ( 'editors' === $value ) {
 			return user_can( $user_id, 'edit_others_posts' );
 		}
-		return $user_id > 0;
+		return self::is_site_user( $user_id );
+	}
+
+	/** Whether the id is an account that still exists and, on a network, belongs to this site. */
+	public static function is_site_user( $user_id ) {
+		$user_id = (int) $user_id;
+		if ( $user_id <= 0 || false === get_userdata( $user_id ) ) {
+			return false;
+		}
+		return ! is_multisite() || is_user_member_of_blog( $user_id ) || is_super_admin( $user_id );
 	}
 
 	/** Whether the current user may use tools outside the Royal MCP endpoint. */

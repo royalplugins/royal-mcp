@@ -14,6 +14,10 @@ class Settings_Page {
     /** admin-post action (and nonce action) that rotates the API key. */
     const REGENERATE_ACTION = 'royal_mcp_regenerate_api_key';
     const DISABLE_KEY_ACTION = 'royal_mcp_disable_api_key';
+    const CLEAR_LOG_ACTION   = 'royal_mcp_clear_activity_log';
+
+    /** Days an Activity Log entry is kept. */
+    const LOG_RETENTION_DAYS = 90;
 
     /**
      * Record an API key event (created or rotated) in the activity log, with where it came from.
@@ -82,6 +86,7 @@ class Settings_Page {
         add_action('wp_ajax_royal_mcp_clear_oauth_field', [$this, 'ajax_clear_oauth_field']);
         add_action('admin_post_' . self::REGENERATE_ACTION, [$this, 'handle_regenerate_api_key']);
         add_action('admin_post_' . self::DISABLE_KEY_ACTION, [$this, 'handle_disable_api_key']);
+        add_action('admin_post_' . self::CLEAR_LOG_ACTION, [$this, 'handle_clear_activity_log']);
     }
 
     /** Render the wp.org review-request banner (Free tier only, version-stamped dismissal). */
@@ -680,6 +685,83 @@ class Settings_Page {
         ]);
 
         include ROYAL_MCP_PLUGIN_DIR . 'templates/admin/settings.php';
+    }
+
+    /**
+     * Days an Activity Log entry is kept; 0 keeps entries until they are cleared by hand.
+     *
+     * @return int
+     */
+    public static function log_retention_days() {
+        /**
+         * Filter how many days Activity Log entries are kept. Return 0 to keep them all.
+         *
+         * @param int $days Days.
+         */
+        return max( 0, (int) apply_filters( 'royal_mcp_log_retention_days', self::LOG_RETENTION_DAYS ) );
+    }
+
+    /** Whether this site has the Activity Log table. */
+    private static function log_table_exists() {
+        global $wpdb;
+        $table = $wpdb->prefix . 'royal_mcp_logs';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- existence check of our own table
+        return $table === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) );
+    }
+
+    /**
+     * Daily: delete Activity Log entries older than the retention period, in
+     * batches so a large table never holds one long delete.
+     *
+     * @return int Rows deleted.
+     */
+    public static function prune_activity_log() {
+        global $wpdb;
+        $days = self::log_retention_days();
+        if ( $days <= 0 || ! self::log_table_exists() ) {
+            return 0;
+        }
+        $table   = esc_sql( $wpdb->prefix . 'royal_mcp_logs' );
+        $deleted = 0;
+        for ( $batch = 0; $batch < 20; $batch++ ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
+            $n = (int) $wpdb->query( $wpdb->prepare( "DELETE FROM `{$table}` WHERE timestamp < DATE_SUB( NOW(), INTERVAL %d DAY ) LIMIT 5000", $days ) );
+            $deleted += $n;
+            if ( $n < 5000 ) {
+                break;
+            }
+        }
+        return $deleted;
+    }
+
+    /** The Clear button on the Activity Log page: delete every entry, then record who did it. */
+    public function handle_clear_activity_log() {
+        if ( ! current_user_can( self::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from admin_capability(); clears the per-site wp_royal_mcp_logs table only
+            wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
+        }
+        check_admin_referer( self::CLEAR_LOG_ACTION );
+
+        global $wpdb;
+        $removed = 0;
+        if ( ! empty( $_POST['royal_mcp_clear_confirm'] ) && self::log_table_exists() ) {
+            $table = esc_sql( $wpdb->prefix . 'royal_mcp_logs' );
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
+            $removed = (int) $wpdb->query( "DELETE FROM `{$table}`" );
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- insert into our own log table
+            $wpdb->insert(
+                $wpdb->prefix . 'royal_mcp_logs',
+                [
+                    'mcp_server'    => 'MCP Server',
+                    'action'        => 'settings:activity_log_cleared',
+                    'request_data'  => wp_json_encode( [ 'source' => 'settings', 'by' => (int) get_current_user_id() ] ),
+                    'response_data' => wp_json_encode( [ 'status' => 'success', 'entries_removed' => $removed ] ),
+                    'status'        => 'success',
+                ],
+                [ '%s', '%s', '%s', '%s', '%s' ]
+            );
+        }
+        wp_safe_redirect( add_query_arg( [ 'page' => 'royal-mcp-logs', 'royal_mcp_log_cleared' => empty( $_POST['royal_mcp_clear_confirm'] ) ? '0' : '1' ], admin_url( 'admin.php' ) ) );
+        exit;
     }
 
     public function render_logs_page() {

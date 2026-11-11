@@ -1002,6 +1002,12 @@ class Elementor {
 		if ( current_user_can( 'unfiltered_html' ) ) {
 			return $value;
 		}
+		if ( self::is_custom_attributes( $key, $value ) ) {
+			return self::without_custom_attributes( $value );
+		}
+		if ( is_array( $value ) || $value instanceof \stdClass ) {
+			$value = self::map_typed_link_addresses( $value, 'esc_url_raw' );
+		}
 		if ( is_array( $value ) ) {
 			foreach ( $value as $k => $v ) {
 				$value[ $k ] = self::sanitize_tree_for_user( $v, (string) $k );
@@ -1024,10 +1030,122 @@ class Elementor {
 		if ( ! is_string( $value ) ) {
 			return $value;
 		}
-		if ( 'url' === $key || '_url' === substr( $key, -4 ) ) {
+		if ( self::is_address_key( $key ) ) {
 			return esc_url_raw( $value );
 		}
 		return wp_strip_all_tags( $value ) !== $value ? wp_kses_post( $value ) : $value;
+	}
+
+	/**
+	 * Link addresses in a typed setting ({"$$type": ..., "value": ...}), each passed
+	 * through $fix: the value of a url setting, and the destination of a link setting
+	 * whether it is a plain string or a typed value of any type. Other nodes come back
+	 * unchanged.
+	 *
+	 * @param array|\stdClass $node One node of the element tree.
+	 * @param callable        $fix  Takes the address, returns the address to keep.
+	 * @return array|\stdClass
+	 */
+	private static function map_typed_link_addresses( $node, callable $fix ) {
+		$get = static function ( $from, $name ) {
+			if ( is_array( $from ) ) {
+				return array_key_exists( $name, $from ) ? $from[ $name ] : null;
+			}
+			return $from instanceof \stdClass && property_exists( $from, $name ) ? $from->$name : null;
+		};
+		$set = static function ( $in, $name, $new ) {
+			if ( is_array( $in ) ) {
+				$in[ $name ] = $new;
+			} elseif ( $in instanceof \stdClass ) {
+				$in->$name = $new;
+			}
+			return $in;
+		};
+		$type  = $get( $node, '$$type' );
+		$inner = $get( $node, 'value' );
+		if ( 'url' === $type && is_string( $inner ) ) {
+			return $set( $node, 'value', (string) $fix( $inner ) );
+		}
+		if ( 'link' !== $type || ( ! is_array( $inner ) && ! $inner instanceof \stdClass ) ) {
+			return $node;
+		}
+		$destination = $get( $inner, 'destination' );
+		if ( is_string( $destination ) ) {
+			return $set( $node, 'value', $set( $inner, 'destination', (string) $fix( $destination ) ) );
+		}
+		$address = $get( $destination, 'value' );
+		if ( is_string( $address ) ) {
+			return $set( $node, 'value', $set( $inner, 'destination', $set( $destination, 'value', (string) $fix( $address ) ) ) );
+		}
+		return $node;
+	}
+
+	/** Whether a setting key holds a link address (url, any *_url, href, destination). */
+	private static function is_address_key( $key ) {
+		$key = (string) $key;
+		return 'url' === $key || '_url' === substr( $key, -4 ) || 'href' === $key || 'destination' === $key;
+	}
+
+	/** A named part of a tree node that may be an array or a plain object; null when absent. */
+	private static function node_get( $from, $name ) {
+		if ( is_array( $from ) ) {
+			return array_key_exists( $name, $from ) ? $from[ $name ] : null;
+		}
+		return $from instanceof \stdClass && property_exists( $from, $name ) ? $from->$name : null;
+	}
+
+	/** The node with a named part replaced. */
+	private static function node_set( $in, $name, $new ) {
+		if ( is_array( $in ) ) {
+			$in[ $name ] = $new;
+		} elseif ( $in instanceof \stdClass ) {
+			$in->$name = $new;
+		}
+		return $in;
+	}
+
+	/**
+	 * Whether a node holds custom HTML attributes: the setting named attributes in any
+	 * shape, or a typed attributes setting anywhere.
+	 *
+	 * @param string $key  Key the node is stored under.
+	 * @param mixed  $node Node of the element tree.
+	 * @return bool
+	 */
+	private static function is_custom_attributes( $key, $node ) {
+		if ( 'attributes' === $key ) {
+			return true;
+		}
+		return 'attributes' === self::node_get( $node, '$$type' );
+	}
+
+	/** Whether a custom attributes node sets nothing. */
+	private static function custom_attributes_empty( $node ) {
+		if ( is_string( $node ) ) {
+			return '' === trim( $node );
+		}
+		if ( null !== self::node_get( $node, '$$type' ) ) {
+			$node = self::node_get( $node, 'value' );
+		}
+		return is_scalar( $node ) || null === $node ? '' === trim( (string) $node ) : [] === (array) $node;
+	}
+
+	/**
+	 * The node with its custom attributes taken out, keeping its kind. Custom attributes
+	 * are printed into the page as written, so only users who may save unfiltered HTML
+	 * may set them.
+	 *
+	 * @param mixed $node Node of the element tree.
+	 * @return mixed
+	 */
+	private static function without_custom_attributes( $node ) {
+		if ( null !== self::node_get( $node, '$$type' ) ) {
+			return self::node_set( $node, 'value', [] );
+		}
+		if ( $node instanceof \stdClass ) {
+			return new \stdClass();
+		}
+		return is_array( $node ) ? [] : '';
 	}
 
 	/**
@@ -1059,6 +1177,22 @@ class Elementor {
 	 * @param string $key   Key the value is stored under.
 	 */
 	private static function filtering_removes_markup( $value, $key = '' ) {
+		if ( is_array( $value ) || $value instanceof \stdClass ) {
+			$dropped = false;
+			self::map_typed_link_addresses(
+				$value,
+				static function ( $address ) use ( &$dropped ) {
+					$dropped = $dropped || ( '' !== trim( $address ) && '' === esc_url_raw( $address ) );
+					return $address;
+				}
+			);
+			if ( $dropped ) {
+				return true;
+			}
+		}
+		if ( self::is_custom_attributes( $key, $value ) ) {
+			return ! self::custom_attributes_empty( $value );
+		}
 		if ( is_array( $value ) || is_object( $value ) ) {
 			foreach ( (array) $value as $k => $v ) {
 				if ( self::filtering_removes_markup( $v, (string) $k ) ) {
@@ -1070,7 +1204,7 @@ class Elementor {
 		if ( ! is_string( $value ) || '' === $value ) {
 			return false;
 		}
-		if ( 'url' === $key || '_url' === substr( $key, -4 ) ) {
+		if ( self::is_address_key( $key ) ) {
 			return '' === esc_url_raw( $value );
 		}
 		if ( wp_strip_all_tags( $value ) === $value ) {

@@ -262,7 +262,7 @@ class Drafts_Policy {
 	 * @return string|null
 	 */
 	private static function undo_refusal( array $args ) {
-		$token    = isset( $args['token'] ) && is_scalar( $args['token'] ) ? sanitize_text_field( (string) $args['token'] ) : '';
+		$token    = \Royal_MCP\MCP\Undo_Store::token_from_args( $args );
 		$snapshot = '' !== $token ? \Royal_MCP\MCP\Undo_Store::read( $token ) : null;
 		if ( ! is_array( $snapshot ) ) {
 			return null; // The undo tool gives its usual answer for unknown tokens.

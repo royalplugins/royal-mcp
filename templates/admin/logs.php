@@ -13,6 +13,16 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
 <div class="wrap royal-mcp-logs">
     <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
 
+    <?php // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only flag set by our own redirect ?>
+    <?php if ( isset( $_GET['royal_mcp_log_cleared'] ) ) : ?>
+        <?php // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only flag set by our own redirect ?>
+        <?php if ( '1' === sanitize_text_field( wp_unslash( $_GET['royal_mcp_log_cleared'] ) ) ) : ?>
+            <div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'The Activity Log was cleared.', 'royal-mcp' ); ?></p></div>
+        <?php else : ?>
+            <div class="notice notice-warning is-dismissible"><p><?php esc_html_e( 'Nothing was cleared: tick the box next to the Clear button first.', 'royal-mcp' ); ?></p></div>
+        <?php endif; ?>
+    <?php endif; ?>
+
     <?php
     // Royal AI Firewall cross-link — deep-link if active, wp.org install pointer otherwise.
     $royal_mcp_raif_active = defined('ROYAL_AI_FIREWALL_VERSION');
@@ -64,6 +74,27 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
         </div>
         <?php endif; ?>
     </div>
+
+    <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin:0 0 12px;">
+        <input type="hidden" name="action" value="<?php echo esc_attr( \Royal_MCP\Admin\Settings_Page::CLEAR_LOG_ACTION ); ?>">
+        <?php wp_nonce_field( \Royal_MCP\Admin\Settings_Page::CLEAR_LOG_ACTION ); ?>
+        <span class="description" style="margin-right:12px;">
+            <?php
+            $royal_mcp_keep_days = \Royal_MCP\Admin\Settings_Page::log_retention_days();
+            if ( $royal_mcp_keep_days > 0 ) {
+                /* translators: %s: number of days */
+                echo esc_html( sprintf( _n( 'Entries are kept for %s day, then deleted.', 'Entries are kept for %s days, then deleted.', $royal_mcp_keep_days, 'royal-mcp' ), number_format_i18n( $royal_mcp_keep_days ) ) );
+            } else {
+                esc_html_e( 'Entries are kept until you clear them.', 'royal-mcp' );
+            }
+            ?>
+        </span>
+        <label style="margin-right:8px;">
+            <input type="checkbox" name="royal_mcp_clear_confirm" value="1" required>
+            <?php esc_html_e( 'Delete every entry now', 'royal-mcp' ); ?>
+        </label>
+        <button type="submit" class="button"><?php esc_html_e( 'Clear log', 'royal-mcp' ); ?></button>
+    </form>
 
     <table class="wp-list-table widefat fixed striped">
         <thead>
