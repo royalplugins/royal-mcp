@@ -6,7 +6,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * OAuth 2.0 Authorization Server for MCP.
+ * OAuth 2.1 Authorization Server for MCP.
  *
  * Implements the OAuth 2.1 authorization code flow with PKCE
  * per the MCP specification.
@@ -47,6 +47,9 @@ class Server {
         self::$issuer_mark = (bool) $on && '' !== self::namespace_issuer();
     }
 
+    /** Query argument that marks the shared sign-in address as reached from the namespace issuer's document. */
+    const ISSUER_MARK_ARG = 'royal_mcp_issuer';
+
     /** The sign-in page address for this request, kept through login and the consent form. */
     private static function authorize_page_url() {
         if ( ! class_exists( '\\Royal_MCP_Plugin' ) ) {
@@ -55,7 +58,30 @@ class Server {
         $paths = \Royal_MCP_Plugin::get_oauth_rewrite_paths();
         $slug  = isset( $paths['authorize'] ) ? trim( trim( (string) $paths['authorize'] ), '/' ) : '';
         $slug  = '' === $slug ? 'authorize' : $slug;
-        return home_url( '/' . ( self::$issuer_mark ? \Royal_MCP_Plugin::namespace_authorize_slug() : $slug ) );
+        if ( ! self::$issuer_mark ) {
+            return home_url( '/' . $slug );
+        }
+        // The namespace issuer's own address when the site routes it, the shared one carrying the mark when not.
+        return \Royal_MCP_Plugin::has_namespace_authorize_rule()
+            ? home_url( '/' . \Royal_MCP_Plugin::namespace_authorize_slug() )
+            : self::marked_authorize_url();
+    }
+
+    /**
+     * The shared sign-in page carrying the namespace issuer's mark. Used while the
+     * namespace issuer's own page is not routed; when the shared page's rule is not
+     * stored either, the page is reached by its query variable, which needs no rule.
+     *
+     * @return string
+     */
+    public static function marked_authorize_url() {
+        $paths = class_exists( '\\Royal_MCP_Plugin' ) ? \Royal_MCP_Plugin::get_oauth_rewrite_paths() : [];
+        $slug  = isset( $paths['authorize'] ) ? trim( trim( (string) $paths['authorize'] ), '/' ) : '';
+        $slug  = '' === $slug ? 'authorize' : $slug;
+        $base  = class_exists( '\\Royal_MCP_Plugin' ) && ! \Royal_MCP_Plugin::has_oauth_rewrite_rule( 'authorize' )
+            ? add_query_arg( 'royal_mcp_oauth', 'authorize', home_url( '/' ) )
+            : home_url( '/' . $slug );
+        return add_query_arg( self::ISSUER_MARK_ARG, 'namespace', $base );
     }
 
     /** True while a request arrived at the namespace endpoints (/wp-json/royal-mcp/v1/oauth/*). */
@@ -81,6 +107,12 @@ class Server {
                 status_header( 204 );
                 exit;
             }
+        }
+
+        // The sign-in and consent pages are never shown inside another site's frame.
+        if ( 'authorize' === $action && ! headers_sent() ) {
+            header( 'X-Frame-Options: DENY' );
+            header( "Content-Security-Policy: frame-ancestors 'none'" );
         }
 
         switch ( $action ) {
@@ -458,6 +490,8 @@ class Server {
             // via royal_mcp_cimd_enabled for site owners who want to lock to
             // dynamic-registration only.
             'client_id_metadata_document_supported' => (bool) apply_filters( 'royal_mcp_cimd_enabled', true ),
+            // Every /authorize response names its issuer in `iss`.
+            'authorization_response_iss_parameter_supported' => true,
         ];
 
         if ( '' !== $issuer ) {
@@ -465,8 +499,12 @@ class Server {
             // WordPress session, which the REST API does not use.
             $metadata['issuer']                                     = $issuer;
             // Its own sign-in address (same page), so the response can name this issuer.
+            // When the site does not route that address, an address under the namespace
+            // sends the browser on to the shared page with the issuer's mark.
             if ( class_exists( '\\Royal_MCP_Plugin' ) && \Royal_MCP_Plugin::has_namespace_authorize_rule() ) {
                 $metadata['authorization_endpoint'] = $base . '/' . \Royal_MCP_Plugin::namespace_authorize_slug();
+            } else {
+                $metadata['authorization_endpoint'] = $issuer . '/oauth/authorize';
             }
             $metadata['token_endpoint']                             = $issuer . '/oauth/token';
             $metadata['registration_endpoint']                      = $issuer . '/oauth/register';
@@ -722,7 +760,7 @@ class Server {
         $redirect_uri          = isset( $_GET['redirect_uri'] ) && is_string( $_GET['redirect_uri'] ) ? Token_Store::sanitize_redirect_uri( wp_unslash( $_GET['redirect_uri'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitize_redirect_uri() is the sanitizer registration stores with
         $code_challenge        = isset( $_GET['code_challenge'] ) ? sanitize_text_field( wp_unslash( $_GET['code_challenge'] ) ) : '';
         $code_challenge_method = isset( $_GET['code_challenge_method'] ) ? sanitize_text_field( wp_unslash( $_GET['code_challenge_method'] ) ) : '';
-        $state                 = isset( $_GET['state'] ) ? sanitize_text_field( wp_unslash( $_GET['state'] ) ) : '';
+        $state                 = self::state_param( $_GET['state'] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- state_param() unslashes and validates
         $scope                 = isset( $_GET['scope'] ) ? sanitize_text_field( wp_unslash( $_GET['scope'] ) ) : 'mcp:full';
         $resource_indicator    = isset( $_GET['resource'] ) ? esc_url_raw( wp_unslash( $_GET['resource'] ) ) : '';
         if ( '' !== $resource_indicator ) {
@@ -781,15 +819,18 @@ class Server {
         if ( ! is_user_logged_in() ) {
             // Build the full authorize URL with all params to come back after login.
             $authorize_url = add_query_arg(
-                [
-                    'response_type'         => $response_type,
-                    'client_id'             => $client_id,
-                    'redirect_uri'          => $redirect_uri,
-                    'code_challenge'        => $code_challenge,
-                    'code_challenge_method' => $code_challenge_method,
-                    'state'                 => $state,
-                    'scope'                 => $scope,
-                ],
+                array_map(
+                    'rawurlencode',
+                    [
+                        'response_type'         => $response_type,
+                        'client_id'             => $client_id,
+                        'redirect_uri'          => $redirect_uri,
+                        'code_challenge'        => $code_challenge,
+                        'code_challenge_method' => $code_challenge_method,
+                        'state'                 => $state,
+                        'scope'                 => $scope,
+                    ]
+                ),
                 self::authorize_page_url()
             );
 
@@ -858,7 +899,7 @@ class Server {
         $this->authorize_client_id = $client_id;
         $code_challenge        = isset( $_POST['code_challenge'] ) ? sanitize_text_field( wp_unslash( $_POST['code_challenge'] ) ) : '';
         $code_challenge_method = isset( $_POST['code_challenge_method'] ) ? sanitize_text_field( wp_unslash( $_POST['code_challenge_method'] ) ) : '';
-        $state                 = isset( $_POST['state'] ) ? sanitize_text_field( wp_unslash( $_POST['state'] ) ) : '';
+        $state                 = self::state_param( $_POST['state'] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- state_param() unslashes and validates
         $scope                 = isset( $_POST['scope'] ) ? sanitize_text_field( wp_unslash( $_POST['scope'] ) ) : 'mcp:full';
         $action                = isset( $_POST['authorize_action'] ) ? sanitize_text_field( wp_unslash( $_POST['authorize_action'] ) ) : '';
 
@@ -1011,6 +1052,13 @@ class Server {
             }
         }
 
+        // The account that approved the request must still exist and still be allowed to connect.
+        if ( ! \Royal_MCP\MCP\Support\Route_Roles::is_site_user( (int) $code_data['user_id'] )
+            || ! \Royal_MCP\MCP\Support\Route_Roles::connect_allowed( (int) $code_data['user_id'] ) ) {
+            $this->log_event( 'code_user_not_allowed', 'An authorization code was presented for an account that no longer exists or may no longer connect.', 400 );
+            $this->json_error( 'invalid_grant', 'Authorization code is invalid or expired.', 400 );
+        }
+
         // Issue tokens.
         $tokens = Token_Store::create_token_pair( $client_id, $code_data['user_id'], $code_data['scope'] ?? '' );
 
@@ -1065,6 +1113,14 @@ class Server {
         // Validate client_id (timing-safe).
         if ( ! hash_equals( $token_data['client_id'], $client_id ) ) {
             $this->json_error( 'invalid_grant', 'client_id mismatch.', 400 );
+        }
+
+        // The account must still exist and still be allowed to connect AI clients.
+        if ( ! \Royal_MCP\MCP\Support\Route_Roles::is_site_user( (int) $token_data['user_id'] )
+            || ! \Royal_MCP\MCP\Support\Route_Roles::connect_allowed( (int) $token_data['user_id'] ) ) {
+            Token_Store::revoke_connection( $client_id, (int) $token_data['user_id'] );
+            $this->log_event( 'refresh_user_not_allowed', 'A refresh token was presented for an account that no longer exists or may no longer connect; the connection was revoked.', 400 );
+            $this->json_error( 'invalid_grant', 'Refresh token is invalid, expired, or revoked.', 400 );
         }
 
         // Issue new token pair.
@@ -1318,14 +1374,38 @@ class Server {
      */
     public static function build_authorize_redirect_url( $redirect_uri, array $params, $client_id = '' ) {
         $params['iss'] = self::issuer_for_client( (string) $client_id );
-        return add_query_arg( $params, $redirect_uri );
+        // add_query_arg() does not encode values, so each one is encoded here and
+        // stays a single parameter.
+        $encoded = [];
+        foreach ( $params as $name => $value ) {
+            $encoded[ $name ] = rawurlencode( is_scalar( $value ) ? (string) $value : '' );
+        }
+        return add_query_arg( $encoded, $redirect_uri );
     }
 
     /**
-     * The issuer a client discovered: the namespace issuer when it came to the sign-in
-     * address only the namespace document advertises, otherwise the one it registered
-     * with (clients that read an older copy of the namespace document, which pointed at
-     * the shared sign-in address, are marked when they registered there).
+     * The client's `state`, which goes back to it unchanged. A value made of
+     * printable ASCII (what OAuth allows) is kept exactly; anything else is
+     * cleaned as plain text. Never printed without escaping or encoding.
+     *
+     * @param mixed $raw Value from the request, still slashed.
+     * @return string
+     */
+    private static function state_param( $raw ) {
+        if ( ! is_string( $raw ) ) {
+            return '';
+        }
+        $state = wp_unslash( $raw );
+        if ( strlen( $state ) <= 2048 && 1 === preg_match( '/^[\x20-\x7E]*$/', $state ) ) {
+            return $state;
+        }
+        return sanitize_text_field( $state );
+    }
+
+    /**
+     * The issuer a client discovered: the namespace issuer when it came to a sign-in
+     * address only the namespace document advertises, or when it registered at the
+     * namespace or identifies by a metadata document URL; the site-root issuer otherwise.
      */
     public static function issuer_for_client( $client_id ) {
         $namespace = self::namespace_issuer();

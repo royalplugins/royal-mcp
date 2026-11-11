@@ -111,6 +111,26 @@ class Undo_Store {
     }
 
     /**
+     * The undo token in a tool call's arguments. Write replies name it undo_token and
+     * the undo tool's argument is token, so either name is read; token is used when
+     * both hold a value.
+     *
+     * @param array $args Tool arguments.
+     * @return string '' when neither holds a usable value.
+     */
+    public static function token_from_args( array $args ) {
+        foreach ( [ 'token', 'undo_token' ] as $name ) {
+            if ( isset( $args[ $name ] ) && is_scalar( $args[ $name ] ) && ! is_bool( $args[ $name ] ) ) {
+                $token = sanitize_text_field( (string) $args[ $name ] );
+                if ( '' !== $token ) {
+                    return $token;
+                }
+            }
+        }
+        return '';
+    }
+
+    /**
      * Read a snapshot by token. Returns null when the token is invalid, missing,
      * or expired. Expired rows are deleted as a side effect of a failed read.
      *

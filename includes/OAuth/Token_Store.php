@@ -566,6 +566,37 @@ class Token_Store {
         return (int) $wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET revoked = 1 WHERE user_id = %d AND revoked IN (0, 2)", $user_id ) );
     }
 
+    /** deleted_user: the account is gone, and so are its connections. */
+    public static function revoke_on_user_removed( $user_id ) {
+        self::revoke_all_for_user( (int) $user_id );
+    }
+
+    /** remove_user_from_blog: the account left one site of a network; its connections to that site end. */
+    public static function revoke_on_removed_from_blog( $user_id, $blog_id = 0 ) {
+        $blog_id  = (int) $blog_id;
+        $switched = is_multisite() && $blog_id > 0 && get_current_blog_id() !== $blog_id;
+        if ( $switched ) {
+            switch_to_blog( $blog_id );
+        }
+        try {
+            if ( self::tokens_table_exists() ) {
+                self::revoke_all_for_user( (int) $user_id );
+            }
+        } finally {
+            if ( $switched ) {
+                restore_current_blog();
+            }
+        }
+    }
+
+    /** Whether the current site has the tokens table (a network site where the plugin never ran has none). */
+    private static function tokens_table_exists() {
+        global $wpdb;
+        $table = self::tokens_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        return $table === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) );
+    }
+
     /** after_password_reset: the user chose a new password through the reset link. */
     public static function revoke_on_password_reset( $user ) {
         if ( is_object( $user ) && isset( $user->ID ) ) {

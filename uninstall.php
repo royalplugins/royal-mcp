@@ -43,8 +43,10 @@ function royal_mcp_uninstall_site() {
     // makes a reinstall flush its rewrite rules again.
     delete_option('royal_mcp_rewrite_version');
     delete_option('royal_mcp_db_upgrade_last_failed_at');
+    delete_option('royal_mcp_tables_checked_at');
 
     delete_transient('royal_mcp_cache');
+    delete_transient('royal_mcp_authorize_rule_restore');
 
     // OAuth auth code transients (pattern: royal_mcp_authcode_*).
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
