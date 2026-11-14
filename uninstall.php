@@ -112,6 +112,7 @@ function royal_mcp_uninstall_site() {
     // token and authorization-code rows the daily cleanup removes.
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal_mcp_undo_%'");
+    $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal\_mcp\_undopart\_%'");
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal\_mcp\_rt\_retry\_%'");
     delete_option( 'royal_mcp_rejected_cimd_clients' );

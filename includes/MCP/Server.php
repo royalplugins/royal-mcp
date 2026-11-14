@@ -1468,13 +1468,17 @@ class Server {
     }
 
     /**
-     * Where a media item is still used, as short reasons ([] when nowhere found): a
-     * featured image, a WooCommerce gallery, the site logo or icon, an ACF image
-     * field, or its file address in any post's content or Elementor layout.
+     * Where a media item is still used, as short reasons ([] when nowhere found):
+     * a featured image (other than on $except_post), a WooCommerce gallery, a
+     * category image, the site logo, icon or background, an ACF image / file /
+     * gallery field (posts and options pages), a gallery or image block or
+     * shortcode naming its id, or its file address in any post's content or
+     * Elementor layout (Elementor stores addresses with escaped slashes).
      */
     private static function media_in_use( $attachment_id, $except_post = 0 ) {
         global $wpdb;
         $aid     = (int) $attachment_id;
+        $sid     = (string) $aid;
         $reasons = [];
         $thumbs  = self::media_used_as_thumbnail( $aid, $except_post );
         if ( $thumbs ) {
@@ -1485,32 +1489,98 @@ class Server {
         if ( $gallery ) {
             $reasons[] = 'in the gallery of product(s) ' . implode( ', ', array_map( 'intval', $gallery ) );
         }
+        $term_img = $wpdb->get_col( $wpdb->prepare( "SELECT term_id FROM {$wpdb->termmeta} WHERE meta_key = 'thumbnail_id' AND meta_value = %s LIMIT 5", $sid ) );
+        if ( $term_img ) {
+            $reasons[] = 'the image of term(s) ' . implode( ', ', array_map( 'intval', $term_img ) );
+        }
         if ( (int) get_option( 'site_icon' ) === $aid ) {
             $reasons[] = 'the site icon';
         }
         if ( (int) get_theme_mod( 'custom_logo' ) === $aid ) {
             $reasons[] = 'the site logo';
         }
-        $acf = $wpdb->get_col( $wpdb->prepare( "SELECT pm.post_id FROM {$wpdb->postmeta} pm JOIN {$wpdb->postmeta} ref ON ref.post_id = pm.post_id AND ref.meta_key = CONCAT('_', pm.meta_key) AND ref.meta_value LIKE 'field\\_%%' WHERE pm.meta_value = %s LIMIT 5", (string) $aid ) );
-        if ( $acf ) {
-            $reasons[] = 'a custom field of post(s) ' . implode( ', ', array_map( 'intval', $acf ) );
+        // ACF image, file and gallery fields: the value is the id (a gallery: a list holding it as text),
+        // and a sibling "_<name>" row names the field. Fields of another type with the same number are left out.
+        $acf_rows = $wpdb->get_results( $wpdb->prepare(
+            "SELECT pm.post_id, ref.meta_value AS field_key FROM {$wpdb->postmeta} pm JOIN {$wpdb->postmeta} ref ON ref.post_id = pm.post_id AND ref.meta_key = CONCAT('_', pm.meta_key) AND ref.meta_value LIKE 'field\\_%%' WHERE pm.meta_value = %s OR pm.meta_value LIKE %s LIMIT 20",
+            $sid,
+            '%' . $wpdb->esc_like( '"' . $sid . '";' ) . '%'
+        ) );
+        $acf_opt  = $wpdb->get_results( $wpdb->prepare(
+            "SELECT o.option_name, ref.option_value AS field_key FROM {$wpdb->options} o JOIN {$wpdb->options} ref ON ref.option_name = CONCAT('_', o.option_name) AND ref.option_value LIKE 'field\\_%%' WHERE o.option_value = %s OR o.option_value LIKE %s LIMIT 20",
+            $sid,
+            '%' . $wpdb->esc_like( '"' . $sid . '";' ) . '%'
+        ) );
+        $acf_posts = [];
+        foreach ( (array) $acf_rows as $row ) {
+            if ( self::acf_field_holds_media( (string) $row->field_key ) ) {
+                $acf_posts[] = (int) $row->post_id;
+            }
         }
-        // The file's address without its extension also matches the resized copies.
+        if ( $acf_posts ) {
+            $reasons[] = 'a custom field of post(s) ' . implode( ', ', array_unique( $acf_posts ) );
+        }
+        foreach ( (array) $acf_opt as $row ) {
+            if ( self::acf_field_holds_media( (string) $row->field_key ) ) {
+                $reasons[] = 'a custom field on a settings page (' . sanitize_key( (string) $row->option_name ) . ')';
+                break;
+            }
+        }
+        // Gallery or image blocks and gallery shortcodes that name the id.
+        $id_posts = [];
+        $cands    = $wpdb->get_results( $wpdb->prepare( "SELECT ID, post_content FROM {$wpdb->posts} WHERE post_type NOT IN ('revision', 'attachment') AND post_content LIKE %s AND (post_content LIKE '%%ids%%' OR post_content LIKE '%%\"id\"%%') LIMIT 50", '%' . $wpdb->esc_like( $sid ) . '%' ) );
+        foreach ( (array) $cands as $c ) {
+            $body = (string) $c->post_content;
+            if ( preg_match( '/ids=["\']?[0-9,\s]*(?<![0-9])' . $aid . '(?![0-9])/', $body ) || preg_match( '/"ids"\s*:\s*\[[0-9,\s"]*(?<![0-9])' . $aid . '(?![0-9])/', $body ) || preg_match( '/"id"\s*:\s*"?' . $aid . '(?![0-9])/', $body ) ) {
+                $id_posts[] = (int) $c->ID;
+            }
+        }
+        // The file's address, also as Elementor stores it (escaped slashes), with its resized copies.
         $file = (string) get_post_meta( $aid, '_wp_attached_file', true );
-        $stem = '' !== $file ? preg_replace( '/\.[A-Za-z0-9]{2,5}$/', '', $file ) : '';
-        if ( strlen( (string) $stem ) >= 6 ) {
-            $like  = '%' . $wpdb->esc_like( $stem ) . '%';
-            $users = $wpdb->get_col( $wpdb->prepare( "SELECT ID FROM {$wpdb->posts} WHERE post_type NOT IN ('revision', 'attachment') AND ID <> %d AND post_content LIKE %s LIMIT 5", (int) $except_post, $like ) );
-            $users = array_merge( $users, $wpdb->get_col( $wpdb->prepare( "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_elementor_data' AND post_id <> %d AND meta_value LIKE %s LIMIT 5", (int) $except_post, $like ) ) );
-            if ( $users ) {
-                $reasons[] = 'in the content of post(s) ' . implode( ', ', array_unique( array_map( 'intval', $users ) ) );
+        $stem = '' !== $file ? (string) preg_replace( '/\.[A-Za-z0-9]{2,5}$/', '', $file ) : '';
+        $ext  = '' !== $file ? (string) pathinfo( $file, PATHINFO_EXTENSION ) : '';
+        $url_posts = [];
+        if ( strlen( $stem ) >= 6 ) {
+            $exact = static function ( $text ) use ( $stem, $ext ) {
+                $alts = [ preg_quote( $stem, '/' ), preg_quote( str_replace( '/', '\/', $stem ), '/' ) ];
+                return (bool) preg_match( '/(?:' . implode( '|', $alts ) . ')(?:-\d+x\d+|-scaled|-rotated)?\.' . preg_quote( $ext, '/' ) . '/i', (string) $text );
+            };
+            $like   = '%' . $wpdb->esc_like( $stem ) . '%';
+            $like_e = '%' . $wpdb->esc_like( str_replace( '/', '\/', $stem ) ) . '%';
+            foreach ( (array) $wpdb->get_results( $wpdb->prepare( "SELECT ID, post_content FROM {$wpdb->posts} WHERE post_type NOT IN ('revision', 'attachment') AND (post_content LIKE %s OR post_content LIKE %s) LIMIT 20", $like, $like_e ) ) as $c ) {
+                if ( $exact( $c->post_content ) ) {
+                    $url_posts[] = (int) $c->ID;
+                }
+            }
+            foreach ( (array) $wpdb->get_results( $wpdb->prepare( "SELECT post_id, meta_value FROM {$wpdb->postmeta} WHERE meta_key = '_elementor_data' AND (meta_value LIKE %s OR meta_value LIKE %s) LIMIT 20", $like, $like_e ) ) as $c ) {
+                if ( $exact( $c->meta_value ) ) {
+                    $url_posts[] = (int) $c->post_id;
+                }
+            }
+            foreach ( [ 'background_image', 'header_image' ] as $mod ) {
+                if ( $exact( (string) get_theme_mod( $mod ) ) ) {
+                    $reasons[] = 'the site ' . str_replace( '_', ' ', $mod );
+                }
             }
         }
         // phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $in_content = array_unique( array_merge( $id_posts, $url_posts ) );
+        if ( $in_content ) {
+            $reasons[] = 'in the content of post(s) ' . implode( ', ', $in_content );
+        }
         if ( get_post_meta( $aid, '_royal_mcp_reused_at', true ) ) {
             $reasons[] = 'handed out again by a later upload of the same file';
         }
         return $reasons;
+    }
+
+    /** Whether an ACF field (by key) holds media: an image, file or gallery field; true when ACF cannot say. */
+    private static function acf_field_holds_media( $field_key ) {
+        if ( ! function_exists( 'acf_get_field' ) ) {
+            return true;
+        }
+        $field = acf_get_field( $field_key );
+        return ! is_array( $field ) || in_array( (string) ( $field['type'] ?? '' ), [ 'image', 'file', 'gallery' ], true );
     }
 
     /**
@@ -1889,10 +1959,10 @@ class Server {
             $response['undo_reason']    = 'custom_css_has_no_undo_here';
             return \Royal_MCP\MCP\Support\Envelope::success($response['message'] . ' No undo for the theme stylesheet: use wp_update_custom_css to change it back.', $response);
         }
-        if (strlen(gzcompress((string) wp_json_encode(['prior' => $content]), 9)) > 1024 * 1024) {
+        if (!\Royal_MCP\MCP\Undo_Store::fits(['prior' => $content])) {
             $response['undo_available'] = false;
             $response['undo_reason']    = 'snapshot_too_large';
-            return \Royal_MCP\MCP\Support\Envelope::success(sprintf('%s %d content updated: %d occurrence(s) replaced. No undo: the earlier content is over the 1 MB undo limit; use the revisions to go back.', ucfirst($noun), $post_id, $occurrences), $response);
+            return \Royal_MCP\MCP\Support\Envelope::success(sprintf('%s %d content updated: %d occurrence(s) replaced. No undo: the earlier content is over the undo size limit; use the revisions to go back.', ucfirst($noun), $post_id, $occurrences), $response);
         }
         $undo = \Royal_MCP\MCP\Undo_Store::store([
             'op'           => 'wp_update_post',
@@ -2077,7 +2147,7 @@ class Server {
             ['name' => 'get_tool_info', 'description' => 'Return the full inputSchema (and, when available, an example invocation) for a single tool named in tool_name. Pairs with discover_tools + execute_tool for the compact discovery flow.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name (e.g. "wp_update_post").']], 'required' => ['tool_name']]],
             ['name' => 'execute_tool', 'description' => 'Pass-through dispatcher for the compact discovery flow. Invokes the tool named in tool_name with the arguments in arguments — semantically identical to a direct tools/call for that tool. Useful when the client only advertised the routing tools via X-MCP-Profile: compact but still wants to invoke a specific underlying tool without renegotiating the profile.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name to invoke.'], 'arguments' => ['type' => 'object', 'description' => 'Arguments object forwarded to the underlying tool. Same shape you\'d pass in tools/call.']], 'required' => ['tool_name']]],
             ['name' => 'wp_verify_rendered_page', 'description' => 'Post-write verification tool. Fetches the actual rendered HTML that WordPress serves at a URL via a loopback request and returns the response status, a subset of response headers (content-type, cache-control, x-cache), the page title, meta description, first h1, counts of script and stylesheet link tags, robots_meta (content of <meta name="robots">, null when absent), x_robots_tag (the X-Robots-Tag header, null when absent), redirect_chain ([{url, status}] for each redirect followed, up to 5; [] when none — response_status is the final status), tls_valid (whether the https certificate verifies; null for http), and (when include_body_excerpt is true) a 500-char excerpt of the page body. Optional selector arg reports whether an id/class selector is present in the served HTML. Use after any write that changes content, theme, or options to catch page-builder caches, object caches, or edge caches serving stale HTML even when the DB write returned success. Rate-limited to 10 calls per minute per URL; the redirect hops within one call are not counted separately. Requires read on the target post/page or manage_options. URL must belong to the current WordPress site.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Absolute URL on this site to fetch (must match home_url() origin).'], 'selector' => ['type' => 'string', 'description' => 'Optional #id or .class selector to check for presence in the rendered HTML.'], 'include_body_excerpt' => ['type' => 'boolean', 'description' => 'When true, include a 500-char excerpt of the <body> in the response. Default false.']], 'required' => ['url']]],
-            ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, the block tools (wp_insert_blocks, wp_replace_block, wp_move_block, wp_delete_block, wp_replace_text_in_blocks, wp_update_block_attributes, wp_update_synced_pattern), wp_create_post, wp_create_page and wp_clone_post_as_draft (undo moves the new post to the trash), wp_update_post, wp_replace_in_post and wp_replace_in_page (undo puts the earlier content back), wp_create_term (undo deletes the new term; refused while items use it), wp_add_post_terms (undo takes the added terms off and deletes terms the call created when nothing uses them), wp_set_featured_image (undo puts the earlier featured image back, and deletes an image the call downloaded when no other post uses it), wp_upload_media and wp_upload_media_from_url (undo deletes the new library item and its file for good; refused while it is a featured image), wp_update_post_meta, wp_add_post_meta, wp_delete_post_meta, wp_delete_post, wp_delete_page, wp_delete_media (when it moves the item to the media trash), wp_restore_revision, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_term_meta, wp_create_menu and wp_create_menu_item (undo deletes the new menu or item), wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, yoast_update_meta (aliases wp_update_seo_meta), wp_update_widget, the comment tools (wp_create_comment, wp_delete_comment, wp_approve_comment, wp_spam_comment, wp_trash_comment), the WooCommerce writes (products, variations, orders, order notes, attributes, coupons), the Redirection writes (redirection_create_redirect deletes the new redirect, redirection_update_redirect restores it as it was), the Relevanssi writes (relevanssi_reindex_post puts the earlier index entry back, relevanssi_update_synonyms and relevanssi_add_stopword restore the earlier list), the MailPoet writes (mailpoet_save_subscriber and mailpoet_set_subscriber_lists restore the subscriber\'s earlier details and lists, or delete a subscriber the call added; mailpoet_save_draft restores the earlier draft, or deletes a draft the call created), the TablePress writes (tablepress_create_table and tablepress_copy_table delete the new table, tablepress_update_cells restores the earlier cells), snippets_update_metadata (restores the snippet\'s earlier name, description and tags), the Complianz writes (complianz_update_banner_text and complianz_update_cookie_description restore the earlier texts), the Royal AI Firewall writes (raif_set_bot_policies and raif_block_all_ai_bots restore the earlier bot policies), gp_block_ip (undo lifts the block; refused with edited_since_write when the block was changed since, unless forced), the launch tools (wp_publish_and_launch removes the post and the image it uploaded, seo_optimize_for_launch restores the earlier SEO title and description and removes the redirects it made, wp_migrate_theme_assets puts the earlier post content back; search engine submissions and cache purges cannot be taken back), the plugin and theme tools (wp_install_plugin and wp_install_theme remove what was installed, wp_activate_plugin and wp_deactivate_plugin switch back, wp_switch_theme returns to the earlier theme, the auto-update switches restore the earlier setting; refused with edited_since_write after a later change, or security_plugin for the active security plugin, unless forced; updates and deletes have no undo), the ACF setup tools (field group and field creates, changes, deletes, imports, reorders and acf_register_post_type: undo puts the earlier definition back or removes what was made, and is refused with edited_since_write when the field group changed again since, unless forced), wp_set_maintenance_mode (undo restores the earlier state; refused with edited_since_write when the mode was changed again, unless forced), the Royal Affiliate writes (rafp_update_referral_status puts each referral back to its earlier status; rafp_create_campaign and rafp_create_challenge delete what they made, refused with in_use once it is used; rafp_assign_landing_page gives the page back; all four are refused with edited_since_write after a later change unless forced), the FormForge form tools (formforge_duplicate and formforge_create_from_template: undo deletes the new form, and is refused with has_entries while the form holds entries or with edited_since_write once it was edited, unless forced), the Elementor write tools (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_apply_template_to_page, elementor_rebuild_post_content) and the Divi write tools (divi_replace_image, divi_clone_page, divi_import_template). Tokens live ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Most undos are refused with edited_since_write if the target was modified between the tracked write and this undo call (protects later edits from a silent overwrite; see force). These restore without that check: the undos that recreate a permanently deleted item (wp_delete_term, wp_delete_post / wp_delete_page / wp_delete_media with force, wp_delete_comment with force, WooCommerce permanent deletes), wc_add_order_note and divi_clone_page. For a browser agent (WebMCP), these undos delete what their operation created and are refused while the matching delete tool is switched off for browser agents: wp_create_post, wp_create_page, wp_clone_post_as_draft, elementor_clone_page, elementor_import_template and divi_clone_page (wp_delete_post, or wp_delete_page for a page), wp_insert_blocks (wp_delete_block), elementor_add_widget (elementor_delete_widget, where that tool exists), wp_create_menu_item (wp_delete_menu_item), wp_create_term and wp_add_post_terms when it created terms (wp_delete_term), wp_upload_media, wp_upload_media_from_url and wp_set_featured_image when it downloaded the image (wp_delete_media), wp_create_comment (wp_delete_comment), wp_add_post_meta (wp_delete_post_meta), wc_create_variation and the variations a wc_batch_update_variations call created (wc_delete_variation), and wc_create_coupon (wc_delete_coupon); a browser agent cannot undo wp_create_menu with force. Other undos are not tied to a delete tool. Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).'], 'undo_token' => ['type' => 'string', 'description' => 'Same as token; either name works.'], 'force' => ['type' => 'boolean', 'description' => 'These undos are refused with edited_since_write when the target changed after the tracked write, and accept force: the post content undos (wp_update_post, wp_replace_in_post, wp_replace_in_page, wp_restore_revision and the block tools), wp_create_term, wp_add_post_terms, wp_set_featured_image, wp_upload_media, wp_upload_media_from_url, wp_create_post, wp_create_page and wp_clone_post_as_draft, post and page trash, post and term meta updates, wp_add_post_meta, wp_delete_post_meta, wp_delete_term_meta, wp_update_media, wp_update_term, menus and menu items (wp_create_menu, wp_create_menu_item, wp_update_menu_item, wp_delete_menu_item, wp_reorder_menu_items), wp_update_option, the WooCommerce writes (products, variations, batch variation updates, product attributes and attribute creation, orders and order status, coupons, emptying the coupon trash), the comment tools (wp_create_comment, wp_approve_comment, wp_spam_comment, wp_trash_comment, wp_delete_comment to the trash), wp_update_seo_meta / yoast_update_meta, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_widget, the Elementor write tools (an Elementor undo is also refused while an editor is open on the page), divi_replace_image and divi_import_template, the Redirection writes, the MailPoet writes, the Relevanssi writes and raif_set_bot_policies / raif_block_all_ai_bots (bots changed since are skipped, the others restored). Nothing is changed and the token stays valid; pass force: true to restore anyway, removing those later edits (an item the operation created is deleted with them; undoing wp_create_menu deletes the menu with its items). An item already out of the trash is left as it is and the token is closed; coupons whose code another coupon uses now are skipped while the others are recreated; a batch variation undo leaves off a SKU another product uses now and reports it. The other undos that check for later edits (the TablePress writes, snippets_update_metadata and the Complianz writes) refuse with an error and cannot be forced, and recreating a deleted term or coupon is refused while another term or coupon has its slug or code. Default false.']]]],
+            ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, the block tools (wp_insert_blocks, wp_replace_block, wp_move_block, wp_delete_block, wp_replace_text_in_blocks, wp_update_block_attributes, wp_update_synced_pattern), wp_create_post, wp_create_page and wp_clone_post_as_draft (undo moves the new post to the trash), wp_update_post, wp_replace_in_post and wp_replace_in_page (undo puts the earlier content back), wp_create_term (undo deletes the new term; refused while items use it), wp_add_post_terms (undo takes the added terms off and deletes terms the call created when nothing uses them), wp_set_featured_image (undo puts the earlier featured image back, and deletes an image the call downloaded when no other post uses it), wp_upload_media and wp_upload_media_from_url (undo deletes the new library item and its file for good; refused while it is a featured image), wp_update_post_meta, wp_add_post_meta, wp_delete_post_meta, wp_delete_post, wp_delete_page, wp_delete_media (when it moves the item to the media trash), wp_restore_revision, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_term_meta, wp_create_menu and wp_create_menu_item (undo deletes the new menu or item), wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, yoast_update_meta (aliases wp_update_seo_meta), wp_update_widget, the comment tools (wp_create_comment, wp_delete_comment, wp_approve_comment, wp_spam_comment, wp_trash_comment), the WooCommerce writes (products, variations, orders, order notes, attributes, coupons), the Redirection writes (redirection_create_redirect deletes the new redirect, redirection_update_redirect restores it as it was), the Relevanssi writes (relevanssi_reindex_post puts the earlier index entry back, relevanssi_update_synonyms and relevanssi_add_stopword restore the earlier list), the MailPoet writes (mailpoet_save_subscriber and mailpoet_set_subscriber_lists restore the subscriber\'s earlier details and lists, or delete a subscriber the call added; mailpoet_save_draft restores the earlier draft, or deletes a draft the call created), the TablePress writes (tablepress_create_table and tablepress_copy_table delete the new table, tablepress_update_cells restores the earlier cells), snippets_update_metadata (restores the snippet\'s earlier name, description and tags), the Complianz writes (complianz_update_banner_text and complianz_update_cookie_description restore the earlier texts), the Royal AI Firewall writes (raif_set_bot_policies and raif_block_all_ai_bots restore the earlier bot policies), gp_block_ip (undo lifts the block; refused with edited_since_write when the block was changed since, unless forced), the launch tools (wp_publish_and_launch removes the post and the image it uploaded, seo_optimize_for_launch restores the earlier SEO title and description and removes the redirects it made, wp_migrate_theme_assets puts the earlier post content back; search engine submissions and cache purges cannot be taken back), the plugin and theme tools (wp_install_plugin and wp_install_theme remove what was installed, wp_activate_plugin and wp_deactivate_plugin switch back, wp_switch_theme returns to the earlier theme, the auto-update switches restore the earlier setting; refused with edited_since_write after a later change, or security_plugin for the active security plugin, unless forced; updates and deletes have no undo), the ACF setup tools (field group and field creates, changes, deletes, imports, reorders and acf_register_post_type: undo puts the earlier definition back or removes what was made, and is refused with edited_since_write when the field group changed again since, unless forced), wp_set_maintenance_mode (undo restores the earlier state; refused with edited_since_write when the mode was changed again, unless forced), the Royal Affiliate writes (rafp_update_referral_status puts each referral back to its earlier status; rafp_create_campaign and rafp_create_challenge delete what they made, refused with in_use once it is used; rafp_assign_landing_page gives the page back; all four are refused with edited_since_write after a later change unless forced), the FormForge form tools (formforge_duplicate and formforge_create_from_template: undo deletes the new form, and is refused with has_entries while the form holds entries or with edited_since_write once it was edited, unless forced), the Elementor write tools (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_apply_template_to_page, elementor_rebuild_post_content, and elementor_rebuild_post_content_bulk, whose undo empties again the pages it filled and leaves pages edited since alone unless forced) and the Divi write tools (divi_replace_image, divi_clone_page, divi_import_template). Tokens live ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Most undos are refused with edited_since_write if the target was modified between the tracked write and this undo call (protects later edits from a silent overwrite; see force). These restore without that check: the undos that recreate a permanently deleted item (wp_delete_term, wp_delete_post / wp_delete_page / wp_delete_media with force, wp_delete_comment with force, WooCommerce permanent deletes), wc_add_order_note and divi_clone_page. For a browser agent (WebMCP), these undos delete what their operation created and are refused while the matching delete tool is switched off for browser agents: wp_create_post, wp_create_page, wp_clone_post_as_draft, elementor_clone_page, elementor_import_template and divi_clone_page (wp_delete_post, or wp_delete_page for a page), wp_insert_blocks (wp_delete_block), elementor_add_widget (elementor_delete_widget, where that tool exists), wp_create_menu_item (wp_delete_menu_item), wp_create_term and wp_add_post_terms when it created terms (wp_delete_term), wp_upload_media, wp_upload_media_from_url and wp_set_featured_image when it downloaded the image (wp_delete_media), wp_create_comment (wp_delete_comment), wp_add_post_meta (wp_delete_post_meta), wc_create_variation and the variations a wc_batch_update_variations call created (wc_delete_variation), and wc_create_coupon (wc_delete_coupon); a browser agent cannot undo wp_create_menu with force. Other undos are not tied to a delete tool. Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).'], 'undo_token' => ['type' => 'string', 'description' => 'Same as token; either name works.'], 'force' => ['type' => 'boolean', 'description' => 'These undos are refused with edited_since_write when the target changed after the tracked write, and accept force: the post content undos (wp_update_post, wp_replace_in_post, wp_replace_in_page, wp_restore_revision and the block tools), wp_create_term, wp_add_post_terms, wp_set_featured_image, wp_upload_media, wp_upload_media_from_url, wp_create_post, wp_create_page and wp_clone_post_as_draft, post and page trash, post and term meta updates, wp_add_post_meta, wp_delete_post_meta, wp_delete_term_meta, wp_update_media, wp_update_term, menus and menu items (wp_create_menu, wp_create_menu_item, wp_update_menu_item, wp_delete_menu_item, wp_reorder_menu_items), wp_update_option, the WooCommerce writes (products, variations, batch variation updates, product attributes and attribute creation, orders and order status, coupons, emptying the coupon trash), the comment tools (wp_create_comment, wp_approve_comment, wp_spam_comment, wp_trash_comment, wp_delete_comment to the trash), wp_update_seo_meta / yoast_update_meta, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_widget, the Elementor write tools (an Elementor undo is also refused while an editor is open on the page), divi_replace_image and divi_import_template, the Redirection writes, the MailPoet writes, the Relevanssi writes and raif_set_bot_policies / raif_block_all_ai_bots (bots changed since are skipped, the others restored). Nothing is changed and the token stays valid; pass force: true to restore anyway, removing those later edits (an item the operation created is deleted with them; undoing wp_create_menu deletes the menu with its items). An item already out of the trash is left as it is and the token is closed; coupons whose code another coupon uses now are skipped while the others are recreated; a batch variation undo leaves off a SKU another product uses now and reports it. The other undos that check for later edits (the TablePress writes, snippets_update_metadata and the Complianz writes) refuse with an error and cannot be forced, and recreating a deleted term or coupon is refused while another term or coupon has its slug or code. Default false.']]]],
             ['name' => 'mcp_list_recent_changes', 'description' => 'List the changes made through Royal MCP that can still be reviewed: every undo-tracked write from the last ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' by the same WordPress user (administrators can pass all_users for every user\'s), newest first. Each row has the time, the tool, what it changed (target_label), what undo would restore (undo_summary), which connection made it (AI client, API key, another MCP server or a browser agent), whether it was undone, and the undo token while undo is still possible. Pass a change_id to mcp_get_change for the before and after values. Changes older than ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' are not kept.', 'inputSchema' => ['type' => 'object', 'properties' => ['limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 100, 'description' => 'Rows to return (default 20, max 100).'], 'tool' => ['type' => 'string', 'description' => 'Only changes made by this tool, for example wp_update_post.'], 'include_undone' => ['type' => 'boolean', 'description' => 'Include changes that were already undone (default true).'], 'all_users' => ['type' => 'boolean', 'description' => 'Administrators only: list every user\'s changes (each row names its user; undo tokens only for your own changes). Default false.']]]],
             ['name' => 'mcp_get_change', 'description' => 'Show one change field by field: the value before the change, the value the change wrote, and the value now, plus a line diff for post content, CSS and page-builder data. Flags fields that were changed again since, which undo would refuse. Takes a change_id from mcp_list_recent_changes, or the undo token from the original tool response. A change older than ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' reports status "expired".', 'inputSchema' => ['type' => 'object', 'properties' => ['change_id' => ['type' => 'string', 'description' => 'change_id from mcp_list_recent_changes, or the undo token from the tool response that made the change.']], 'required' => ['change_id']]],
             ['name' => 'mcp_get_skill', 'description' => 'Read a skill: the site owner\'s chosen instructions for one kind of work on this site (for example editing Elementor pages or changing WooCommerce products). Read the skill before you start that kind of work and follow it. Without arguments it lists the skills loaded on this site. With a skill it returns the core of that skill and the list of its workflows; with a skill and a section it returns that one workflow.', 'inputSchema' => ['type' => 'object', 'properties' => ['skill' => ['type' => 'string', 'description' => 'Skill id from the list, for example "elementor". Leave out to list the loaded skills.'], 'section' => ['type' => 'string', 'description' => 'Id of one workflow of the skill, from the list in the skill\'s core. Leave out for the core.']]]],
@@ -4970,8 +5040,8 @@ class Server {
     private function execute_tool($name, $args) {
         $name = (string) $name;
         if ( 'mcp_undo_last_operation' === $name && is_array( $args ) ) {
-            $ul_token = (string) ( $args['token'] ?? ( $args['undo_token'] ?? '' ) );
-            if ( preg_match( '/^[a-f0-9]{32}$/', $ul_token ) ) {
+            $ul_token = \Royal_MCP\MCP\Undo_Store::token_from_args( $args );
+            if ( 1 === preg_match( '/^[a-f0-9]{32}\z/', $ul_token ) ) {
                 $ul_held = self::named_lock( 'undo_' . $ul_token, 15 );
                 if ( false === $ul_held ) {
                     throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'busy', 'Another undo of this change is running. Try again in a moment; the token stays valid.' );
@@ -4992,14 +5062,32 @@ class Server {
         }
         $cl_pid  = self::content_tool_post_id( $cl_keys, $args );
         $cl_want = is_array( $args ) && isset( $args['expected_hash'] ) ? $args['expected_hash'] : null;
-        if ( isset( self::CONTENT_HASH_READS[ $name ] ) || null === $cl_want || '' === $cl_want ) {
+        if ( isset( self::CONTENT_HASH_READS[ $name ] ) ) {
+            // The hash goes with a read only when the post did not change while it ran, so a
+            // reply never pairs older content with a newer hash.
+            $cl_before = $cl_pid > 0 ? self::content_hash( $cl_pid ) : '';
             $cl_result = $this->execute_tool_now( $name, $args );
-            return ( $cl_pid > 0 && ! ( is_array( $args ) && ! empty( $args['dry_run'] ) && isset( self::CONTENT_LOCK_TOOLS[ $name ] ) ) ) ? self::with_content_hash( $cl_result, $cl_pid ) : $cl_result;
+            return ( '' !== $cl_before && hash_equals( $cl_before, self::content_hash( $cl_pid ) ) ) ? self::with_content_hash( $cl_result, $cl_pid ) : $cl_result;
+        }
+        if ( null === $cl_want || '' === $cl_want ) {
+            // Writes without a hash also run under the post lock, so the hash in their reply
+            // describes this write and not a Royal MCP write that landed in between.
+            $cl_held = ( $cl_pid > 0 && ! ( is_array( $args ) && ! empty( $args['dry_run'] ) ) && current_user_can( 'edit_post', $cl_pid ) ) ? self::named_lock( 'post_' . $cl_pid, 10 ) : null;
+            try {
+                $cl_result = $this->execute_tool_now( $name, $args );
+                return ( $cl_pid > 0 && ! ( is_array( $args ) && ! empty( $args['dry_run'] ) ) ) ? self::with_content_hash( $cl_result, $cl_pid ) : $cl_result;
+            } finally {
+                if ( $cl_held ) {
+                    self::release_named_lock( 'post_' . $cl_pid );
+                }
+            }
         }
         if ( ! is_string( $cl_want ) || ! preg_match( '/^[a-f0-9]{32}$/', $cl_want ) ) {
             throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', 'expected_hash must be the 32-character content_hash a read of this post returned.' );
         }
-        if ( $cl_pid <= 0 || ! get_post( $cl_pid ) ) {
+        // Only someone who may edit the post learns anything about it from the check; anyone else
+        // gets the tool's own answer.
+        if ( $cl_pid <= 0 || ! get_post( $cl_pid ) || ! current_user_can( 'edit_post', $cl_pid ) ) {
             return $this->execute_tool_now( $name, $args );
         }
         $cl_held = self::named_lock( 'post_' . $cl_pid, 10 );
@@ -12311,6 +12399,38 @@ class Server {
                             ]
                         );
 
+                    case 'elementor_rebuild_post_content_bulk':
+                        $rb_written = (array) ( $undo_snapshot['pre_op_state']['written_md5'] ?? [] );
+                        if ( ! $rb_written ) {
+                            throw new \Exception( 'Undo snapshot has no pages to restore.' );
+                        }
+                        $rb_done = [];
+                        $rb_left = [];
+                        foreach ( $rb_written as $rb_pid => $rb_md5 ) {
+                            $rb_pid  = (int) $rb_pid;
+                            $rb_post = $rb_pid > 0 ? get_post( $rb_pid ) : null;
+                            if ( ! $rb_post || ! current_user_can( 'edit_post', $rb_pid ) ) {
+                                $rb_left[] = [ 'post_id' => $rb_pid, 'reason' => $rb_post ? 'no_permission' : 'gone' ];
+                                continue;
+                            }
+                            // A page edited since keeps its text; force empties it anyway.
+                            if ( ! $undo_force && ! hash_equals( (string) $rb_md5, md5( (string) $rb_post->post_content ) ) ) {
+                                $rb_left[] = [ 'post_id' => $rb_pid, 'reason' => 'edited_since_write' ];
+                                continue;
+                            }
+                            wp_update_post( [ 'ID' => $rb_pid, 'post_content' => '' ] );
+                            clean_post_cache( $rb_pid );
+                            $rb_done[] = $rb_pid;
+                        }
+                        if ( ! $rb_done && $rb_left && ! $undo_force ) {
+                            throw self::undo_drift_refusal( 'every page the repair filled was edited since or cannot be changed by you.', 'empty them anyway' );
+                        }
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return \Royal_MCP\MCP\Support\Envelope::success(
+                            sprintf( 'Emptied the stored text of %d page(s) again%s.', count( $rb_done ), $rb_left ? sprintf( '; left %d alone (edited since or not yours to change): %s', count( $rb_left ), implode( ', ', array_column( $rb_left, 'post_id' ) ) ) : '' ),
+                            [ 'undone' => true, 'op' => $undo_op, 'emptied' => $rb_done, 'left' => $rb_left, 'restored' => true ]
+                        );
+
                     case 'elementor_rebuild_post_content':
                         $rc_target = $undo_snapshot['target'] ?? [];
                         $rc_pid    = (int) ( $rc_target['post_id'] ?? 0 );
@@ -15175,7 +15295,7 @@ class Server {
             'elementor_clone_page', 'elementor_clone_template',
             'elementor_import_template', 'elementor_apply_template_to_page',
             'elementor_apply_template_advanced',
-            'elementor_rebuild_post_content',
+            'elementor_rebuild_post_content', 'elementor_rebuild_post_content_bulk',
             'elementor_manage_elements', 'elementor_manage_global_classes',
             'elementor_manage_global_variable',
             'elementor_save_template_with_conditions',

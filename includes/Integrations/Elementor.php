@@ -492,8 +492,7 @@ class Elementor {
 	 * SiteVault snapshot).
 	 */
 	private static function build_elementor_data_undo( $op, $post_id, $prior_blob, $summary ) {
-		$reverse_json = (string) wp_json_encode( [ 'prior_elementor_data' => $prior_blob ] );
-		if ( strlen( gzcompress( $reverse_json, 9 ) ) > 1024 * 1024 ) {
+		if ( ! \Royal_MCP\MCP\Undo_Store::fits( [ 'prior_elementor_data' => $prior_blob ] ) ) {
 			return null;
 		}
 		return \Royal_MCP\MCP\Undo_Store::store( [
@@ -888,12 +887,10 @@ class Elementor {
 
 		// Undo envelope — restore prior post_content. Skip token if prior content
 		// exceeds the 1MB compressed cap.
-		$reverse_json     = (string) wp_json_encode( [ 'prior_content' => $prior_content ] );
-		$reverse_size_est = strlen( gzcompress( $reverse_json, 9 ) );
 		$undo_envelope    = null;
 		$warnings         = [];
-		if ( $reverse_size_est > 1024 * 1024 ) {
-			$warnings[] = 'undo not available — prior post_content exceeds 1MB storage cap. SiteVault snapshot recommended for reversal.';
+		if ( ! \Royal_MCP\MCP\Undo_Store::fits( [ 'prior_content' => $prior_content ] ) ) {
+			$warnings[] = 'undo not available: the earlier post_content is over the undo size limit. A SiteVault backup is the way back.';
 		} else {
 			$undo_envelope = \Royal_MCP\MCP\Undo_Store::store( [
 				'op'      => 'elementor_rebuild_post_content',
@@ -1003,6 +1000,7 @@ class Elementor {
 		}
 
 		$repaired = [];
+		$written  = [];
 		$skipped  = [];
 		foreach ( $candidate_ids as $pid ) {
 			if ( ! current_user_can( 'edit_post', $pid ) ) {
@@ -1042,6 +1040,16 @@ class Elementor {
 				continue;
 			}
 			$repaired[] = [ 'post_id' => $pid, 'new_length' => $new_length ];
+			$written[ $pid ] = md5( (string) get_post( $pid )->post_content ); // audit:null-chain-ok -- the post was just repaired
+		}
+		$bulk_undo = null;
+		if ( $repaired ) {
+			$bulk_undo = \Royal_MCP\MCP\Undo_Store::store( [
+				'op'           => 'elementor_rebuild_post_content_bulk',
+				'summary'      => sprintf( 'Empty the stored text of the %d page(s) this repair filled again: %s.', count( $repaired ), implode( ', ', array_keys( $written ) ) ),
+				'target'       => [ 'post_ids' => array_keys( $written ) ],
+				'pre_op_state' => [ 'written_md5' => $written ],
+			] );
 		}
 
 		$repaired_ids = array_column( $repaired, 'post_id' );
@@ -1051,18 +1059,8 @@ class Elementor {
 		$skipped_display = ! empty( $skipped )
 			? ' Skipped ' . count( $skipped ) . ' (reasons in structured detail).'
 			: '';
-		return \Royal_MCP\MCP\Support\Envelope::success(
-			sprintf( 'Bulk rebuild: %d repaired, %d skipped (scanned %d candidate(s)).%s%s There is no undo for a bulk rebuild.',
-				count( $repaired ),
-				count( $skipped ),
-				count( $candidate_ids ),
-				$repaired_display,
-				$skipped_display
-			),
-			[
+		$bulk_struct = [
 				'action'           => 'bulk_repair',
-				'undo_available'   => false,
-				'undo_reason'      => 'bulk_rebuild_has_no_undo',
 				'scanned'          => count( $candidate_ids ),
 				'repaired_count'   => count( $repaired ),
 				'skipped_count'    => count( $skipped ),
@@ -1072,7 +1070,22 @@ class Elementor {
 				'limit_applied'    => $limit,
 				'may_be_more'      => $may_be_more,
 				'last_post_id'     => $last_scanned,
-			]
+		];
+		if ( null === $bulk_undo ) {
+			$bulk_struct['undo_available'] = false;
+			$bulk_struct['undo_reason']    = 'nothing_repaired';
+		}
+		return \Royal_MCP\MCP\Support\Envelope::success(
+			sprintf( 'Bulk rebuild: %d repaired, %d skipped (scanned %d candidate(s)).%s%s%s',
+				count( $repaired ),
+				count( $skipped ),
+				count( $candidate_ids ),
+				$repaired_display,
+				$skipped_display,
+				null !== $bulk_undo ? ' Undo empties the stored text of the repaired pages again (pages edited since are left alone).' : ''
+			),
+			$bulk_struct,
+			$bulk_undo
 		);
 	}
 
