@@ -117,15 +117,15 @@ class SiteVaultHealth {
 					$schedule['on_track'] = false;
 				}
 			}
-			// SiteVault stamps last_run when a run starts, so a schedule whose
-			// backups keep failing still reads as fresh: also off track when
-			// the newest failure started after the newest completed backup.
-			if ( is_array( $latest_failed ) ) {
-				$failed_ts    = strtotime( (string) $latest_failed['started_at'] );
-				$completed_ts = ( $last && ! empty( $last->created_at ) ) ? self::site_local_to_ts( $last->created_at ) : false;
-				if ( false === $completed_ts || ( false !== $failed_ts && $failed_ts > $completed_ts ) ) {
-					$schedule['on_track'] = false;
-				}
+		}
+		// SiteVault stamps last_run when a run starts, so a schedule whose
+		// backups keep failing still reads as fresh: also off track when
+		// the newest failure started after the newest completed backup.
+		if ( is_array( $latest_failed ) && true === ( $schedule['on_track'] ?? null ) ) {
+			$failed_ts    = strtotime( (string) $latest_failed['started_at'] );
+			$completed_ts = ( $last && ! empty( $last->created_at ) ) ? self::site_local_to_ts( $last->created_at ) : false;
+			if ( false === $completed_ts || ( false !== $failed_ts && $failed_ts > $completed_ts ) ) {
+				$schedule['on_track'] = false;
 			}
 		}
 
@@ -434,7 +434,7 @@ class SiteVaultHealth {
 
 	/** Unix timestamp for a site-local MySQL datetime, or false. */
 	private static function site_local_to_ts( $mysql_datetime ) {
-		if ( ! is_scalar( $mysql_datetime ) || '' === (string) $mysql_datetime ) {
+		if ( ! is_scalar( $mysql_datetime ) || '' === (string) $mysql_datetime || 0 === strpos( (string) $mysql_datetime, '0000-00-00' ) ) {
 			return false;
 		}
 		try {
@@ -444,10 +444,10 @@ class SiteVaultHealth {
 		}
 	}
 
-	/** ISO 8601 with the site's offset for a site-local MySQL datetime, or null. */
+	/** ISO 8601 in UTC for a site-local MySQL datetime, or null. Every time in the summary is in UTC. */
 	private static function site_local_to_iso( $mysql_datetime ) {
 		$ts = self::site_local_to_ts( $mysql_datetime );
-		return false === $ts ? null : wp_date( 'c', $ts );
+		return false === $ts ? null : gmdate( 'c', $ts );
 	}
 
 	/** Encrypted when SiteVault flagged it or the archive is an .enc file. */

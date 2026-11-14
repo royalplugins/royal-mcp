@@ -43,7 +43,7 @@ class Elementor {
 		return [
 			[
 				'name'        => 'elementor_clone_page',
-				'description' => 'Duplicate an existing Elementor page or post as a new draft. Copies the full _elementor_data tree and regenerates every element ID to avoid duplicates. Preserves Container model, legacy section/column, and atomic widgets as-is. Returns the new post ID. The Elementor editor on the new page opens cleanly because IDs are unique within the document.',
+				'description' => 'Duplicate an existing Elementor page or post as a new draft. Copies the full _elementor_data tree and regenerates every element ID to avoid duplicates. Also copies the page template, excerpt, parent, order and slug (WordPress makes the slug unique). Preserves Container model, legacy section/column, and atomic widgets as-is. Returns the new post ID. The Elementor editor on the new page opens cleanly because IDs are unique within the document.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -246,13 +246,14 @@ class Elementor {
 			],
 			[
 				'name'        => 'elementor_rebuild_post_content_bulk',
-				'description' => 'Scan all posts with _elementor_data + empty post_content and rebuild them in batch. Fixes bulk SEO / search damage from prior clone operations that shipped without post_content. Pass dry_run=true to preview the count + first 20 candidate post IDs without writing. Batches up to limit posts per call (default 50, max 200). NO undo tokens emitted (bulk rebuild of empty content is generally not something users want to reverse — take a SiteVault snapshot beforehand if reversal capability matters). Cap: edit_posts to enter the tool; only posts the caller can edit are scanned and rebuilt.',
+				'description' => 'Find posts that have Elementor data but empty stored text (so search and SEO tools see nothing) and fill the text in from the Elementor layout, in batches. Pass dry_run=true to preview: it returns up to 200 candidates, the first 20 IDs, and may_be_more. A run repairs up to limit posts (default 50, max 200), lowest IDs first. A page that renders no text is listed under skipped with reason no_text_rendered and stays a candidate: pass after_id (the last_post_id of the reply) to go on past it. No undo token; it only fills text that is empty. Needs edit_posts; only posts the caller can edit are scanned and repaired.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
 						'dry_run'   => [ 'type' => 'boolean', 'description' => 'Default false. When true, report what would be repaired without writing.' ],
 						'limit'     => [ 'type' => 'integer', 'description' => 'Max posts to repair in this call. Default 50, max 200.' ],
 						'post_type' => [ 'type' => 'string', 'description' => 'Optional post_type filter (e.g. "page" or "post"). Default: all post types.' ],
+						'after_id'  => [ 'type' => 'integer', 'description' => 'Only posts with an ID above this one. Pass the last_post_id of the reply before to continue.' ],
 					],
 				],
 			],
@@ -393,10 +394,15 @@ class Elementor {
 
 		// Create the new post.
 		$new_post_data = [
-			'post_title'  => $new_title,
-			'post_status' => $new_status,
-			'post_type'   => $source->post_type,
-			'post_author' => get_current_user_id() ?: $source->post_author,
+			'post_title'   => $new_title,
+			'post_status'  => $new_status,
+			'post_type'    => $source->post_type,
+			'post_author'  => get_current_user_id() ?: $source->post_author,
+			// The page's own fields come along; WordPress makes the slug unique when it must.
+			'post_excerpt' => wp_slash( (string) $source->post_excerpt ),
+			'post_parent'  => (int) $source->post_parent,
+			'menu_order'   => (int) $source->menu_order,
+			'post_name'    => (string) $source->post_name,
 		];
 		$new_id = wp_insert_post( $new_post_data, true );
 		if ( is_wp_error( $new_id ) ) {
@@ -422,6 +428,12 @@ class Elementor {
 			if ( $value !== '' && $value !== null && $value !== false ) {
 				update_post_meta( $new_id, $key, wp_slash( $value ) );
 			}
+		}
+
+		// The WordPress page template (Elementor Canvas, Full Width and others live there).
+		$source_template = get_post_meta( $source_id, '_wp_page_template', true );
+		if ( is_string( $source_template ) && '' !== $source_template ) {
+			update_post_meta( $new_id, '_wp_page_template', wp_slash( $source_template ) );
 		}
 
 		// Set edit mode = 'builder' if it wasn't on source (rare).
@@ -502,6 +514,44 @@ class Elementor {
 	 * component isn't reachable in this request context; caller then leaves
 	 * post_content untouched.
 	 */
+	/**
+	 * True when Elementor's plain-text pass gives no text for this post, so a
+	 * rebuild would store nothing. False when it gives text or cannot be asked.
+	 */
+	private static function renders_no_text( $post_id ) {
+		if ( ! class_exists( '\\Elementor\\Plugin' ) ) {
+			return false;
+		}
+		try {
+			$plugin = \Elementor\Plugin::$instance ?? null;
+			if ( ! $plugin || empty( $plugin->db ) || ! method_exists( $plugin->db, 'get_plain_text' ) ) {
+				return false;
+			}
+			// Dynamic values are left out, as they are when Elementor stores the text.
+			$tags = $plugin->dynamic_tags ?? null;
+			$mode = null;
+			if ( $tags && method_exists( $tags, 'get_parsing_mode' ) && method_exists( $tags, 'set_parsing_mode' ) && defined( '\\Elementor\\Core\\DynamicTags\\Manager::MODE_REMOVE' ) ) {
+				$mode = $tags->get_parsing_mode();
+				$tags->set_parsing_mode( \Elementor\Core\DynamicTags\Manager::MODE_REMOVE );
+			}
+			$buffers = ob_get_level();
+			try {
+				$text = (string) $plugin->db->get_plain_text( (int) $post_id );
+			} finally {
+				// A widget that throws while rendering leaves its output buffer open.
+				while ( ob_get_level() > $buffers ) {
+					ob_end_clean();
+				}
+				if ( null !== $mode ) {
+					$tags->set_parsing_mode( $mode );
+				}
+			}
+			return '' === trim( $text );
+		} catch ( \Throwable $e ) {
+			return false;
+		}
+	}
+
 	private static function populate_post_content_from_elementor( $post_id ) {
 		if ( ! class_exists( '\\Elementor\\Plugin' ) ) {
 			return false;
@@ -889,6 +939,7 @@ class Elementor {
 		$dry_run   = ! empty( $args['dry_run'] );
 		$limit     = isset( $args['limit'] ) ? max( 1, min( 200, (int) $args['limit'] ) ) : 50;
 		$post_type = isset( $args['post_type'] ) ? sanitize_key( (string) $args['post_type'] ) : '';
+		$after_id  = isset( $args['after_id'] ) ? max( 0, (int) $args['after_id'] ) : 0;
 
 		global $wpdb;
 		$sql = "SELECT pm.post_id
@@ -903,11 +954,18 @@ class Elementor {
 			$sql .= ' AND p.post_type = %s';
 			$params[] = $post_type;
 		}
+		if ( $after_id > 0 ) {
+			$sql     .= ' AND p.ID > %d';
+			$params[] = $after_id;
+		}
 		$sql .= ' ORDER BY p.ID ASC LIMIT %d';
 		$params[] = $dry_run ? 200 : $limit;
 
 		$prepared = $wpdb->prepare( $sql, $params );
 		$candidate_ids = array_map( 'intval', (array) $wpdb->get_col( $prepared ) );
+		// The query stops at its limit, so a full page means there may be more after its last ID.
+		$may_be_more  = count( $candidate_ids ) >= ( $dry_run ? 200 : $limit );
+		$last_scanned = $candidate_ids ? max( $candidate_ids ) : null;
 		// Only posts the caller could repair, in the preview and in the results.
 		$candidate_ids = array_values( array_filter( $candidate_ids, static function ( $pid ) {
 			return current_user_can( 'edit_post', $pid );
@@ -926,6 +984,8 @@ class Elementor {
 				[
 					'action'          => 'dry_run',
 					'candidate_count' => count( $candidate_ids ),
+					'may_be_more'     => $may_be_more,
+					'last_post_id'    => $last_scanned,
 					'sample_post_ids' => $sample,
 					'note'            => 'Preview only — no writes performed. Re-run without dry_run to repair.',
 				]
@@ -949,6 +1009,11 @@ class Elementor {
 				$skipped[] = [ 'post_id' => $pid, 'reason' => 'post_content_now_populated' ];
 				continue;
 			}
+			// Looked at before anything is saved, so a page with nothing to store is not touched.
+			if ( self::renders_no_text( $pid ) ) {
+				$skipped[] = [ 'post_id' => $pid, 'reason' => 'no_text_rendered' ];
+				continue;
+			}
 			$ok = self::populate_post_content_from_elementor( $pid );
 			if ( ! $ok ) {
 				$skipped[] = [ 'post_id' => $pid, 'reason' => 'render_failed' ];
@@ -956,6 +1021,10 @@ class Elementor {
 			}
 			clean_post_cache( $pid );
 			$new_length = strlen( (string) get_post( $pid )->post_content ); // audit:null-chain-ok -- populate_post_content_from_elementor returned true, row exists
+			if ( 0 === $new_length ) {
+				$skipped[] = [ 'post_id' => $pid, 'reason' => 'no_text_rendered' ];
+				continue;
+			}
 			$repaired[] = [ 'post_id' => $pid, 'new_length' => $new_length ];
 		}
 
@@ -985,6 +1054,8 @@ class Elementor {
 				'skipped'          => $skipped,
 				'post_type_filter' => $post_type !== '' ? $post_type : null,
 				'limit_applied'    => $limit,
+				'may_be_more'      => $may_be_more,
+				'last_post_id'     => $last_scanned,
 			]
 		);
 	}
@@ -1355,6 +1426,20 @@ class Elementor {
 			);
 		}
 
+		// Nothing matched: the page is not saved again.
+		if ( 0 === (int) $match_count ) {
+			return \Royal_MCP\MCP\Support\Envelope::success(
+				sprintf( 'No occurrence of "%s" on post %d. Nothing was written.', $find, $post_id ),
+				[
+					'post_id'      => $post_id,
+					'find'         => $find,
+					'matches'      => 0,
+					'replacements' => 0,
+					'written'      => false,
+				]
+			);
+		}
+
 		self::refuse_if_stored_markup_would_be_removed( $post_id );
 		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $updated ) ) ) );
 		Elementor_Atomic::clear_post_cache( $post_id );
@@ -1683,6 +1768,18 @@ class Elementor {
 
 		$counter = [ 'count' => 0 ];
 		$updated = self::walk_widgets_image( $tree, $old_url, $new_url, $old_id, $new_id, $counter );
+
+		// Nothing matched: the page is not saved again.
+		if ( 0 === (int) $counter['count'] ) {
+			return \Royal_MCP\MCP\Support\Envelope::success(
+				sprintf( 'No image matched on post %d. Nothing was written.', $post_id ),
+				[
+					'post_id'      => $post_id,
+					'replacements' => 0,
+					'written'      => false,
+				]
+			);
+		}
 
 		self::refuse_if_stored_markup_would_be_removed( $post_id );
 		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $updated ) ) ) );

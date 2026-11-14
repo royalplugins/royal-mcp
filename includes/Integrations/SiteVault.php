@@ -31,6 +31,46 @@ class SiteVault {
 		return null;
 	}
 
+	/** Whether the installed SiteVault can tell a backup that is still being made from one whose job stopped. */
+	private static function can_tell_stopped( $async_class ) {
+		return null !== $async_class && ( method_exists( $async_class, 'is_backup_running' ) || method_exists( $async_class, 'is_job_alive' ) );
+	}
+
+	/** Whether any backup listed as in progress is still being made, by SiteVault's own check of each one. */
+	private static function any_backup_alive( $async_class ) {
+		global $wpdb;
+		$paid  = '\\RB_Async_Backup' === $async_class;
+		$table = $wpdb->prefix . ( $paid ? 'rb_backups' : 'sitevault_backups' );
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- the table name is one of two fixed names
+		$rows = (array) $wpdb->get_results( "SELECT * FROM {$table} WHERE status = 'in_progress'" );
+		try {
+			$async = $async_class::instance();
+		} catch ( \Throwable $e ) {
+			// Not knowing counts as still being made.
+			return true;
+		}
+		foreach ( $rows as $row ) {
+			if ( ! is_object( $row ) || empty( $row->id ) ) {
+				continue;
+			}
+			try {
+				if ( method_exists( $async, 'is_backup_running' ) ) {
+					$alive = (bool) $async->is_backup_running( $row );
+				} else {
+					$engine = self::engine_class();
+					$alive  = (bool) $async->is_job_alive( (int) $row->id ) || ( null !== $engine && is_callable( [ $engine, 'is_running' ] ) && true === $engine::is_running( (int) $row->id ) );
+				}
+			} catch ( \Throwable $e ) {
+				// Not knowing counts as still being made.
+				$alive = true;
+			}
+			if ( $alive ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private static function scheduler_class() {
 		if ( class_exists( '\\RB_Backup_Scheduler' ) ) return '\\RB_Backup_Scheduler';
 		if ( class_exists( '\\SiteVault_Backup_Scheduler' ) ) return '\\SiteVault_Backup_Scheduler';
@@ -182,9 +222,11 @@ class SiteVault {
 					$backup_args[ $folder_key ] = array_values( $args[ $folder_key ] );
 				}
 
-				// Check if a backup is already running
-				if ( $manager->has_active_backup() ) {
-					throw new \Exception( 'A backup is already in progress. Please wait for it to complete.' );
+				// A backup that is still being made is never started over. One whose job
+				// stopped is cleared by SiteVault's own start. A SiteVault that cannot tell
+				// the two apart keeps every backup in progress as a reason to wait.
+				if ( $manager->has_active_backup() && ( ! self::can_tell_stopped( $async_class ) || self::any_backup_alive( $async_class ) ) ) {
+					throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'backup_running', 'A backup is already in progress. Please wait for it to complete.' );
 				}
 
 				// Use async backup to avoid timeout
@@ -199,7 +241,7 @@ class SiteVault {
 				}
 
 				if ( is_wp_error( $backup_id ) ) {
-					throw new \Exception( esc_html( $backup_id->get_error_message() ) );
+					throw new \Royal_MCP\MCP\Support\Tool_Refusal( sanitize_key( (string) $backup_id->get_error_code() ) ?: 'backup_not_started', esc_html( $backup_id->get_error_message() ) );
 				}
 
 				return [

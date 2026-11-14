@@ -95,7 +95,7 @@ Bad:
 - **Variable parents have no price of their own.** The shop shows variation prices. `wc_update_product` accepts a price on a variable parent without complaint, and it changes nothing a customer sees. Change the variations.
 - **`sale_price` has three states.** Left out keeps the sale, `""` ends it, a number sets it. `null` is the same as left out.
 - **Price format.** Dot for decimals, no symbols, no thousands separators, not negative. A sale price above the regular price is refused, also when you send only one of the two and the stored other one makes it wrong.
-- **`stock_quantity` on a product switches stock management on.** If the user did not want stock tracked on that product, do not send it. On a variation it does not: send `manage_stock: true` with the quantity.
+- **`stock_quantity` switches stock management on**, on a product and on a variation. If the user did not want stock tracked on that item, do not send it. Undo puts stock management back. On a variation (`wc_update_variation`, `wc_batch_update_variations`), `manage_stock` must be true or false; any other value, "parent" included, and `manage_stock: false` with a `stock_quantity` are refused with `invalid_args`. Undo of a variation's stock change also puts its stock status back, and a variation that followed its parent's stock follows it again.
 - **`wc_set_product_attributes` replaces, it does not add.** The reply warns when it replaced existing attributes. Variations that used a removed attribute can break.
 - **Store-wide attribute options must exist as terms.** Unknown options are dropped silently. Check with `wc_get_attribute_terms`, add with `wp_create_term`.
 - **Undoing a new store-wide attribute deletes the attribute.** Once terms were added to it, plain undo is refused with `edited_since_write` and the token is kept. With `force: true` the terms go too, and with them the values on any product that used them.
@@ -151,7 +151,7 @@ ROYAL_MCP_SKILL_TEXT
    - `stock_quantity` is a whole number, 0 or more. Setting it switches stock management on for that product. Undo puts both back.
    - The reply has `saved_fields` (what is stored now) and, when WordPress stored a different value than you sent, `modified_by_wp`. If a field did not take at all, the call fails with a "silently dropped" error: report it, do not repeat it blindly.
    - Keep the undo token of every call with its product ID.
-6. **Variable products.** For each parent call `wc_get_product_variations({ product_id, page: 1 })` (up to 100 per page). Then send all changes for that parent in one call: `wc_batch_update_variations({ product_id, update: [{ variation_id, regular_price, sale_price, stock_quantity }, ...] })`. Every price in the batch is checked before anything is written; one bad price refuses the whole batch with "Nothing was changed". Read the `update` rows in the reply: a row with `error` did not change. One undo token covers the whole batch. On a variation, `stock_quantity` does not switch stock management on: send `manage_stock: true` with it, or the quantity can be dropped without an error. Read the variations back after the batch.
+6. **Variable products.** For each parent call `wc_get_product_variations({ product_id, page: 1 })` (up to 100 per page). Then send all changes for that parent in one call: `wc_batch_update_variations({ product_id, update: [{ variation_id, regular_price, sale_price, stock_quantity }, ...] })`. Every row's prices and stock fields are checked before anything is written; one bad row refuses the whole batch with "Nothing was changed". Read the `update` rows in the reply: a row with `error` did not change. One undo token covers the whole batch. A `stock_quantity` switches stock management on for that variation. `manage_stock` must be true or false (the texts "true" and "false" count); any other value, "parent" included, is refused with `invalid_args`, and so is `manage_stock: false` together with a `stock_quantity`. Undo puts the quantity, stock management and the stock status back. Read the variations back after the batch.
 7. **Stop on the first failure.** If a call fails, stop the loop, tell the user how many are done and which one failed, and ask how to go on.
 8. **Verify.** After a short run, read every product back. After a long run, read back at least the first, the last and three in between with `wc_get_products({ include: [ids], status: "any", per_page: 100, page: 1 })` and compare with your plan. Without `status` only published products come back, and without `per_page` only 10; `any` covers every status except the trash.
 9. **Report** as described in "Report to the user".
@@ -248,9 +248,8 @@ ROYAL_MCP_SKILL_TEXT
 2. `wc_create_order({ line_items: [{ product_id, quantity, variation_id }], billing, shipping, customer_id, payment_method, shipping_lines, fee_lines, customer_note, meta_data, status })`.
    - All line items are checked before the order exists; a wrong product leaves nothing behind.
    - `status` may be `pending`, `processing`, `on-hold`, `completed` or `cancelled`. Anything else becomes `pending` without an error, so read `status` in the reply.
-   - Create as `pending` unless the user wants WooCommerce's emails right away. Only a `pending` order is known to send nothing. Any other starting status may send WooCommerce's usual customer and admin emails for that status, and this call has no switch to hold them back. Say so before you create.
-   - To move a pending order on, use `wc_update_order_status`; it has the email switch (`send_emails: false`).
-   - `send_emails: true` also sends WooCommerce's New Order email; the reply shows `email_sent`. No email can be taken back.
+   - Creating an order sends none of WooCommerce's own emails, whatever the starting status. `send_emails` is read as true or false in any common spelling (the text "false" sends nothing); true sends the New Order email only. `email_sent` in the reply is false when nothing went out, also when the shop has the New Order email switched off. A sent email cannot be taken back.
+   - To move an order on later, use `wc_update_order_status`; it has the email switch (`send_emails: false`).
    - `meta_data` is a list of `{ key, value }`. Keys that WooCommerce uses for its own records are refused, before the order exists.
 3. Report order ID, total and status from the reply. Undo deletes the order; it is refused if the order was changed after you created it.
 
@@ -259,7 +258,7 @@ ROYAL_MCP_SKILL_TEXT
 `wc_update_order({ order_id, billing, shipping, customer_note, status, meta_data, line_items })`.
 
 - `billing` and `shipping` are partial: only the keys you send change.
-- `line_items`: an entry with `id` and `quantity: 0` removes that line, with `id` and a quantity changes it, without `id` adds a product. Always send `quantity` with `id`: without it the line is set to 1. Totals are recalculated.
+- `line_items`: an entry with `id` and `quantity: 0` removes that line, with `id` and a quantity changes it, with `id` and no `quantity` leaves it as it is, without `id` adds a product. A `quantity` must be a whole number from 0 to 1000000 (digits as text count); anything else refuses the whole call with `invalid_args` before any line is touched. A changed quantity changes the line's amounts and the order total in proportion, at the price the line already has.
 - Undo exists only when the call touched nothing but addresses, the customer note and status. A call with `meta_data` or `line_items` has no undo: the reply says `undo_available: false` with the reason under `warnings`. So send item or meta changes in their own call, tell the user first that this one cannot be undone, and read the order before so you can report the old lines.
 - For a status change use `wc_update_order_status`. It is the tool with the email switch.
 ROYAL_MCP_SKILL_TEXT
@@ -274,17 +273,17 @@ ROYAL_MCP_SKILL_TEXT
 Facts first:
 
 - Codes are stored in lower case. `WINTER25` becomes `winter25`. Report the code from the reply.
-- Discount types: `percent`, `fixed_cart`, `fixed_product`. The default is `fixed_cart`. `wc_create_coupon` ignores a type outside this list without an error and keeps `fixed_cart`, so read the coupon back after creating one. `wc_update_coupon` fails on such a type with a "silently dropped" error, but only after it saved the other fields you sent: read the coupon back then too.
+- Discount types: `percent`, `fixed_cart`, `fixed_product`. The default is `fixed_cart`. `wc_create_coupon` and `wc_update_coupon` refuse any other type with `invalid_args`, and nothing is saved. One exception: a coupon whose type comes from another plugin can be updated when you send that same type back, or no type.
 - `date_expires` takes a date such as `2026-12-31` or `2026-12-31T23:59:59`.
 
 ### Create
 
-`wc_create_coupon({ code, discount_type, amount, date_expires, usage_limit, usage_limit_per_user, minimum_amount, individual_use, product_ids, ... })`. Only `code` is required. A code that a published coupon already has is refused with `conflict` and the ID of that coupon. A draft coupon with the same code is not seen, and a second coupon with that code is created: when that matters, look first with `wc_get_coupons({ search: "<code>", status: "any", page: 1 })` and compare the `code` of each row. After creating, `wc_get_coupon({ code })` and repeat the terms to the user. Undo deletes the coupon; it is refused once the coupon was edited or used.
+`wc_create_coupon({ code, discount_type, amount, date_expires, usage_limit, usage_limit_per_user, minimum_amount, individual_use, product_ids, ... })`. Only `code` is required. A code that another coupon already has, in any status except the trash, is refused with `conflict` and the ID of that coupon; codes with `&` are checked too. After creating, `wc_get_coupon({ code })` and repeat the terms to the user. Undo deletes the coupon; it is refused once the coupon was edited or used.
 
 ### Change or expire
 
 1. `wc_get_coupon({ id })` or `({ code })` and show what will change.
-2. `wc_update_coupon({ id, ...only the fields that change })`. Fields you leave out stay as they are. `date_expires: ""` removes the expiry.
+2. `wc_update_coupon({ id, ...only the fields that change })`. Fields you leave out stay as they are. `date_expires: ""` removes the expiry. A new `code` that another coupon holds, in any status except the trash, is refused with `conflict` and that coupon's ID; codes with `&` are checked too.
 3. To switch a coupon off but keep its history, set `date_expires` to a past date. That is nearly always better than deleting a coupon that was used.
 4. The reply has `saved_fields` and, when a stored value differs from what you sent, `modified_by_wp`. Quote those.
 
@@ -305,7 +304,7 @@ Facts first:
 
 There is no call for a set of coupons. Loop: one `wc_create_coupon`, `wc_update_coupon` or `wc_delete_coupon` per coupon.
 
-- Creating a series: make the codes yourself, check your own list for duplicates, show the pattern and the count, then create. A `conflict` reply means a published coupon has that code: note it and go on, then list the conflicts in the report.
+- Creating a series: make the codes yourself, check your own list for duplicates, show the pattern and the count, then create. A `conflict` reply means another coupon has that code: note it and go on, then list the conflicts in the report.
 - Finding expired coupons: page through `wc_get_coupons({ page })` and compare each `date_expires` with today yourself; there is no date filter.
 - Keep every undo token with its code. Stop on any failure other than `conflict`.
 ROYAL_MCP_SKILL_TEXT

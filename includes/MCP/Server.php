@@ -215,6 +215,9 @@ class Server {
     /** Leading verbs that only read. Matched against the verb word only, never anywhere in the name. */
     const READ_VERBS = [ 'get', 'list', 'count', 'search', 'audit', 'verify', 'validate', 'diff', 'discover' ];
 
+    /** Write tools whose dry run is known to change nothing: with dry_run true they count as reads. */
+    const DRY_RUN_READS = [ 'wp_replace_in_post', 'wp_replace_in_page', 'elementor_replace_text', 'elementor_rebuild_post_content_bulk' ];
+
     /** Reads whose names don't start with a read verb. */
     const READ_ONLY_TOOLS = [
         'royal_mcp_connection_health',
@@ -338,6 +341,11 @@ class Server {
         }
         // A tool another plugin adds may say that this call, by its arguments, only reads.
         if ( is_array( $args ) && ! $this->is_builtin_tool_name( $name ) && apply_filters( 'royal_mcp_call_reads', false, $name, $args ) ) {
+            return true;
+        }
+        // A preview that writes nothing is a read. Only the literal true counts, so no
+        // tool can read the same argument differently and write.
+        if ( is_array( $args ) && true === ( $args['dry_run'] ?? null ) && in_array( $name, self::DRY_RUN_READS, true ) ) {
             return true;
         }
         // Royal MCP's own tools are classed by name, whatever the tool list says.
@@ -1752,7 +1760,7 @@ class Server {
             ['name' => 'wp_get_pages', 'description' => 'List WordPress pages. Returns id, title, status, URL, date (publish date, site local time), modified (last change, ISO 8601 UTC) and content_length (bytes of stored content — size-check before fetching) for each. Filter by parent to walk the page hierarchy; sort with orderby / order; use modified_after to find pages edited recently. Content edits, Royal MCP custom-field tools, ACF field writes and Elementor writes update modified; other plugins changing only custom fields may leave it unchanged.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of pages (default 10, max 100)'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID — returns only direct children of this page'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'pending', 'private', 'future', 'any'], 'description' => 'publish (default), one status, or any (every status you can read except trash), so a draft you just created can be found.'], 'orderby' => ['type' => 'string', 'enum' => ['date', 'modified', 'title', 'menu_order', 'id'], 'description' => 'Sort field. Without orderby or modified_after, pages are listed by title A to Z.'], 'order' => ['type' => 'string', 'enum' => ['asc', 'desc'], 'description' => 'asc or desc. Default when orderby is given: asc (A to Z) for title, desc for every other sort.'], 'modified_after' => ['type' => 'string', 'description' => 'Only items last modified after this moment: a date (2026-11-01) or date and time (2026-11-01T09:30:00Z). No timezone means UTC.']]]],
             ['name' => 'wp_get_page', 'description' => 'Get single page by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Page ID']], 'required' => ['id']]],
             ['name' => 'wp_create_page', 'description' => 'Create new page. Combine status="future" with date to schedule. Excerpt (via wp_update_post_meta on _excerpt or via wp_create_post fallback) may contain safe HTML.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule.'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID'], 'template' => ['type' => 'string', 'description' => 'Page template: default, or a template filename the theme offers for pages. Anything else is refused and the error lists the valid values.']], 'required' => ['title', 'content']]],
-            ['name' => 'wp_update_page', 'description' => 'Update existing page. Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional page excerpt. May contain safe HTML.'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as page author.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling pages. Lower = earlier in navigation.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent page ID (0 = top-level). Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Page password. Empty string removes protection.'], 'template' => ['type' => 'string', 'description' => 'Page template: default, or a template filename the theme offers for pages. Anything else is refused and the error lists the valid values. The reply carries an undo token that restores the prior template (only the template).']], 'required' => ['id']]],
+            ['name' => 'wp_update_page', 'description' => 'Update existing page. Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate. The reply carries an undo token that puts the page back; a template change has its own token (template_undo_token).', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional page excerpt. May contain safe HTML.'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as page author.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling pages. Lower = earlier in navigation.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent page ID (0 = top-level). Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Page password. Empty string removes protection.'], 'template' => ['type' => 'string', 'description' => 'Page template: default, or a template filename the theme offers for pages. Anything else is refused and the error lists the valid values. The reply carries an undo token that restores the prior template (only the template).']], 'required' => ['id']]],
             ['name' => 'wp_replace_in_page', 'description' => 'Find/replace a literal string inside a page\'s content without resending the full body. Page-typed variant of wp_replace_in_post — same semantics: case-sensitive literal match, all occurrences replaced, dry_run preview, expected_count guard, read-after-write verification.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'find' => ['type' => 'string', 'minLength' => 1, 'description' => 'Literal text to find in the page content (case-sensitive, no regex).'], 'replace' => ['type' => 'string', 'description' => 'Literal replacement text. Empty string deletes the matched text.'], 'expected_count' => ['type' => 'integer', 'description' => 'Optional guard: abort without writing unless the number of occurrences equals this value.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Report the occurrence count without writing. Default false.']], 'required' => ['id', 'find', 'replace']]],
             ['name' => 'wp_delete_page', 'description' => 'Delete page. Without force it moves to the trash; if the page cannot be trashed (already in the trash, or the site has the trash turned off) the call is refused and nothing is deleted. force: true deletes permanently. Either way the reply carries an undo token (untrash, or recreate a permanently deleted page with a new id).', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean', 'description' => 'Skip the trash and delete permanently']], 'required' => ['id']]],
 
@@ -3968,7 +3976,7 @@ class Server {
             'exempt_keys'  => [ 'session_id', 'token_ttl', 'resultType', 'isError', 'client_id' ],
             // Royal MCP's own undo and change fields, at any depth (lists of changes carry them too).
             // _meta is set aside only at the reply's top level (scrub_reply_payload).
-            'skip_keys'    => [ 'undo', 'undo_token', 'change_id' ],
+            'skip_keys'    => [ 'undo', 'undo_token', 'template_undo_token', 'change_id' ],
             // Royal MCP's own tokens, kept only at the top of the reply (and of structuredContent).
             'own_fields'   => [ 'commit_token', 'confirm_token' ],
             'content_keys' => self::scrub_content_keys(),
@@ -5211,6 +5219,15 @@ class Server {
                 $up_legacy       = self::build_update_response($post_id, $args, $data, 'Post updated successfully');
                 $up_saved_fields = $up_legacy['saved_fields'] ?? [];
 
+                // Only what this call changed goes back on undo; a publish also gives the
+                // post its slug, so that goes back with the status.
+                $up_prior_changed = array_intersect_key( $up_prior, $data );
+                if ( isset( $data['post_status'] ) ) {
+                    $up_prior_changed['post_name'] = (string) $up_existing_post->post_name;
+                }
+                if ( $up_prior_changed ) {
+                    $up_prior = $up_prior_changed;
+                }
                 $up_undo_pre = [
                     'prior_values'      => $up_prior,
                     'is_product'        => $up_is_product,
@@ -5522,6 +5539,28 @@ class Server {
                     $data['post_date_gmt'] = gmdate('Y-m-d H:i:s', $ts);
                     $data['edit_date'] = true;
                 }
+                // The page as it is now, so the whole update can be undone.
+                $upg_prior = [
+                    'post_title'     => (string) $existing_page->post_title,
+                    'post_content'   => (string) $existing_page->post_content,
+                    'post_status'    => (string) $existing_page->post_status,
+                    'post_excerpt'   => (string) $existing_page->post_excerpt,
+                    'post_author'    => (int)    $existing_page->post_author,
+                    'menu_order'     => (int)    $existing_page->menu_order,
+                    'post_parent'    => (int)    $existing_page->post_parent,
+                    'post_password'  => (string) $existing_page->post_password,
+                    'comment_status' => (string) $existing_page->comment_status,
+                    'ping_status'    => (string) $existing_page->ping_status,
+                    'post_date'      => (string) $existing_page->post_date,
+                    'post_date_gmt'  => (string) $existing_page->post_date_gmt,
+                ];
+                // Only what this call changes is put back by its undo; a publish also
+                // gives the page its slug, so that goes back with the status.
+                $upg_prior = array_intersect_key($upg_prior, $data);
+                if (isset($data['post_status'])) {
+                    $upg_prior['post_name'] = (string) $existing_page->post_name;
+                }
+                $upg_template_undo = null;
                 $result = wp_update_post($data);
                 if (is_wp_error($result)) throw new \Exception(esc_html($result->get_error_message()));
                 // build_update_response re-reads the row and surfaces
@@ -5549,11 +5588,30 @@ class Server {
                             'template_param' => true,
                         ],
                     ]);
-                    $upg_response['undo_available']  = true;
-                    $upg_response['undo_token']      = (string) $upg_undo['token'];
-                    $upg_response['undo_expires_at'] = (string) $upg_undo['expires_at'];
-                    $upg_response['undo_summary']    = (string) $upg_undo['summary'];
+                    $upg_template_undo = $upg_undo;
                     \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger($page_id);
+                }
+                // One undo for the page's own fields, stored the way a post update stores it.
+                $upg_page_undo = empty($upg_prior) ? null : \Royal_MCP\MCP\Undo_Store::store([
+                    'op'           => 'wp_update_post',
+                    'summary'      => sprintf('Restore page %d to its prior state (%d field(s)).', $page_id, count($upg_prior)),
+                    'target'       => ['post_id' => $page_id, 'post_type' => 'page'],
+                    'pre_op_state' => [
+                        'prior_values'        => $upg_prior,
+                        'is_product'          => false,
+                        'written_fingerprint' => self::post_undo_fingerprint($page_id),
+                    ],
+                ]);
+                if (null !== $upg_page_undo) {
+                    $upg_response['undo_available']  = true;
+                    $upg_response['undo_token']      = (string) $upg_page_undo['token'];
+                    $upg_response['undo_expires_at'] = (string) $upg_page_undo['expires_at'];
+                    $upg_response['undo_summary']    = (string) $upg_page_undo['summary'];
+                }
+                if (null !== $upg_template_undo) {
+                    // The template is a separate change with its own token.
+                    $upg_response['template_undo_token']   = (string) $upg_template_undo['token'];
+                    $upg_response['template_undo_summary'] = (string) $upg_template_undo['summary'];
                 }
                 $upg_response['saved_fields'] = $upg_saved_fields;
                 return $upg_response;
@@ -9680,7 +9738,7 @@ class Server {
                                         break;
                                     case 'status':         $var->set_status( (string) $v ); break;
                                     case 'manage_stock':   $var->set_manage_stock( (bool) $v ); break;
-                                    case 'stock_quantity': $var->set_stock_quantity( (int) $v ); break;
+                                    case 'stock_quantity': $var->set_stock_quantity( null === $v ? null : (int) $v ); break;
                                     case 'stock_status':   $var->set_stock_status( (string) $v ); break;
                                     case 'weight':         $var->set_weight( (string) $v ); break;
                                     case 'length':         $var->set_length( (string) $v ); break;
@@ -10506,7 +10564,7 @@ class Server {
                         // scheduling handler comment).
                         $up_undo_data = [ 'ID' => $undo_up_pid ];
                         foreach ( $up_undo_prior as $prop => $val ) {
-                            if ( in_array( $prop, [ 'post_title', 'post_content', 'post_status', 'post_excerpt', 'post_author', 'menu_order', 'post_parent', 'post_password', 'comment_status', 'ping_status', 'post_date', 'post_date_gmt' ], true ) ) {
+                            if ( in_array( $prop, [ 'post_title', 'post_content', 'post_status', 'post_excerpt', 'post_author', 'menu_order', 'post_parent', 'post_password', 'post_name', 'comment_status', 'ping_status', 'post_date', 'post_date_gmt' ], true ) ) {
                                 $up_undo_data[ $prop ] = $val;
                             }
                         }
@@ -10591,7 +10649,7 @@ class Server {
                                 case 'sku':                return (string) $uv_undo_var->get_sku( 'edit' );
                                 case 'status':             return (string) $uv_undo_var->get_status( 'edit' );
                                 case 'manage_stock':       return (bool)   $uv_undo_var->get_manage_stock( 'edit' );
-                                case 'stock_quantity':     return (int)    $uv_undo_var->get_stock_quantity( 'edit' );
+                                case 'stock_quantity':     return null === $uv_undo_var->get_stock_quantity( 'edit' ) ? null : (int) $uv_undo_var->get_stock_quantity( 'edit' );
                                 case 'stock_status':       return (string) $uv_undo_var->get_stock_status( 'edit' );
                                 case 'weight':             return (string) $uv_undo_var->get_weight( 'edit' );
                                 case 'description':        return (string) $uv_undo_var->get_description( 'edit' );
@@ -10618,7 +10676,7 @@ class Server {
                                 case 'sku':                $uv_undo_var->set_sku( (string) $prior ); break;
                                 case 'status':             $uv_undo_var->set_status( (string) $prior ); break;
                                 case 'manage_stock':       $uv_undo_var->set_manage_stock( (bool) $prior ); break;
-                                case 'stock_quantity':     $uv_undo_var->set_stock_quantity( (int) $prior ); break;
+                                case 'stock_quantity':     $uv_undo_var->set_stock_quantity( null === $prior ? null : (int) $prior ); break;
                                 case 'stock_status':       $uv_undo_var->set_stock_status( (string) $prior ); break;
                                 case 'weight':             $uv_undo_var->set_weight( (string) $prior ); break;
                                 case 'description':        $uv_undo_var->set_description( (string) $prior ); break;
@@ -11791,6 +11849,12 @@ class Server {
                         if ( isset( $dv_pre['meta'] ) && is_array( $dv_pre['meta'] ) ) {
                             foreach ( $dv_pre['meta'] as $mk => $mv ) {
                                 update_post_meta( $dv_pid, (string) $mk, wp_slash( $mv ) );
+                            }
+                            // A builder field the page did not have before goes away again.
+                            foreach ( \Royal_MCP\Integrations\Divi::CLONE_META_KEYS as $dv_key ) {
+                                if ( ! array_key_exists( $dv_key, $dv_pre['meta'] ) ) {
+                                    delete_post_meta( $dv_pid, $dv_key );
+                                }
                             }
                         }
                         clean_post_cache( $dv_pid );

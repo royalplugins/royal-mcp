@@ -1948,8 +1948,8 @@ class LaunchTools {
 			if ( 'strict' === $mode && 'skipped' === $status && in_array( (string) ( $r['data']['reason'] ?? '' ), $no_snapshot, true ) && self::steps_write( $steps ) ) {
 				$status       = 'error';
 				$r['message'] = 'backup_in_progress' === $r['data']['reason']
-					? 'Strict mode stopped here: a SiteVault backup is already running, so this run cannot take its own backup first. Nothing after this step was done. Run it again when that backup has finished, or use mode best_effort to go on without one.'
-					: 'Strict mode stopped here: SiteVault is installed but its backup cannot be started from here, so this run cannot take a backup first. Nothing after this step was done. Use mode best_effort to go on without one.';
+					? 'Strict mode stopped here: a SiteVault backup is already running, so this run cannot take its own backup first. Nothing after this step was done. Run it again when that backup has finished, or pass compose_mode best_effort to go on without one.'
+					: 'Strict mode stopped here: SiteVault is installed but its backup cannot be started from here, so this run cannot take a backup first. Nothing after this step was done. Pass compose_mode best_effort to go on without one.';
 			}
 			$rec = [
 				'name'       => $name,
