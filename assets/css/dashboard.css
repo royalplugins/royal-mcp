@@ -257,6 +257,45 @@
 	outline-offset: 2px;
 }
 
+/* Review card: the warm gold of the old review banner, so it stands out. */
+.royal-mcp-dash-review {
+	background: #fffaf0;
+	border: 1px solid #f0d990;
+	border-left: 4px solid #d4a017;
+	color: #3d3522;
+}
+
+.royal-mcp-dash-review h2,
+.royal-mcp-dash-review p {
+	color: #3d3522;
+}
+
+.royal-mcp-dash-review .button-primary,
+.royal-mcp-dash-review .button-primary:focus,
+.royal-mcp-dash-review .button-primary:active {
+	background: #d4a017;
+	border-color: #b8890f;
+	color: #2c2c2c;
+	font-weight: 600;
+	text-shadow: none;
+	box-shadow: none;
+}
+
+.royal-mcp-dash-review .button-primary:hover {
+	background: #e0b12b;
+	border-color: #b8890f;
+	color: #2c2c2c;
+}
+
+.royal-mcp-dash-review .button-primary:focus-visible {
+	outline: 2px solid #3d3522;
+	outline-offset: 2px;
+}
+
+.royal-mcp-dash-review a:not(.button) {
+	color: #6b5413;
+}
+
 .royal-mcp-dash-links li {
 	margin: 0 0 8px;
 }
