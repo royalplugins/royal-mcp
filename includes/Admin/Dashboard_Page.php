@@ -40,28 +40,18 @@ class Dashboard_Page {
 		wp_enqueue_style( 'royal-mcp-dashboard', ROYAL_MCP_PLUGIN_URL . 'assets/css/dashboard.css', [], ROYAL_MCP_VERSION . '.' . ( file_exists( $path ) ? filemtime( $path ) : '0' ) );
 	}
 
-	/**
-	 * Card asking for a WordPress.org review. "Not now" hides it until the next
-	 * Royal MCP version (the same per-user dismissal the settings screen used).
-	 */
+	/** Card asking for a WordPress.org review; always on the Dashboard. */
 	private static function review_card( $btn ) {
 		if ( class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false ) ) {
 			return;
 		}
-		$user_id   = get_current_user_id();
-		$dismissed = $user_id ? (string) get_user_meta( $user_id, 'royal_mcp_review_dismissed_version', true ) : '';
-		if ( ! $user_id || ( '' !== $dismissed && version_compare( $dismissed, ROYAL_MCP_VERSION, '>=' ) ) ) {
-			return;
-		}
-		$dismiss = wp_nonce_url( add_query_arg( 'royal_mcp_dismiss_review', '1', self::url( self::PAGE_SLUG ) ), 'royal_mcp_dismiss_review' );
 		$star    = '<svg style="width:16px;height:16px;flex-shrink:0;" viewBox="0 0 24 24" fill="#C9A227" stroke="#C9A227" stroke-width="1" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
 		$out     = '<svg style="width:14px;height:14px;flex-shrink:0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
 		echo '<div class="royal-mcp-dash-card royal-mcp-dash-review">';
 		echo '<h2>' . esc_html__( 'Enjoying Royal MCP?', 'royal-mcp' ) . '</h2>';
 		echo '<p style="display:flex;gap:2px;margin:0 0 8px;" aria-hidden="true">' . str_repeat( $star, 5 ) . '</p>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- fixed SVG markup
 		echo '<p>' . esc_html__( 'A quick review on WordPress.org helps other site owners find it. It takes about a minute.', 'royal-mcp' ) . '</p>';
-		echo '<p style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><a class="button button-primary" style="' . esc_attr( $btn ) . '" target="_blank" rel="noopener noreferrer" href="https://wordpress.org/support/plugin/royal-mcp/reviews/#new-post"><span>' . esc_html__( 'Leave a review', 'royal-mcp' ) . '</span>' . $out . '</a>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- fixed SVG markup
-		echo '<a href="' . esc_url( $dismiss ) . '">' . esc_html__( 'Not now', 'royal-mcp' ) . '</a></p>';
+		echo '<p><a class="button button-primary" style="' . esc_attr( $btn ) . '" target="_blank" rel="noopener noreferrer" href="https://wordpress.org/support/plugin/royal-mcp/reviews/#new-post"><span>' . esc_html__( 'Leave a review', 'royal-mcp' ) . '</span>' . $out . '</a></p>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- fixed SVG markup
 		echo '</div>';
 	}
 
@@ -195,6 +185,16 @@ class Dashboard_Page {
 		];
 	}
 
+	/** Prompts that use the skills (Elementor, Divi, WooCommerce, SiteVault). */
+	private static function skill_starters() {
+		return [
+			__( 'Back up the site with SiteVault and tell me when the backup has really finished.', 'royal-mcp' ),
+			__( 'Clone my homepage in Elementor as a draft and change [old city] to [new city] on the copy.', 'royal-mcp' ),
+			__( 'Lower the price of [product] in WooCommerce by 10%. Show me the change before you save it.', 'royal-mcp' ),
+			__( 'Check which of my Divi pages are ready for Divi 5. Do not change anything.', 'royal-mcp' ),
+		];
+	}
+
 	private static function icon( $name ) {
 		$paths = [
 			'copy'  => '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
@@ -297,7 +297,15 @@ class Dashboard_Page {
 		foreach ( self::starters() as $prompt ) {
 			echo '<li><button type="button" class="royal-mcp-dash-starter" data-copy="' . esc_attr( $prompt ) . '">' . esc_html( $prompt ) . '</button></li>';
 		}
-		echo '</ul></div>';
+		echo '</ul>';
+		echo '<h3 style="margin:16px 0 8px;font-size:13px;font-weight:600;color:#2c2c2c;">' . esc_html__( 'With a skill switched on', 'royal-mcp' ) . '</h3>';
+		echo '<ul class="royal-mcp-dash-starters">';
+		foreach ( self::skill_starters() as $prompt ) {
+			echo '<li><button type="button" class="royal-mcp-dash-starter" data-copy="' . esc_attr( $prompt ) . '">' . esc_html( $prompt ) . '</button></li>';
+		}
+		echo '</ul>';
+		echo '<p><a class="button" style="' . esc_attr( $btn ) . '" href="' . esc_url( self::url( Skills_Page::PAGE_SLUG ) ) . '"><span>' . esc_html__( 'Switch on skills', 'royal-mcp' ) . '</span>' . self::icon( 'arrow' ) . '</a></p>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- icon() returns fixed SVG markup
+		echo '</div>';
 
 		echo '</div><div class="royal-mcp-dash-side">';
 

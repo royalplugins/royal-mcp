@@ -84,7 +84,6 @@ class Settings_Page {
     public function __construct() {
         add_action('admin_menu', [$this, 'add_menu_page']);
         add_action('admin_init', [$this, 'register_settings']);
-        add_action('admin_init', [$this, 'maybe_dismiss_review_banner']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_scripts']);
         add_filter('admin_footer_text', [$this, 'admin_footer_text']);
 
@@ -95,28 +94,6 @@ class Settings_Page {
         add_action('admin_post_' . self::DISABLE_KEY_ACTION, [$this, 'handle_disable_api_key']);
         add_action('admin_post_' . self::CLEAR_LOG_ACTION, [$this, 'handle_clear_activity_log']);
         add_action('admin_post_' . self::EXPORT_LOG_ACTION, [$this, 'handle_export_activity_log']);
-    }
-
-    /**
-     * Persist a per-user dismissal of the Dashboard's review card. Version-stamped:
-     * the card comes back with the next plugin version.
-     */
-    public function maybe_dismiss_review_banner() {
-        if (!isset($_GET['royal_mcp_dismiss_review'])) {
-            return;
-        }
-        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- writes per-user meta only (no per-site or network-scope state)
-            return;
-        }
-        if (!isset($_GET['_wpnonce']) ||
-            !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'royal_mcp_dismiss_review')) {
-            return;
-        }
-
-        update_user_meta(get_current_user_id(), 'royal_mcp_review_dismissed_version', ROYAL_MCP_VERSION);
-
-        wp_safe_redirect(remove_query_arg(['royal_mcp_dismiss_review', '_wpnonce']));
-        exit;
     }
 
     /**

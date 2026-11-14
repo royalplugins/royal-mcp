@@ -69,10 +69,10 @@ class Pro_Notice {
         ?>
         <div class="notice notice-info royal-mcp-pro-notice" style="padding: 14px 18px; background: #eff6ff; border-left-color: #1d4ed8;">
             <p style="margin: 0 0 6px; font-size: 14px;">
-                <strong><?php esc_html_e( 'One connection for everything your AI manages', 'royal-mcp' ); ?></strong>
+                <strong><?php esc_html_e( '1,700+ MCP tools. 4,800+ actions. One connection.', 'royal-mcp' ); ?></strong>
             </p>
             <p style="margin: 0 0 12px;">
-                <?php esc_html_e( 'Royally puts your whole stack behind one MCP connection: every WordPress site you run, plus Cloudflare, UptimeRobot, Notion and other MCP servers. Each change can wait for your approval, is recorded and can be undone. Royal MCP Pro comes with it.', 'royal-mcp' ); ?>
+                <?php esc_html_e( 'With Royally your AI reaches more than 1,700 MCP tools and 4,800 actions across your WordPress sites and the services you run them with, from one place instead of a connector per app. Royal MCP Pro is included.', 'royal-mcp' ); ?>
             </p>
             <p style="margin: 0;">
                 <a href="<?php echo esc_url( $pro_url ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary" style="background:#1d4ed8;border-color:#1e40af;color:#fff;"><?php esc_html_e( 'See Royally', 'royal-mcp' ); ?></a>
