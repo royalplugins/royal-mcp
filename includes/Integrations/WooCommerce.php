@@ -1421,31 +1421,12 @@ class WooCommerce {
 					$uo_before['status']    = $uo_order->get_status( 'edit' );
 				}
 
-				// Execute — preserve existing behavior including the one-way
-				// meta_data / line_items paths.
-				if ( ! empty( $args['billing'] ) && is_array( $args['billing'] ) ) {
-					$uo_order->set_address( array_merge( self::current_address( $uo_order, 'billing' ), self::sanitize_address_fields( $args['billing'] ) ), 'billing' );
-				}
-				if ( ! empty( $args['shipping'] ) && is_array( $args['shipping'] ) ) {
-					$uo_order->set_address( array_merge( self::current_address( $uo_order, 'shipping' ), self::sanitize_address_fields( $args['shipping'] ) ), 'shipping' );
-				}
-				if ( array_key_exists( 'customer_note', $args ) ) {
-					$uo_order->set_customer_note( wp_kses_post( (string) $args['customer_note'] ) );
-				}
+				// Protected meta keys and every line item are checked before anything is set on
+				// the order (with orders stored as posts, an address is saved as soon as it is set).
 				if ( ! empty( $args['meta_data'] ) && is_array( $args['meta_data'] ) ) {
-					foreach ( $args['meta_data'] as $meta ) {
-						if ( isset( $meta['key'] ) ) {
-							$order_meta_key = sanitize_text_field( (string) $meta['key'] );
-							// Protected keys (_order_stock_reduced, _order_total ...) are WooCommerce's own state.
-							if ( \Royal_MCP\MCP\Support\Protected_Meta::is_protected_key( $order_meta_key ) ) {
-								throw new \Exception( 'Order meta key ' . esc_html( $order_meta_key ) . ' is protected and cannot be written.' );
-							}
-							$uo_order->update_meta_data( $order_meta_key, $meta['value'] ?? '' );
-						}
-					}
+					\Royal_MCP\MCP\Support\Protected_Meta::assert_order_meta_args( $args['meta_data'] );
 				}
 				if ( ! empty( $args['line_items'] ) && is_array( $args['line_items'] ) ) {
-					// Checked for every entry before any line is touched.
 					foreach ( $args['line_items'] as $item ) {
 						if ( ! is_array( $item ) ) {
 							return Envelope::error( 'invalid_args', 'Each line_items entry must be an object. Nothing was changed.', [ 'field' => 'line_items' ] );
@@ -1472,6 +1453,32 @@ class WooCommerce {
 							return Envelope::error( 'invalid_args', 'variation_id ' . $check_variation_id . ' does not belong to product_id ' . $check_product_id . '. Nothing was changed.', [ 'field' => 'line_items' ] );
 						}
 					}
+				}
+
+				// Execute — preserve existing behavior including the one-way
+				// meta_data / line_items paths.
+				if ( ! empty( $args['billing'] ) && is_array( $args['billing'] ) ) {
+					$uo_order->set_address( array_merge( self::current_address( $uo_order, 'billing' ), self::sanitize_address_fields( $args['billing'] ) ), 'billing' );
+				}
+				if ( ! empty( $args['shipping'] ) && is_array( $args['shipping'] ) ) {
+					$uo_order->set_address( array_merge( self::current_address( $uo_order, 'shipping' ), self::sanitize_address_fields( $args['shipping'] ) ), 'shipping' );
+				}
+				if ( array_key_exists( 'customer_note', $args ) ) {
+					$uo_order->set_customer_note( wp_kses_post( (string) $args['customer_note'] ) );
+				}
+				if ( ! empty( $args['meta_data'] ) && is_array( $args['meta_data'] ) ) {
+					foreach ( $args['meta_data'] as $meta ) {
+						if ( isset( $meta['key'] ) ) {
+							$order_meta_key = sanitize_text_field( (string) $meta['key'] );
+							// Protected keys (_order_stock_reduced, _order_total ...) are WooCommerce's own state.
+							if ( \Royal_MCP\MCP\Support\Protected_Meta::is_protected_key( $order_meta_key ) ) {
+								throw new \Exception( 'Order meta key ' . esc_html( $order_meta_key ) . ' is protected and cannot be written.' );
+							}
+							$uo_order->update_meta_data( $order_meta_key, $meta['value'] ?? '' );
+						}
+					}
+				}
+				if ( ! empty( $args['line_items'] ) && is_array( $args['line_items'] ) ) {
 					foreach ( $args['line_items'] as $item ) {
 						$item_id      = isset( $item['id'] ) ? (int) $item['id'] : 0;
 						$product_id   = isset( $item['product_id'] ) ? (int) $item['product_id'] : 0;

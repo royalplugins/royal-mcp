@@ -48,7 +48,7 @@ class Help_Page {
 		],
 		[
 			'title' => 'Wipe stale OAuth state',
-			'body'  => 'Royal MCP 1.4.17+: Royal MCP → Settings → Reset OAuth State button. This clears stale OAuth clients, issued tokens, and pending authorization codes without touching your API key or Activity Log.',
+			'body'  => 'Royal MCP → Connections → Reset OAuth State button. This clears stale OAuth clients, issued tokens, and pending authorization codes without touching your API key or Activity Log.',
 		],
 		[
 			'title' => 'Check the Activity Log',

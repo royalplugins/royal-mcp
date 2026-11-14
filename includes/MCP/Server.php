@@ -5240,7 +5240,9 @@ class Server {
                     $up_undo_pre['prior_featured_id'] = (int) $up_prior_featured_id;
                 }
                 $up_undo_pre['written_fingerprint'] = self::post_undo_fingerprint( $post_id );
-                $up_undo_envelope = \Royal_MCP\MCP\Undo_Store::store([
+                // A call that changed no post field, image or product type has nothing to undo.
+                $up_has_undo      = $up_prior || array_key_exists( 'prior_featured_id', $up_undo_pre ) || isset( $up_undo_pre['prior_product_type'] );
+                $up_undo_envelope = ! $up_has_undo ? null : \Royal_MCP\MCP\Undo_Store::store([
                     'op'      => 'wp_update_post',
                     'summary' => sprintf( 'Restore post %d to prior state (%d field(s)%s).',
                         $post_id,
@@ -5263,10 +5265,11 @@ class Server {
                     );
                 }
                 return \Royal_MCP\MCP\Support\Envelope::success(
-                    sprintf( 'Updated post %d (%s)%s, undo available.',
+                    sprintf( 'Updated post %d (%s)%s%s.',
                         $post_id,
                         (string) $up_existing_post->post_type,
-                        $up_product_type_restored ? ' (WC product_type restored from silent-downgrade)' : ''
+                        $up_product_type_restored ? ' (WC product_type restored from silent-downgrade)' : '',
+                        $up_has_undo ? ', undo available' : ', nothing to undo (no post field changed)'
                     ),
                     $up_struct,
                     $up_undo_envelope

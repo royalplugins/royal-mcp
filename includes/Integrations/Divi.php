@@ -70,6 +70,20 @@ class Divi {
 	/** Backup meta key stamped by divi_import_template. */
 	const BACKUP_META_KEY_PREFIX = '_royal_mcp_pro_divi_backup_';
 
+	/** Work left for the dynamic-token scan during one replace call; null outside one. */
+	private static $scan_budget = null;
+
+	/**
+	 * The same markers with the module or block name they open, for comparing a page's
+	 * structure before and after a text change marker by marker.
+	 */
+	const STRUCTURE_PATTERNS = [
+		'[et_pb_'    => '/\[\/?et_pb_[a-z0-9_]*/i',
+		'<!-- wp:'   => '/<!--\s*\/?\s*wp:[a-z0-9_\/-]*/i',
+		'@ET-DC@'    => '/@ET-DC@/i',
+		'$variable(' => '/\$variable\s*\(/i',
+	];
+
 	/** Builder markup and dynamic-content tokens, as Divi and the block parser read them. */
 	const MARKUP_PATTERNS = [
 		'[et_pb_'    => '/\[\/?et_pb_/i',
@@ -1658,10 +1672,11 @@ class Divi {
 			}
 		}
 
-		$content_before = (string) $post->post_content;
-		$content        = $content_before;
-		$per_pair       = [];
-		$total          = 0;
+		$content_before    = (string) $post->post_content;
+		$content           = $content_before;
+		$per_pair          = [];
+		$total             = 0;
+		self::$scan_budget = 8 * strlen( $content_before ) + 200000;
 
 		foreach ( $pairs as $pair ) {
 			$counter = [ 'count' => 0 ];
@@ -1676,6 +1691,7 @@ class Divi {
 			$per_pair[ $pair['find'] ] = ( isset( $per_pair[ $pair['find'] ] ) ? $per_pair[ $pair['find'] ] : 0 ) + $counter['count'];
 			$total += $counter['count'];
 			if ( ! empty( $counter['too_complex'] ) ) {
+				self::$scan_budget = null;
 				return Envelope::error(
 					'content_too_complex',
 					sprintf( 'Post %d holds text with so many unfinished dynamic-content openers that it cannot be searched safely. Nothing was changed. Change the text in the Divi Builder.', $post_id ),
@@ -1683,6 +1699,7 @@ class Divi {
 				);
 			}
 			if ( ! empty( $counter['unsafe_setting'] ) ) {
+				self::$scan_budget = null;
 				return Envelope::error(
 					'invalid_args',
 					sprintf( 'replacements[%d].replace holds a quote or a square bracket, and one of its matches is inside a module setting, where that would end the setting early. Nothing was changed. Leave those characters out, or change that setting in the Divi Builder.', (int) $pair['original_index'] ),
@@ -1690,6 +1707,8 @@ class Divi {
 				);
 			}
 		}
+
+		self::$scan_budget = null;
 
 		// Nothing matched: the page is not written at all, and the reply says what was searched.
 		if ( 0 === $total ) {
@@ -1710,8 +1729,10 @@ class Divi {
 
 		// The words may change, the structure may not: the replacements together must not
 		// add or remove a module, a block or a dynamic-content token.
-		foreach ( self::MARKUP_PATTERNS as $marker => $pattern ) {
-			if ( preg_match_all( $pattern, $content_before ) !== preg_match_all( $pattern, $content ) ) {
+		foreach ( self::STRUCTURE_PATTERNS as $marker => $pattern ) {
+			preg_match_all( $pattern, $content_before, $markers_before );
+			preg_match_all( $pattern, $content, $markers_after );
+			if ( $markers_before[0] !== $markers_after[0] ) {
 				return Envelope::error(
 					'invalid_args',
 					sprintf( 'Together the replacements would add or remove builder markup or a dynamic-content token (%s) on post %d. Only text can be changed. Nothing was changed.', $marker, $post_id ),
@@ -1844,7 +1865,9 @@ class Divi {
 		$length = strlen( $text );
 		$at     = 0;
 		// The work is bounded: a text full of openers that never close cannot make the scan slow.
-		$budget = 8 * $length + 200000;
+		// Within a replace call the limit is shared by all its pairs and segments.
+		$shared = null !== self::$scan_budget;
+		$budget = $shared ? self::$scan_budget : 8 * $length + 200000;
 		$d4     = -1;
 		$d5     = -1;
 		while ( $at < $length ) {
@@ -1902,6 +1925,9 @@ class Divi {
 				}
 			}
 			if ( $budget < 0 ) {
+				if ( $shared ) {
+					self::$scan_budget = -1;
+				}
 				return null;
 			}
 			if ( null !== $end ) {
@@ -1911,6 +1937,9 @@ class Divi {
 				// Never closed: ordinary text. The scan goes on after the opener.
 				$at = $d5 + 10;
 			}
+		}
+		if ( $shared ) {
+			self::$scan_budget = $budget;
 		}
 		return $spans;
 	}
@@ -1966,7 +1995,12 @@ class Divi {
 				$block['innerBlocks'] = self::d5_walk_text( $block['innerBlocks'], $find, $replace, $case_insensitive, $counter );
 			}
 			if ( isset( $block['innerHTML'] ) && is_string( $block['innerHTML'] ) ) {
-				$block['innerHTML'] = self::replace_keeping_tokens( $find, $replace, $block['innerHTML'], $case_insensitive, $counter );
+				// innerHTML mirrors innerContent (which is what gets saved): kept in step, not counted twice.
+				$mirror             = [ 'count' => 0 ];
+				$block['innerHTML'] = self::replace_keeping_tokens( $find, $replace, $block['innerHTML'], $case_insensitive, $mirror );
+				if ( ! empty( $mirror['too_complex'] ) ) {
+					$counter['too_complex'] = true;
+				}
 			}
 			if ( isset( $block['innerContent'] ) && is_array( $block['innerContent'] ) ) {
 				$block['innerContent'] = array_map( static function ( $ic ) use ( $find, $replace, $case_insensitive, &$counter ) {
@@ -2327,7 +2361,7 @@ class Divi {
 		self::assert_divi_meta_flags( $target_id, $effective_format );
 		self::purge_divi_static_css( $target_id );
 
-		$backup_meta_key = self::BACKUP_META_KEY_PREFIX . time();
+		$backup_meta_key = self::BACKUP_META_KEY_PREFIX . time() . '_' . strtolower( wp_generate_password( 6, false, false ) );
 		update_post_meta( $target_id, $backup_meta_key, wp_slash( $original ) );
 
 		$modules_added = 0;

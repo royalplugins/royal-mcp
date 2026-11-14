@@ -944,7 +944,7 @@ class Elementor {
 			$raw_after = $args['after_id'];
 			if ( is_int( $raw_after ) && $raw_after >= 0 ) {
 				$after_id = $raw_after;
-			} elseif ( is_string( $raw_after ) && preg_match( '/^\d{1,19}$/', $raw_after ) ) {
+			} elseif ( is_string( $raw_after ) && preg_match( '/^\d{1,19}\z/', $raw_after ) ) {
 				$after_id = (int) $raw_after;
 			} else {
 				throw new \Exception( 'after_id must be a post ID (a whole number, 0 or more): pass the last_post_id of the reply before. Nothing was changed.' );

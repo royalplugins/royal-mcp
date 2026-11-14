@@ -122,12 +122,12 @@ class SiteVaultHealth {
 		// backups keep failing still reads as fresh: also off track when
 		// the newest failed scheduled backup started after the newest
 		// completed backup. A failed manual backup says nothing about the schedule.
-		$failed_scheduled = true === ( $schedule['on_track'] ?? null ) ? self::latest_failed_scheduled_start() : null;
-		if ( null !== $failed_scheduled ) {
-			$failed_ts    = $failed_scheduled;
-			$completed_ts = ( $last && ! empty( $last->created_at ) ) ? self::site_local_to_ts( $last->created_at ) : false;
-			if ( false === $completed_ts || ( false !== $failed_ts && $failed_ts > $completed_ts ) ) {
-				$schedule['on_track'] = false;
+		$schedule['failed_scheduled_at'] = null;
+		if ( null !== ( $schedule['on_track'] ?? null ) ) {
+			$failed_ts = self::latest_failed_scheduled_start( ( $last && ! empty( $last->created_at ) ) ? (string) $last->created_at : '' );
+			if ( null !== $failed_ts ) {
+				$schedule['failed_scheduled_at'] = gmdate( 'c', $failed_ts );
+				$schedule['on_track']            = false;
 			}
 		}
 
@@ -210,29 +210,42 @@ class SiteVaultHealth {
 	}
 
 	/**
-	 * Start time (Unix) of the newest failed backup that a schedule made, or null.
-	 * SiteVault names a scheduled backup after its schedule followed by the date
-	 * and time ("<schedule name>-YYYY-MM-DD-HHMMSS-..."); manual backups do not
-	 * carry a schedule's name.
+	 * Start time (Unix) of the newest failed backup that a schedule made after the
+	 * newest completed backup, or null. A scheduled backup is recognised by the
+	 * schedule id SiteVault records with it (where it records one) or by its name:
+	 * SiteVault names it after its schedule followed by the date and time
+	 * ("<schedule name>-YYYY-MM-DD-HHMMSS-..."), the free plugin as a file name, the
+	 * paid one as typed. Manual backups carry neither.
+	 *
+	 * @param string $completed_at Start time of the newest completed backup (site time), '' when none.
 	 */
-	private static function latest_failed_scheduled_start() {
+	private static function latest_failed_scheduled_start( $completed_at ) {
 		$scheduler = self::obj( 'Backup_Scheduler' );
 		if ( ! $scheduler || ! is_callable( [ $scheduler, 'get_schedules' ] ) ) {
 			return null;
 		}
 		$patterns = [];
+		$ids      = [];
+		$stamp    = '2000-01-01-000000';
+		$date     = '\d{4}-\d{2}-\d{2}-\d{6}(?:-|$)/';
 		foreach ( (array) $scheduler->get_schedules( true ) as $row ) {
-			if ( ! is_object( $row ) || ! isset( $row->schedule_name ) || '' === (string) $row->schedule_name ) {
+			if ( ! is_object( $row ) ) {
 				continue;
 			}
-			$stamp = '2000-01-01-000000';
-			$name  = sanitize_file_name( (string) $row->schedule_name . '-' . $stamp );
-			if ( substr( $name, -strlen( $stamp ) ) !== $stamp ) {
+			if ( isset( $row->id ) && (int) $row->id > 0 ) {
+				$ids[ (int) $row->id ] = true;
+			}
+			$raw = isset( $row->schedule_name ) ? trim( (string) $row->schedule_name ) : '';
+			if ( '' === $raw ) {
 				continue;
 			}
-			$patterns[] = '/^' . preg_quote( substr( $name, 0, -strlen( $stamp ) ), '/' ) . '\d{4}-\d{2}-\d{2}-\d{6}(?:-|$)/';
+			$patterns[] = '/^' . preg_quote( $raw . '-', '/' ) . $date;
+			$file       = sanitize_file_name( $raw . '-' . $stamp );
+			if ( substr( $file, -strlen( $stamp ) ) === $stamp ) {
+				$patterns[] = '/^' . preg_quote( substr( $file, 0, -strlen( $stamp ) ), '/' ) . $date;
+			}
 		}
-		if ( ! $patterns ) {
+		if ( ! $patterns && ! $ids ) {
 			return null;
 		}
 		global $wpdb;
@@ -241,14 +254,29 @@ class SiteVaultHealth {
 		if ( ! $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) ) {
 			return null;
 		}
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table is prefix + literal
-		$rows = $wpdb->get_results( "SELECT backup_name, created_at FROM {$table} WHERE status = 'failed' ORDER BY created_at DESC, id DESC LIMIT 100" );
+		// Only failures that started after the newest completed backup can put the schedule off track.
+		if ( '' !== (string) $completed_at ) {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table is prefix + literal
+			$rows = $wpdb->get_results( $wpdb->prepare( "SELECT backup_name, created_at, metadata FROM {$table} WHERE status = 'failed' AND created_at > %s ORDER BY created_at DESC, id DESC LIMIT 1000", (string) $completed_at ) );
+		} else {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table is prefix + literal
+			$rows = $wpdb->get_results( "SELECT backup_name, created_at, metadata FROM {$table} WHERE status = 'failed' ORDER BY created_at DESC, id DESC LIMIT 1000" );
+		}
 		foreach ( (array) $rows as $failed ) {
-			foreach ( $patterns as $pattern ) {
+			$scheduled = false;
+			$meta      = json_decode( (string) $failed->metadata, true );
+			if ( is_array( $meta ) && isset( $meta['schedule_id'] ) && isset( $ids[ (int) $meta['schedule_id'] ] ) ) {
+				$scheduled = true;
+			}
+			foreach ( $scheduled ? [] : $patterns as $pattern ) {
 				if ( preg_match( $pattern, (string) $failed->backup_name ) ) {
-					$ts = self::site_local_to_ts( (string) $failed->created_at );
-					return false === $ts ? null : $ts;
+					$scheduled = true;
+					break;
 				}
+			}
+			if ( $scheduled ) {
+				$ts = self::site_local_to_ts( (string) $failed->created_at );
+				return false === $ts ? null : $ts;
 			}
 		}
 		return null;
