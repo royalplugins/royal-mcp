@@ -70,6 +70,14 @@ class Divi {
 	/** Backup meta key stamped by divi_import_template. */
 	const BACKUP_META_KEY_PREFIX = '_royal_mcp_pro_divi_backup_';
 
+	/** Builder markup and dynamic-content tokens, as Divi and the block parser read them. */
+	const MARKUP_PATTERNS = [
+		'[et_pb_'    => '/\[\/?et_pb_/i',
+		'<!-- wp:'   => '/<!--\s*\/?\s*wp:/i',
+		'@ET-DC@'    => '/@ET-DC@/i',
+		'$variable(' => '/\$variable\s*\(/i',
+	];
+
 	/**
 	 * Per-tool minimum-version map. Every Divi tool that ships should have
 	 * an entry so callers can pre-check compatibility via get_version_support().
@@ -540,7 +548,7 @@ class Divi {
 						'mode'           => [ 'type' => 'string',  'enum' => [ 'merge', 'replace' ], 'description' => 'merge = append template content to existing (default); replace = overwrite target content (backup stamped to a versioned meta key).' ],
 						'position'       => [ 'type' => 'string',  'enum' => [ 'top', 'bottom' ], 'description' => 'Merge mode only — insert template at top or bottom of existing content. Defaults to bottom.' ],
 						'force'          => [ 'type' => 'boolean', 'description' => 'Default false. When true, bypasses the active-editor-session guard.' ],
-						'allow_non_divi_target' => [ 'type' => 'boolean', 'description' => 'Default false. A target that has content of its own and was not built with Divi is refused (target_not_divi); true imports into it anyway. An empty target needs no flag.' ],
+						'allow_non_divi_target' => [ 'type' => 'boolean', 'description' => 'Default false. Merging into a target that has content of its own and was not built with Divi is refused (target_not_divi); true merges into it anyway. An empty target, or mode replace, needs no flag.' ],
 					],
 					'required'   => [ 'target_post_id', 'template_id' ],
 				],
@@ -903,10 +911,10 @@ class Divi {
 	 * doesn't require a post fetch — inspects the string directly.
 	 */
 	private static function detect_format_from_content( $content ) {
-		$has_d5 = ( false !== strpos( $content, '<!-- wp:divi/' ) );
+		$has_d5 = ( preg_match( '/<!--\s+wp:divi\//', $content ) === 1 );
 		$has_d4 = ( false !== strpos( $content, '[et_pb_section' ) )
 			|| ( false !== strpos( $content, '[et_pb_row' ) )
-			|| ( preg_match( '/\[et_pb_[a-z0-9_]+[\s\]]/', $content ) === 1 );
+			|| ( preg_match( '/\[et_pb_[a-z0-9_]+[\s\]\/]/', $content ) === 1 );
 
 		if ( $has_d5 && $has_d4 ) return 'mixed';
 		if ( $has_d5 )            return 'divi_5_blocks';
@@ -1639,8 +1647,8 @@ class Divi {
 		// A replace value is text. One that holds builder markup or a dynamic-content token
 		// would change the structure of the page, not its words.
 		foreach ( $pairs as $pair ) {
-			foreach ( [ '[et_pb_', '[/et_pb_', '<!-- wp:', '<!-- /wp:', '@ET-DC@', '$variable(' ] as $marker ) {
-				if ( false !== stripos( (string) $pair['replace'], $marker ) ) {
+			foreach ( self::MARKUP_PATTERNS as $marker => $pattern ) {
+				if ( preg_match( $pattern, (string) $pair['replace'] ) ) {
 					return Envelope::error(
 						'invalid_args',
 						sprintf( 'replacements[%d].replace holds builder markup or a dynamic-content token (%s). Only text can be put in. Nothing was changed.', (int) $pair['original_index'], $marker ),
@@ -1667,6 +1675,13 @@ class Divi {
 			}
 			$per_pair[ $pair['find'] ] = ( isset( $per_pair[ $pair['find'] ] ) ? $per_pair[ $pair['find'] ] : 0 ) + $counter['count'];
 			$total += $counter['count'];
+			if ( ! empty( $counter['too_complex'] ) ) {
+				return Envelope::error(
+					'content_too_complex',
+					sprintf( 'Post %d holds text with so many unfinished dynamic-content openers that it cannot be searched safely. Nothing was changed. Change the text in the Divi Builder.', $post_id ),
+					[ 'post_id' => $post_id ]
+				);
+			}
 			if ( ! empty( $counter['unsafe_setting'] ) ) {
 				return Envelope::error(
 					'invalid_args',
@@ -1691,6 +1706,18 @@ class Divi {
 				$summary        .= ' ' . $nothing['note'];
 			}
 			return Envelope::success( $summary, $nothing );
+		}
+
+		// The words may change, the structure may not: the replacements together must not
+		// add or remove a module, a block or a dynamic-content token.
+		foreach ( self::MARKUP_PATTERNS as $marker => $pattern ) {
+			if ( preg_match_all( $pattern, $content_before ) !== preg_match_all( $pattern, $content ) ) {
+				return Envelope::error(
+					'invalid_args',
+					sprintf( 'Together the replacements would add or remove builder markup or a dynamic-content token (%s) on post %d. Only text can be changed. Nothing was changed.', $marker, $post_id ),
+					[ 'post_id' => $post_id ]
+				);
+			}
 		}
 
 		// Post-walk D4 validation — belt-and-suspenders per every-write policy.
@@ -1753,8 +1780,8 @@ class Divi {
 	}
 
 	// ----------------------------------------------------------------------
-	// Text-substitution walkers (ported verbatim from Pro's Divi.php:
-	// d4_walk_text, d4_walk_attrs_text, d5_walk_text, str_replace_counted)
+	// Text-substitution walkers: d4_walk_text, d4_walk_attrs_text,
+	// d5_walk_text, str_replace_counted
 	// ----------------------------------------------------------------------
 
 	/**
@@ -1790,9 +1817,14 @@ class Divi {
 		if ( false === strpos( $text, '@ET-DC@' ) && false === strpos( $text, '$variable(' ) ) {
 			return self::str_replace_counted( $find, $replace, $text, $case_insensitive, $counter );
 		}
+		$spans = self::token_spans( $text );
+		if ( null === $spans ) {
+			$counter['too_complex'] = true;
+			return $text;
+		}
 		$out    = '';
 		$offset = 0;
-		foreach ( self::token_spans( $text ) as $span ) {
+		foreach ( $spans as $span ) {
 			$out   .= self::str_replace_counted( $find, $replace, substr( $text, $offset, $span[0] - $offset ), $case_insensitive, $counter );
 			$out   .= substr( $text, $span[0], $span[1] - $span[0] );
 			$offset = $span[1];
@@ -1804,17 +1836,25 @@ class Divi {
 	 * Where the dynamic-content tokens of a text start and end, in order. One pass
 	 * over the text. An opener that is never closed is ordinary text.
 	 *
-	 * @return array<int, array{0:int, 1:int}> Start and end offset of each token.
+	 * @return array<int, array{0:int, 1:int}>|null Start and end offset of each token;
+	 *         null when the text is too tangled to scan within the work limit.
 	 */
 	private static function token_spans( $text ) {
 		$spans  = [];
 		$length = strlen( $text );
 		$at     = 0;
 		// The work is bounded: a text full of openers that never close cannot make the scan slow.
-		$budget = 8 * $length + 1000;
+		$budget = 8 * $length + 200000;
+		$d4     = -1;
+		$d5     = -1;
 		while ( $at < $length ) {
-			$d4 = strpos( $text, '@ET-DC@', $at );
-			$d5 = strpos( $text, '$variable(', $at );
+			// Each kind of opener is looked up again only once the scan has passed the one found before.
+			if ( false !== $d4 && $d4 < $at ) {
+				$d4 = strpos( $text, '@ET-DC@', $at );
+			}
+			if ( false !== $d5 && $d5 < $at ) {
+				$d5 = strpos( $text, '$variable(', $at );
+			}
 			if ( false === $d4 && false === $d5 ) {
 				break;
 			}
@@ -1862,9 +1902,7 @@ class Divi {
 				}
 			}
 			if ( $budget < 0 ) {
-				// Out of budget: the rest is left exactly as it is.
-				$spans[] = [ $d5, $length ];
-				break;
+				return null;
 			}
 			if ( null !== $end ) {
 				$spans[] = [ $d5, $end ];
@@ -2249,12 +2287,13 @@ class Divi {
 		$target_format   = self::detect_format( $target_id );
 		$template_format = self::detect_format( $template_id );
 
-		// An empty page can take a layout. A page with content of its own that was
-		// not built with Divi would become a Divi page with foreign content in it.
-		if ( 'not_divi' === $target_format && '' !== trim( (string) $target->post_content ) && ! $allow_other ) {
+		// An empty page can take a layout, and so can any page whose content the layout
+		// replaces. Merging into a page with content of its own that was not built with
+		// Divi would make a Divi page with foreign content in it.
+		if ( 'not_divi' === $target_format && 'merge' === $mode && '' !== trim( (string) $target->post_content ) && ! $allow_other ) {
 			return Envelope::error(
 				'target_not_divi',
-				sprintf( 'Post %d has content that was not built with Divi. Importing a layout would turn it into a Divi page with that content in it. Pass allow_non_divi_target:true only if that is what the user asked for.', $target_id ),
+				sprintf( 'Post %d has content that was not built with Divi. Merging a layout into it would turn it into a Divi page with that content in it. Use mode: replace to swap the content for the layout (the old content is kept for undo), or pass allow_non_divi_target:true only if the user asked for the merge.', $target_id ),
 				[ 'target_post_id' => $target_id, 'format_detected' => $target_format ]
 			);
 		}
@@ -2303,7 +2342,7 @@ class Divi {
 		$undo_envelope = Undo_Store::store( [
 			'op'           => 'divi_import_template',
 			'target'       => [ 'target_post_id' => $target_id ],
-			'pre_op_state' => array_merge( (array) $snapshot, [ 'written_sha256' => hash( 'sha256', self::stored_content( $target_id ) ) ] ),
+			'pre_op_state' => array_merge( (array) $snapshot, [ 'written_sha256' => hash( 'sha256', self::stored_content( $target_id ) ), 'backup_meta_key' => $backup_meta_key ] ),
 			'summary'      => sprintf( 'Restore prior content of post %d (before divi_import_template).', $target_id ),
 		] );
 

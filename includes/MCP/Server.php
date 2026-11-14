@@ -365,6 +365,9 @@ class Server {
 
     /** Whether drafts-only checks may treat the tool as read-only. */
     private function tool_is_read_only( $name, $args = null ) {
+        if ( is_array( $args ) && true === ( $args['dry_run'] ?? null ) && in_array( (string) $name, self::DRY_RUN_READS, true ) ) {
+            return true;
+        }
         if ( $this->is_builtin_tool_name( $name ) ) {
             return ! empty( self::annotations_for( $name )['readOnlyHint'] );
         }
@@ -5225,9 +5228,7 @@ class Server {
                 if ( isset( $data['post_status'] ) ) {
                     $up_prior_changed['post_name'] = (string) $up_existing_post->post_name;
                 }
-                if ( $up_prior_changed ) {
-                    $up_prior = $up_prior_changed;
-                }
+                $up_prior = $up_prior_changed;
                 $up_undo_pre = [
                     'prior_values'      => $up_prior,
                     'is_product'        => $up_is_product,
@@ -10552,7 +10553,7 @@ class Server {
                         }
                         $up_undo_pre   = ( isset( $undo_snapshot['pre_op_state'] ) && is_array( $undo_snapshot['pre_op_state'] ) ) ? $undo_snapshot['pre_op_state'] : [];
                         $up_undo_prior = ( isset( $up_undo_pre['prior_values'] ) && is_array( $up_undo_pre['prior_values'] ) ) ? $up_undo_pre['prior_values'] : [];
-                        if ( empty( $up_undo_prior ) ) {
+                        if ( empty( $up_undo_prior ) && ! array_key_exists( 'prior_featured_id', $up_undo_pre ) && empty( $up_undo_pre['prior_product_type'] ) ) {
                             throw new \Exception('Undo snapshot has no prior_values to restore.');
                         }
                         $up_undo_written = (string) ( $up_undo_pre['written_fingerprint'] ?? '' );
@@ -10571,9 +10572,11 @@ class Server {
                         if ( isset( $up_undo_data['post_date'] ) ) {
                             $up_undo_data['edit_date'] = true;
                         }
-                        $up_undo_res = wp_update_post( wp_slash( $up_undo_data ), true );
-                        if ( is_wp_error( $up_undo_res ) ) {
-                            throw new \Exception( esc_html( $up_undo_res->get_error_message() ) );
+                        if ( count( $up_undo_data ) > 1 ) {
+                            $up_undo_res = wp_update_post( wp_slash( $up_undo_data ), true );
+                            if ( is_wp_error( $up_undo_res ) ) {
+                                throw new \Exception( esc_html( $up_undo_res->get_error_message() ) );
+                            }
                         }
                         // Restore WC product_type term if snapshotted (the
                         // product-downgrade preservation kicks in on the
@@ -11856,6 +11859,11 @@ class Server {
                                     delete_post_meta( $dv_pid, $dv_key );
                                 }
                             }
+                        }
+                        // The import's own backup of the earlier content is not needed any more.
+                        $dv_backup_key = (string) ( $dv_pre['backup_meta_key'] ?? '' );
+                        if ( '' !== $dv_backup_key && 0 === strpos( $dv_backup_key, \Royal_MCP\Integrations\Divi::BACKUP_META_KEY_PREFIX ) ) {
+                            delete_post_meta( $dv_pid, $dv_backup_key );
                         }
                         clean_post_cache( $dv_pid );
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );

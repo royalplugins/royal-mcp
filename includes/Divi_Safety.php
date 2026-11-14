@@ -90,10 +90,11 @@ class Divi_Safety {
         // converted without being saved again) or written by another tool, and
         // the tools that change a page must walk the markup that is really there.
         $content = (string) $post->post_content;
-        $has_d5  = strpos( $content, '<!-- wp:divi/' ) !== false;
+        // Block comments may use any whitespace after "<!--", as the block parser allows.
+        $has_d5  = preg_match( '/<!--\s+wp:divi\//', $content ) === 1;
         $has_d4  = strpos( $content, '[et_pb_section' ) !== false
             || strpos( $content, '[et_pb_row' ) !== false
-            || preg_match( '/\[et_pb_[a-z0-9_]+[\s\]]/', $content ) === 1;
+            || preg_match( '/\[et_pb_[a-z0-9_]+[\s\]\/]/', $content ) === 1;
         if ( $has_d5 && $has_d4 ) return $with_stamp( 'mixed', 'content_scan' );
         if ( $has_d5 )            return $with_stamp( 'divi_5_blocks', 'content_scan' );
         if ( $has_d4 )            return $with_stamp( 'divi_4_shortcodes', 'content_scan' );

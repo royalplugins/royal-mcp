@@ -24,7 +24,7 @@ Connect Claude, ChatGPT or any AI app to WordPress. Drafts only mode, access lev
 * **Set access for each app** - apps sign in with OAuth 2.1. Give each one Full, Read-only or Drafts only access, and make new apps wait for your approval before they can connect.
 * **See what changed** - Recent Changes lists each AI edit with the value before and after, and the Activity Log records every tool call.
 * **Undo it** - tracked changes to content, settings, menus, WooCommerce, Elementor and Divi can be reversed for 72 hours, and undo will not write over edits made after the AI's change unless you tell it to.
-* **Nothing leaves your site** - no relay server, no account, no telemetry and no license check. Your AI app talks to your site directly.
+* **No middleman** - no relay server, no account, no telemetry and no license check. Your AI app talks to your site directly.
 
 = New in 2.0 =
 
@@ -193,7 +193,14 @@ Royal MCP implements the [MCP Streamable HTTP transport](https://modelcontextpro
 
 == External Services ==
 
-Royal MCP makes no outbound calls of its own — no telemetry, no license check, no update ping. The MCP protocol is inbound: your AI client authenticates and calls your site, and any data the AI sees is sent under whatever terms you've agreed to with that AI provider.
+Royal MCP sends no telemetry and makes no license check or update ping. The MCP protocol is inbound: your AI client authenticates and calls your site, and any data the AI sees is sent under whatever terms you've agreed to with that AI provider.
+
+Your site contacts another server only when a tool call asks for it:
+
+* **IndexNow** - when a launch or SEO tool is called with the IndexNow option switched on, the site sends the page address, the site's host name and the site's IndexNow key to api.indexnow.org, which passes it to the search engines that take part. Nothing is sent unless that option is used. [IndexNow terms](https://www.indexnow.org/terms)
+* **Addresses you or your AI give** - `wp_upload_media_from_url` downloads the file at the address it is given, and the page and SEO check tools load the pages they are asked to check.
+* **AI app sign-in** - when an AI app signs in with a client metadata address, the site reads that app's published metadata document from the address the app gives.
+* **WordPress.org** - plugin and theme installs and updates go through WordPress itself, which downloads them from WordPress.org.
 
 == Installation ==
 
@@ -214,7 +221,7 @@ Model Context Protocol (MCP) is an open standard created by Anthropic that lets 
 
 = How is Royal MCP different from other WordPress MCP plugins? =
 
-Security. Most MCP plugins (and 41% of all public MCP servers) have no authentication at all. Royal MCP requires sign-in (OAuth, an API key or an Application Password) for every session, rate-limits requests to prevent abuse, logs every interaction for audit purposes, and filters sensitive data (emails, PHP version, admin credentials) from responses. We built this plugin with the same security standards we apply to GuardPress, our WordPress security plugin used on thousands of sites.
+Security. Many MCP servers have no authentication at all. Royal MCP requires sign-in (OAuth, an API key or an Application Password) for every session, rate-limits requests to prevent abuse, logs every interaction for audit purposes, and filters sensitive data (emails, PHP version, admin credentials) from responses. We built this plugin with the same security standards we apply to GuardPress, our WordPress security plugin used on thousands of sites.
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
@@ -243,15 +250,15 @@ Install Royal MCP, go to Royal MCP → Connections, and copy your API key and MC
 
 = The connector won't connect — where do I start? =
 
-About 90% of "can't connect" / "OAuth failed" / "tools missing" issues resolve in a basic 4-step pass before any host-specific fix is needed. In order: (1) update Royal MCP to the latest version (every recent release fixes meaningful OAuth edge cases), (2) run a conflict test — deactivate all other plugins, switch to a default theme like Twenty Twenty-Five, and purge every cache layer (any cache plugin, your host's server-level cache, Cloudflare/CDN, and browser cache), (3) wipe stale OAuth state — use the Reset OAuth State button in Royal MCP → Settings if you're on 1.4.17 or newer, or run the four `DELETE` SQL queries documented in our support article, (4) check Royal MCP → Activity Logs for the most recent `oauth:` row, which records exactly which validation rule fired. Full walk-through with copy-pasteable commands at [royalplugins.com/support/royal-mcp/troubleshooting-start-here.html](https://royalplugins.com/support/royal-mcp/troubleshooting-start-here.html). Only proceed to host-specific fixes (Cloudflare AI Bots toggle, SiteGround `/.well-known/` static files, edge-cache exclusions) after the four basics are ruled out — most "advanced infrastructure" tickets we receive actually resolve in those four steps.
+About 90% of "can't connect" / "OAuth failed" / "tools missing" issues resolve in a basic 4-step pass before any host-specific fix is needed. In order: (1) update Royal MCP to the latest version (each release improves sign-in reliability), (2) run a conflict test — deactivate all other plugins, switch to a default theme like Twenty Twenty-Five, and purge every cache layer (any cache plugin, your host's server-level cache, Cloudflare/CDN, and browser cache), (3) wipe stale OAuth state — use the Reset OAuth State button in Royal MCP → Connections, or run the four `DELETE` SQL queries documented in our support article, (4) check Royal MCP → Activity Logs for the most recent `oauth:` row, which records exactly which validation rule fired. Full walk-through with copy-pasteable commands at [royalplugins.com/support/royal-mcp/troubleshooting-start-here.html](https://royalplugins.com/support/royal-mcp/troubleshooting-start-here.html). Only proceed to host-specific fixes (Cloudflare AI Bots toggle, SiteGround `/.well-known/` static files, edge-cache exclusions) after the four basics are ruled out — most "advanced infrastructure" tickets we receive actually resolve in those four steps.
 
 = I restored my WordPress database from backup and Claude can't reconnect. How do I fix this? =
 
-When you restore from backup, the OAuth client credentials Claude was holding no longer match anything on the WordPress side, so Claude's connector ends up with a stale token that no Royal MCP installation will accept. The fix in Royal MCP 1.4.17+ is one click: go to **Royal MCP → Connections** and click the **Reset OAuth State** button. This wipes all stale OAuth clients, issued access/refresh tokens, and pending authorization codes. Then in Claude, delete the existing connector entirely, wait 30 seconds, and re-add it from scratch — the full OAuth flow runs fresh against the cleaned-up state and the connection works. On 1.4.16 or older the same effect can be achieved by running four `DELETE` SQL queries documented at [royalplugins.com/support/royal-mcp/troubleshooting-start-here.html](https://royalplugins.com/support/royal-mcp/troubleshooting-start-here.html). The plugin's settings, API key, and Activity Log are not affected by Reset OAuth State — only the OAuth handshake state.
+When you restore from backup, the OAuth client credentials Claude was holding no longer match anything on the WordPress side, so Claude's connector ends up with a stale token that no Royal MCP installation will accept. The fix is one click: go to **Royal MCP → Connections** and click the **Reset OAuth State** button. This wipes all stale OAuth clients, issued access/refresh tokens, and pending authorization codes. Then in Claude, delete the existing connector entirely, wait 30 seconds, and re-add it from scratch — the full OAuth flow runs fresh against the cleaned-up state and the connection works. On 1.4.16 or older the same effect can be achieved by running four `DELETE` SQL queries documented at [royalplugins.com/support/royal-mcp/troubleshooting-start-here.html](https://royalplugins.com/support/royal-mcp/troubleshooting-start-here.html). The plugin's settings, API key, and Activity Log are not affected by Reset OAuth State — only the OAuth handshake state.
 
 = Claude says "Couldn't register with sign-in service" or "Session not found" — what's wrong? =
 
-Both messages (plus "no tools available" in Claude.ai after connecting) usually mean one of Royal MCP's OAuth or sessions database tables is physically missing. The fix is to update Royal MCP to 1.4.29 or newer — the new runtime healer detects missing tables and recreates them automatically on the next pageload, with no deactivate/reactivate required. After updating, delete the existing Royal MCP connector in Claude, wait 30 seconds, then re-add it fresh. If you can't update yet and need to recover immediately, the manual workaround is `wp option delete royal_mcp_db_version` followed by loading any wp-admin page. Full symptom diagnostic (phpMyAdmin / WP-CLI), the auto-heal explanation, and the manual recovery walkthrough are at [royalplugins.com/support/royal-mcp/oauth-tables-missing.html](https://royalplugins.com/support/royal-mcp/oauth-tables-missing.html).
+Both messages (plus "no tools available" in Claude.ai after connecting) usually mean one of Royal MCP's OAuth or sessions database tables is physically missing. Royal MCP detects missing tables and recreates them automatically on the next page load, with no deactivate/reactivate required; update to the latest version if it does not. Then delete the existing Royal MCP connector in Claude, wait 30 seconds, then re-add it fresh. If you can't update yet and need to recover immediately, the manual workaround is `wp option delete royal_mcp_db_version` followed by loading any wp-admin page. Full symptom diagnostic (phpMyAdmin / WP-CLI), the auto-heal explanation, and the manual recovery walkthrough are at [royalplugins.com/support/royal-mcp/oauth-tables-missing.html](https://royalplugins.com/support/royal-mcp/oauth-tables-missing.html).
 
 = Where are Royal MCP's OAuth endpoints? =
 

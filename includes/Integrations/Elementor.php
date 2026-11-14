@@ -43,7 +43,7 @@ class Elementor {
 		return [
 			[
 				'name'        => 'elementor_clone_page',
-				'description' => 'Duplicate an existing Elementor page or post as a new draft. Copies the full _elementor_data tree and regenerates every element ID to avoid duplicates. Also copies the page template, excerpt, parent, order and slug (WordPress makes the slug unique). Preserves Container model, legacy section/column, and atomic widgets as-is. Returns the new post ID. The Elementor editor on the new page opens cleanly because IDs are unique within the document.',
+				'description' => 'Duplicate an existing Elementor page or post as a new draft. Copies the full _elementor_data tree and regenerates every element ID to avoid duplicates. Also copies the page template, excerpt, parent, order and slug (the draft keeps the slug; WordPress makes it unique when the copy is published). Preserves Container model, legacy section/column, and atomic widgets as-is. Returns the new post ID. The Elementor editor on the new page opens cleanly because IDs are unique within the document.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -520,12 +520,12 @@ class Elementor {
 	 */
 	private static function renders_no_text( $post_id ) {
 		if ( ! class_exists( '\\Elementor\\Plugin' ) ) {
-			return false;
+			return null;
 		}
 		try {
 			$plugin = \Elementor\Plugin::$instance ?? null;
 			if ( ! $plugin || empty( $plugin->db ) || ! method_exists( $plugin->db, 'get_plain_text' ) ) {
-				return false;
+				return null;
 			}
 			// Dynamic values are left out, as they are when Elementor stores the text.
 			$tags = $plugin->dynamic_tags ?? null;
@@ -548,7 +548,7 @@ class Elementor {
 			}
 			return '' === trim( $text );
 		} catch ( \Throwable $e ) {
-			return false;
+			return null;
 		}
 	}
 
@@ -939,7 +939,17 @@ class Elementor {
 		$dry_run   = ! empty( $args['dry_run'] );
 		$limit     = isset( $args['limit'] ) ? max( 1, min( 200, (int) $args['limit'] ) ) : 50;
 		$post_type = isset( $args['post_type'] ) ? sanitize_key( (string) $args['post_type'] ) : '';
-		$after_id  = isset( $args['after_id'] ) ? max( 0, (int) $args['after_id'] ) : 0;
+		$after_id  = 0;
+		if ( isset( $args['after_id'] ) ) {
+			$raw_after = $args['after_id'];
+			if ( is_int( $raw_after ) && $raw_after >= 0 ) {
+				$after_id = $raw_after;
+			} elseif ( is_string( $raw_after ) && preg_match( '/^\d{1,19}$/', $raw_after ) ) {
+				$after_id = (int) $raw_after;
+			} else {
+				throw new \Exception( 'after_id must be a post ID (a whole number, 0 or more): pass the last_post_id of the reply before. Nothing was changed.' );
+			}
+		}
 
 		global $wpdb;
 		$sql = "SELECT pm.post_id
@@ -1009,9 +1019,15 @@ class Elementor {
 				$skipped[] = [ 'post_id' => $pid, 'reason' => 'post_content_now_populated' ];
 				continue;
 			}
-			// Looked at before anything is saved, so a page with nothing to store is not touched.
-			if ( self::renders_no_text( $pid ) ) {
+			// Looked at before anything is saved, so a page with nothing to store is not touched,
+			// and neither is one whose text Elementor cannot give.
+			$no_text = self::renders_no_text( $pid );
+			if ( true === $no_text ) {
 				$skipped[] = [ 'post_id' => $pid, 'reason' => 'no_text_rendered' ];
+				continue;
+			}
+			if ( null === $no_text ) {
+				$skipped[] = [ 'post_id' => $pid, 'reason' => 'render_failed' ];
 				continue;
 			}
 			$ok = self::populate_post_content_from_elementor( $pid );

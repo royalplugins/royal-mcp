@@ -1447,11 +1447,29 @@ class WooCommerce {
 				if ( ! empty( $args['line_items'] ) && is_array( $args['line_items'] ) ) {
 					// Checked for every entry before any line is touched.
 					foreach ( $args['line_items'] as $item ) {
-						if ( is_array( $item ) && isset( $item['quantity'] ) ) {
+						if ( ! is_array( $item ) ) {
+							return Envelope::error( 'invalid_args', 'Each line_items entry must be an object. Nothing was changed.', [ 'field' => 'line_items' ] );
+						}
+						if ( isset( $item['quantity'] ) ) {
 							$item_quantity = self::clean_stock( $item['quantity'] );
 							if ( null === $item_quantity || $item_quantity > 1000000 ) {
 								return Envelope::error( 'invalid_args', 'A line item quantity must be a whole number from 0 to 1000000. Nothing was changed.', [ 'field' => 'line_items' ] );
 							}
+						}
+						if ( isset( $item['id'] ) && (int) $item['id'] > 0 ) {
+							continue;
+						}
+						$check_product_id   = isset( $item['product_id'] ) ? (int) $item['product_id'] : 0;
+						$check_variation_id = isset( $item['variation_id'] ) ? (int) $item['variation_id'] : 0;
+						if ( $check_product_id <= 0 ) {
+							return Envelope::error( 'invalid_args', 'A line_items entry without id must include product_id. Nothing was changed.', [ 'field' => 'line_items' ] );
+						}
+						$check_product = wc_get_product( $check_variation_id > 0 ? $check_variation_id : $check_product_id );
+						if ( ! $check_product ) {
+							return Envelope::error( 'invalid_args', 'Product not found: ' . ( $check_variation_id > 0 ? $check_variation_id : $check_product_id ) . '. Nothing was changed.', [ 'field' => 'line_items' ] );
+						}
+						if ( $check_variation_id > 0 && (int) $check_product->get_parent_id() !== $check_product_id ) {
+							return Envelope::error( 'invalid_args', 'variation_id ' . $check_variation_id . ' does not belong to product_id ' . $check_product_id . '. Nothing was changed.', [ 'field' => 'line_items' ] );
 						}
 					}
 					foreach ( $args['line_items'] as $item ) {

@@ -120,9 +120,11 @@ class SiteVaultHealth {
 		}
 		// SiteVault stamps last_run when a run starts, so a schedule whose
 		// backups keep failing still reads as fresh: also off track when
-		// the newest failure started after the newest completed backup.
-		if ( is_array( $latest_failed ) && true === ( $schedule['on_track'] ?? null ) ) {
-			$failed_ts    = strtotime( (string) $latest_failed['started_at'] );
+		// the newest failed scheduled backup started after the newest
+		// completed backup. A failed manual backup says nothing about the schedule.
+		$failed_scheduled = true === ( $schedule['on_track'] ?? null ) ? self::latest_failed_scheduled_start() : null;
+		if ( null !== $failed_scheduled ) {
+			$failed_ts    = $failed_scheduled;
 			$completed_ts = ( $last && ! empty( $last->created_at ) ) ? self::site_local_to_ts( $last->created_at ) : false;
 			if ( false === $completed_ts || ( false !== $failed_ts && $failed_ts > $completed_ts ) ) {
 				$schedule['on_track'] = false;
@@ -205,6 +207,51 @@ class SiteVaultHealth {
 			// SiteVault's error text can name server paths, hosts and accounts.
 			'error'       => ( is_array( $meta ) && isset( $meta['error'] ) ) ? Location_Filter::clean( $meta['error'], 300 ) : null,
 		];
+	}
+
+	/**
+	 * Start time (Unix) of the newest failed backup that a schedule made, or null.
+	 * SiteVault names a scheduled backup after its schedule followed by the date
+	 * and time ("<schedule name>-YYYY-MM-DD-HHMMSS-..."); manual backups do not
+	 * carry a schedule's name.
+	 */
+	private static function latest_failed_scheduled_start() {
+		$scheduler = self::obj( 'Backup_Scheduler' );
+		if ( ! $scheduler || ! is_callable( [ $scheduler, 'get_schedules' ] ) ) {
+			return null;
+		}
+		$patterns = [];
+		foreach ( (array) $scheduler->get_schedules( true ) as $row ) {
+			if ( ! is_object( $row ) || ! isset( $row->schedule_name ) || '' === (string) $row->schedule_name ) {
+				continue;
+			}
+			$stamp = '2000-01-01-000000';
+			$name  = sanitize_file_name( (string) $row->schedule_name . '-' . $stamp );
+			if ( substr( $name, -strlen( $stamp ) ) !== $stamp ) {
+				continue;
+			}
+			$patterns[] = '/^' . preg_quote( substr( $name, 0, -strlen( $stamp ) ), '/' ) . '\d{4}-\d{2}-\d{2}-\d{6}(?:-|$)/';
+		}
+		if ( ! $patterns ) {
+			return null;
+		}
+		global $wpdb;
+		$table = $wpdb->prefix . ( self::is_pro() ? 'rb_backups' : 'sitevault_backups' );
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		if ( ! $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) ) {
+			return null;
+		}
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table is prefix + literal
+		$rows = $wpdb->get_results( "SELECT backup_name, created_at FROM {$table} WHERE status = 'failed' ORDER BY created_at DESC, id DESC LIMIT 100" );
+		foreach ( (array) $rows as $failed ) {
+			foreach ( $patterns as $pattern ) {
+				if ( preg_match( $pattern, (string) $failed->backup_name ) ) {
+					$ts = self::site_local_to_ts( (string) $failed->created_at );
+					return false === $ts ? null : $ts;
+				}
+			}
+		}
+		return null;
 	}
 
 	/** Per-schedule health from SiteVault's own scheduler check, where the plugin has one. */
