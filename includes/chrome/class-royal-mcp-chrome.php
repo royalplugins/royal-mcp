@@ -142,9 +142,8 @@ class Royal_MCP_Chrome {
                     \Royal_MCP\Chrome\Whats_New::instance()->render_trigger_button();
                 }
                 ?>
-                <a href="<?php echo esc_url( $this->campaign_url( self::AFFILIATE_URL_BASE, 'chrome_header_affiliate' ) ); ?>" class="royal-mcp-chrome-header-btn royal-mcp-chrome-header-btn--affiliate" target="_blank" rel="noopener noreferrer" title="<?php esc_attr_e( 'Earn 30% recommending Royal Plugins and Royally', 'royal-mcp' ); ?>">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg>
-                    <?php esc_html_e( 'Affiliates', 'royal-mcp' ); ?>
+                <a href="<?php echo esc_url( $this->campaign_url( self::AFFILIATE_URL_BASE, 'chrome_header_affiliate' ) ); ?>" class="royal-mcp-chrome-header-btn royal-mcp-chrome-header-btn--affiliate" target="_blank" rel="noopener noreferrer" title="<?php esc_attr_e( 'Affiliates: earn 30% recommending Royal Plugins and Royally', 'royal-mcp' ); ?>" aria-label="<?php esc_attr_e( 'Affiliates: earn 30% recommending Royal Plugins and Royally (opens in a new tab)', 'royal-mcp' ); ?>">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
                 </a>
                 <a href="<?php echo esc_url( $docs_url ); ?>" class="royal-mcp-chrome-header-btn" target="_blank" rel="noopener noreferrer">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>

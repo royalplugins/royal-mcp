@@ -102,13 +102,24 @@ $rmcp_wn_royally_slide_url = 'https://royalplugins.com/royally/?utm_source=royal
                 </div>
             </div>
 
-            <!-- SLIDE 4: Royally -->
+            <!-- SLIDE 4: Safety and plugin abilities -->
             <div class="rmcp-wn-slide">
                 <div class="rmcp-wn-slide-visual">
-                    <div class="rmcp-wn-circle is-dark">
-                        <img src="<?php echo esc_url( $rmcp_wn_img_base . 'royal-shield.png' ); ?>" alt="">
-                    </div>
+                    <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone"><span class="c"><?php esc_html_e( '// Each connection', 'royal-mcp' ); ?></span>
+  <span class="s"><?php esc_html_e( 'access', 'royal-mcp' ); ?></span>     <span class="s hl"><?php esc_html_e( 'full', 'royal-mcp' ); ?></span> <span class="c">|</span> <span class="s"><?php esc_html_e( 'read-only', 'royal-mcp' ); ?></span> <span class="c">|</span> <span class="s"><?php esc_html_e( 'drafts-only', 'royal-mcp' ); ?></span>
+  <span class="s"><?php esc_html_e( 'every call', 'royal-mcp' ); ?></span> <span class="s hl"><?php esc_html_e( 'logged', 'royal-mcp' ); ?> &#10003;</span>
+  <span class="s"><?php esc_html_e( 'changes', 'royal-mcp' ); ?></span>    <span class="s hl"><?php esc_html_e( 'undo for 72 hours', 'royal-mcp' ); ?></span></div>
                 </div>
+                <div class="rmcp-wn-slide-body">
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v2.0', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'You decide what each AI may do', 'royal-mcp' ); ?></h3>
+                    <p><?php esc_html_e( 'Give each connection full access, read-only or drafts-only, or switch the whole site to one of them on the Safety screen. The Activity screen shows every call and every change, with the value before and after, and exports to CSV. Undo will not write over edits made after the AI\'s change unless you tell it to.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'On the Plugin Abilities screen, let your AI use the abilities other plugins add to WordPress, one plugin at a time. Those calls are logged and follow the same access levels.', 'royal-mcp' ); ?></p>
+                </div>
+            </div>
+
+            <!-- SLIDE 5: Royally -->
+            <div class="rmcp-wn-slide is-reversed">
                 <div class="rmcp-wn-slide-body">
                     <span class="rmcp-wn-tag"><?php esc_html_e( 'Royally', 'royal-mcp' ); ?></span>
                     <h3><?php esc_html_e( 'One connection for everything your AI manages', 'royal-mcp' ); ?></h3>
@@ -116,6 +127,11 @@ $rmcp_wn_royally_slide_url = 'https://royalplugins.com/royally/?utm_source=royal
                     <a href="<?php echo esc_url( $rmcp_wn_royally_slide_url ); ?>" target="_blank" rel="noopener noreferrer" class="rmcp-wn-btn">
                         <?php esc_html_e( 'See Royally', 'royal-mcp' ); ?>
                     </a>
+                </div>
+                <div class="rmcp-wn-slide-visual">
+                    <div class="rmcp-wn-circle is-dark">
+                        <img src="<?php echo esc_url( $rmcp_wn_img_base . 'royal-shield.png' ); ?>" alt="">
+                    </div>
                 </div>
             </div>
 

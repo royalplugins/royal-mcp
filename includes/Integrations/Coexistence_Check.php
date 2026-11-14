@@ -713,7 +713,8 @@ class Coexistence_Check {
 	 * by name prefix: the plugin and Royal MCP's matching tools.
 	 */
 	const OVERLAPPING_ABILITIES = [
-		'mailpoet/' => [ 'plugin' => 'MailPoet', 'royal_mcp_tools' => 'mailpoet_*' ],
+		'mailpoet/'    => [ 'plugin' => 'MailPoet', 'royal_mcp_tools' => 'mailpoet_*' ],
+		'woocommerce/' => [ 'plugin' => 'WooCommerce', 'royal_mcp_tools' => 'wc_*' ],
 	];
 
 	/**

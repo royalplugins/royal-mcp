@@ -193,6 +193,8 @@ class Dashboard_Page {
 		echo '<span class="royal-mcp-dash-pill ' . ( $d['enabled'] ? 'is-on' : 'is-off' ) . '">' . esc_html( $d['enabled'] ? __( 'On', 'royal-mcp' ) : __( 'Off', 'royal-mcp' ) ) . '</span>';
 		echo '<a class="royal-mcp-dash-help" href="' . esc_url( self::url( Help_Page::SLUG ) ) . '">' . esc_html__( 'Help', 'royal-mcp' ) . '</a>';
 		echo '</div>';
+		// WordPress puts admin notices (ours and other plugins') after this marker, not inside the header row.
+		echo '<hr class="wp-header-end">';
 
 		// ---- connect
 		echo '<div class="royal-mcp-dash-card royal-mcp-dash-connect">';

@@ -250,6 +250,15 @@ class Plugin_Abilities {
 		} );
 	}
 
+	/**
+	 * Royal MCP's own tools for the plugin behind a namespace, when it has them
+	 * (for example wc_* for woocommerce), or ''.
+	 */
+	public static function own_tools_for( $ns ) {
+		$overlap = \Royal_MCP\Integrations\Coexistence_Check::OVERLAPPING_ABILITIES[ self::sanitize_namespace( (string) $ns ) . '/' ] ?? null;
+		return is_array( $overlap ) ? (string) $overlap['royal_mcp_tools'] : '';
+	}
+
 	public static function namespace_label( $ns ) {
 		$known = [ 'rank-math' => 'Rank Math', 'core' => 'WordPress', 'elementor' => 'Elementor', 'woocommerce' => 'WooCommerce', 'yoast' => 'Yoast SEO', 'angie' => 'Angie' ];
 		return $known[ $ns ] ?? ucwords( str_replace( '-', ' ', $ns ) );
@@ -364,14 +373,17 @@ class Plugin_Abilities {
 				continue;
 			}
 			$name    = (string) $ability->get_name();
-			$label   = self::namespace_label( (string) strtok( $name, '/' ) );
+			$ns      = (string) strtok( $name, '/' );
+			$label   = self::namespace_label( $ns );
+			$own     = self::own_tools_for( $ns );
 			$tools[] = [
 				'name'        => $tool,
 				'description' => sprintf(
-					'[Third-party: %1$s ability %2$s] %3$s Runs %1$s\'s own code with the connected user\'s WordPress permissions. Royal MCP logs the call but has no undo for it.',
+					'[Third-party: %1$s ability %2$s] %3$s Runs %1$s\'s own code with the connected user\'s WordPress permissions. Royal MCP logs the call but has no undo for it.%4$s',
 					$label,
 					$name,
-					self::clip( trim( wp_strip_all_tags( (string) $ability->get_description() ) ), self::MAX_DESCRIPTION_CHARS )
+					self::clip( trim( wp_strip_all_tags( (string) $ability->get_description() ) ), self::MAX_DESCRIPTION_CHARS ),
+					'' !== $own ? sprintf( ' Royal MCP\'s own %1$s tools cover %2$s with undo and the read-only and drafts-only checks: use those first, and this one only for what they do not do.', $own, $label ) : ''
 				),
 				'inputSchema' => $schema,
 				'annotations' => self::annotations( $ability ),

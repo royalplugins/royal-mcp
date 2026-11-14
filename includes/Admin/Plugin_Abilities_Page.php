@@ -85,7 +85,7 @@ class Plugin_Abilities_Page {
 			// Ticking the whole plugin covers its read abilities, so their single boxes are locked while it is ticked.
 			$toggle = 'var b=this.closest(\'tr\').querySelectorAll(\'.royal-mcp-ability-single\');for(var i=0;i<b.length;i++){b[i].disabled=this.checked;}';
 			echo '<tr>';
-			echo '<td><label for="' . esc_attr( $id ) . '"><input type="checkbox" id="' . esc_attr( $id ) . '" name="namespaces[]" value="' . esc_attr( $ns ) . '"' . checked( $all_on, true, false ) . ' onchange="' . esc_attr( $toggle ) . '" /> <strong>' . esc_html( $group['label'] ) . '</strong></label><br><code>' . esc_html( $ns ) . '/*</code><br><span class="description">' . esc_html__( 'Tick to turn on every ability that only reads.', 'royal-mcp' ) . '</span></td>';
+			echo '<td><label for="' . esc_attr( $id ) . '"><input type="checkbox" id="' . esc_attr( $id ) . '" name="namespaces[]" value="' . esc_attr( $ns ) . '"' . checked( $all_on, true, false ) . ' onchange="' . esc_attr( $toggle ) . '" /> <strong>' . esc_html( $group['label'] ) . '</strong></label><br><code>' . esc_html( $ns ) . '/*</code><br><span class="description">' . esc_html__( 'Tick to turn on every ability that only reads.', 'royal-mcp' ) . '</span>' . self::own_tools_note( $ns, $group['label'] ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- own_tools_note() returns escaped markup.
 			/* translators: 1: abilities turned on, 2: abilities the plugin registers */
 			echo '<td>' . esc_html( sprintf( __( '%1$d of %2$d', 'royal-mcp' ), $on_count, count( $group['abilities'] ) ) ) . '</td>';
 			echo '<td><details' . ( $on_count && ! $all_on ? ' open' : '' ) . '><summary style="cursor:pointer;">' . esc_html__( 'Choose abilities', 'royal-mcp' ) . '</summary><ul style="margin:8px 0 0;">';
@@ -114,6 +114,17 @@ class Plugin_Abilities_Page {
 		}
 		echo '</form>';
 		echo '</div>';
+	}
+
+	/** A note on a plugin Royal MCP already has its own tools for: turning its abilities on lists a second set. */
+	private static function own_tools_note( $ns, $label ) {
+		$own = Plugin_Abilities::own_tools_for( $ns );
+		if ( '' === $own ) {
+			return '';
+		}
+		/* translators: 1: plugin name, 2: Royal MCP tool names such as wc_* */
+		$text = sprintf( __( 'Royal MCP already has its own %1$s tools (%2$s), with undo and the read-only and drafts-only checks. Turning this on lists %1$s\'s own abilities next to them, so the AI sees two sets of tools for the same job. Most sites do not need it.', 'royal-mcp' ), $label, $own );
+		return '<br><span class="description" style="display:inline-block;margin-top:4px;color:#8a5a00;">' . esc_html( $text ) . '</span>';
 	}
 
 	public static function handle_save() {
