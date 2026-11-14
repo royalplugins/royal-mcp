@@ -622,6 +622,27 @@ class WooCommerce {
 	 * for it, emoji encoded where the posts table cannot store them. On a new product the first
 	 * product written in the call is the one.
 	 */
+	/**
+	 * Save a coupon with its description exactly as given: WordPress unslashes what it
+	 * saves, so backslashes in the description would otherwise be lost.
+	 */
+	public static function save_coupon_exact( $coupon ) {
+		$id      = (int) $coupon->get_id();
+		$excerpt = (string) $coupon->get_description( 'edit' );
+		$keep    = static function ( $data, $postarr ) use ( $id, $excerpt ) {
+			if ( isset( $data['post_type'] ) && 'shop_coupon' === $data['post_type'] && $id === (int) ( $postarr['ID'] ?? 0 ) ) {
+				$data['post_excerpt'] = wp_slash( $excerpt );
+			}
+			return $data;
+		};
+		add_filter( 'wp_insert_post_data', $keep, PHP_INT_MAX, 2 );
+		try {
+			return $coupon->save();
+		} finally {
+			remove_filter( 'wp_insert_post_data', $keep, PHP_INT_MAX );
+		}
+	}
+
 	public static function save_product_exact( $product ) {
 		$id      = (int) $product->get_id();
 		$content = (string) $product->get_description( 'edit' );
@@ -1318,7 +1339,6 @@ class WooCommerce {
 					),
 					[
 						'order_id'   => (int) $new_order->get_id(),
-						'order_key'  => $new_order->get_order_key(),
 						'total'      => $new_order->get_total(),
 						'status'     => $new_order->get_status(),
 						'email_sent' => $co_email_sent,
@@ -2474,7 +2494,7 @@ class WooCommerce {
 				$cc_coupon->set_code( $cc_code );
 				$cc_coupon->set_discount_type( 'fixed_cart' ); // explicit default; WC default matches but we make it clear
 				self::apply_coupon_fields( $cc_coupon, $args );
-				$cc_new_id = $cc_coupon->save();
+				$cc_new_id = self::save_coupon_exact( $cc_coupon );
 				if ( ! $cc_new_id ) {
 					throw new \Exception( 'Failed to create coupon' );
 				}
@@ -2606,7 +2626,7 @@ class WooCommerce {
 					$uc_coupon->set_code( $uc_requested['code'] );
 				}
 				self::apply_coupon_fields( $uc_coupon, $args );
-				$uc_coupon->save();
+				self::save_coupon_exact( $uc_coupon );
 				wp_cache_delete( $uc_id, 'posts' );
 
 				// Re-read AFTER

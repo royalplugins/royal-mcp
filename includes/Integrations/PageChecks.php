@@ -137,8 +137,9 @@ class PageChecks {
 		$current = (string) $url;
 		$resp    = null;
 		$status  = 0;
+		$deadline = self::$deadline > 0 ? self::$deadline : microtime( true ) + min( 10, max( 1, (int) $timeout ) );
 		for ( $hop = 0; $hop <= 5; $hop++ ) {
-			$left = self::$deadline > 0 ? self::$deadline - microtime( true ) : (float) $timeout;
+			$left = $deadline - microtime( true );
 			if ( $left < 1 ) {
 				return new \WP_Error( 'fetch_failed', 'The page took too long to load.' );
 			}

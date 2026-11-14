@@ -1106,6 +1106,11 @@ class Royal_MCP_Plugin {
         // weekly Site Health check runs from cron and calls them directly.
         new Royal_MCP\Admin\Site_Health_Tests();
 
+        // The sign-in path report depends on the rewrite rules: forget it when they change.
+        foreach ( [ 'update_option_rewrite_rules', 'add_option_rewrite_rules', 'delete_option_rewrite_rules' ] as $rmcp_hook ) {
+            add_action( $rmcp_hook, [ \Royal_MCP\Integrations\Coexistence_Check::class, 'clear' ] );
+        }
+
         if ( defined( 'WP_CLI' ) && WP_CLI ) {
             \WP_CLI::add_command( 'royal-mcp', 'Royal_MCP\CLI\Commands' );
         }

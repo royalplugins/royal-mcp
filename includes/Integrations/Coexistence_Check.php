@@ -41,7 +41,14 @@ class Coexistence_Check {
 			}
 		}
 		$report = self::run_discovery_chain();
-		set_transient( self::CHAIN_TRANSIENT, $report, self::CHAIN_TTL );
+		// A run that could not reach a step (timeout, loopback blocked) is retried soon.
+		$unknown = false;
+		foreach ( (array) ( $report['steps'] ?? [] ) as $step ) {
+			if ( 'unknown' === ( is_array( $step ) ? ( $step['answered_by'] ?? '' ) : '' ) ) {
+				$unknown = true;
+			}
+		}
+		set_transient( self::CHAIN_TRANSIENT, $report, $unknown ? 5 * MINUTE_IN_SECONDS : self::CHAIN_TTL );
 		return $report;
 	}
 
@@ -166,8 +173,9 @@ class Coexistence_Check {
 		$same  = static function ( $a, $b ) {
 			return is_string( $a ) && is_string( $b ) && rtrim( $a, '/' ) === rtrim( $b, '/' );
 		};
+		// The authorize address changes with the rewrite rules (a cached copy may name the
+		// other form), so Royal MCP's own document is recognised by issuer and token endpoint.
 		return ( $same( $doc['issuer'] ?? null, $issuer )
-			&& $same( $doc['authorization_endpoint'] ?? null, $ours['authorization_endpoint'] ?? '' )
 			&& $same( $doc['token_endpoint'] ?? null, $ours['token_endpoint'] ?? '' ) ) ? 'royal_mcp' : 'other';
 	}
 
@@ -452,8 +460,12 @@ class Coexistence_Check {
 		 *
 		 * @param string $owner Detected owner ('' for none).
 		 */
-		$cache[ $key ] = (string) apply_filters( 'royal_mcp_root_oauth_documents_owner', $owner );
-		return $cache[ $key ];
+		$owner = (string) apply_filters( 'royal_mcp_root_oauth_documents_owner', $owner );
+		// Before rest_api_init, servers known only by their REST namespace cannot be seen yet.
+		if ( '' !== $owner || did_action( 'rest_api_init' ) ) {
+			$cache[ $key ] = $owner;
+		}
+		return $owner;
 	}
 
 	/** Whether the bundled WP Media MCP sign-in library is loaded and switched on, read as it reads its own switch. */

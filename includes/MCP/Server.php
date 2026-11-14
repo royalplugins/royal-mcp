@@ -1104,6 +1104,13 @@ class Server {
             && ! isset( \Royal_MCP\OAuth\Server::accepted_resources()[ \Royal_MCP\OAuth\Server::normalize_resource( (string) $token_data['resource'] ) ] ) ) {
             $token_data = false;
         }
+        // The token's client must still exist and be approved.
+        if ( $token_data ) {
+            $tok_client = \Royal_MCP\OAuth\Token_Store::get_client( (string) $token_data['client_id'] );
+            if ( ! $tok_client || \Royal_MCP\OAuth\Token_Store::is_pending_approval( $tok_client ) ) {
+                $token_data = false;
+            }
+        }
 
         if (!$token_data) {
             $response = new \WP_REST_Response([
@@ -6300,8 +6307,8 @@ class Server {
                 if ('reuse' === $uf_reuse) {
                     $uf_existing = \Royal_MCP\MCP\Support\Media_Fingerprint::find_reusable('url', $url, \Royal_MCP\MCP\Support\Media_Fingerprint::opts_signature($uf_opts));
                     if ($uf_existing) {
-                        $this->apply_reuse_fields($uf_existing, $uf_title, $uf_caption, $uf_alt);
-                        return $this->media_upload_response($uf_existing, true);
+                        $uf_undo = $this->apply_reuse_fields($uf_existing, $uf_title, $uf_caption, $uf_alt);
+                        return $this->reuse_response($uf_existing, $uf_undo);
                     }
                 }
                 list($uf_bytes, $uf_name) = $this->download_media($url, isset($args['filename']) ? sanitize_file_name($args['filename']) : '', false);
@@ -11321,6 +11328,15 @@ class Server {
                         if ( ! empty( $up_undo_pre['is_product'] ) && ! empty( $up_undo_pre['prior_product_type'] ) ) {
                             wp_set_object_terms( $undo_up_pid, [ (string) $up_undo_pre['prior_product_type'] ], 'product_type', false );
                         }
+                        // Revisioned meta put back as it was before a revision restore.
+                        if ( ! empty( $up_undo_pre['prior_revision_meta'] ) && is_array( $up_undo_pre['prior_revision_meta'] ) ) {
+                            foreach ( $up_undo_pre['prior_revision_meta'] as $rm_key => $rm_values ) {
+                                delete_post_meta( $undo_up_pid, (string) $rm_key );
+                                foreach ( is_array( $rm_values ) ? $rm_values : [] as $rm_value ) {
+                                    add_post_meta( $undo_up_pid, (string) $rm_key, wp_slash( $rm_value ) );
+                                }
+                            }
+                        }
                         // Restore featured media if snapshotted
                         if ( array_key_exists( 'prior_featured_id', $up_undo_pre ) ) {
                             $prior_fid = (int) $up_undo_pre['prior_featured_id'];
@@ -11524,7 +11540,7 @@ class Server {
                                 case 'email_restrictions':          $uc_undo_coupon->set_email_restrictions( (array) $prior ); break;
                             }
                         }
-                        $uc_undo_coupon->save();
+                        \Royal_MCP\Integrations\WooCommerce::save_coupon_exact( $uc_undo_coupon );
                         wp_cache_delete( $undo_uc_id, 'posts' );
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
                         return \Royal_MCP\MCP\Support\Envelope::success(
@@ -14058,15 +14074,22 @@ class Server {
                     'post_content' => (string) $rr_parent->post_content,
                     'post_excerpt' => (string) $rr_parent->post_excerpt,
                 ] : [];
+                // Meta registered to be kept with revisions is restored by WordPress too; undo puts it back.
+                $rr_meta = [];
+                if ( $rr_parent && function_exists( 'wp_post_revision_meta_keys' ) ) {
+                    foreach ( (array) wp_post_revision_meta_keys( (string) $rr_parent->post_type ) as $rr_key ) {
+                        $rr_meta[ (string) $rr_key ] = metadata_exists( 'post', (int) $rr_parent->ID, (string) $rr_key ) ? get_post_meta( (int) $rr_parent->ID, (string) $rr_key ) : null;
+                    }
+                }
                 $result = wp_restore_post_revision($revision_id);
                 if (!$result) throw new \Exception('Failed to restore revision.');
                 $rr_undo = null;
-                if ( $rr_prior && strlen( gzcompress( (string) wp_json_encode( $rr_prior ), 9 ) ) <= 1024 * 1024 ) {
+                if ( $rr_prior && strlen( gzcompress( (string) wp_json_encode( [ $rr_prior, $rr_meta ] ), 9 ) ) <= 1024 * 1024 ) {
                     $rr_undo = \Royal_MCP\MCP\Undo_Store::store( [
                         'op'           => 'wp_update_post',
                         'summary'      => sprintf( 'Put post %d back as it was before revision %d was restored.', (int) $revision->post_parent, $revision_id ),
                         'target'       => [ 'post_id' => (int) $revision->post_parent ],
-                        'pre_op_state' => [ 'prior_values' => $rr_prior, 'written_fingerprint' => self::post_undo_fingerprint( (int) $revision->post_parent ) ],
+                        'pre_op_state' => [ 'prior_values' => $rr_prior, 'written_fingerprint' => self::post_undo_fingerprint( (int) $revision->post_parent ) ] + ( $rr_meta ? [ 'prior_revision_meta' => $rr_meta ] : [] ),
                     ] );
                 }
                 return \Royal_MCP\MCP\Support\Envelope::success(
@@ -14658,8 +14681,8 @@ class Server {
         if ('reuse' === $if_exists) {
             $existing = \Royal_MCP\MCP\Support\Media_Fingerprint::find_reusable('sha', $source_sha, $opts_sig);
             if ($existing) {
-                $this->apply_reuse_fields($existing, $title, $caption, $alt_text);
-                return $this->media_upload_response($existing, true);
+                $undo = $this->apply_reuse_fields($existing, $title, $caption, $alt_text);
+                return $this->reuse_response($existing, $undo);
             }
         }
         $attachment_id = $this->sideload_media_from_bytes($bytes, $filename, $title, $caption, $alt_text, false, $opts);
@@ -14675,10 +14698,33 @@ class Server {
         return \Royal_MCP\MCP\Support\Envelope::success(sprintf('File uploaded to the media library: id %d, %s, %s. Undo available.', (int) $attachment_id, (string) $response['mime_type'], (string) $response['url']), $response, $undo);
     }
 
-    /** On a reuse, the title, caption and alt text the caller asked for are set on the existing item. */
+    /** A reused item's response; with an undo when the call changed its title, caption or alt text. */
+    private function reuse_response($attachment_id, $undo) {
+        $response = $this->media_upload_response($attachment_id, true);
+        if (empty($undo['token'])) {
+            return $response;
+        }
+        return \Royal_MCP\MCP\Support\Envelope::success(sprintf('This file is already in the media library: returned item %d and set the title, caption or alt text asked for. Undo puts the earlier values back.', (int) $attachment_id), $response, $undo);
+    }
+
+    /**
+     * On a reuse, the title, caption and alt text the caller asked for are set on the existing
+     * item. Returns an undo (the media field undo) when any of them changed, else [].
+     */
     private function apply_reuse_fields($attachment_id, $title, $caption, $alt_text) {
         // An item handed out again is not deleted by the first upload's undo without force.
         update_post_meta((int) $attachment_id, '_royal_mcp_reused_at', time());
+        $read = static function ($id) {
+            clean_post_cache((int) $id);
+            wp_cache_delete((int) $id, 'post_meta');
+            $p = get_post((int) $id);
+            return [
+                'title'    => $p ? (string) $p->post_title : '',
+                'caption'  => $p ? (string) $p->post_excerpt : '',
+                'alt_text' => (string) get_post_meta((int) $id, '_wp_attachment_image_alt', true),
+            ];
+        };
+        $before = $read($attachment_id);
         $update = [];
         if ('' !== (string) $title) {
             $update['post_title'] = (string) $title;
@@ -14692,6 +14738,24 @@ class Server {
         if ('' !== (string) $alt_text && current_user_can('edit_post', (int) $attachment_id)) {
             update_post_meta((int) $attachment_id, '_wp_attachment_image_alt', wp_slash((string) $alt_text));
         }
+        $after   = $read($attachment_id);
+        $prior   = [];
+        $applied = [];
+        foreach ($after as $field => $value) {
+            if ($value !== $before[$field]) {
+                $prior[$field]   = $before[$field];
+                $applied[$field] = $value;
+            }
+        }
+        if (!$prior || strlen(gzcompress((string) wp_json_encode($prior), 9)) > 1024 * 1024) {
+            return [];
+        }
+        return \Royal_MCP\MCP\Undo_Store::store([
+            'op'           => 'wp_update_media',
+            'summary'      => sprintf('Restore %d field(s) on media %d to the values before the upload reused it.', count($prior), (int) $attachment_id),
+            'target'       => ['media_id' => (int) $attachment_id],
+            'pre_op_state' => ['prior_values' => $prior, 'applied_values' => $applied],
+        ]);
     }
 
     /** Input properties shared by the two upload tools for converting, resizing and compressing an image. */

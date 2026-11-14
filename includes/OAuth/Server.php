@@ -137,11 +137,11 @@ class Server {
                 break;
 
             case 'metadata_scoped':
-                $this->json_response( self::build_authorization_server_metadata( true ), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+                $this->json_response( self::build_authorization_server_metadata( true ), 200, [ 'Cache-Control' => 'public, max-age=300' ] );
                 break;
 
             case 'metadata_oidc_scoped':
-                $this->json_response( self::build_openid_configuration( true ), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+                $this->json_response( self::build_openid_configuration( true ), 200, [ 'Cache-Control' => 'public, max-age=300' ] );
                 break;
 
             case 'jwks':
@@ -451,7 +451,7 @@ class Server {
             $doc = self::build_protected_resource_metadata();
         }
         $this->log_event( 'prm_served', 'resource=' . $doc['resource'], 200, 'success' );
-        $this->json_response( $doc, 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+        $this->json_response( $doc, 200, [ 'Cache-Control' => 'public, max-age=300' ] );
     }
 
     /**
@@ -480,7 +480,7 @@ class Server {
         }
         $doc = self::build_protected_resource_metadata_for_endpoint( self::canonical_resource_url( $rel ) );
         $this->log_event( 'prm_served', 'resource=' . $doc['resource'], 200, 'success' );
-        $this->json_response( $doc, 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+        $this->json_response( $doc, 200, [ 'Cache-Control' => 'public, max-age=300' ] );
     }
 
     /* ------------------------------------------------------------------
@@ -592,7 +592,7 @@ class Server {
     }
 
     private function metadata() {
-        $this->json_response( self::build_authorization_server_metadata(), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+        $this->json_response( self::build_authorization_server_metadata(), 200, [ 'Cache-Control' => 'public, max-age=300' ] );
     }
 
     /**
@@ -609,7 +609,7 @@ class Server {
         // Same resource identifier as protected_resource_metadata — canonical
         // /mcp alias URL so both discovery paths agree on the resource URL.
         $metadata['resource'] = self::canonical_resource_url( '/mcp' );
-        $this->json_response( $metadata, 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+        $this->json_response( $metadata, 200, [ 'Cache-Control' => 'public, max-age=300' ] );
     }
 
     /**
@@ -637,11 +637,11 @@ class Server {
     }
 
     private function metadata_oidc() {
-        $this->json_response( self::build_openid_configuration(), 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+        $this->json_response( self::build_openid_configuration(), 200, [ 'Cache-Control' => 'public, max-age=300' ] );
     }
 
     private function jwks() {
-        $this->json_response( [ 'keys' => [] ], 200, [ 'Cache-Control' => 'public, max-age=3600' ] );
+        $this->json_response( [ 'keys' => [] ], 200, [ 'Cache-Control' => 'public, max-age=300' ] );
     }
 
     /* ------------------------------------------------------------------
@@ -1518,7 +1518,7 @@ class Server {
             return $namespace;
         }
         if ( '' !== $namespace && '' !== $client_id
-            && ( Token_Store::is_cimd_client( $client_id ) || Token_Store::is_namespace_client( $client_id ) ) ) {
+            && Token_Store::is_namespace_client( $client_id ) ) {
             return $namespace;
         }
         $metadata = self::build_authorization_server_metadata();

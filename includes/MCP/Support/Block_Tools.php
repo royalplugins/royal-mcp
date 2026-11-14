@@ -309,7 +309,7 @@ class Block_Tools {
 		$post   = self::editable_post( $args );
 		$check  = self::require_good_markup( self::markup_arg( $args ) );
 		$new    = self::named( $check['parsed'] );
-		$tree   = parse_blocks( (string) $post->post_content );
+		$tree   = self::parse_keeping_objects( (string) $post->post_content );
 		$at     = isset( $args['at'] ) ? (string) $args['at'] : 'end';
 		$target = isset( $args['path'] ) && '' !== (string) $args['path'] ? self::parse_path( $args['path'] ) : [];
 		$tree   = self::insert_at( $tree, $at, $target, $new );
@@ -319,7 +319,7 @@ class Block_Tools {
 	private static function replace_tool( array $args ) {
 		$post  = self::editable_post( $args );
 		$path  = self::parse_path( $args['path'] ?? '' );
-		$tree  = parse_blocks( (string) $post->post_content );
+		$tree  = self::parse_keeping_objects( (string) $post->post_content );
 		$block = self::expect_block( $tree, $path, $args );
 		$check = self::require_good_markup( self::markup_arg( $args ) );
 		$new   = self::named( $check['parsed'] );
@@ -330,7 +330,7 @@ class Block_Tools {
 	private static function move_tool( array $args ) {
 		$post   = self::editable_post( $args );
 		$path   = self::parse_path( $args['path'] ?? '' );
-		$tree   = parse_blocks( (string) $post->post_content );
+		$tree   = self::parse_keeping_objects( (string) $post->post_content );
 		$block  = self::expect_block( $tree, $path, $args );
 		$at     = isset( $args['at'] ) ? (string) $args['at'] : 'end';
 		$target = isset( $args['target_path'] ) && '' !== (string) $args['target_path'] ? self::parse_path( $args['target_path'] ) : [];
@@ -349,7 +349,7 @@ class Block_Tools {
 	private static function delete_tool( array $args ) {
 		$post  = self::editable_post( $args );
 		$path  = self::parse_path( $args['path'] ?? '' );
-		$tree  = parse_blocks( (string) $post->post_content );
+		$tree  = self::parse_keeping_objects( (string) $post->post_content );
 		$block = self::expect_block( $tree, $path, $args );
 		$tree  = self::remove_at( $tree, $path );
 		return self::write_tree( $post, $tree, 'wp_delete_block', sprintf( 'Deleted %s at %s', $block['blockName'], implode( '.', $path ) ), [ 'deleted' => (string) $block['blockName'] ] );
@@ -368,7 +368,7 @@ class Block_Tools {
 		if ( $find === $replace ) {
 			throw new \Exception( 'find and replace are identical; nothing to do.' );
 		}
-		$tree  = parse_blocks( (string) $post->post_content );
+		$tree  = self::parse_keeping_objects( (string) $post->post_content );
 		$scope = isset( $args['path'] ) && '' !== (string) $args['path'] ? self::parse_path( $args['path'] ) : [];
 		if ( $scope && null === self::block_at( $tree, $scope ) ) {
 			throw new \Exception( 'No block at path ' . implode( '.', $scope ) . '.' );
@@ -424,7 +424,7 @@ class Block_Tools {
 	private static function attributes_tool( array $args ) {
 		$post  = self::editable_post( $args );
 		$path  = self::parse_path( $args['path'] ?? '' );
-		$tree  = parse_blocks( (string) $post->post_content );
+		$tree  = self::parse_keeping_objects( (string) $post->post_content );
 		$block = self::expect_block( $tree, $path, $args );
 		if ( empty( $args['attributes'] ) || ! is_array( $args['attributes'] ) ) {
 			throw new \Exception( 'attributes must be an object of attribute names and new values (null removes one).' );
@@ -459,7 +459,7 @@ class Block_Tools {
 					throw new \Exception( esc_html( $valid->get_error_message() ) );
 				}
 			}
-			$attrs[ $key ] = $value;
+			$attrs[ $key ] = self::restore_empty_objects( $value, $block['attrs'][ $key ] ?? null );
 		}
 		$tree = self::map_blocks( $tree, $path, static function ( array $b, array $p ) use ( $path, $attrs ) {
 			if ( $p === $path ) {
@@ -536,6 +536,57 @@ class Block_Tools {
 	 * parse_blocks() reads an empty JSON object as an empty array, which would be written back as [].
 	 * An attribute its block type declares as an object goes back as {}.
 	 */
+	/**
+	 * parse_blocks(), with every empty JSON object of the markup kept as an object
+	 * (parse_blocks() reads {} as an empty array, which would be written back as []).
+	 * Block comments open in the same order parse_blocks() walks the tree.
+	 */
+	private static function parse_keeping_objects( $markup ) {
+		$markup = (string) $markup;
+		$tree   = parse_blocks( $markup );
+		if ( false === strpos( $markup, '{}' ) && ! preg_match( '/\{\s+\}/', $markup ) ) {
+			return $tree;
+		}
+		preg_match_all( '/<!--\s+wp:[a-z][a-z0-9_-]*(?:\/[a-z][a-z0-9_-]*)?\s+(?:(\{(?:(?:[^}]+|}+(?=})|(?!}\s+\/?-->).)*+)?}\s+))?\/?-->/s', $markup, $m );
+		$shapes = array_map( static function ( $json ) {
+			return '' === $json ? null : json_decode( $json, false );
+		}, $m[1] );
+		$i    = 0;
+		$walk = static function ( array $list ) use ( &$walk, &$i, $shapes ) {
+			foreach ( $list as $k => $b ) {
+				if ( empty( $b['blockName'] ) ) {
+					continue;
+				}
+				$shape = $shapes[ $i++ ] ?? null;
+				if ( is_object( $shape ) && is_array( $b['attrs'] ) ) {
+					foreach ( $b['attrs'] as $key => $value ) {
+						$list[ $k ]['attrs'][ $key ] = self::restore_empty_objects( $value, $shape->$key ?? null );
+					}
+				}
+				if ( ! empty( $b['innerBlocks'] ) ) {
+					$list[ $k ]['innerBlocks'] = $walk( (array) $b['innerBlocks'] );
+				}
+			}
+			return $list;
+		};
+		return $walk( $tree );
+	}
+
+	/** An empty array that was an empty object in $shape (at any depth) becomes an object again. */
+	private static function restore_empty_objects( $value, $shape ) {
+		if ( [] === $value ) {
+			return ( $shape instanceof \stdClass && [] === get_object_vars( $shape ) ) ? new \stdClass() : $value;
+		}
+		if ( ! is_array( $value ) ) {
+			return $value;
+		}
+		foreach ( $value as $k => $v ) {
+			$sub = is_object( $shape ) ? ( $shape->$k ?? null ) : ( is_array( $shape ) ? ( $shape[ $k ] ?? null ) : null );
+			$value[ $k ] = self::restore_empty_objects( $v, $sub );
+		}
+		return $value;
+	}
+
 	private static function keep_object_attributes( array $list ) {
 		$registry = \WP_Block_Type_Registry::get_instance();
 		foreach ( $list as $i => $block ) {
@@ -687,7 +738,7 @@ class Block_Tools {
 		if ( null !== $limit ) {
 			return [ 'ok' => false, 'blocks' => 0, 'block_names' => [], 'unknown' => [], 'editor_only' => [], 'core_html_blocks' => 0, 'freeform_chars' => 0, 'broken_delimiters' => false, 'stable' => false, 'problems' => [ $limit ], 'parsed' => [] ];
 		}
-		$parsed   = parse_blocks( $markup );
+		$parsed   = self::parse_keeping_objects( $markup );
 		$registry = \WP_Block_Type_Registry::get_instance();
 		$names    = [];
 		$unknown  = [];
@@ -844,7 +895,7 @@ class Block_Tools {
 					$own .= $chunk;
 				}
 			}
-			$out[] = [ $b['blockName'], (array) $b['attrs'], preg_replace( '/\s+/', ' ', trim( $own ) ), self::shape( (array) $b['innerBlocks'] ) ];
+			$out[] = [ $b['blockName'], (array) json_decode( (string) wp_json_encode( (array) $b['attrs'] ), true ), preg_replace( '/\s+/', ' ', trim( $own ) ), self::shape( (array) $b['innerBlocks'] ) ];
 		}
 		return $out;
 	}

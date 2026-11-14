@@ -35,7 +35,7 @@ final class SiteVault_Hook {
     private static $watch = null;
 
     /** Tools that change files, not the database: the hook fires for them straight away. */
-    const FIRE_AT_START = [ 'fc_clear_cache', 'fc_purge_url' ];
+    const FIRE_AT_START = [ 'fc_clear_cache', 'fc_purge_url', 'wp_upload_media', 'wp_upload_media_from_url' ];
 
     /**
      * Fire the hook just before the running tool's first database write, so a call the

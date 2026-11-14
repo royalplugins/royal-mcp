@@ -1499,6 +1499,11 @@ class Token_Store {
                 array_merge( [ 'client_id' => $client_id, 'client_secret_hash' => null ], $fields, [ 'status' => $status ] ),
                 [ '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
             );
+            // Another request registered the same client a moment earlier: that row serves.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix
+            if ( false === $replaced && null !== $wpdb->get_var( $wpdb->prepare( "SELECT status FROM `{$table}` WHERE client_id = %s LIMIT 1", $client_id ) ) ) {
+                $replaced = 0;
+            }
         }
 
         if ( false === $replaced ) {

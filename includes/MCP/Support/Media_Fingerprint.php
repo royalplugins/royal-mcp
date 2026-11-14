@@ -178,8 +178,11 @@ class Media_Fingerprint {
 		if ( ! is_string( $hash ) ) {
 			return null;
 		}
-		update_post_meta( (int) $attachment_id, self::FILE_SHA_META, $hash );
-		update_post_meta( (int) $attachment_id, self::FILE_SHA_SIG_META, $sig );
+		// In read-only mode nothing is written, not even this cache.
+		if ( ! \Royal_MCP\MCP\Server::read_only_mode() ) {
+			update_post_meta( (int) $attachment_id, self::FILE_SHA_META, $hash );
+			update_post_meta( (int) $attachment_id, self::FILE_SHA_SIG_META, $sig );
+		}
 		return $hash;
 	}
 
