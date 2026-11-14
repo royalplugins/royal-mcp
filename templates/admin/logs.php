@@ -96,6 +96,18 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
         <button type="submit" class="button"><?php esc_html_e( 'Clear log', 'royal-mcp' ); ?></button>
     </form>
 
+    <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin:0 0 12px;">
+        <input type="hidden" name="action" value="<?php echo esc_attr( \Royal_MCP\Admin\Settings_Page::EXPORT_LOG_ACTION ); ?>">
+        <?php wp_nonce_field( \Royal_MCP\Admin\Settings_Page::EXPORT_LOG_ACTION ); ?>
+        <button type="submit" class="button"><?php esc_html_e( 'Export CSV', 'royal-mcp' ); ?></button>
+        <span class="description" style="margin-left:12px;">
+            <?php
+            /* translators: %s: number of entries */
+            echo esc_html( sprintf( __( 'Downloads the newest entries, up to %s. An entry holds the tool name, the names of its arguments and any error text, never argument values.', 'royal-mcp' ), number_format_i18n( \Royal_MCP\Admin\Settings_Page::LOG_EXPORT_MAX ) ) );
+            ?>
+        </span>
+    </form>
+
     <table class="wp-list-table widefat fixed striped">
         <thead>
             <tr>

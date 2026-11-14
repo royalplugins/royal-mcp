@@ -59,6 +59,9 @@ function royal_mcp_uninstall_site() {
     // Cached CIMD metadata documents keyed by sha256 of the client_id URL.
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_cimd_meta_%' OR option_name LIKE '_transient_timeout_royal_mcp_cimd_meta_%'");
+    delete_transient( 'royal_mcp_jp_backups' );
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+    $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_site_ips_%' OR option_name LIKE '_transient_timeout_royal_mcp_site_ips_%'");
 
     // Per-IP rate-limit transients (both the MCP endpoint and /register).
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
@@ -69,6 +72,7 @@ function royal_mcp_uninstall_site() {
     // wp_verify_rendered_page per-(site, URL) fetch bucket.
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_vrp_%' OR option_name LIKE '_transient_timeout_royal_mcp_vrp_%'");
+    $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_page_%' OR option_name LIKE '_transient_timeout_royal_mcp_page_%'");
 
     // Preview_Link short-lived preview tokens (rmcp_preview_ prefix).
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
@@ -111,6 +115,14 @@ function royal_mcp_uninstall_site() {
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal\_mcp\_rt\_retry\_%'");
     delete_option( 'royal_mcp_rejected_cimd_clients' );
+    delete_option( 'royal_mcp_maintenance' );
+    delete_option( 'royal_mcp_indexnow_key' );
+    delete_option( 'royal_mcp_bridged_namespaces' );
+    delete_option( 'royal_mcp_bridged_abilities' );
+    delete_option( 'royal_mcp_bridged_writes' );
+    delete_option( 'royal_mcp_bridged_known' );
+    delete_option( 'royal_mcp_skills' );
+    delete_transient( 'royal_mcp_acf_field_types_v1' );
     delete_option( 'royal_mcp_mailpoet_send_guard' );
     delete_option( 'royal_mcp_mailpoet_test_sends' );
     delete_option( 'royal_mcp_mailpoet_confirmations' );
@@ -134,6 +146,7 @@ function royal_mcp_uninstall_site() {
     // -----------------------------------------------------------------------
     if ( $delete_data ) {
         delete_option('royal_mcp_settings');
+        delete_option( 'royal_mcp_site_context' );
         delete_option('royal_mcp_abilities_registration_enabled');
         delete_option('royal_mcp_client_access');
         delete_option('royal_mcp_app_password_seen');

@@ -28,7 +28,7 @@ class Legacy_Key_Header_Notice {
 			return;
 		}
 		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
-		if ( ! $screen || ! in_array( $screen->id, [ 'toplevel_page_royal-mcp', 'royal-mcp_page_royal-mcp-logs' ], true ) ) {
+		if ( ! $screen || ! in_array( $screen->id, [ 'toplevel_page_royal-mcp', 'royal-mcp_page_royal-mcp-connections', 'royal-mcp_page_royal-mcp-logs' ], true ) ) {
 			return;
 		}
 		?>

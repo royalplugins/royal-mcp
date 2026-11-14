@@ -126,7 +126,7 @@ class Site_Health_Tests {
             $problem[0],
             [
                 [ $problem[1], __( 'Read the support article', 'royal-mcp' ) ],
-                [ admin_url( 'admin.php?page=royal-mcp' ), __( 'Open Royal MCP settings', 'royal-mcp' ) ],
+                [ admin_url( 'admin.php?page=royal-mcp-connections' ), __( 'Open Royal MCP settings', 'royal-mcp' ) ],
             ]
         );
     }
@@ -304,7 +304,7 @@ class Site_Health_Tests {
             'good',
             $label,
             __( 'Royal MCP is switched off in its settings, so this check was not run.', 'royal-mcp' ),
-            [ [ admin_url( 'admin.php?page=royal-mcp' ), __( 'Open Royal MCP settings', 'royal-mcp' ) ] ]
+            [ [ admin_url( 'admin.php?page=royal-mcp-connections' ), __( 'Open Royal MCP settings', 'royal-mcp' ) ] ]
         );
     }
 

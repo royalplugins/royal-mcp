@@ -108,6 +108,14 @@ class Categories {
 				'label'       => __( 'Royal MCP: W3 Total Cache', 'royal-mcp' ),
 				'description' => __( 'W3 Total Cache configuration, purging and statistics.', 'royal-mcp' ),
 			),
+			'seo-reads' => array(
+				'label'       => __( 'Royal MCP: SEO reads', 'royal-mcp' ),
+				'description' => __( 'Rank Math scores and missing-URL logs, and Search Console performance from SEObolt.', 'royal-mcp' ),
+			),
+			'backup-status' => array(
+				'label'       => __( 'Royal MCP: Backup status', 'royal-mcp' ),
+				'description' => __( 'Backup status from All-in-One WP Migration, WPvivid, Jetpack VaultPress Backup and BackWPup.', 'royal-mcp' ),
+			),
 			'duplicator' => array(
 				'label'       => __( 'Royal MCP: Duplicator', 'royal-mcp' ),
 				'description' => __( 'Duplicator migration packages and installers.', 'royal-mcp' ),
@@ -143,6 +151,14 @@ class Categories {
 			'fluent-forms'  => array(
 				'label'       => __( 'Royal MCP: Fluent Forms', 'royal-mcp' ),
 				'description' => __( 'Fluent Forms forms, fields and entries, read only; personal fields masked.', 'royal-mcp' ),
+			),
+			'royal-affiliate' => array(
+				'label'       => __( 'Royal MCP: Royal Affiliate', 'royal-mcp' ),
+				'description' => __( 'Royal Affiliate affiliates, referrals, campaigns, creatives, payouts, landing pages, fraud incidents and the activity log; personal details left out.', 'royal-mcp' ),
+			),
+			'formforge'     => array(
+				'label'       => __( 'Royal MCP: FormForge', 'royal-mcp' ),
+				'description' => __( 'FormForge forms, entry counts, single entries with personal fields masked, analytics, and new forms from a copy or a template.', 'royal-mcp' ),
 			),
 			'mailpoet'      => array(
 				'label'       => __( 'Royal MCP: MailPoet', 'royal-mcp' ),

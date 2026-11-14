@@ -2,7 +2,7 @@
 /**
  * Royal MCP — What's New modal template.
  *
- * Whats-New-For-Version: 1.5.17
+ * Whats-New-For-Version: 2.0.0
  *
  * Rendered from Whats_New::render_modal() on admin_footer (Royal MCP pages
  * only). JS (assets/js/whats-new.js) handles show/hide + AJAX dismissal.
@@ -17,9 +17,9 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-$rmcp_wn_img_base      = ROYAL_MCP_PLUGIN_URL . 'assets/img/whats-new/';
-$rmcp_wn_pro_url       = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_17&utm_content=footer_cta';
-$rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=whats_new_modal&utm_medium=free_plugin&utm_campaign=whats_new_1_5_17&utm_content=slide_1_cta';
+$rmcp_wn_img_base          = ROYAL_MCP_PLUGIN_URL . 'assets/img/whats-new/';
+$rmcp_wn_royally_url       = 'https://royalplugins.com/royally/?utm_source=royal_mcp_free&utm_medium=free_plugin&utm_content=whats_new_footer&utm_campaign=royal_mcp_admin';
+$rmcp_wn_royally_slide_url = 'https://royalplugins.com/royally/?utm_source=royal_mcp_free&utm_medium=free_plugin&utm_content=whats_new_slide&utm_campaign=royal_mcp_admin';
 ?>
 <div class="rmcp-wn-backdrop" data-royal-mcp-wn-backdrop hidden>
     <div class="rmcp-wn-modal" role="dialog" aria-modal="true" aria-labelledby="rmcp-wn-title">
@@ -27,14 +27,14 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
             <img class="rmcp-wn-header-logo" src="<?php echo esc_url( $rmcp_wn_img_base . 'royal-shield.png' ); ?>" alt="">
             <div class="rmcp-wn-header-titles">
                 <h2 id="rmcp-wn-title"><?php esc_html_e( "What's New in Royal MCP", 'royal-mcp' ); ?></h2>
-                <p><?php esc_html_e( '1.5.17: Activity Log Controls and Stronger Safeguards', 'royal-mcp' ); ?></p>
+                <p><?php esc_html_e( '2.0: Dashboard, Context, Skills and 79 More Tools', 'royal-mcp' ); ?></p>
             </div>
             <button type="button" class="rmcp-wn-close" data-royal-mcp-wn-close aria-label="<?php esc_attr_e( 'Close', 'royal-mcp' ); ?>">&times;</button>
         </div>
 
         <div class="rmcp-wn-slides">
 
-            <!-- SLIDE 0: 200,000 downloads and the 2.0 teaser -->
+            <!-- SLIDE 0: 2.0 -->
             <div class="rmcp-wn-slide is-celebration" data-royal-mcp-wn-confetti>
                 <div class="rmcp-wn-slide-visual">
                     <div class="rmcp-wn-circle is-dark">
@@ -42,78 +42,95 @@ $rmcp_wn_pro_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=wha
                     </div>
                 </div>
                 <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Thank you', 'royal-mcp' ); ?></span>
-                    <p class="rmcp-wn-big-number"><?php esc_html_e( '200,000 downloads', 'royal-mcp' ); ?></p>
-                    <h3><?php esc_html_e( 'Royal MCP 2.0 is on the way', 'royal-mcp' ); ?></h3>
-                    <p><?php esc_html_e( 'A new dashboard, a redesigned layout and the biggest tool expansion Royal MCP has had. Shaped by 200,000 downloads of feedback.', 'royal-mcp' ); ?></p>
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Version 2.0', 'royal-mcp' ); ?></span>
+                    <p class="rmcp-wn-big-number"><?php esc_html_e( '380+ tools', 'royal-mcp' ); ?></p>
+                    <h3><?php esc_html_e( 'Royal MCP 2.0 is here', 'royal-mcp' ); ?></h3>
+                    <p><?php esc_html_e( 'A new dashboard, a simpler menu and the biggest tool expansion Royal MCP has had. It is still free, and it still runs only on your site.', 'royal-mcp' ); ?></p>
                 </div>
             </div>
 
-            <!-- SLIDE 1 — ROYAL MCP PRO PITCH (flagship marketing spot) -->
+            <!-- SLIDE 1: Dashboard and menu -->
+            <div class="rmcp-wn-slide is-reversed">
+                <div class="rmcp-wn-slide-body">
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v2.0', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'A dashboard and a simpler menu', 'royal-mcp' ); ?></h3>
+                    <p><?php esc_html_e( 'The Dashboard shows your MCP address with the steps to connect, which AI clients are connected, what they changed lately and how the site is protected.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'Settings now sit on two screens: Connections for who can connect and how, and Safety for what a connected AI may do.', 'royal-mcp' ); ?></p>
+                </div>
+                <div class="rmcp-wn-slide-visual">
+                    <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone"><span class="c"><?php esc_html_e( '// Royal MCP menu', 'royal-mcp' ); ?></span>
+  <span class="s hl"><?php esc_html_e( 'Dashboard', 'royal-mcp' ); ?></span>
+  <span class="s"><?php esc_html_e( 'Connections', 'royal-mcp' ); ?></span>
+  <span class="s"><?php esc_html_e( 'Context', 'royal-mcp' ); ?></span>
+  <span class="s"><?php esc_html_e( 'Safety', 'royal-mcp' ); ?></span>
+  <span class="s"><?php esc_html_e( 'Activity', 'royal-mcp' ); ?></span>
+  <span class="s"><?php esc_html_e( 'Skills', 'royal-mcp' ); ?></span></div>
+                </div>
+            </div>
+
+            <!-- SLIDE 2: Context and Skills -->
+            <div class="rmcp-wn-slide">
+                <div class="rmcp-wn-slide-visual">
+                    <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone"><span class="c"><?php esc_html_e( '// When an AI client connects', 'royal-mcp' ); ?></span>
+  <span class="s"><?php esc_html_e( 'your site context', 'royal-mcp' ); ?></span>   <span class="s hl"><?php esc_html_e( 'sent', 'royal-mcp' ); ?> &#10003;</span>
+  <span class="s"><?php esc_html_e( 'skills for this site', 'royal-mcp' ); ?></span> <span class="s hl"><?php esc_html_e( 'offered', 'royal-mcp' ); ?> &#10003;</span>
+
+<span class="k">mcp_get_skill</span>
+  <span class="s">skill</span>   <span class="c">elementor</span></div>
+                </div>
+                <div class="rmcp-wn-slide-body">
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v2.0', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'Tell your AI about your site', 'royal-mcp' ); ?></h3>
+                    <p><?php esc_html_e( 'On the Context screen, write what your site is for, its tone and what to leave alone. Every connected AI client gets it when it connects.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'On the Skills screen, switch on a playbook for Elementor, Divi, WooCommerce or SiteVault. Connected AI clients read it before that kind of work, with nothing to download.', 'royal-mcp' ); ?></p>
+                </div>
+            </div>
+
+            <!-- SLIDE 3: more tools, shorter list -->
+            <div class="rmcp-wn-slide is-reversed">
+                <div class="rmcp-wn-slide-body">
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v2.0', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( '79 more tools, and a shorter list for your AI', 'royal-mcp' ); ?></h3>
+                    <p><?php esc_html_e( 'Your AI can now install, update and switch plugins and themes, check a site before launch, write a monthly maintenance report and do more in ACF, GuardPress, SiteVault and other plugins.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'Tools for plugins that are not active on your site are left out, so your AI sees only what it can use here.', 'royal-mcp' ); ?></p>
+                </div>
+                <div class="rmcp-wn-slide-visual">
+                    <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone"><span class="c"><?php esc_html_e( '// Tools', 'royal-mcp' ); ?></span>
+  <span class="s"><?php esc_html_e( 'for WordPress itself', 'royal-mcp' ); ?></span>   <span class="s hl">140</span>
+  <span class="s"><?php esc_html_e( 'across 38 plugins', 'royal-mcp' ); ?></span>      <span class="s hl">244</span>
+  <span class="s"><?php esc_html_e( 'sent to your AI', 'royal-mcp' ); ?></span>        <span class="c"><?php esc_html_e( 'only what is active', 'royal-mcp' ); ?></span></div>
+                </div>
+            </div>
+
+            <!-- SLIDE 4: Royally -->
             <div class="rmcp-wn-slide">
                 <div class="rmcp-wn-slide-visual">
                     <div class="rmcp-wn-circle is-dark">
-                        <img src="<?php echo esc_url( $rmcp_wn_img_base . 'royal-shield.png' ); ?>" alt="Royal MCP Pro">
+                        <img src="<?php echo esc_url( $rmcp_wn_img_base . 'royal-shield.png' ); ?>" alt="">
                     </div>
                 </div>
                 <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Royal MCP Pro + Royally', 'royal-mcp' ); ?></span>
-                    <p class="rmcp-wn-big-number"><?php esc_html_e( 'Upgrade Your AI Agent', 'royal-mcp' ); ?></p>
-                    <h3><?php esc_html_e( 'The plugin on each site, the guardrails in the cloud', 'royal-mcp' ); ?></h3>
-                    <p><?php esc_html_e( 'On each WordPress site, Royal MCP Pro gives your AI client 400+ tools, from bulk WooCommerce, SEO and content edits to Elementor and Divi layouts that stay editable in the builder, and records every change with undo.', 'royal-mcp' ); ?></p>
-                    <p><?php esc_html_e( 'In the cloud, Royally is the accountability layer across your whole fleet: run the same bulk action or edit on many sites at once, approve changes before they go out, undo them across sites, and keep one record of everything the AI did.', 'royal-mcp' ); ?></p>
-                    <a href="<?php echo esc_url( $rmcp_wn_pro_slide_url ); ?>" target="_blank" rel="noopener noreferrer" class="rmcp-wn-btn">
-                        <?php esc_html_e( 'Starts at $9/Month', 'royal-mcp' ); ?>
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Royally', 'royal-mcp' ); ?></span>
+                    <h3><?php esc_html_e( 'One connection for everything your AI manages', 'royal-mcp' ); ?></h3>
+                    <p><?php esc_html_e( 'Royally puts your whole stack behind one MCP connection: every WordPress site you run, plus Cloudflare, UptimeRobot, Notion and other MCP servers. Each change can wait for your approval, is recorded and can be undone. Royal MCP Pro comes with it.', 'royal-mcp' ); ?></p>
+                    <a href="<?php echo esc_url( $rmcp_wn_royally_slide_url ); ?>" target="_blank" rel="noopener noreferrer" class="rmcp-wn-btn">
+                        <?php esc_html_e( 'See Royally', 'royal-mcp' ); ?>
                     </a>
-                </div>
-            </div>
-
-            <!-- SLIDE 2: Activity Log retention and Clear -->
-            <div class="rmcp-wn-slide is-reversed">
-                <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v1.5.17', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'An Activity Log that looks after itself', 'royal-mcp' ); ?></h3>
-                    <p><?php esc_html_e( 'The Activity Log now keeps 90 days of entries and removes older ones once a day, so the record of what your AI clients did stays useful without growing forever.', 'royal-mcp' ); ?></p>
-                    <p><?php esc_html_e( 'Want a clean start? Royal MCP > Activity Log has a Clear log button. It asks you to confirm first and leaves one entry saying who cleared it.', 'royal-mcp' ); ?></p>
-                </div>
-                <div class="rmcp-wn-slide-visual">
-                    <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone"><span class="c"><?php esc_html_e( '// Activity Log', 'royal-mcp' ); ?></span>
-  <span class="s"><?php esc_html_e( 'entries kept', 'royal-mcp' ); ?></span>     <span class="s hl"><?php esc_html_e( '90 days', 'royal-mcp' ); ?></span>
-  <span class="s"><?php esc_html_e( 'older entries', 'royal-mcp' ); ?></span>    <span class="c"><?php esc_html_e( 'removed', 'royal-mcp' ); ?></span>
-  <span class="s"><?php esc_html_e( 'Clear log', 'royal-mcp' ); ?></span>        <span class="s hl"><?php esc_html_e( 'ready', 'royal-mcp' ); ?> &#10003;</span></div>
-                </div>
-            </div>
-
-            <!-- SLIDE 3: safeguards for sign-in, undo and integrations -->
-            <div class="rmcp-wn-slide">
-                <div class="rmcp-wn-slide-visual">
-                    <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone"><span class="k">mcp_undo_last_operation</span>
-  <span class="s">undo_token</span>   <span class="c">a1b2c3&hellip;</span>
-<span class="k">&rarr;</span> <span class="s hl"><?php esc_html_e( 'change undone', 'royal-mcp' ); ?> &#10003;</span>
-
-<span class="c"><?php esc_html_e( '// Account removed', 'royal-mcp' ); ?></span>
-  <span class="s"><?php esc_html_e( 'its AI connections', 'royal-mcp' ); ?></span>  <span class="s hl"><?php esc_html_e( 'ended', 'royal-mcp' ); ?> &#10003;</span></div>
-                </div>
-                <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Security', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( 'Stronger safeguards for sign-in, undo and integrations', 'royal-mcp' ); ?></h3>
-                    <p><?php esc_html_e( 'AI connections follow the WordPress account behind them: remove a user, or their right to connect, and their OAuth 2.1 sign-ins and API key stop working. The sign-in screen can only be opened directly, never inside another site.', 'royal-mcp' ); ?></p>
-                    <p><?php esc_html_e( 'The undo tool takes the token under either name your AI client sends, and the Redirection, ACF, Elementor and WooCommerce order tools apply stricter checks to what an AI client may save or read.', 'royal-mcp' ); ?></p>
                 </div>
             </div>
 
         </div>
 
-        <!-- PRO UPSELL FOOTER -->
+        <!-- FOOTER -->
         <div class="rmcp-wn-upsell">
             <div class="rmcp-wn-upsell-copy">
-                <h4><?php esc_html_e( 'Ready to let AI do more on every client site?', 'royal-mcp' ); ?></h4>
+                <h4><?php esc_html_e( 'Running more than one site?', 'royal-mcp' ); ?></h4>
                 <p>
-                    <?php esc_html_e( '1,400+ tools and 4,500+ actions, including the whole Cloudflare API, across every MCP server Royally connects.', 'royal-mcp' ); ?>
+                    <?php esc_html_e( 'One MCP connection for all your sites, Cloudflare, UptimeRobot and more, with approvals and undo.', 'royal-mcp' ); ?>
                 </p>
             </div>
-            <a href="<?php echo esc_url( $rmcp_wn_pro_url ); ?>" target="_blank" rel="noopener noreferrer" class="rmcp-wn-upsell-btn">
-                <?php esc_html_e( 'Upgrade to Pro →', 'royal-mcp' ); ?>
+            <a href="<?php echo esc_url( $rmcp_wn_royally_url ); ?>" target="_blank" rel="noopener noreferrer" class="rmcp-wn-upsell-btn">
+                <?php esc_html_e( 'See Royally →', 'royal-mcp' ); ?>
             </a>
         </div>
 

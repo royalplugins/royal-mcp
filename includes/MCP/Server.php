@@ -23,6 +23,18 @@ use Royal_MCP\Integrations\ContactForm7 as CF7Integration;
 use Royal_MCP\Integrations\MonsterInsights as MonsterInsightsIntegration;
 use Royal_MCP\Integrations\W3TotalCache as W3TCIntegration;
 use Royal_MCP\Integrations\Duplicator as DuplicatorIntegration;
+use Royal_MCP\Integrations\BackupStatus as BackupStatusIntegration;
+use Royal_MCP\Integrations\SeoReads as SeoReadsIntegration;
+use Royal_MCP\Integrations\SeoAudit as SeoAuditIntegration;
+use Royal_MCP\Integrations\PageChecks as PageChecksIntegration;
+use Royal_MCP\Integrations\FormForge as FormForgeIntegration;
+use Royal_MCP\Integrations\RoyalAffiliate as RoyalAffiliateIntegration;
+use Royal_MCP\Integrations\RoyalAffiliateWrites as RoyalAffiliateWritesIntegration;
+use Royal_MCP\Integrations\SiteReports as SiteReportsIntegration;
+use Royal_MCP\Integrations\MaintenanceMode as MaintenanceModeIntegration;
+use Royal_MCP\Integrations\AcfSetup as AcfSetupIntegration;
+use Royal_MCP\Integrations\PluginsThemes as PluginsThemesIntegration;
+use Royal_MCP\Integrations\LaunchTools as LaunchToolsIntegration;
 use Royal_MCP\Integrations\BuddyPress as BuddyPressIntegration;
 use Royal_MCP\Integrations\TablePress as TablePressIntegration;
 use Royal_MCP\Integrations\CodeSnippets as CodeSnippetsIntegration;
@@ -402,6 +414,7 @@ class Server {
         $this->register_method_handler('resources/read',            [ $this, 'handle_resources_read' ]);
         $this->register_method_handler('resources/templates/list',  [ $this, 'handle_resource_templates_list' ]);
         $this->register_method_handler('prompts/list',              [ $this, 'handle_prompts_list' ]);
+        $this->register_method_handler('prompts/get',               [ $this, 'handle_prompts_get' ]);
         $this->register_method_handler('server/discover',           [ $this, 'handle_server_discover' ]);
     }
 
@@ -1804,9 +1817,10 @@ class Server {
             ['name' => 'get_tool_info', 'description' => 'Return the full inputSchema (and, when available, an example invocation) for a single tool named in tool_name. Pairs with discover_tools + execute_tool for the compact discovery flow.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name (e.g. "wp_update_post").']], 'required' => ['tool_name']]],
             ['name' => 'execute_tool', 'description' => 'Pass-through dispatcher for the compact discovery flow. Invokes the tool named in tool_name with the arguments in arguments — semantically identical to a direct tools/call for that tool. Useful when the client only advertised the routing tools via X-MCP-Profile: compact but still wants to invoke a specific underlying tool without renegotiating the profile.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name to invoke.'], 'arguments' => ['type' => 'object', 'description' => 'Arguments object forwarded to the underlying tool. Same shape you\'d pass in tools/call.']], 'required' => ['tool_name']]],
             ['name' => 'wp_verify_rendered_page', 'description' => 'Post-write verification tool. Fetches the actual rendered HTML that WordPress serves at a URL via a loopback request and returns the response status, a subset of response headers (content-type, cache-control, x-cache), the page title, meta description, first h1, counts of script and stylesheet link tags, robots_meta (content of <meta name="robots">, null when absent), x_robots_tag (the X-Robots-Tag header, null when absent), redirect_chain ([{url, status}] for each redirect followed, up to 5; [] when none — response_status is the final status), tls_valid (whether the https certificate verifies; null for http), and (when include_body_excerpt is true) a 500-char excerpt of the page body. Optional selector arg reports whether an id/class selector is present in the served HTML. Use after any write that changes content, theme, or options to catch page-builder caches, object caches, or edge caches serving stale HTML even when the DB write returned success. Rate-limited to 10 calls per minute per URL; the redirect hops within one call are not counted separately. Requires read on the target post/page or manage_options. URL must belong to the current WordPress site.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Absolute URL on this site to fetch (must match home_url() origin).'], 'selector' => ['type' => 'string', 'description' => 'Optional #id or .class selector to check for presence in the rendered HTML.'], 'include_body_excerpt' => ['type' => 'boolean', 'description' => 'When true, include a 500-char excerpt of the <body> in the response. Default false.']], 'required' => ['url']]],
-            ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, the block tools (wp_insert_blocks, wp_replace_block, wp_move_block, wp_delete_block, wp_replace_text_in_blocks, wp_update_block_attributes, wp_update_synced_pattern), wp_create_post, wp_create_page and wp_clone_post_as_draft (undo moves the new post to the trash), wp_update_post, wp_update_post_meta, wp_add_post_meta, wp_delete_post_meta, wp_delete_post, wp_delete_page, wp_delete_media (when it moves the item to the media trash), wp_restore_revision, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_term_meta, wp_create_menu and wp_create_menu_item (undo deletes the new menu or item), wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, yoast_update_meta (aliases wp_update_seo_meta), wp_update_widget, the comment tools (wp_create_comment, wp_delete_comment, wp_approve_comment, wp_spam_comment, wp_trash_comment), the WooCommerce writes (products, variations, orders, order notes, attributes, coupons), the Redirection writes (redirection_create_redirect deletes the new redirect, redirection_update_redirect restores it as it was), the Relevanssi writes (relevanssi_reindex_post puts the earlier index entry back, relevanssi_update_synonyms and relevanssi_add_stopword restore the earlier list), the MailPoet writes (mailpoet_save_subscriber and mailpoet_set_subscriber_lists restore the subscriber\'s earlier details and lists, or delete a subscriber the call added; mailpoet_save_draft restores the earlier draft, or deletes a draft the call created), the TablePress writes (tablepress_create_table and tablepress_copy_table delete the new table, tablepress_update_cells restores the earlier cells), snippets_update_metadata (restores the snippet\'s earlier name, description and tags), the Complianz writes (complianz_update_banner_text and complianz_update_cookie_description restore the earlier texts), the Royal AI Firewall writes (raif_set_bot_policies and raif_block_all_ai_bots restore the earlier bot policies), the Elementor write tools (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_apply_template_to_page, elementor_rebuild_post_content) and the Divi write tools (divi_replace_image, divi_clone_page, divi_import_template). Tokens live ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Most undos are refused with edited_since_write if the target was modified between the tracked write and this undo call (protects later edits from a silent overwrite; see force). These restore without that check: the undos that recreate a permanently deleted item (wp_delete_term, wp_delete_post / wp_delete_page / wp_delete_media with force, wp_delete_comment with force, WooCommerce permanent deletes), wc_add_order_note and divi_clone_page. For a browser agent (WebMCP), these undos delete what their operation created and are refused while the matching delete tool is switched off for browser agents: wp_create_post, wp_create_page, wp_clone_post_as_draft, elementor_clone_page, elementor_import_template and divi_clone_page (wp_delete_post, or wp_delete_page for a page), wp_insert_blocks (wp_delete_block), elementor_add_widget (elementor_delete_widget, where that tool exists), wp_create_menu_item (wp_delete_menu_item), wp_create_comment (wp_delete_comment), wp_add_post_meta (wp_delete_post_meta), wc_create_variation and the variations a wc_batch_update_variations call created (wc_delete_variation), and wc_create_coupon (wc_delete_coupon); a browser agent cannot undo wp_create_menu with force. Other undos are not tied to a delete tool. Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).'], 'undo_token' => ['type' => 'string', 'description' => 'Same as token; either name works.'], 'force' => ['type' => 'boolean', 'description' => 'These undos are refused with edited_since_write when the target changed after the tracked write, and accept force: the post content undos (wp_update_post, wp_restore_revision and the block tools), wp_create_post, wp_create_page and wp_clone_post_as_draft, post and page trash, post and term meta updates, wp_add_post_meta, wp_delete_post_meta, wp_delete_term_meta, wp_update_media, wp_update_term, menus and menu items (wp_create_menu, wp_create_menu_item, wp_update_menu_item, wp_delete_menu_item, wp_reorder_menu_items), wp_update_option, the WooCommerce writes (products, variations, batch variation updates, product attributes and attribute creation, orders and order status, coupons, emptying the coupon trash), the comment tools (wp_create_comment, wp_approve_comment, wp_spam_comment, wp_trash_comment, wp_delete_comment to the trash), wp_update_seo_meta / yoast_update_meta, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_widget, the Elementor write tools (an Elementor undo is also refused while an editor is open on the page), divi_replace_image and divi_import_template, the Redirection writes, the MailPoet writes, the Relevanssi writes and raif_set_bot_policies / raif_block_all_ai_bots (bots changed since are skipped, the others restored). Nothing is changed and the token stays valid; pass force: true to restore anyway, removing those later edits (an item the operation created is deleted with them; undoing wp_create_menu deletes the menu with its items). An item already out of the trash is left as it is and the token is closed; coupons whose code another coupon uses now are skipped while the others are recreated; a batch variation undo leaves off a SKU another product uses now and reports it. The other undos that check for later edits (the TablePress writes, snippets_update_metadata and the Complianz writes) refuse with an error and cannot be forced, and recreating a deleted term or coupon is refused while another term or coupon has its slug or code. Default false.']]]],
+            ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, the block tools (wp_insert_blocks, wp_replace_block, wp_move_block, wp_delete_block, wp_replace_text_in_blocks, wp_update_block_attributes, wp_update_synced_pattern), wp_create_post, wp_create_page and wp_clone_post_as_draft (undo moves the new post to the trash), wp_update_post, wp_update_post_meta, wp_add_post_meta, wp_delete_post_meta, wp_delete_post, wp_delete_page, wp_delete_media (when it moves the item to the media trash), wp_restore_revision, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_term_meta, wp_create_menu and wp_create_menu_item (undo deletes the new menu or item), wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, yoast_update_meta (aliases wp_update_seo_meta), wp_update_widget, the comment tools (wp_create_comment, wp_delete_comment, wp_approve_comment, wp_spam_comment, wp_trash_comment), the WooCommerce writes (products, variations, orders, order notes, attributes, coupons), the Redirection writes (redirection_create_redirect deletes the new redirect, redirection_update_redirect restores it as it was), the Relevanssi writes (relevanssi_reindex_post puts the earlier index entry back, relevanssi_update_synonyms and relevanssi_add_stopword restore the earlier list), the MailPoet writes (mailpoet_save_subscriber and mailpoet_set_subscriber_lists restore the subscriber\'s earlier details and lists, or delete a subscriber the call added; mailpoet_save_draft restores the earlier draft, or deletes a draft the call created), the TablePress writes (tablepress_create_table and tablepress_copy_table delete the new table, tablepress_update_cells restores the earlier cells), snippets_update_metadata (restores the snippet\'s earlier name, description and tags), the Complianz writes (complianz_update_banner_text and complianz_update_cookie_description restore the earlier texts), the Royal AI Firewall writes (raif_set_bot_policies and raif_block_all_ai_bots restore the earlier bot policies), gp_block_ip (undo lifts the block; refused with edited_since_write when the block was changed since, unless forced), the launch tools (wp_publish_and_launch removes the post and the image it uploaded, seo_optimize_for_launch restores the earlier SEO title and description and removes the redirects it made, wp_migrate_theme_assets puts the earlier post content back; search engine submissions and cache purges cannot be taken back), the plugin and theme tools (wp_install_plugin and wp_install_theme remove what was installed, wp_activate_plugin and wp_deactivate_plugin switch back, wp_switch_theme returns to the earlier theme, the auto-update switches restore the earlier setting; refused with edited_since_write after a later change, or security_plugin for the active security plugin, unless forced; updates and deletes have no undo), the ACF setup tools (field group and field creates, changes, deletes, imports, reorders and acf_register_post_type: undo puts the earlier definition back or removes what was made, and is refused with edited_since_write when the field group changed again since, unless forced), wp_set_maintenance_mode (undo restores the earlier state; refused with edited_since_write when the mode was changed again, unless forced), the Royal Affiliate writes (rafp_update_referral_status puts each referral back to its earlier status; rafp_create_campaign and rafp_create_challenge delete what they made, refused with in_use once it is used; rafp_assign_landing_page gives the page back; all four are refused with edited_since_write after a later change unless forced), the FormForge form tools (formforge_duplicate and formforge_create_from_template: undo deletes the new form, and is refused with has_entries while the form holds entries or with edited_since_write once it was edited, unless forced), the Elementor write tools (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_apply_template_to_page, elementor_rebuild_post_content) and the Divi write tools (divi_replace_image, divi_clone_page, divi_import_template). Tokens live ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Most undos are refused with edited_since_write if the target was modified between the tracked write and this undo call (protects later edits from a silent overwrite; see force). These restore without that check: the undos that recreate a permanently deleted item (wp_delete_term, wp_delete_post / wp_delete_page / wp_delete_media with force, wp_delete_comment with force, WooCommerce permanent deletes), wc_add_order_note and divi_clone_page. For a browser agent (WebMCP), these undos delete what their operation created and are refused while the matching delete tool is switched off for browser agents: wp_create_post, wp_create_page, wp_clone_post_as_draft, elementor_clone_page, elementor_import_template and divi_clone_page (wp_delete_post, or wp_delete_page for a page), wp_insert_blocks (wp_delete_block), elementor_add_widget (elementor_delete_widget, where that tool exists), wp_create_menu_item (wp_delete_menu_item), wp_create_comment (wp_delete_comment), wp_add_post_meta (wp_delete_post_meta), wc_create_variation and the variations a wc_batch_update_variations call created (wc_delete_variation), and wc_create_coupon (wc_delete_coupon); a browser agent cannot undo wp_create_menu with force. Other undos are not tied to a delete tool. Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).'], 'undo_token' => ['type' => 'string', 'description' => 'Same as token; either name works.'], 'force' => ['type' => 'boolean', 'description' => 'These undos are refused with edited_since_write when the target changed after the tracked write, and accept force: the post content undos (wp_update_post, wp_restore_revision and the block tools), wp_create_post, wp_create_page and wp_clone_post_as_draft, post and page trash, post and term meta updates, wp_add_post_meta, wp_delete_post_meta, wp_delete_term_meta, wp_update_media, wp_update_term, menus and menu items (wp_create_menu, wp_create_menu_item, wp_update_menu_item, wp_delete_menu_item, wp_reorder_menu_items), wp_update_option, the WooCommerce writes (products, variations, batch variation updates, product attributes and attribute creation, orders and order status, coupons, emptying the coupon trash), the comment tools (wp_create_comment, wp_approve_comment, wp_spam_comment, wp_trash_comment, wp_delete_comment to the trash), wp_update_seo_meta / yoast_update_meta, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_widget, the Elementor write tools (an Elementor undo is also refused while an editor is open on the page), divi_replace_image and divi_import_template, the Redirection writes, the MailPoet writes, the Relevanssi writes and raif_set_bot_policies / raif_block_all_ai_bots (bots changed since are skipped, the others restored). Nothing is changed and the token stays valid; pass force: true to restore anyway, removing those later edits (an item the operation created is deleted with them; undoing wp_create_menu deletes the menu with its items). An item already out of the trash is left as it is and the token is closed; coupons whose code another coupon uses now are skipped while the others are recreated; a batch variation undo leaves off a SKU another product uses now and reports it. The other undos that check for later edits (the TablePress writes, snippets_update_metadata and the Complianz writes) refuse with an error and cannot be forced, and recreating a deleted term or coupon is refused while another term or coupon has its slug or code. Default false.']]]],
             ['name' => 'mcp_list_recent_changes', 'description' => 'List the changes made through Royal MCP that can still be reviewed: every undo-tracked write from the last ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' by the same WordPress user (administrators can pass all_users for every user\'s), newest first. Each row has the time, the tool, what it changed (target_label), what undo would restore (undo_summary), which connection made it (AI client, API key, another MCP server or a browser agent), whether it was undone, and the undo token while undo is still possible. Pass a change_id to mcp_get_change for the before and after values. Changes older than ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' are not kept.', 'inputSchema' => ['type' => 'object', 'properties' => ['limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 100, 'description' => 'Rows to return (default 20, max 100).'], 'tool' => ['type' => 'string', 'description' => 'Only changes made by this tool, for example wp_update_post.'], 'include_undone' => ['type' => 'boolean', 'description' => 'Include changes that were already undone (default true).'], 'all_users' => ['type' => 'boolean', 'description' => 'Administrators only: list every user\'s changes (each row names its user; undo tokens only for your own changes). Default false.']]]],
             ['name' => 'mcp_get_change', 'description' => 'Show one change field by field: the value before the change, the value the change wrote, and the value now, plus a line diff for post content, CSS and page-builder data. Flags fields that were changed again since, which undo would refuse. Takes a change_id from mcp_list_recent_changes, or the undo token from the original tool response. A change older than ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' reports status "expired".', 'inputSchema' => ['type' => 'object', 'properties' => ['change_id' => ['type' => 'string', 'description' => 'change_id from mcp_list_recent_changes, or the undo token from the tool response that made the change.']], 'required' => ['change_id']]],
+            ['name' => 'mcp_get_skill', 'description' => 'Read a skill: the site owner\'s chosen instructions for one kind of work on this site (for example editing Elementor pages or changing WooCommerce products). Read the skill before you start that kind of work and follow it. Without arguments it lists the skills loaded on this site. With a skill it returns the core of that skill and the list of its workflows; with a skill and a section it returns that one workflow.', 'inputSchema' => ['type' => 'object', 'properties' => ['skill' => ['type' => 'string', 'description' => 'Skill id from the list, for example "elementor". Leave out to list the loaded skills.'], 'section' => ['type' => 'string', 'description' => 'Id of one workflow of the skill, from the list in the skill\'s core. Leave out for the core.']]]],
             ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page). Each result includes content_length (bytes of stored content) for size triage.', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'pending', 'private', 'future', 'any'], 'description' => 'publish (default), one status, or any (every status you can read except trash), so a draft you just created can be found.']], 'required' => ['query']]],
 
             // Options
@@ -1841,7 +1855,7 @@ class Server {
             ['name' => 'wp_update_widget', 'description' => 'Update a widget instance by ID. Requires the "Allow AI to modify theme appearance" admin toggle AND edit_theme_options capability. Uses WordPress core /wp/v2/widgets so classic and block widgets are handled uniformly. Pass the id returned by wp_get_widgets. Response includes a ' . \Royal_MCP\MCP\Undo_Store::window_adjective() . ' undo token that restores the prior widget instance via mcp_undo_last_operation. Backslashes (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) are stored as sent.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string', 'description' => 'Widget ID (e.g. text-2, block-15)'], 'sidebar' => ['type' => 'string', 'description' => 'Sidebar ID to place the widget in (omit to leave unchanged)'], 'instance' => ['type' => 'object', 'additionalProperties' => true, 'description' => 'Widget instance data. For classic widgets, pass the settings as {raw: {…}} as wp_get_widgets returns them; Royal MCP encodes them for widgets that only take the encoded form.'], 'form_data' => ['type' => 'string', 'description' => 'Serialized form data (classic widgets alternative to instance)']], 'required' => ['id']]],
 
             // SEO Meta (auto-detects Yoast SEO / Rank Math / AIOSEO / SEObolt)
-            ['name' => 'wp_get_seo_meta', 'description' => 'Get the SEO meta fields for a post (title, description, focus keyword, noindex, OG overrides where supported, URL slug). Auto-detects the active SEO plugin — Yoast SEO, Rank Math, AIOSEO, SEOPress, or SEObolt — and returns that plugin\'s fields plus the post slug (which is a WordPress-native field, returned regardless of SEO plugin). AIOSEO + SEObolt return the four core fields (title/description/focus_keyword/noindex); og_title/og_description are populated for Yoast + Rank Math only. Returns RAW stored templates (e.g. Yoast\'s default "%%page%% %%sep%% %%sitename%%") — do NOT measure length from these values, they contain template markup that never appears in the rendered <title> tag and will produce false-positive title_too_short / title_too_long flags. For measured/rendered SEO values, use Royal MCP Pro\'s wp_audit_seo_bulk which resolves per-engine template variables before measuring.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer']], 'required' => ['post_id']]],
+            ['name' => 'wp_get_seo_meta', 'description' => 'Get the SEO meta fields for a post (title, description, focus keyword, noindex, OG overrides where supported, URL slug). Auto-detects the active SEO plugin — Yoast SEO, Rank Math, AIOSEO, SEOPress, or SEObolt — and returns that plugin\'s fields plus the post slug (which is a WordPress-native field, returned regardless of SEO plugin). AIOSEO + SEObolt return the four core fields (title/description/focus_keyword/noindex); og_title/og_description are populated for Yoast + Rank Math only. Returns RAW stored templates (e.g. Yoast\'s default "%%page%% %%sep%% %%sitename%%") — do NOT measure length from these values, they contain template markup that never appears in the rendered <title> tag and will produce false-positive title_too_short / title_too_long flags. For measured/rendered SEO values, use wp_audit_seo_bulk, which fills in the SEO plugin\'s template variables before measuring.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer']], 'required' => ['post_id']]],
             ['name' => 'wp_update_seo_meta', 'description' => 'Update SEO meta fields on a post. Auto-routes title/description/focus_keyword/noindex to whichever SEO plugin is active (Yoast, Rank Math, AIOSEO, SEOPress, or SEObolt). og_title / og_description route to Yoast, Rank Math, and SEOPress; AIOSEO + SEObolt store OG data in different shapes so those fields fall through to unsupported_fields. twitter_title / twitter_description / twitter_image route to Yoast, Rank Math, SEOPress, and SEObolt; AIOSEO stores twitter data in its own database table so all three twitter fields fall through to unsupported_fields until a dedicated AIOSEO adapter lands. The slug field is a WordPress-native field and works regardless of SEO plugin. The response lists each field under fields with its value before, the value requested, the value saved and verified (true when saved matches requested). Requires edit_post capability on the target post.', 'inputSchema' => ['type' => 'object', 'properties' => ['force' => ['type' => 'boolean', 'description' => 'Replace a field that holds an SEO template (template variables such as %%title%%) with a value that has none. Without it such a write is refused (template_overwrite).'], 'post_id' => ['type' => 'integer'], 'title' => ['type' => 'string', 'description' => 'SEO title (replaces the meta title used in browser tabs and SERPs)'], 'description' => ['type' => 'string', 'description' => 'SEO meta description (used in SERPs)'], 'focus_keyword' => ['type' => 'string', 'description' => 'Primary focus keyword for SEO scoring (AIOSEO stores this as focus_keyphrase internally)'], 'noindex' => ['type' => 'boolean', 'description' => 'Tell search engines not to index this URL'], 'og_title' => ['type' => 'string', 'description' => 'Open Graph title (Facebook / Slack / LinkedIn previews). Yoast + Rank Math only.'], 'og_description' => ['type' => 'string', 'description' => 'Open Graph description. Yoast + Rank Math only.'], 'twitter_title' => ['type' => 'string', 'description' => 'Twitter card title. Routed to the active SEO plugin\'s Twitter-title meta key (Yoast, Rank Math, AIOSEO, SEObolt).'], 'twitter_description' => ['type' => 'string', 'description' => 'Twitter card description. Same per-plugin routing as twitter_title.'], 'twitter_image' => ['type' => 'string', 'description' => 'Twitter card image URL. Routed to Yoast, Rank Math, and SEObolt; AIOSEO stores this in a custom table and returns as unsupported_field.'], 'slug' => ['type' => 'string', 'description' => 'URL slug (post_name). WordPress will sanitize and ensure uniqueness; the actually-saved value is returned in the response so the caller can confirm.']], 'required' => ['post_id']]],
             ['name' => 'seo_audit_meta_tags', 'description' => 'Fetch a post\'s actual rendered HTML and parse the head for title, meta description, canonical, viewport, Open Graph and Twitter Card tags, robots ({meta, x_robots_tag, noindex}), hreflang ([{lang, href}]) and JSON-LD ({present, types} — @type values incl. @graph). Catches theme/plugin/cache conflicts that only appear in the served output — duplicate title tags, mismatched canonicals, missing OG images, viewport misconfiguration. Complements wp_get_seo_meta (which reads DB fields) by validating what actually reaches crawlers. Pass a post_id (URL is resolved via get_permalink) or a same-site url. Read-only.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer', 'description' => 'Post ID whose permalink to audit. Either post_id or url is required.'], 'url' => ['type' => 'string', 'description' => 'Absolute URL to audit. Must be on this site (same host as home_url). Either post_id or url is required.']]]],
 
@@ -1907,6 +1921,18 @@ class Server {
         $tools = array_merge( $tools, MailPoetIntegration::get_tools() );
         $tools = array_merge( $tools, W3TCIntegration::get_tools() );
         $tools = array_merge( $tools, DuplicatorIntegration::get_tools() );
+        $tools = array_merge( $tools, BackupStatusIntegration::get_tools() );
+        $tools = array_merge( $tools, SeoReadsIntegration::get_tools() );
+        $tools = array_merge( $tools, SeoAuditIntegration::get_tools() );
+        $tools = array_merge( $tools, PageChecksIntegration::get_tools() );
+        $tools = array_merge( $tools, FormForgeIntegration::get_tools() );
+        $tools = array_merge( $tools, RoyalAffiliateIntegration::get_tools() );
+        $tools = array_merge( $tools, RoyalAffiliateWritesIntegration::get_tools() );
+        $tools = array_merge( $tools, SiteReportsIntegration::get_tools() );
+        $tools = array_merge( $tools, MaintenanceModeIntegration::get_tools() );
+        $tools = array_merge( $tools, AcfSetupIntegration::get_tools() );
+        $tools = array_merge( $tools, PluginsThemesIntegration::get_tools() );
+        $tools = array_merge( $tools, LaunchToolsIntegration::get_tools() );
         $tools = array_merge( $tools, BuddyPressIntegration::get_tools() );
 
         // If Elementor's own MCP module is present, prefix our elementor_* descriptions with a routing hint.
@@ -2540,6 +2566,9 @@ class Server {
         if ( 'resources/read' === $method && is_array( $params ) && isset( $params['uri'] ) && is_string( $params['uri'] ) ) {
             $request_meta['resource_uri'] = substr( sanitize_text_field( $params['uri'] ), 0, 200 );
         }
+        if ( 'prompts/get' === $method && is_array( $params ) && isset( $params['name'] ) && is_string( $params['name'] ) ) {
+            $request_meta['prompt_name'] = substr( sanitize_text_field( $params['name'] ), 0, 200 );
+        }
         $response_meta = [ 'status' => $status ];
         if ($is_error) {
             $response_meta['error_code']    = (int) ($result['error']['code'] ?? 0);
@@ -2708,18 +2737,25 @@ class Server {
             ];
         }
 
+        $init_result = [
+            'protocolVersion' => $negotiated,
+            'serverInfo' => $this->build_server_info_with_icons(),
+            'capabilities' => [
+                'tools'     => new \stdClass(),
+                'resources' => new \stdClass(),
+                'prompts'   => new \stdClass(),
+            ],
+        ];
+        // What the site owner wrote for AI clients, for any signed-in connection.
+        $site_context = current_user_can( 'read' ) ? trim( \Royal_MCP\MCP\Support\Site_Context::instructions() . "\n\n" . \Royal_MCP\MCP\Support\Skills::instructions() ) : '';
+        if ( '' !== $site_context ) {
+            $init_result['instructions'] = $site_context;
+        }
+
         return [
             'jsonrpc' => '2.0',
             'id' => $id,
-            'result' => [
-                'protocolVersion' => $negotiated,
-                'serverInfo' => $this->build_server_info_with_icons(),
-                'capabilities' => [
-                    'tools'     => new \stdClass(),
-                    'resources' => new \stdClass(),
-                    'prompts'   => new \stdClass(),
-                ],
-            ],
+            'result' => $init_result,
         ];
     }
 
@@ -2972,6 +3008,10 @@ class Server {
         // registration, and license state transitions — all infrequent.
         $tools = $this->get_tools();
 
+        // Tools for a plugin that is not active on this site are left out.
+        $hidden_unavailable = 0;
+        $tools              = self::without_unavailable_tools( $tools, $hidden_unavailable );
+
         // Compact discovery profile: when the caller advertised X-MCP-Profile:
         // compact on initialize (or is passing it on this request), trim the
         // tools/list response to only the three routing tools so context-
@@ -3053,6 +3093,9 @@ class Server {
         $body = [ 'tools' => $tools ];
         if ( null !== $page['next'] ) {
             $body['nextCursor'] = $page['next'];
+        }
+        if ( $hidden_unavailable > 0 ) {
+            $body['_meta'] = [ 'royal-mcp/hidden_unavailable' => $hidden_unavailable ];
         }
 
         return [
@@ -3138,9 +3181,74 @@ class Server {
         return hash_equals( self::list_fingerprint( $tools ), $data['h'] ) ? $data['o'] : null;
     }
 
+    /** The tools marked with the plugin each needs and whether it is active, for callers who could see the plugin list anyway. */
+    private static function with_availability_for_admins( array $tools ) {
+        return current_user_can( 'manage_options' ) ? self::stamp_tool_availability( $tools ) : $tools;
+    }
+
     /**
-     * Integration tools stay listed whether or not their plugin is active;
-     * each one carries _meta["royal-mcp/requires"] (plugin name) and
+     * What the current user's connection is sent as its tool list, in numbers, for the Context screen.
+     *
+     * @return array{listed:int,left_out:int,tokens:int,left_out_by_plugin:array<string,int>}
+     */
+    public static function list_summary() {
+        $all    = ( new self() )->get_tools();
+        $hidden = 0;
+        $listed = self::without_unavailable_tools( $all, $hidden );
+        $by     = [];
+        if ( $hidden > 0 ) {
+            foreach ( self::stamp_tool_availability( $all ) as $tool ) {
+                if ( false === ( $tool['_meta']['royal-mcp/available'] ?? null ) ) {
+                    $label        = (string) ( $tool['_meta']['royal-mcp/requires'] ?? '' );
+                    $by[ $label ] = ( $by[ $label ] ?? 0 ) + 1;
+                }
+            }
+            arsort( $by );
+        }
+        return [
+            'listed'             => count( $listed ),
+            'left_out'           => (int) $hidden,
+            // A rough size: about four characters of JSON to a token.
+            'tokens'             => (int) round( strlen( (string) wp_json_encode( array_values( $listed ) ) ) / 4 ),
+            'left_out_by_plugin' => $by,
+        ];
+    }
+
+    /**
+     * The tool list without the tools whose plugin is not active on this site, so a client is
+     * not sent tools that cannot work here. Applies only to callers who could see the plugin
+     * list anyway: for anyone else the list does not show which plugins the site runs. A left-out
+     * tool can still be looked up with get_tool_info and still answers that its plugin is not active.
+     *
+     * @param array $tools  Tool definitions.
+     * @param int   $hidden Set to the number of tools left out.
+     * @return array
+     */
+    private static function without_unavailable_tools( array $tools, &$hidden = 0 ) {
+        $hidden = 0;
+        /**
+         * Filters whether tools for plugins that are not active are left out of the tool list.
+         *
+         * @param bool $hide Default true.
+         */
+        if ( ! current_user_can( 'manage_options' ) || ! apply_filters( 'royal_mcp_hide_unavailable_tools', true ) ) {
+            return $tools;
+        }
+        $kept = [];
+        foreach ( self::stamp_tool_availability( $tools ) as $i => $stamped ) {
+            // The three routing tools always stay: a short tool list is used through them.
+            $routing = in_array( (string) ( $stamped['name'] ?? '' ), [ 'discover_tools', 'get_tool_info', 'execute_tool' ], true );
+            if ( ! $routing && false === ( $stamped['_meta']['royal-mcp/available'] ?? null ) ) {
+                ++$hidden;
+                continue;
+            }
+            $kept[] = $tools[ $i ];
+        }
+        return $kept;
+    }
+
+    /**
+     * Each integration tool carries _meta["royal-mcp/requires"] (plugin name) and
      * _meta["royal-mcp/available"] (whether that plugin is active now).
      *
      * @param array $tools Tool definitions.
@@ -3161,13 +3269,16 @@ class Server {
             return strlen( $b ) - strlen( $a );
         } );
 
+        $own   = self::builtin_tool_names();
         $cache = [];
         foreach ( $tools as $i => $tool ) {
             $name = (string) ( $tool['name'] ?? '' );
             $req  = null;
             if ( array_key_exists( $name, $exact ) ) {
                 $req = $exact[ $name ];
-            } else {
+            } elseif ( isset( $own[ $name ] ) ) {
+                // A family's requirement covers Royal MCP's own tools. A tool another plugin adds
+                // under the same prefix is judged only by an entry for its exact name.
                 foreach ( $prefixes as $prefix => $candidate ) {
                     if ( 0 === strpos( $name, $prefix ) ) {
                         $req = $candidate;
@@ -3175,20 +3286,23 @@ class Server {
                     }
                 }
             }
-            if ( ! is_array( $req ) || empty( $req[0] ) || ! is_callable( $req[1] ?? null ) ) {
+            if ( ! is_array( $req ) || ! is_string( $req[0] ?? null ) || '' === $req[0] || ! is_callable( $req[1] ?? null ) ) {
                 continue;
             }
-            $label = (string) $req[0];
-            if ( ! array_key_exists( $label, $cache ) ) {
+            $label = $req[0];
+            // One answer per check, not per plugin name: two entries can name the same plugin and ask different things of it.
+            $check = is_string( $req[1] ) ? $req[1] : ( is_array( $req[1] ) ? ( is_object( $req[1][0] ) ? spl_object_id( $req[1][0] ) : (string) $req[1][0] ) . '::' . (string) $req[1][1] : (string) spl_object_id( $req[1] ) );
+            $key   = $label . '|' . $check;
+            if ( ! array_key_exists( $key, $cache ) ) {
                 try {
-                    $cache[ $label ] = (bool) call_user_func( $req[1] );
+                    $cache[ $key ] = (bool) call_user_func( $req[1] );
                 } catch ( \Throwable $e ) {
-                    $cache[ $label ] = false;
+                    $cache[ $key ] = false;
                 }
             }
             $meta = isset( $tool['_meta'] ) && is_array( $tool['_meta'] ) ? $tool['_meta'] : [];
             $meta['royal-mcp/requires']  = $label;
-            $meta['royal-mcp/available'] = $cache[ $label ];
+            $meta['royal-mcp/available'] = $cache[ $key ];
             $tools[ $i ]['_meta']        = $meta;
         }
         return $tools;
@@ -3224,6 +3338,13 @@ class Server {
             'monsterinsights_'     => [ 'MonsterInsights', [ MonsterInsightsIntegration::class, 'is_available' ] ],
             'w3tc_'                => [ 'W3 Total Cache', [ W3TCIntegration::class, 'is_available' ] ],
             'duplicator_'          => [ 'Duplicator', [ DuplicatorIntegration::class, 'is_available' ] ],
+            'ai1wm_get_backup_status'    => [ 'All-in-One WP Migration', [ BackupStatusIntegration::class, 'ai1wm_active' ] ],
+            'wpvivid_get_backup_status'  => [ 'WPvivid Backup & Migration', [ BackupStatusIntegration::class, 'wpvivid_active' ] ],
+            'jetpack_get_backup_status'  => [ 'Jetpack VaultPress Backup', [ BackupStatusIntegration::class, 'jetpack_active' ] ],
+            'backwpup_get_backup_status' => [ 'BackWPup', [ BackupStatusIntegration::class, 'backwpup_active' ] ],
+            'rankmath_get_post_score'        => [ 'Rank Math', [ SeoReadsIntegration::class, 'rankmath_active' ] ],
+            'rankmath_get_404_logs'          => [ 'Rank Math', [ SeoReadsIntegration::class, 'rankmath_active' ] ],
+            'seobolt_get_search_performance' => [ 'SEObolt Pro', [ SeoReadsIntegration::class, 'seobolt_gsc_active' ] ],
             'bp_'                  => [ 'BuddyPress', [ BuddyPressIntegration::class, 'is_available' ] ],
             'tablepress_'          => [ 'TablePress', [ TablePressIntegration::class, 'is_available' ] ],
             'snippets_'            => [ 'Code Snippets', [ CodeSnippetsIntegration::class, 'is_available' ] ],
@@ -3232,8 +3353,20 @@ class Server {
             'relevanssi_'          => [ 'Relevanssi', [ RelevanssiIntegration::class, 'is_available' ] ],
             'ninjaforms_'          => [ 'Ninja Forms', [ NinjaFormsIntegration::class, 'is_available' ] ],
             'fluentform_'          => [ 'Fluent Forms', [ FluentFormsIntegration::class, 'is_available' ] ],
+            'formforge_'           => [ 'FormForge Pro', [ FormForgeIntegration::class, 'is_available' ] ],
+            'rafp_'                => [ 'Royal Affiliate Pro', [ RoyalAffiliateIntegration::class, 'is_available' ] ],
+            'raif_get_period_rollup'    => [ 'Royal AI Firewall', [ SiteReportsIntegration::class, 'raif_active' ] ],
+            'rlinks_get_top_links'      => [ 'Royal Links', [ SiteReportsIntegration::class, 'links_active' ] ],
+            'elementor_get_kit_globals' => [ 'Elementor', [ SiteReportsIntegration::class, 'elementor_active' ] ],
+            'redirection_bulk_export'   => [ 'Redirection', [ SiteReportsIntegration::class, 'redirection_active' ] ],
             'mailpoet_'            => [ 'MailPoet', [ MailPoetIntegration::class, 'is_available' ] ],
+            'sv_get_restore_status' => [ 'SiteVault Pro', [ \Royal_MCP\Integrations\SiteVaultHealth::class, 'has_background_restores' ] ],
         ];
+        // The field group and field setup tools need ACF 6 or later; the post type tool needs ACF Pro 6.1 or later.
+        foreach ( array_keys( AcfSetupIntegration::TOOLS ) as $acf_setup_tool ) {
+            $map[ $acf_setup_tool ] = [ 'Advanced Custom Fields 6+', [ AcfSetupIntegration::class, 'plugin_active' ] ];
+        }
+        $map['acf_register_post_type'] = [ 'ACF Pro 6.1+', [ AcfSetupIntegration::class, 'plugin_pro_61_plus' ] ];
 
         /**
          * Filters the tool => required plugin map used for the availability flag in tools/list.
@@ -3273,11 +3406,15 @@ class Server {
             ],
             'royal-mcp://tool-catalog'       => [
                 'title'       => 'Tool catalog',
-                'description' => 'Every tool by name with a one-line summary and whether it only reads or can change the site. Use get_tool_info for a full input schema.',
+                'description' => 'Every tool by name with a one-line summary and whether it only reads or can change the site, including tools for plugins that are not active here (the tool list leaves those out). Use get_tool_info for a full input schema.',
             ],
             'royal-mcp://agent-skills-index' => [
                 'title'       => 'Agent skills index',
                 'description' => 'Tool categories with a description and tool count for each; the same document the site publishes for agent discovery.',
+            ],
+            'royal-mcp://site-context'       => [
+                'title'       => 'Site context',
+                'description' => 'What the site owner wants AI clients to know about this site: what it is for, its tone, what to leave alone. Read it before making changes.',
             ],
             'royal-mcp://health'             => [
                 'title'       => 'Connection health',
@@ -3302,6 +3439,15 @@ class Server {
         $resources = [];
         if ( current_user_can( 'read' ) ) {
             foreach ( self::resource_catalog() as $uri => $def ) {
+                $resources[] = [
+                    'uri'         => $uri,
+                    'name'        => substr( $uri, strlen( 'royal-mcp://' ) ),
+                    'title'       => $def['title'],
+                    'description' => $def['description'],
+                    'mimeType'    => 'application/json',
+                ];
+            }
+            foreach ( \Royal_MCP\MCP\Support\Skills::resources() as $uri => $def ) {
                 $resources[] = [
                     'uri'         => $uri,
                     'name'        => substr( $uri, strlen( 'royal-mcp://' ) ),
@@ -3370,7 +3516,7 @@ class Server {
                 [
                     'uri'      => $uri,
                     'mimeType' => 'application/json',
-                    'text'     => (string) wp_json_encode( in_array( $uri, [ 'royal-mcp://tool-catalog', 'royal-mcp://health' ], true ) ? $data : \Royal_MCP\MCP\Support\Secret_Scrubber::scrub( $data, '', [ 'mode' => 'content' ] ), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ),
+                    'text'     => (string) wp_json_encode( in_array( $uri, [ 'royal-mcp://tool-catalog', 'royal-mcp://health', 'royal-mcp://site-context' ], true ) || 0 === strpos( $uri, \Royal_MCP\MCP\Support\Skills::URI_PREFIX ) ? $data : \Royal_MCP\MCP\Support\Secret_Scrubber::scrub( $data, '', [ 'mode' => 'content' ] ), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ),
                 ],
             ],
         ];
@@ -3393,6 +3539,9 @@ class Server {
      * @return array|null
      */
     private function read_resource( $uri ) {
+        if ( 0 === strpos( (string) $uri, \Royal_MCP\MCP\Support\Skills::URI_PREFIX ) ) {
+            return \Royal_MCP\MCP\Support\Skills::read_resource( $uri );
+        }
         switch ( $uri ) {
             case 'royal-mcp://site-info':
                 return [
@@ -3419,6 +3568,9 @@ class Server {
 
             case 'royal-mcp://agent-skills-index':
                 return \Royal_MCP\Discovery\Agent_Skills_Index::build_or_cached();
+
+            case 'royal-mcp://site-context':
+                return \Royal_MCP\MCP\Support\Site_Context::resource();
 
             case 'royal-mcp://health':
                 return $this->connection_health_data();
@@ -3503,11 +3655,35 @@ class Server {
             'jsonrpc' => '2.0',
             'id'      => $id,
             'result'  => $this->stamp_modern_list_envelope(
-                [ 'prompts' => [] ],
-                'public',
+                [ 'prompts' => current_user_can( 'read' ) ? \Royal_MCP\MCP\Support\Skills::prompts() : [] ],
+                'private',
                 300000,
                 $params
             ),
+        ];
+    }
+
+    /** One prompt: a skill loaded on this site. An unknown name and one the caller may not read get the same answer. */
+    private function handle_prompts_get($params, $id) {
+        $name   = is_array( $params ) && isset( $params['name'] ) && is_string( $params['name'] ) ? $params['name'] : '';
+        $prompt = '' !== $name && current_user_can( 'read' ) ? \Royal_MCP\MCP\Support\Skills::prompt( $name, is_array( $params ) && isset( $params['arguments'] ) && is_array( $params['arguments'] ) ? $params['arguments'] : [] ) : null;
+        if ( null === $prompt ) {
+            return [
+                'jsonrpc' => '2.0',
+                'id'      => $id,
+                'error'   => [
+                    'code'    => -32602,
+                    'message' => 'Prompt not found',
+                ],
+            ];
+        }
+        if ( $this->is_modern_era( $params ) ) {
+            $prompt = [ 'resultType' => 'complete' ] + $prompt;
+        }
+        return [
+            'jsonrpc' => '2.0',
+            'id'      => $id,
+            'result'  => $prompt,
         ];
     }
 
@@ -3645,7 +3821,9 @@ class Server {
 
         try {
             $result = $this->run_tool($name, $args);
-            $result = $this->scrub_tool_result($name, $result);
+            // A skill is a fixed text shipped with the plugin, also when it is read through execute_tool.
+            $skill_read = 'execute_tool' === $name && is_array( $args ) && 'mcp_get_skill' === ( $args['tool_name'] ?? '' );
+            $result = $skill_read ? $result : $this->scrub_tool_result($name, $result);
             $this->log_tool_call($name, $args, 'success', null, $start, $result, null);
 
             // If the tool already returned a pre-formed MCP envelope (isError
@@ -3735,6 +3913,8 @@ class Server {
             'wp_create_preview_link', 'wp_create_login_link', 'wc_create_order',
             // Royal MCP's own tool metadata and connection details.
             'get_tool_info', 'discover_tools', 'royal_mcp_connection_health',
+            // A skill is a fixed text that ships with the plugin.
+            'mcp_get_skill',
         ] );
         return in_array( (string) $name, (array) $tools, true );
     }
@@ -3793,6 +3973,10 @@ class Server {
             'own_fields'   => [ 'commit_token', 'confirm_token' ],
             'content_keys' => self::scrub_content_keys(),
         ];
+        // ACF's own group and field keys are identifiers the next call needs back.
+        if ( AcfSetupIntegration::handles( (string) $name ) ) {
+            $opts['exempt_keys'] = array_merge( $opts['exempt_keys'], AcfSetupIntegration::ID_FIELDS );
+        }
         /**
          * Filter how one tool's reply is scrubbed. Only add fields that hold
          * Royal MCP's own tokens or ids; never remove keys or switch modes.
@@ -4197,17 +4381,22 @@ class Server {
      * without leaking "what data." Error messages from the tool dispatcher are
      * our own strings, safe to log. Gives every /mcp tool call an Activity Log entry.
      */
+    /** A tool or argument name as the log keeps it: its letters, digits, dot, underscore and hyphen, 64 characters at most. */
+    private static function log_name( $name ) {
+        return substr( (string) preg_replace( '/[^A-Za-z0-9_.\-]+/', '', is_scalar( $name ) ? (string) $name : '' ), 0, 64 );
+    }
+
     private function log_tool_call($tool_name, $args, $status, $error_message, $start_time = null, $result = null, $exception = null) {
         global $wpdb;
         // The call is over: a pre-change backup armed for it must not fire on a later write.
         \Royal_MCP\MCP\Support\SiteVault_Hook::disarm( (string) $tool_name );
 
         $request_meta = [
-            'tool'            => (string) $tool_name,
+            'tool'            => self::log_name( $tool_name ),
             'user_id'         => (int) get_current_user_id(),
             'auth'            => (string) $this->request_auth_method,
             'client_id'       => null !== $this->request_client_id ? (string) $this->request_client_id : '',
-            'arg_keys'        => is_array($args) ? array_keys($args) : [],
+            'arg_keys'        => is_array($args) ? array_slice( array_values( array_filter( array_map( [ __CLASS__, 'log_name' ], array_keys( $args ) ), 'strlen' ) ), 0, 50 ) : [],
             'access_level'    => $this->connection_access_level()[0],
             'route'           => (string) $this->request_route,
             'mcp_method_hint' => $this->request_mcp_method_hint,
@@ -4228,7 +4417,7 @@ class Server {
             $wpdb->prefix . 'royal_mcp_logs',
             [
                 'mcp_server'    => 'MCP Server',
-                'action'        => 'tools/call:' . sanitize_text_field((string) $tool_name),
+                'action'        => 'tools/call:' . self::log_name( $tool_name ),
                 'request_data'  => wp_json_encode($request_meta),
                 'response_data' => wp_json_encode($response_meta),
                 'status'        => 'success' === $status ? 'success' : 'error',
@@ -4532,6 +4721,15 @@ class Server {
             && $this->is_builtin_tool_name( $name )
             && ! current_user_can( \Royal_MCP\Abilities\Tool_Capabilities::for_tool( (string) $name ) ) ) {
             throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'insufficient_caps', 'You do not have permission to use ' . esc_html( (string) $name ) . '.' );
+        }
+        // A tool whose plugin is not active answers the same to every caller who may not see the
+        // plugin list, so the answer does not show which plugins the site runs.
+        if ( ( null !== $this->request_auth_method || 'abilities' === $this->request_route )
+            && ! current_user_can( 'manage_options' ) ) {
+            $one_tool = self::stamp_tool_availability( [ [ 'name' => (string) $name ] ] );
+            if ( false === ( $one_tool[0]['_meta']['royal-mcp/available'] ?? null ) ) {
+                throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'not_available', 'This tool is not available on this site.' );
+            }
         }
         // A write carrying the redaction marker would store the marker in place of the real value.
         // The execute_tool passthrough is checked when it calls the tool it names;
@@ -7098,7 +7296,8 @@ class Server {
                 return $this->connection_health_data();
 
             case 'discover_tools':
-                $dt_tools = $this->get_tools();
+                $dt_hidden = 0;
+                $dt_tools  = self::without_unavailable_tools( $this->get_tools(), $dt_hidden );
                 $dt_by_cat  = isset( $args['by_category'] ) ? strtolower( (string) $args['by_category'] ) : '';
                 $dt_by_plug = isset( $args['by_plugin'] ) ? strtolower( (string) $args['by_plugin'] ) : '';
                 $dt_by_cap  = isset( $args['by_capability'] ) ? (string) $args['by_capability'] : '';
@@ -7203,6 +7402,7 @@ class Server {
                     'tools'         => $dt_out,
                     'total_matched' => count( $dt_out ),
                     'total_available' => count( $dt_tools ),
+                    'hidden_unavailable' => $dt_hidden,
                     'filters_applied' => [
                         'by_category'     => $dt_by_cat  !== '' ? $dt_by_cat  : null,
                         'by_plugin'       => $dt_by_plug !== '' ? $dt_by_plug : null,
@@ -7216,7 +7416,7 @@ class Server {
                 if ( '' === $gti_name ) {
                     throw new \Exception( 'tool_name is required.' );
                 }
-                $gti_tools = $this->get_tools();
+                $gti_tools = self::with_availability_for_admins( $this->get_tools() );
                 foreach ( $gti_tools as $gti_tool ) {
                     if ( ( (string) ( $gti_tool['name'] ?? '' ) ) === $gti_name ) {
                         return [
@@ -8737,6 +8937,9 @@ class Server {
                     'total'        => $lrc_total,
                     'window_hours' => \Royal_MCP\MCP\Undo_Store::ttl_hours(),
                 ];
+
+            case 'mcp_get_skill':
+                return \Royal_MCP\MCP\Support\Skills::tool_reply( is_array( $args ) ? $args : [] );
 
             case 'mcp_get_change':
                 $gc_id = isset($args['change_id']) ? strtolower(sanitize_text_field((string) $args['change_id'])) : '';
@@ -11628,6 +11831,62 @@ class Server {
                             ]
                         );
 
+                    case 'wp_publish_and_launch':
+                    case 'seo_optimize_for_launch':
+                    case 'wp_migrate_theme_assets':
+                        $lt_undone = LaunchToolsIntegration::undo( $undo_snapshot, $undo_force );
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return $lt_undone;
+
+                    case 'wp_install_plugin':
+                    case 'wp_install_theme':
+                    case 'wp_activate_plugin':
+                    case 'wp_deactivate_plugin':
+                    case 'wp_switch_theme':
+                    case 'wp_set_plugin_auto_update':
+                    case 'wp_set_theme_auto_update':
+                        $pt_undone = PluginsThemesIntegration::undo( $undo_snapshot, $undo_force );
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return $pt_undone;
+
+                    case 'acf_create_field_group':
+                    case 'acf_clone_field_group':
+                    case 'acf_update_field_group':
+                    case 'acf_delete_field_group':
+                    case 'acf_import_field_group_json':
+                    case 'acf_add_field':
+                    case 'acf_update_field_definition':
+                    case 'acf_delete_field':
+                    case 'acf_reorder_fields':
+                    case 'acf_register_post_type':
+                        $acf_undone = AcfSetupIntegration::undo( $undo_snapshot, $undo_force );
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return $acf_undone;
+
+                    case 'wp_set_maintenance_mode':
+                        $mm_undone = MaintenanceModeIntegration::undo( $undo_snapshot, $undo_force );
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return $mm_undone;
+
+                    case 'rafp_update_referral_status':
+                    case 'rafp_create_campaign':
+                    case 'rafp_create_challenge':
+                    case 'rafp_assign_landing_page':
+                        $rafp_undone = RoyalAffiliateWritesIntegration::undo( $undo_snapshot, $undo_force );
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return $rafp_undone;
+
+                    case 'formforge_duplicate':
+                    case 'formforge_create_from_template':
+                        $ff_undone = FormForgeIntegration::undo( $undo_snapshot, $undo_force );
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return $ff_undone;
+
+                    case 'gp_block_ip':
+                        $gp_undone = \Royal_MCP\Integrations\GuardPressControls::undo( $undo_snapshot, $undo_force );
+                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        return $gp_undone;
+
                     case 'redirection_create_redirect':
                     case 'redirection_update_redirect':
                         $red_undone = RedirectionIntegration::undo( $undo_snapshot, $undo_force );
@@ -13008,7 +13267,22 @@ class Server {
                     }
                 }
 
-                // Route to integration handlers
+                // Route to integration handlers. Tools matched by their exact name come first: some share a prefix with a family below.
+                if ( SiteReportsIntegration::handles( $name ) ) {
+                    return SiteReportsIntegration::execute_tool( $name, $args );
+                }
+                if ( LaunchToolsIntegration::handles( $name ) ) {
+                    return LaunchToolsIntegration::execute_tool( $name, $args );
+                }
+                if ( PluginsThemesIntegration::handles( $name ) ) {
+                    return PluginsThemesIntegration::execute_tool( $name, $args );
+                }
+                if ( AcfSetupIntegration::handles( $name ) ) {
+                    return AcfSetupIntegration::execute_tool( $name, $args );
+                }
+                if ( MaintenanceModeIntegration::handles( $name ) ) {
+                    return MaintenanceModeIntegration::execute_tool( $name, $args );
+                }
                 if ( strpos( $name, 'wc_' ) === 0 ) {
                     return WooIntegration::execute_tool( $name, $args );
                 }
@@ -13047,6 +13321,27 @@ class Server {
                 }
                 if ( strpos( $name, 'yoast_' ) === 0 ) {
                     return YoastIntegration::execute_tool( $name, $args );
+                }
+                if ( RoyalAffiliateWritesIntegration::handles( $name ) ) {
+                    return RoyalAffiliateWritesIntegration::execute_tool( $name, $args );
+                }
+                if ( RoyalAffiliateIntegration::handles( $name ) ) {
+                    return RoyalAffiliateIntegration::execute_tool( $name, $args );
+                }
+                if ( FormForgeIntegration::handles( $name ) ) {
+                    return FormForgeIntegration::execute_tool( $name, $args );
+                }
+                if ( PageChecksIntegration::handles( $name ) ) {
+                    return PageChecksIntegration::execute_tool( $name, $args );
+                }
+                if ( SeoAuditIntegration::handles( $name ) ) {
+                    return SeoAuditIntegration::execute_tool( $name, $args );
+                }
+                if ( SeoReadsIntegration::handles( $name ) ) {
+                    return SeoReadsIntegration::execute_tool( $name, $args );
+                }
+                if ( BackupStatusIntegration::handles( $name ) ) {
+                    return BackupStatusIntegration::execute_tool( $name, $args );
                 }
                 if ( strpos( $name, 'updraftplus_' ) === 0 ) {
                     return UpdraftIntegration::execute_tool( $name, $args );

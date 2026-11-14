@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.5.17
+ * Version: 2.0.0
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -41,7 +41,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 }
 
 // Define plugin constants.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.17' );
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '2.0.0' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -182,6 +182,15 @@ class Royal_MCP_Plugin {
         // Preview_Link redirect handler for rmcp_preview token URLs.
         \Royal_MCP\MCP\Support\Preview_Link::register();
 
+        // The 503 page for visitors while maintenance mode is on.
+        \Royal_MCP\Integrations\MaintenanceMode::register();
+
+        // The public IndexNow key address the launch tools point search engines to.
+        \Royal_MCP\Integrations\LaunchTools::register();
+
+        // Other plugins' WordPress abilities the owner turned on, offered as tools.
+        \Royal_MCP\Abilities\Plugin_Abilities::register();
+
         // Weekly per-protocol / per-client / per-method request rollups.
         // Passive observer on rest_pre_dispatch; wp_options storage keyed by
         // ISO year-week, no custom table. Data feeds the Protocol Insights
@@ -294,7 +303,7 @@ class Royal_MCP_Plugin {
      */
     public function add_action_links($links) {
         $plugin_links = [
-            '<a href="' . admin_url('admin.php?page=royal-mcp') . '">' . __('Settings', 'royal-mcp') . '</a>',
+            '<a href="' . admin_url('admin.php?page=royal-mcp-connections') . '">' . __('Settings', 'royal-mcp') . '</a>',
             '<a href="https://royalplugins.com/support/royal-mcp/" target="_blank">' . __('Docs', 'royal-mcp') . '</a>',
         ];
         return array_merge($plugin_links, $links);
@@ -1111,6 +1120,11 @@ class Royal_MCP_Plugin {
             new Royal_MCP\Admin\Authorization_Header_Notice();
             new Royal_MCP\Admin\Legacy_Key_Header_Notice();
             new Royal_MCP\Admin\Help_Page();
+            \Royal_MCP\Admin\Dashboard_Page::register();
+            \Royal_MCP\Admin\Skills_Page::register();
+            \Royal_MCP\Admin\Menu_Layout::register();
+            \Royal_MCP\Admin\Context_Page::register();
+            \Royal_MCP\Admin\Plugin_Abilities_Page::register();
         }
     }
 

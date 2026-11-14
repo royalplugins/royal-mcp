@@ -1024,3 +1024,44 @@ input:checked + .slider:before {
     }
 }
 
+/* One settings form on two screens: each screen shows its own parts. */
+.rmcp-view-connections .rmcp-group-limits,
+.rmcp-view-connections .rmcp-group-writes,
+.rmcp-view-connections .rmcp-group-advanced,
+.rmcp-view-safety .rmcp-group-connection,
+.rmcp-view-safety .rmcp-group-apikey,
+.rmcp-view-safety #royal-mcp-connect-agents,
+.rmcp-view-safety .rmcp-box-connections,
+.rmcp-view-safety .royal-mcp-oauth-sessions,
+.rmcp-view-safety .royal-mcp-troubleshooting {
+	display: none;
+}
+
+.rmcp-view-safety .rmcp-group-limits .rmcp-settings-group-title {
+	margin-top: 0;
+}
+
+/* The row of tabs at the top of a section. */
+.royal-mcp-section-nav {
+	display: flex;
+	align-items: flex-end;
+	gap: 16px;
+	margin: 12px 20px 0 2px;
+}
+
+.royal-mcp-section-nav .nav-tab-wrapper {
+	flex: 1;
+	margin: 0;
+	padding-top: 0;
+}
+
+.royal-mcp-section-help {
+	margin-left: auto;
+	padding-bottom: 6px;
+	text-decoration: none;
+}
+
+.royal-mcp-section-back {
+	padding-bottom: 6px;
+	text-decoration: none;
+}

@@ -247,6 +247,62 @@ class Change_View {
 		return [ 'type' => 'none', 'label' => __( 'No MCP connection (WP-CLI or another plugin)', 'royal-mcp' ) ];
 	}
 
+	/** Longest pause, in seconds, between two changes of one connection that still belong to the same group. */
+	const GROUP_GAP = 1800;
+
+	/**
+	 * Changes put into groups: one group is one connection's run of changes by one user, with
+	 * no pause longer than GROUP_GAP between them. Nothing is stored; the groups are worked out
+	 * from each change's own time, user and connection.
+	 *
+	 * @param array $changes Changes from Undo_Store::all_changes(), newest first.
+	 * @param int   $gap     Longest pause inside a group, in seconds.
+	 * @return array<int, array{user_id:int, connection:array, from:int, to:int, count:int, statuses:array<string,int>, changes:array}>
+	 */
+	public static function groups( array $changes, $gap = self::GROUP_GAP ) {
+		$gap     = max( 0, (int) $gap );
+		$changes = array_values( array_filter( $changes, 'is_array' ) );
+		// Newest first, whatever order the list came in: the grouping below relies on it.
+		usort( $changes, static function ( $a, $b ) {
+			return (int) ( $b['created_at'] ?? 0 ) <=> (int) ( $a['created_at'] ?? 0 );
+		} );
+		$groups = [];
+		$open   = []; // connection key => index of the group that is still collecting
+		foreach ( $changes as $change ) {
+			$via  = isset( $change['via'] ) && is_array( $change['via'] ) ? $change['via'] : [];
+			if ( isset( $via['client_id'] ) && ! is_scalar( $via['client_id'] ) ) {
+				$via['client_id'] = '';
+			}
+			$time = (int) ( $change['created_at'] ?? 0 );
+			// The key follows the connection as it is named in the heading, so one heading is one group.
+			$conn = self::connection( $via );
+			$key  = (int) ( $change['user_id'] ?? 0 ) . '|' . (string) $conn['type'] . '|' . (string) ( $conn['client_id'] ?? '' );
+			// The list runs from new to old, so a change joins its connection's group when it is close to that group's oldest one.
+			if ( isset( $open[ $key ] ) && $groups[ $open[ $key ] ]['from'] - $time <= $gap ) {
+				$i = $open[ $key ];
+			} else {
+				$i            = count( $groups );
+				$open[ $key ] = $i;
+				$groups[ $i ] = [
+					'user_id'    => (int) ( $change['user_id'] ?? 0 ),
+					'connection' => $conn,
+					'from'       => $time,
+					'to'         => $time,
+					'count'      => 0,
+					'statuses'   => [],
+					'changes'    => [],
+				];
+			}
+			$status                            = self::status( $change );
+			$groups[ $i ]['from']              = min( $groups[ $i ]['from'], $time );
+			$groups[ $i ]['to']                = max( $groups[ $i ]['to'], $time );
+			$groups[ $i ]['count']++;
+			$groups[ $i ]['statuses'][ $status ] = ( $groups[ $i ]['statuses'][ $status ] ?? 0 ) + 1;
+			$groups[ $i ]['changes'][]         = $change;
+		}
+		return $groups;
+	}
+
 	/** Expired, undone, or still active. */
 	public static function status( array $change ) {
 		if ( (int) ( $change['expires_at'] ?? 0 ) <= time() ) {

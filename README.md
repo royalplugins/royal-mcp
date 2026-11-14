@@ -57,9 +57,9 @@ Royal MCP answers on its own endpoint and never switches off another plugin's to
 
 ## Capabilities
 
-305 tools: 118 core tools that are always available, plus 187 integration tools that load only when the matching plugin is active.
+384 tools: 140 core tools that are always available, plus 244 integration tools that load only when the matching plugin is active.
 
-### WordPress core (118 tools)
+### WordPress core (140 tools)
 
 - **Content** - Posts, pages and custom post types (create, read, update, delete, clone as a draft, revisions, featured images); sort by publish or last-modified date and find posts edited since a given date
 - **Taxonomies** - Categories, tags, custom taxonomies, read a single term, term meta, post-term linking
@@ -77,7 +77,7 @@ Royal MCP answers on its own endpoint and never switches off another plugin's to
 - **Plugins and themes** - Every installed plugin, including must-use plugins and drop-ins, with versions, active status and last-modified dates; installed themes
 - **Diagnostics** - Site status (WordPress, PHP, MySQL, plugins, themes and cron in one call), PHP error-log tail, a record of PHP fatal errors kept by Royal MCP (credentials hidden), cron schedule, and `royal_mcp_connection_health`
 
-### Plugin integrations (187 tools)
+### Plugin integrations (244 tools)
 
 | Plugin | Tools | What's covered |
 |---|---|---|
@@ -215,7 +215,7 @@ Pro is one plugin that includes everything in Royal MCP. When Pro is active, you
 
 | | Royal MCP (free) | Royal MCP Pro |
 |---|:---:|:---:|
-| **Tools** | 305 | **400+** |
+| **Tools** | 384 | **400+** |
 | Connect Claude, ChatGPT, Cursor and any MCP app (OAuth, API key or Application Password) | ✅ | ✅ |
 | Read-only and drafts-only modes, per-connection access levels | ✅ | ✅ |
 | Recent Changes and 72-hour undo on destructive writes | ✅ | ✅ Pro tools too |

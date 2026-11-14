@@ -54,7 +54,7 @@ class SiteVault {
 		// activating a plugin post-MCP-connection requires the client to
 		// reconnect before the tools become discoverable.
 
-		return [
+		return array_merge( [
 			[
 				'name'        => 'sv_get_backups',
 				'description' => 'List available SiteVault backups',
@@ -112,10 +112,15 @@ class SiteVault {
 				'description' => 'List backup schedules',
 				'inputSchema' => [ 'type' => 'object', 'properties' => new \stdClass() ],
 			],
-		];
+		], SiteVaultHealth::get_tools() );
 	}
 
 	public static function execute_tool( $name, $args ) {
+		// The health tools check the permission themselves and answer for a site without SiteVault.
+		if ( SiteVaultHealth::handles( $name ) ) {
+			return SiteVaultHealth::execute_tool( $name, $args );
+		}
+
 		// cap check fires BEFORE the active-check, so a Subscriber-tier
 		// OAuth Bearer gets a permission error rather than "SiteVault is not
 		// active" (which leaks integration presence). All SiteVault tools are

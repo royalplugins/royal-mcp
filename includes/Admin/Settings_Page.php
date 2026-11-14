@@ -15,6 +15,13 @@ class Settings_Page {
     const REGENERATE_ACTION = 'royal_mcp_regenerate_api_key';
     const DISABLE_KEY_ACTION = 'royal_mcp_disable_api_key';
     const CLEAR_LOG_ACTION   = 'royal_mcp_clear_activity_log';
+    const EXPORT_LOG_ACTION  = 'royal_mcp_export_activity_log';
+    /** Most entries one export holds, newest first. */
+    const LOG_EXPORT_MAX     = 50000;
+    /** Longest exported cell (bytes), under a spreadsheet's own cell limit. */
+    const LOG_EXPORT_CELL_MAX = 30000;
+    /** Column names of the Activity Log export. */
+    const LOG_EXPORT_COLUMNS = [ 'id', 'timestamp', 'source', 'action', 'status', 'tool', 'user_id', 'auth', 'client_id', 'access_level', 'route', 'arg_keys', 'error', 'change_id' ];
 
     /** Days an Activity Log entry is kept. */
     const LOG_RETENTION_DAYS = 90;
@@ -87,6 +94,7 @@ class Settings_Page {
         add_action('admin_post_' . self::REGENERATE_ACTION, [$this, 'handle_regenerate_api_key']);
         add_action('admin_post_' . self::DISABLE_KEY_ACTION, [$this, 'handle_disable_api_key']);
         add_action('admin_post_' . self::CLEAR_LOG_ACTION, [$this, 'handle_clear_activity_log']);
+        add_action('admin_post_' . self::EXPORT_LOG_ACTION, [$this, 'handle_export_activity_log']);
     }
 
     /** Render the wp.org review-request banner (Free tier only, version-stamped dismissal). */
@@ -166,21 +174,39 @@ class Settings_Page {
 
     public function add_menu_page() {
         add_menu_page(
-            __('Royal MCP Settings', 'royal-mcp'),
+            __('Royal MCP', 'royal-mcp'),
             __('Royal MCP', 'royal-mcp'),
             self::admin_capability(),
             'royal-mcp',
-            [$this, 'render_settings_page'],
+            [ Dashboard_Page::class, 'render' ],
             'dashicons-networking',
             80
         );
 
         add_submenu_page(
             'royal-mcp',
-            __('Settings', 'royal-mcp'),
-            __('Settings', 'royal-mcp'),
+            __('Royal MCP', 'royal-mcp'),
+            __('Dashboard', 'royal-mcp'),
             self::admin_capability(),
             'royal-mcp',
+            [ Dashboard_Page::class, 'render' ]
+        );
+
+        add_submenu_page(
+            'royal-mcp',
+            __('Connections', 'royal-mcp'),
+            __('Connections', 'royal-mcp'),
+            self::admin_capability(),
+            Menu_Layout::CONNECTIONS,
+            [$this, 'render_settings_page']
+        );
+
+        add_submenu_page(
+            'royal-mcp',
+            __('Safety', 'royal-mcp'),
+            __('Safety', 'royal-mcp'),
+            self::admin_capability(),
+            Menu_Layout::SAFETY,
             [$this, 'render_settings_page']
         );
 
@@ -591,7 +617,7 @@ class Settings_Page {
             [ '%s', '%s', '%s', '%s', '%s' ]
         );
 
-        wp_safe_redirect( add_query_arg( [ 'page' => 'royal-mcp', 'settings-updated' => 'true' ], admin_url( 'admin.php' ) ) );
+        wp_safe_redirect( add_query_arg( [ 'page' => Menu_Layout::CONNECTIONS, 'settings-updated' => 'true' ], admin_url( 'admin.php' ) ) );
         exit;
     }
 
@@ -628,7 +654,7 @@ class Settings_Page {
             [ '%s', '%s', '%s', '%s', '%s' ]
         );
 
-        wp_safe_redirect( add_query_arg( [ 'page' => 'royal-mcp', 'settings-updated' => 'true' ], admin_url( 'admin.php' ) ) );
+        wp_safe_redirect( add_query_arg( [ 'page' => Menu_Layout::CONNECTIONS, 'settings-updated' => 'true' ], admin_url( 'admin.php' ) ) );
         exit;
     }
 
@@ -684,6 +710,9 @@ class Settings_Page {
             'api_key_user_id' => 0,
         ]);
 
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- reads which screen is open, changes nothing
+        $royal_mcp_view = isset( $_GET['page'] ) && Menu_Layout::SAFETY === sanitize_key( wp_unslash( $_GET['page'] ) ) ? 'safety' : 'connections';
+
         include ROYAL_MCP_PLUGIN_DIR . 'templates/admin/settings.php';
     }
 
@@ -732,6 +761,112 @@ class Settings_Page {
             }
         }
         return $deleted;
+    }
+
+    /** A value as a CSV cell: one line, and never read as a formula by a spreadsheet. */
+    private static function csv_cell( $value ) {
+        $value = is_scalar( $value ) ? (string) $value : '';
+        // One line of printable text: control and line-separator characters become a space.
+        $value = (string) preg_replace( '/[\x00-\x1F\x7F]+|\xE2\x80[\xA8\xA9]/', ' ', $value );
+        $value = trim( $value );
+        if ( strlen( $value ) > self::LOG_EXPORT_CELL_MAX ) {
+            $value = substr( $value, 0, self::LOG_EXPORT_CELL_MAX ) . '...';
+        }
+        // Formula characters are looked for behind spaces and invisible characters too, in their full-width forms as well.
+        $lead = (string) preg_replace( '/^(?:\s|\xC2\xA0|\xE2\x80[\x8B-\x8F]|\xEF\xBB\xBF)+/', '', $value );
+        return preg_match( '/^(?:[=+\-@]|\xEF\xBC\x9D|\xEF\xBC\x8B|\xEF\xBC\x8D|\xEF\xBC\xA0)/', $lead ) ? "'" . $value : $value;
+    }
+
+    /**
+     * Write the Activity Log as CSV to an open stream, newest first. An entry holds the tool
+     * name, the names of its arguments and any error text, never argument values.
+     *
+     * @param resource $stream   Open, writable stream.
+     * @param int      $max_rows Most entries to write.
+     * @return int Entries written.
+     */
+    public static function write_activity_log_csv( $stream, $max_rows = self::LOG_EXPORT_MAX ) {
+        global $wpdb;
+        // A byte-order mark so a spreadsheet reads the file as UTF-8. No escape character: a quote inside a
+        // cell is always doubled, which is the only form spreadsheets read, so a cell cannot end early.
+        fwrite( $stream, "\xEF\xBB\xBF" ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- the response body or a memory stream, not a file
+        fputcsv( $stream, self::LOG_EXPORT_COLUMNS, ',', '"', '' );
+        $max_rows = max( 0, (int) $max_rows );
+        if ( ! self::log_table_exists() ) {
+            return 0;
+        }
+        $table   = esc_sql( $wpdb->prefix . 'royal_mcp_logs' );
+        $written = 0;
+        $before  = PHP_INT_MAX;
+        while ( $written < $max_rows ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above; read in batches by id
+            $rows = $wpdb->get_results( $wpdb->prepare( "SELECT id, timestamp, mcp_server, action, request_data, response_data, status FROM `{$table}` WHERE id < %d ORDER BY id DESC LIMIT %d", $before, min( 1000, $max_rows - $written ) ), ARRAY_A );
+            if ( ! $rows ) {
+                break;
+            }
+            foreach ( $rows as $row ) {
+                $req    = json_decode( (string) $row['request_data'], true );
+                $res    = json_decode( (string) $row['response_data'], true );
+                $req    = is_array( $req ) ? $req : [];
+                $res    = is_array( $res ) ? $res : [];
+                $action = (string) $row['action'];
+                $tool   = isset( $req['tool'] ) && is_scalar( $req['tool'] ) ? (string) $req['tool'] : ( 0 === strpos( $action, 'tools/call:' ) ? substr( $action, 11 ) : '' );
+                $keys   = isset( $req['arg_keys'] ) && is_array( $req['arg_keys'] ) ? implode( ' ', array_filter( $req['arg_keys'], 'is_scalar' ) ) : '';
+                fputcsv( $stream, array_map( [ __CLASS__, 'csv_cell' ], [
+                    (int) $row['id'],
+                    $row['timestamp'],
+                    $row['mcp_server'],
+                    $action,
+                    $row['status'],
+                    $tool,
+                    $req['user_id'] ?? ( $req['by'] ?? '' ),
+                    $req['auth'] ?? '',
+                    $req['client_id'] ?? '',
+                    $req['access_level'] ?? '',
+                    $req['route'] ?? '',
+                    $keys,
+                    $res['error'] ?? '',
+                    $res['change_id'] ?? '',
+                ] ), ',', '"', '' );
+                $written++;
+                $before = (int) $row['id'];
+            }
+        }
+        return $written;
+    }
+
+    /** The Export button on the Activity Log page: record who exported, then send the CSV. */
+    public function handle_export_activity_log() {
+        if ( ! current_user_can( self::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from admin_capability(); reads the per-site wp_royal_mcp_logs table only
+            wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
+        }
+        check_admin_referer( self::EXPORT_LOG_ACTION );
+
+        global $wpdb;
+        if ( self::log_table_exists() ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- insert into our own log table
+            $wpdb->insert(
+                $wpdb->prefix . 'royal_mcp_logs',
+                [
+                    'mcp_server'    => 'MCP Server',
+                    'action'        => 'settings:activity_log_exported',
+                    'request_data'  => wp_json_encode( [ 'source' => 'settings', 'by' => (int) get_current_user_id() ] ),
+                    'response_data' => wp_json_encode( [ 'status' => 'success' ] ),
+                    'status'        => 'success',
+                ],
+                [ '%s', '%s', '%s', '%s', '%s' ]
+            );
+        }
+        nocache_headers();
+        header( 'Content-Type: text/csv; charset=utf-8' );
+        header( 'X-Content-Type-Options: nosniff' );
+        header( 'Content-Disposition: attachment; filename="royal-mcp-activity-log-' . gmdate( 'Y-m-d' ) . '.csv"' );
+        $out = fopen( 'php://output', 'w' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- the response body, not a file
+        if ( $out ) {
+            self::write_activity_log_csv( $out );
+            fclose( $out ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- the response body, not a file
+        }
+        exit;
     }
 
     /** The Clear button on the Activity Log page: delete every entry, then record who did it. */

@@ -253,19 +253,21 @@ class Undo_Store {
      * @param bool     $include_expired Also return expired rows the daily sweep hasn't removed yet.
      * @return array<int, array>
      */
-    public static function all_changes( ?int $user_id = null, bool $include_expired = false ): array {
+    public static function all_changes( ?int $user_id = null, bool $include_expired = false, int $limit = self::CHANGES_LIMIT ): array {
+        $limit = max( 1, min( self::CHANGES_LIMIT, $limit ) );
+        $batch = min( self::CHANGES_BATCH, $limit );
         global $wpdb;
         $prefix = $wpdb->esc_like( self::OPTION_PREFIX ) . '%';
         $out    = [];
         $before = PHP_INT_MAX;
-        while ( count( $out ) < self::CHANGES_LIMIT ) {
+        while ( count( $out ) < $limit ) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $rows = $wpdb->get_results(
                 $wpdb->prepare(
                     "SELECT option_id, option_value FROM {$wpdb->options} WHERE option_name LIKE %s AND option_id < %d ORDER BY option_id DESC LIMIT %d",
                     $prefix,
                     $before,
-                    self::CHANGES_BATCH
+                    $batch
                 )
             );
             if ( empty( $rows ) ) {
@@ -276,12 +278,12 @@ class Undo_Store {
                 $data   = self::visible( self::decode( isset( $row->option_value ) ? (string) $row->option_value : '' ), $user_id, $include_expired );
                 if ( null !== $data ) {
                     $out[] = $data;
-                    if ( count( $out ) >= self::CHANGES_LIMIT ) {
+                    if ( count( $out ) >= $limit ) {
                         break;
                     }
                 }
             }
-            if ( count( $rows ) < self::CHANGES_BATCH ) {
+            if ( count( $rows ) < $batch ) {
                 break;
             }
         }
