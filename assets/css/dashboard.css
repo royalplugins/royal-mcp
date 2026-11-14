@@ -36,11 +36,6 @@
 	color: #8a1f1f;
 }
 
-.royal-mcp-dash-help {
-	margin-inline-start: auto;
-	text-decoration: none;
-}
-
 .royal-mcp-dash-card {
 	background: #fff;
 	border: 1px solid #dcdcde;
@@ -140,7 +135,13 @@
 
 .royal-mcp-dash-tile a {
 	font-size: 13px;
-	text-decoration: none;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+
+.royal-mcp-dash-tile a:hover,
+.royal-mcp-dash-tile a:focus {
+	text-decoration-thickness: 2px;
 }
 
 .royal-mcp-dash-cols {
