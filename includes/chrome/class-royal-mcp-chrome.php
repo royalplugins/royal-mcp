@@ -299,7 +299,7 @@ class Royal_MCP_Chrome {
         add_submenu_page(
             'royal-mcp',
             __( 'Royally', 'royal-mcp' ),
-            '<span class="royal-mcp-upgrade-menu-text">' . esc_html__( 'Upgrade', 'royal-mcp' ) . '</span>',
+            '<span class="royal-mcp-upgrade-menu-text">' . esc_html__( 'Upgrade To Pro', 'royal-mcp' ) . '</span>',
             'manage_options',
             self::FM_MENU_SLUG,
             '__return_true'

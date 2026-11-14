@@ -41,8 +41,6 @@ $royal_mcp_view = isset( $royal_mcp_view ) && in_array( $royal_mcp_view, [ 'conn
 <div class="wrap royal-mcp-settings rmcp-view-<?php echo esc_attr( $royal_mcp_view ); ?>">
     <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
 
-    <?php \Royal_MCP\Admin\Settings_Page::render_review_banner(); ?>
-
     <?php settings_errors(); ?>
 
     <form method="post" action="options.php" id="royal-mcp-settings-form">

@@ -40,6 +40,31 @@ class Dashboard_Page {
 		wp_enqueue_style( 'royal-mcp-dashboard', ROYAL_MCP_PLUGIN_URL . 'assets/css/dashboard.css', [], ROYAL_MCP_VERSION . '.' . ( file_exists( $path ) ? filemtime( $path ) : '0' ) );
 	}
 
+	/**
+	 * Card asking for a WordPress.org review. "Not now" hides it until the next
+	 * Royal MCP version (the same per-user dismissal the settings screen used).
+	 */
+	private static function review_card( $btn ) {
+		if ( class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false ) ) {
+			return;
+		}
+		$user_id   = get_current_user_id();
+		$dismissed = $user_id ? (string) get_user_meta( $user_id, 'royal_mcp_review_dismissed_version', true ) : '';
+		if ( ! $user_id || ( '' !== $dismissed && version_compare( $dismissed, ROYAL_MCP_VERSION, '>=' ) ) ) {
+			return;
+		}
+		$dismiss = wp_nonce_url( add_query_arg( 'royal_mcp_dismiss_review', '1', self::url( self::PAGE_SLUG ) ), 'royal_mcp_dismiss_review' );
+		$star    = '<svg style="width:16px;height:16px;flex-shrink:0;" viewBox="0 0 24 24" fill="#C9A227" stroke="#C9A227" stroke-width="1" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+		$out     = '<svg style="width:14px;height:14px;flex-shrink:0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+		echo '<div class="royal-mcp-dash-card royal-mcp-dash-review">';
+		echo '<h2>' . esc_html__( 'Enjoying Royal MCP?', 'royal-mcp' ) . '</h2>';
+		echo '<p style="display:flex;gap:2px;margin:0 0 8px;" aria-hidden="true">' . str_repeat( $star, 5 ) . '</p>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- fixed SVG markup
+		echo '<p>' . esc_html__( 'A quick review on WordPress.org helps other site owners find it. It takes about a minute.', 'royal-mcp' ) . '</p>';
+		echo '<p style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><a class="button button-primary" style="' . esc_attr( $btn ) . '" target="_blank" rel="noopener noreferrer" href="https://wordpress.org/support/plugin/royal-mcp/reviews/#new-post"><span>' . esc_html__( 'Leave a review', 'royal-mcp' ) . '</span>' . $out . '</a>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- fixed SVG markup
+		echo '<a href="' . esc_url( $dismiss ) . '">' . esc_html__( 'Not now', 'royal-mcp' ) . '</a></p>';
+		echo '</div>';
+	}
+
 	public static function url( $slug, array $args = [] ) {
 		return add_query_arg( [ 'page' => $slug ] + $args, admin_url( 'admin.php' ) );
 	}
@@ -191,10 +216,11 @@ class Dashboard_Page {
 		echo '<div class="royal-mcp-dash-head">';
 		echo '<h1>' . esc_html__( 'Royal MCP', 'royal-mcp' ) . '</h1>';
 		echo '<span class="royal-mcp-dash-pill ' . ( $d['enabled'] ? 'is-on' : 'is-off' ) . '">' . esc_html( $d['enabled'] ? __( 'On', 'royal-mcp' ) : __( 'Off', 'royal-mcp' ) ) . '</span>';
-		echo '<a class="royal-mcp-dash-help" href="' . esc_url( self::url( Help_Page::SLUG ) ) . '">' . esc_html__( 'Help', 'royal-mcp' ) . '</a>';
 		echo '</div>';
 		// WordPress puts admin notices (ours and other plugins') after this marker, not inside the header row.
 		echo '<hr class="wp-header-end">';
+		// Other plugins' notices, folded into one row.
+		Other_Notices::render();
 
 		// ---- connect
 		echo '<div class="royal-mcp-dash-card royal-mcp-dash-connect">';
@@ -275,13 +301,6 @@ class Dashboard_Page {
 
 		echo '</div><div class="royal-mcp-dash-side">';
 
-		// ---- upgrade
-		echo '<div class="royal-mcp-dash-card royal-mcp-dash-upgrade">';
-		echo '<h2>' . esc_html__( 'One connection for everything your AI manages', 'royal-mcp' ) . '</h2>';
-		echo '<p>' . esc_html__( 'Royally puts your whole stack behind one MCP connection: every WordPress site you run, plus Cloudflare, UptimeRobot, Notion and other MCP servers. Each change can wait for your approval, is recorded and can be undone. Royal MCP Pro comes with it.', 'royal-mcp' ) . '</p>';
-		echo '<p><a class="button button-primary" style="' . esc_attr( $btn ) . '" target="_blank" rel="noopener" href="' . esc_url( add_query_arg( [ 'utm_source' => 'royal_mcp_free', 'utm_medium' => 'free_plugin', 'utm_content' => 'dashboard_upgrade_card', 'utm_campaign' => 'royal_mcp_admin' ], 'https://royalplugins.com/royally/' ) ) . '"><span>' . esc_html__( 'See Royally', 'royal-mcp' ) . '</span>' . self::icon( 'arrow' ) . '</a></p>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- icon() returns fixed SVG markup
-		echo '</div>';
-
 		// ---- help
 		echo '<div class="royal-mcp-dash-card">';
 		echo '<h2>' . esc_html__( 'Help', 'royal-mcp' ) . '</h2>';
@@ -290,6 +309,15 @@ class Dashboard_Page {
 		echo '<li><a href="' . esc_url( self::url( 'royal-mcp-logs' ) ) . '">' . esc_html__( 'Activity Log', 'royal-mcp' ) . '</a></li>';
 		echo '<li><a target="_blank" rel="noopener" href="https://wordpress.org/support/plugin/royal-mcp/">' . esc_html__( 'Support forum', 'royal-mcp' ) . '</a></li>';
 		echo '</ul></div>';
+
+		self::review_card( $btn );
+
+		// ---- upgrade
+		echo '<div class="royal-mcp-dash-card royal-mcp-dash-upgrade">';
+		echo '<h2>' . esc_html__( 'One connection for everything your AI manages', 'royal-mcp' ) . '</h2>';
+		echo '<p>' . esc_html__( 'Royally puts your whole stack behind one MCP connection: every WordPress site you run, plus Cloudflare, UptimeRobot, Notion and other MCP servers. Each change can wait for your approval, is recorded and can be undone. Royal MCP Pro comes with it.', 'royal-mcp' ) . '</p>';
+		echo '<p><a class="button button-primary" style="' . esc_attr( $btn ) . '" target="_blank" rel="noopener" href="' . esc_url( add_query_arg( [ 'utm_source' => 'royal_mcp_free', 'utm_medium' => 'free_plugin', 'utm_content' => 'dashboard_upgrade_card', 'utm_campaign' => 'royal_mcp_admin' ], 'https://royalplugins.com/royally/' ) ) . '"><span>' . esc_html__( 'See Royally', 'royal-mcp' ) . '</span>' . self::icon( 'arrow' ) . '</a></p>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- icon() returns fixed SVG markup
+		echo '</div>';
 
 		echo '</div></div>';
 

@@ -164,27 +164,23 @@ class Menu_Layout {
 		if ( ! $ours || ! current_user_can( Settings_Page::admin_capability() ) ) {
 			return;
 		}
-		if ( Help_Page::SLUG === $open ) {
-			echo '<div class="royal-mcp-section-nav"><a class="royal-mcp-section-back" href="' . esc_url( add_query_arg( [ 'page' => self::PARENT ], admin_url( 'admin.php' ) ) ) . '">&larr; ' . esc_html__( 'Dashboard', 'royal-mcp' ) . '</a></div>';
-			return;
-		}
-		// The Dashboard has its own Help link and no tabs.
-		if ( '' === $section || self::PARENT === $section ) {
+		// The Dashboard and the Help screen have no tabs.
+		if ( Help_Page::SLUG === $open || '' === $section || self::PARENT === $section ) {
 			return;
 		}
 		$tabs = self::sections()[ $section ]['tabs'];
-		echo '<div class="royal-mcp-section-nav">';
-		if ( $tabs ) {
-			echo '<nav class="nav-tab-wrapper" aria-label="' . esc_attr( self::sections()[ $section ]['label'] ) . '">';
-			foreach ( $tabs as $slug => $label ) {
-				if ( ! self::registered( $slug ) ) {
-					continue;
-				}
-				echo '<a class="nav-tab' . ( $slug === $open ? ' nav-tab-active' : '' ) . '" href="' . esc_url( add_query_arg( [ 'page' => $slug ], admin_url( 'admin.php' ) ) ) . '"' . ( $slug === $open ? ' aria-current="page"' : '' ) . '>' . esc_html( $label ) . '</a>';
-			}
-			echo '</nav>';
+		if ( ! $tabs ) {
+			return;
 		}
-		echo '<a class="royal-mcp-section-help" href="' . esc_url( add_query_arg( [ 'page' => Help_Page::SLUG ], admin_url( 'admin.php' ) ) ) . '">' . esc_html__( 'Help', 'royal-mcp' ) . '</a>';
+		echo '<div class="royal-mcp-section-nav">';
+		echo '<nav class="nav-tab-wrapper" aria-label="' . esc_attr( self::sections()[ $section ]['label'] ) . '">';
+		foreach ( $tabs as $slug => $label ) {
+			if ( ! self::registered( $slug ) ) {
+				continue;
+			}
+			echo '<a class="nav-tab' . ( $slug === $open ? ' nav-tab-active' : '' ) . '" href="' . esc_url( add_query_arg( [ 'page' => $slug ], admin_url( 'admin.php' ) ) ) . '"' . ( $slug === $open ? ' aria-current="page"' : '' ) . '>' . esc_html( $label ) . '</a>';
+		}
+		echo '</nav>';
 		echo '</div>';
 	}
 

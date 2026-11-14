@@ -97,53 +97,9 @@ class Settings_Page {
         add_action('admin_post_' . self::EXPORT_LOG_ACTION, [$this, 'handle_export_activity_log']);
     }
 
-    /** Render the wp.org review-request banner (Free tier only, version-stamped dismissal). */
-    public static function render_review_banner() {
-        if ( class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false ) ) {
-            return;
-        }
-        $user_id = get_current_user_id();
-        if (!$user_id || !current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- read-only banner render gated by per-user meta (no state mutation)
-            return;
-        }
-        $dismissed_at = get_user_meta($user_id, 'royal_mcp_review_dismissed_version', true);
-        if ($dismissed_at && version_compare($dismissed_at, ROYAL_MCP_VERSION, '>=')) {
-            return;
-        }
-
-        $dismiss_url = wp_nonce_url(
-            add_query_arg('royal_mcp_dismiss_review', '1'),
-            'royal_mcp_dismiss_review'
-        );
-        ?>
-        <div class="royal-mcp-review-banner">
-            <a href="<?php echo esc_url($dismiss_url); ?>" class="royal-mcp-review-dismiss" aria-label="<?php esc_attr_e('Dismiss this notice', 'royal-mcp'); ?>">
-                <span class="dashicons dashicons-no-alt" aria-hidden="true"></span>
-            </a>
-            <div class="royal-mcp-review-body">
-                <span class="royal-mcp-review-stars" aria-hidden="true">
-                    <span class="dashicons dashicons-star-filled"></span>
-                    <span class="dashicons dashicons-star-filled"></span>
-                    <span class="dashicons dashicons-star-filled"></span>
-                    <span class="dashicons dashicons-star-filled"></span>
-                    <span class="dashicons dashicons-star-filled"></span>
-                </span>
-                <div class="royal-mcp-review-text">
-                    <strong><?php esc_html_e('Enjoying Royal MCP?', 'royal-mcp'); ?></strong>
-                    <span><?php esc_html_e('Leaving a quick review on WordPress.org helps other admins find it. Takes about a minute.', 'royal-mcp'); ?></span>
-                </div>
-            </div>
-            <a href="https://wordpress.org/support/plugin/royal-mcp/reviews/#new-post" target="_blank" rel="noopener noreferrer" class="royal-mcp-review-cta">
-                <?php esc_html_e('Leave a Review', 'royal-mcp'); ?>
-                <span class="dashicons dashicons-external" aria-hidden="true"></span>
-            </a>
-        </div>
-        <?php
-    }
-
     /**
-     * Persist a per-user dismissal of the review banner. Version-stamped —
-     * the banner reappears on each plugin version update.
+     * Persist a per-user dismissal of the Dashboard's review card. Version-stamped:
+     * the card comes back with the next plugin version.
      */
     public function maybe_dismiss_review_banner() {
         if (!isset($_GET['royal_mcp_dismiss_review'])) {
