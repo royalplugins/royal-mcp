@@ -76,7 +76,7 @@ Each workflow is a part of this skill. Read the one you need before you start th
 
 **Undo**
 
-- These writes end their reply with `Undo token: <32 characters>` and the undo window (72 hours unless the site changed it): every `elementor_*` write except the bulk rebuild, plus `wp_update_post`, `wp_update_page`, `wp_update_seo_meta` and `wp_create_menu_item`. These return none: the bulk rebuild, `wp_set_featured_image`, `wp_upload_media_from_url`, `wp_create_preview_link` and the cache purge tools.
+- These writes end their reply with `Undo token: <32 characters>` and the undo window (72 hours unless the site changed it): every `elementor_*` write except the bulk rebuild, plus `wp_update_post`, `wp_update_page`, `wp_update_seo_meta`, `wp_create_menu_item`, `wp_set_featured_image` and the media uploads (`wp_upload_media_from_url`, `wp_upload_media`; a reused item has none). These return none: the bulk rebuild, `wp_create_preview_link` and the cache purge tools.
 - Keep every token, in order. Each one restores the page to just before its own write, so after several writes on one page undo them newest first. To reverse, call `mcp_undo_last_operation` with `token`.
 - A token works once, and only for the same WordPress user that made the change.
 - If the page was edited after your write, undo is refused with `edited_since_write` and the token stays valid. With `force: true`, undoing an edit restores the whole page as it was before that write, so later edits are lost; undoing a clone or a template import deletes the copy or template permanently (no trash), with every later edit. Tell the user that, and pass `force: true` only if they agree. To remove an edited copy without that, use `wp_delete_page` or `wp_delete_post` (it goes to the trash).

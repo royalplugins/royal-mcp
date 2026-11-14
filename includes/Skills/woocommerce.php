@@ -92,7 +92,7 @@ Bad:
 - **Undo tokens.** Every write that can be undone puts the token in the reply text ("Undo token: ... pass to mcp_undo_last_operation") and in `structuredContent.undo_token`, with `undo_expires_at`. The window is 72 hours unless the site changed it; read it from the reply instead of assuming. Undo with `mcp_undo_last_operation({ token })`.
 - **Undo can be refused.** If the item was changed after your write, undo answers `edited_since_write` and keeps the token valid. Use `mcp_get_change({ change_id: <token> })` to show the user the value before, the value written and the value now. Pass `force: true` only after the user has seen that and agreed.
 - **One token per call.** A loop over 40 products gives 40 tokens. Only `wc_batch_update_variations` covers many changes with one token.
-- **Calls without an undo token:** `wc_update_order` with `meta_data` or `line_items`, `wp_create_term`, `wp_add_post_terms`, `wp_set_featured_image`, and any reply with `undo_available: false`.
+- **Calls without an undo token:** `wc_update_order` with `meta_data` or `line_items`, and any reply with `undo_available: false`. `wp_create_term`, `wp_add_post_terms` and `wp_set_featured_image` do return one.
 - **Variable parents have no price of their own.** The shop shows variation prices. `wc_update_product` accepts a price on a variable parent without complaint, and it changes nothing a customer sees. Change the variations.
 - **`sale_price` has three states.** Left out keeps the sale, `""` ends it, a number sets it. `null` is the same as left out.
 - **Price format.** Dot for decimals, no symbols, no thousands separators, not negative. A sale price above the regular price is refused, also when you send only one of the two and the stored other one makes it wrong.
@@ -190,7 +190,7 @@ ROYAL_MCP_SKILL_TEXT
    - Variation status is `publish` or `private`. Any other value becomes `publish`. Use `private` to hide one.
    - The reply has `op_counts`, the new IDs under `create`, `undo_available` and one undo token for the batch.
 5. **Verify.** `wc_get_product_variations({ product_id, page: 1 })`: `total` must match your matrix and every row must show the right `attributes`, price and stock.
-6. **Image.** If the user gave one: `wp_set_featured_image({ post_id: <product id>, image_url })` or with a `media_id`. This call returns no undo token.
+6. **Image.** If the user gave one: `wp_set_featured_image({ post_id: <product id>, image_url })` or with a `media_id`. Its undo token puts the earlier image back (and deletes an image the call downloaded, when no other post uses it).
 7. **Stop and show.** Give the name, ID, number of variations, price range and the `url` from the create reply. Ask the user to look at the draft.
 8. **Publish only after a yes.** `wc_update_product({ id, status: "publish" })`. Its undo token puts the product back to draft.
 
