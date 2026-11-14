@@ -35,6 +35,8 @@ class Drafts_Policy {
 	const UNDO_CONTENT_OPS = [
 		'wp_update_post'                   => 'post_id',
 		'wp_create_post_trash'             => 'post_id',
+		'wp_set_featured_image'            => 'post_id',
+		'wp_add_post_terms'                => 'post_id',
 		'wp_update_post_meta'              => 'post_id',
 		'wp_add_post_meta'                 => 'post_id',
 		'wp_update_seo_meta'               => 'post_id',
@@ -271,6 +273,11 @@ class Drafts_Policy {
 		// Deleting a new table or an imported template again (the policy allowed creating it);
 		// each undo refuses once what it created was changed since.
 		if ( in_array( $op, [ 'tablepress_create_table', 'tablepress_copy_table', 'elementor_import_template' ], true ) ) {
+			return null;
+		}
+		// Uploading is allowed in drafts-only, so taking one's own upload back is too
+		// (the undo refuses once the item is changed or used anywhere).
+		if ( in_array( $op, [ 'wp_upload_media', 'wp_upload_media_from_url' ], true ) ) {
 			return null;
 		}
 		// An email draft's undo restores or removes the draft and refuses once it is no longer a draft.

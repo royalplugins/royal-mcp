@@ -169,7 +169,7 @@ function royal_mcp_uninstall_site() {
 
         // Upload fingerprints on media attachments (source URL, hashes, options).
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $wpdb->query("DELETE FROM {$wpdb->postmeta} WHERE meta_key IN ('_royal_mcp_source_url', '_royal_mcp_source_sha256', '_royal_mcp_upload_opts', '_royal_mcp_file_sha256', '_royal_mcp_file_sha256_sig')");
+        $wpdb->query("DELETE FROM {$wpdb->postmeta} WHERE meta_key IN ('_royal_mcp_source_url', '_royal_mcp_source_sha256', '_royal_mcp_upload_opts', '_royal_mcp_file_sha256', '_royal_mcp_file_sha256_sig', '_royal_mcp_reused_at')");
 
         // Weekly protocol-version counter rows, one option row per ISO week.
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching

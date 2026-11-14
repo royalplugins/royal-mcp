@@ -132,6 +132,14 @@ class Change_View {
 				return [ [ 'edit_post', $id( 'post_id' ) ?: $id( 'target_post_id' ) ] ];
 			case 'wp_update_media':
 				return [ [ 'edit_post', $id( 'media_id' ) ] ];
+			case 'wp_set_featured_image':
+			case 'wp_add_post_terms':
+				return [ [ 'edit_post', $id( 'post_id' ) ] ];
+			case 'wp_create_term':
+				return [ [ 'edit_term', $id( 'term_id' ) ] ];
+			case 'wp_upload_media':
+			case 'wp_upload_media_from_url':
+				return [ [ 'edit_post', $id( 'attachment_id' ) ] ];
 			case 'wp_delete_post_force':
 				// The post is gone; changes are only ever listed to the user who
 				// made them, who needs delete rights for that post type.
