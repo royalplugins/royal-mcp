@@ -49,20 +49,23 @@ class Undo_Store {
         $blob  = base64_encode( gzcompress( (string) wp_json_encode( $data['pre_op_state'] ), 9 ) );
         $parts = str_split( $blob, self::PART_BYTES );
         foreach ( $parts as $i => $part ) {
-            add_option( self::PART_PREFIX . $token . '_' . $i, $part, '', 'no' );
+            if ( ! add_option( self::PART_PREFIX . $token . '_' . $i, $part, '', 'no' ) ) {
+                self::delete_parts( $token );
+                return ''; // The database would not take a part: no undo rather than one that cannot run.
+            }
         }
         $pre = (array) $data['pre_op_state'];
         $data['pre_op_state'] = [
-            '_parts'      => count( $parts ),
-            '_sha256'     => hash( 'sha256', $blob ),
-            'original_op' => $pre['original_op'] ?? null,
+            '__royal_mcp_parts' => count( $parts ),
+            '_sha256'           => hash( 'sha256', $blob ),
+            'original_op'       => $pre['original_op'] ?? null,
         ];
         return base64_encode( gzcompress( (string) wp_json_encode( $data ), 9 ) );
     }
 
     /** Put a large snapshot's earlier state back together; null when a part is missing or changed. */
     private static function hydrate( array $data, string $token ): ?array {
-        $parts = (int) ( $data['pre_op_state']['_parts'] ?? 0 );
+        $parts = (int) ( $data['pre_op_state']['__royal_mcp_parts'] ?? 0 );
         if ( $parts < 1 ) {
             return $data;
         }
@@ -152,7 +155,10 @@ class Undo_Store {
         // reject binary blobs in wp_options via WAF/backup layers) but is
         // still ~30-50% smaller than raw JSON for typical menu snapshots.
         $stored = self::encode( $envelope, $token );
-        add_option( self::OPTION_PREFIX . $token, $stored, '', 'no' );
+        if ( '' === $stored || ! add_option( self::OPTION_PREFIX . $token, $stored, '', 'no' ) ) {
+            self::delete_parts( $token );
+            return []; // No token: the caller's reply then offers no undo.
+        }
 
         return [
             'token'      => $token,
@@ -300,7 +306,7 @@ class Undo_Store {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- compare-and-set needs the stored row, not a cached copy
         $stored = $wpdb->get_var( $wpdb->prepare( "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", $name ) );
         $data   = is_string( $stored ) ? self::decode( $stored ) : null;
-        if ( null === $data || ! empty( $data['undone_at'] ) || ! empty( $data['pre_op_state']['_parts'] ) ) {
+        if ( null === $data || ! empty( $data['undone_at'] ) || ! empty( $data['pre_op_state']['__royal_mcp_parts'] ) ) {
             return false; // A snapshot kept in parts is not narrowed; its undo still runs whole.
         }
         if ( wp_json_encode( $data['pre_op_state'] ?? null ) !== wp_json_encode( $expected_pre_op_state ) ) {
@@ -613,6 +619,14 @@ class Undo_Store {
             self::delete( $token );
             if ( false === get_option( (string) $option_name, false ) ) {
                 $deleted++;
+            }
+        }
+        // Part rows whose snapshot row is gone (a write that failed half way) are removed too.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $part_names = $wpdb->get_col( $wpdb->prepare( "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s", $wpdb->esc_like( self::PART_PREFIX ) . '%' ) );
+        foreach ( (array) $part_names as $part_name ) {
+            if ( preg_match( '/^' . preg_quote( self::PART_PREFIX, '/' ) . '([a-f0-9]{32})_\d+$/', (string) $part_name, $m ) && false === get_option( self::OPTION_PREFIX . $m[1], false ) ) {
+                delete_option( (string) $part_name );
             }
         }
         if ( $seen !== $unreadable ) {

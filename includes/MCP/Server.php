@@ -244,6 +244,56 @@ class Server {
         'divi_import_template'             => [ 'target_post_id' ],
     ];
 
+    /**
+     * Item id arguments and the capability that decides whether the caller may act on
+     * that item. For a caller without it (always the case for an id that does not exist)
+     * a "not found" and a "no permission" answer read the same, so nobody can probe which
+     * items exist.
+     */
+    const ITEM_ID_ARGS = [
+        'post_id'        => 'edit_post',
+        'id'             => 'edit_post',
+        'page_id'        => 'edit_post',
+        'media_id'       => 'edit_post',
+        'attachment_id'  => 'edit_post',
+        'source_post_id' => 'edit_post',
+        'target_post_id' => 'edit_post',
+        'revision_id'    => 'edit_post',
+        'menu_item_id'   => 'edit_post',
+        'comment_id'     => 'edit_comment',
+        'term_id'        => 'edit_term',
+        'user_id'        => 'edit_user',
+    ];
+
+    /** Tools whose `id` is not a post: the capability that applies. */
+    const ITEM_ID_TOOLS = [
+        'wp_get_term' => 'edit_term', 'wp_update_term' => 'edit_term', 'wp_delete_term' => 'edit_term',
+        'wp_get_user' => 'edit_user', 'wp_get_comment' => 'edit_comment',
+    ];
+
+    /** [capability, id] for the item a call names, or null when it names none this rule covers. */
+    private function item_scope( $name, $args ) {
+        if ( ! is_array( $args ) || ! $this->is_builtin_tool_name( $name ) ) {
+            return null;
+        }
+        foreach ( self::ITEM_ID_ARGS as $key => $cap ) {
+            if ( isset( $args[ $key ] ) && is_numeric( $args[ $key ] ) && (int) $args[ $key ] > 0 ) {
+                return [ 'id' === $key && isset( self::ITEM_ID_TOOLS[ $name ] ) ? self::ITEM_ID_TOOLS[ $name ] : $cap, (int) $args[ $key ] ];
+            }
+        }
+        return null;
+    }
+
+    /** Whether an answer text says "missing" or "not allowed". */
+    private static function is_notfound_or_forbidden_text( $text ) {
+        return (bool) preg_match( '/\b(not found|does not exist|no longer exists|permission|capability required|not allowed to|cannot (read|edit|delete) this|is not an? [a-z][a-z ]{1,40})\b/i', (string) $text );
+    }
+
+    /** The one answer for "missing" and "not allowed". */
+    private static function notfound_or_forbidden( $id ) {
+        return new \Royal_MCP\MCP\Support\Tool_Refusal( 'not_found', sprintf( 'Item %d was not found, or you do not have permission to use it.', (int) $id ), [ 'id' => (int) $id ] );
+    }
+
     /** Reads whose reply carries the post's content_hash, for a later expected_hash. */
     const CONTENT_HASH_READS = [
         'wp_get_post'                => [ 'id', 'post_id' ],
@@ -2561,6 +2611,9 @@ class Server {
             'target'       => [ 'post_id' => (int) $post_id, 'post_type' => (string) $post_type ],
             'pre_op_state' => [ 'modified_gmt' => (string) $post->post_modified_gmt ],
         ] );
+        if ( empty( $undo['token'] ) ) {
+            return [];
+        }
         return [
             'undo_available'  => true,
             'undo_token'      => (string) $undo['token'],
@@ -5038,7 +5091,27 @@ class Server {
      * since that hash was read; content reads and writes report the current hash.
      */
     private function execute_tool($name, $args) {
-        $name = (string) $name;
+        $name  = (string) $name;
+        $scope = $this->item_scope( $name, $args );
+        // An administrator who may act on the item (or on everything) keeps the exact answer.
+        if ( null === $scope || current_user_can( $scope[0], $scope[1] ) ) {
+            return $this->execute_tool_locked( $name, $args );
+        }
+        try {
+            $result = $this->execute_tool_locked( $name, $args );
+        } catch ( \Exception $e ) {
+            if ( self::is_notfound_or_forbidden_text( $e->getMessage() ) ) {
+                throw self::notfound_or_forbidden( $scope[1] );
+            }
+            throw $e;
+        }
+        if ( is_array( $result ) && ! empty( $result['isError'] ) && self::is_notfound_or_forbidden_text( (string) ( $result['content'][0]['text'] ?? '' ) ) ) {
+            throw self::notfound_or_forbidden( $scope[1] );
+        }
+        return $result;
+    }
+
+    private function execute_tool_locked($name, $args) {
         if ( 'mcp_undo_last_operation' === $name && is_array( $args ) ) {
             $ul_token = \Royal_MCP\MCP\Undo_Store::token_from_args( $args );
             if ( 1 === preg_match( '/^[a-f0-9]{32}\z/', $ul_token ) ) {
@@ -6006,13 +6079,13 @@ class Server {
                         'written_fingerprint' => self::post_undo_fingerprint($page_id),
                     ],
                 ]);
-                if (null !== $upg_page_undo) {
+                if (!empty($upg_page_undo['token'])) {
                     $upg_response['undo_available']  = true;
                     $upg_response['undo_token']      = (string) $upg_page_undo['token'];
                     $upg_response['undo_expires_at'] = (string) $upg_page_undo['expires_at'];
                     $upg_response['undo_summary']    = (string) $upg_page_undo['summary'];
                 }
-                if (null !== $upg_template_undo) {
+                if (!empty($upg_template_undo['token'])) {
                     // The template is a separate change with its own token.
                     $upg_response['template_undo_token']   = (string) $upg_template_undo['token'];
                     $upg_response['template_undo_summary'] = (string) $upg_template_undo['summary'];
@@ -12406,28 +12479,46 @@ class Server {
                         }
                         $rb_done = [];
                         $rb_left = [];
+                        $rb_retry = []; // pages a later undo may still empty
                         foreach ( $rb_written as $rb_pid => $rb_md5 ) {
                             $rb_pid  = (int) $rb_pid;
                             $rb_post = $rb_pid > 0 ? get_post( $rb_pid ) : null;
-                            if ( ! $rb_post || ! current_user_can( 'edit_post', $rb_pid ) ) {
-                                $rb_left[] = [ 'post_id' => $rb_pid, 'reason' => $rb_post ? 'no_permission' : 'gone' ];
+                            if ( ! $rb_post || 'trash' === $rb_post->post_status || ! current_user_can( 'edit_post', $rb_pid ) ) {
+                                $rb_left[] = [ 'post_id' => $rb_pid, 'reason' => ! $rb_post ? 'gone' : ( 'trash' === $rb_post->post_status ? 'trashed' : 'no_permission' ) ];
                                 continue;
                             }
-                            // A page edited since keeps its text; force empties it anyway.
+                            // A page edited since, or open in an editor now, keeps its text; force empties it anyway.
                             if ( ! $undo_force && ! hash_equals( (string) $rb_md5, md5( (string) $rb_post->post_content ) ) ) {
                                 $rb_left[] = [ 'post_id' => $rb_pid, 'reason' => 'edited_since_write' ];
+                                $rb_retry[ $rb_pid ] = $rb_md5;
                                 continue;
+                            }
+                            if ( ! $undo_force ) {
+                                $rb_session = \Royal_MCP\MCP\Support\Builder_Safety::detect_active_editor_session( $rb_pid );
+                                if ( ! empty( $rb_session['active'] ) ) {
+                                    $rb_left[] = [ 'post_id' => $rb_pid, 'reason' => 'builder_session_active' ];
+                                    $rb_retry[ $rb_pid ] = $rb_md5;
+                                    continue;
+                                }
                             }
                             wp_update_post( [ 'ID' => $rb_pid, 'post_content' => '' ] );
                             clean_post_cache( $rb_pid );
                             $rb_done[] = $rb_pid;
                         }
-                        if ( ! $rb_done && $rb_left && ! $undo_force ) {
-                            throw self::undo_drift_refusal( 'every page the repair filled was edited since or cannot be changed by you.', 'empty them anyway' );
+                        if ( ! $rb_done ) {
+                            if ( $rb_retry && ! $undo_force ) {
+                                throw self::undo_drift_refusal( 'every page the repair filled that you may still change was edited since or is open in an editor.', 'empty them anyway' );
+                            }
+                            throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'already_removed', 'Nothing to empty: the pages this repair filled are gone, in the trash, or not yours to change.' );
                         }
-                        \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        // Pages left because they changed or were open stay on the token for a later (forced) undo.
+                        if ( $rb_retry ) {
+                            \Royal_MCP\MCP\Undo_Store::narrow( $undo_token, (array) $undo_snapshot['pre_op_state'], [ 'pre_op_state' => [ 'written_md5' => $rb_retry ] ] );
+                        } else {
+                            \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                        }
                         return \Royal_MCP\MCP\Support\Envelope::success(
-                            sprintf( 'Emptied the stored text of %d page(s) again%s.', count( $rb_done ), $rb_left ? sprintf( '; left %d alone (edited since or not yours to change): %s', count( $rb_left ), implode( ', ', array_column( $rb_left, 'post_id' ) ) ) : '' ),
+                            sprintf( 'Emptied the stored text of %d page(s) again%s%s.', count( $rb_done ), $rb_left ? sprintf( '; left %d alone (see left for why): %s', count( $rb_left ), implode( ', ', array_column( $rb_left, 'post_id' ) ) ) : '', $rb_retry ? '; the same token can empty the edited or open ones later with force: true' : '' ),
                             [ 'undone' => true, 'op' => $undo_op, 'emptied' => $rb_done, 'left' => $rb_left, 'restored' => true ]
                         );
 

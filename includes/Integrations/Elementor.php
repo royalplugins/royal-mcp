@@ -246,7 +246,7 @@ class Elementor {
 			],
 			[
 				'name'        => 'elementor_rebuild_post_content_bulk',
-				'description' => 'Find posts that have Elementor data but empty stored text (so search and SEO tools see nothing) and fill the text in from the Elementor layout, in batches. Pass dry_run=true to preview: it returns up to 200 candidates, the first 20 IDs, and may_be_more. A run repairs up to limit posts (default 50, max 200), lowest IDs first. A page that renders no text is listed under skipped with reason no_text_rendered and stays a candidate: pass after_id (the last_post_id of the reply) to go on past it. No undo token; it only fills text that is empty. Needs edit_posts; only posts the caller can edit are scanned and repaired.',
+				'description' => 'Find posts that have Elementor data but empty stored text (so search and SEO tools see nothing) and fill the text in from the Elementor layout, in batches. Pass dry_run=true to preview: it returns up to 200 candidates, the first 20 IDs, and may_be_more. A run repairs up to limit posts (default 50, max 200), lowest IDs first. A page that renders no text is listed under skipped with reason no_text_rendered and stays a candidate: pass after_id (the last_post_id of the reply) to go on past it. It only fills text that is empty; its undo token empties the stored text of the repaired pages again (pages edited since, or open in an editor, are left alone unless forced). Needs edit_posts; only posts the caller can edit are scanned and repaired.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -488,7 +488,7 @@ class Elementor {
 	 * Captures the prior blob compressed, plus a hash of the data as written
 	 * (callers build it right after their write) so undo can tell when the
 	 * page was edited since. Returns null if the reverse-state exceeds the
-	 * 1MB gzip cap (caller then reports "undo not available" + suggests
+	 * undo size limit (caller then reports "undo not available" + suggests
 	 * SiteVault snapshot).
 	 */
 	private static function build_elementor_data_undo( $op, $post_id, $prior_blob, $summary ) {
@@ -744,7 +744,7 @@ class Elementor {
 		);
 		$warnings = [];
 		if ( $undo_envelope === null ) {
-			$warnings[] = 'undo not available — prior _elementor_data on target exceeds 1MB storage cap. SiteVault snapshot recommended for reversal.';
+			$warnings[] = 'undo not available: the earlier layout of the target is over the undo size limit. A SiteVault backup is the way back.';
 		}
 
 		$struct = [
@@ -886,7 +886,7 @@ class Elementor {
 		$new_length = strlen( (string) get_post( $post_id )->post_content ); // audit:null-chain-ok -- post just rebuilt, existence confirmed above
 
 		// Undo envelope — restore prior post_content. Skip token if prior content
-		// exceeds the 1MB compressed cap.
+		// is over the undo size limit.
 		$undo_envelope    = null;
 		$warnings         = [];
 		if ( ! \Royal_MCP\MCP\Undo_Store::fits( [ 'prior_content' => $prior_content ] ) ) {
@@ -1506,7 +1506,7 @@ class Elementor {
 		);
 		$warnings = [];
 		if ( $undo_envelope === null && $match_count > 0 ) {
-			$warnings[] = 'undo not available — prior _elementor_data exceeds 1MB storage cap. SiteVault snapshot recommended for reversal.';
+			$warnings[] = 'undo not available: the earlier layout is over the undo size limit. A SiteVault backup is the way back.';
 		}
 
 		// Read-after-write verification: fetch fresh post_meta so the response
@@ -1823,7 +1823,7 @@ class Elementor {
 		);
 		$warnings = [];
 		if ( $undo_envelope === null && $counter['count'] > 0 ) {
-			$warnings[] = 'undo not available — prior _elementor_data exceeds 1MB storage cap. SiteVault snapshot recommended for reversal.';
+			$warnings[] = 'undo not available: the earlier layout is over the undo size limit. A SiteVault backup is the way back.';
 		}
 
 		$struct = [
@@ -2452,7 +2452,7 @@ class Elementor {
 		);
 		$warnings = [];
 		if ( $undo_envelope === null ) {
-			$warnings[] = 'undo not available — prior _elementor_data exceeds 1MB storage cap. SiteVault snapshot recommended for reversal.';
+			$warnings[] = 'undo not available: the earlier layout is over the undo size limit. A SiteVault backup is the way back.';
 		}
 
 		$struct = [

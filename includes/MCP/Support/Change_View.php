@@ -128,7 +128,7 @@ class Change_View {
 			case 'elementor_rebuild_post_content':
 				return [ [ 'edit_post', $id( 'post_id' ) ] ];
 			case 'elementor_rebuild_post_content_bulk':
-				return [ [ 'edit_others_posts' ] ];
+				return [ [ 'edit_posts' ] ];
 			case 'divi_replace_image':
 			case 'divi_import_template':
 				return [ [ 'edit_post', $id( 'post_id' ) ?: $id( 'target_post_id' ) ] ];

@@ -949,13 +949,3 @@ input:checked + .slider:before {
 	padding-top: 0;
 }
 
-.royal-mcp-section-help {
-	margin-left: auto;
-	padding-bottom: 6px;
-	text-decoration: none;
-}
-
-.royal-mcp-section-back {
-	padding-bottom: 6px;
-	text-decoration: none;
-}

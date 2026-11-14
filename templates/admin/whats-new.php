@@ -108,12 +108,12 @@ $rmcp_wn_royally_slide_url = 'https://royalplugins.com/royally/?utm_source=royal
                     <div class="rmcp-wn-code-snippet rmcp-wn-code-snippet-standalone"><span class="c"><?php esc_html_e( '// Each connection', 'royal-mcp' ); ?></span>
   <span class="s"><?php esc_html_e( 'access', 'royal-mcp' ); ?></span>     <span class="s hl"><?php esc_html_e( 'full', 'royal-mcp' ); ?></span> <span class="c">|</span> <span class="s"><?php esc_html_e( 'read-only', 'royal-mcp' ); ?></span> <span class="c">|</span> <span class="s"><?php esc_html_e( 'drafts-only', 'royal-mcp' ); ?></span>
   <span class="s"><?php esc_html_e( 'every call', 'royal-mcp' ); ?></span> <span class="s hl"><?php esc_html_e( 'logged', 'royal-mcp' ); ?> &#10003;</span>
-  <span class="s"><?php esc_html_e( 'changes', 'royal-mcp' ); ?></span>    <span class="s hl"><?php esc_html_e( 'undo for 72 hours', 'royal-mcp' ); ?></span></div>
+  <span class="s"><?php esc_html_e( 'changes', 'royal-mcp' ); ?></span>    <span class="s hl"><?php echo esc_html( sprintf( /* translators: %s: undo window, e.g. "72 hours" */ __( 'undo for %s', 'royal-mcp' ), \Royal_MCP\MCP\Undo_Store::window_label() ) ); ?></span></div>
                 </div>
                 <div class="rmcp-wn-slide-body">
                     <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v2.0', 'royal-mcp' ); ?></span>
                     <h3><?php esc_html_e( 'You decide what each AI may do', 'royal-mcp' ); ?></h3>
-                    <p><?php esc_html_e( 'Give each connection full access, read-only or drafts-only, or switch the whole site to one of them on the Safety screen. The Activity screen shows every call and every change, with the value before and after, and exports to CSV. Undo will not write over edits made after the AI\'s change unless you tell it to.', 'royal-mcp' ); ?></p>
+                    <p><?php esc_html_e( 'Give each connection full access, read-only or drafts-only, or switch the whole site to one of them on the Safety screen. The Activity screen shows every call and every change, with the value before and after, and exports to CSV. Most undos will not write over edits made after the AI\'s change unless you tell them to.', 'royal-mcp' ); ?></p>
                     <p><?php esc_html_e( 'On the Plugin Abilities screen, let your AI use the abilities other plugins add to WordPress, one plugin at a time. Those calls are logged and follow the same access levels.', 'royal-mcp' ); ?></p>
                 </div>
             </div>

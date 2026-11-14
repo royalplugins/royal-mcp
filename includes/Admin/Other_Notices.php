@@ -28,7 +28,9 @@ class Other_Notices {
 	}
 
 	public static function on_screen( $screen ) {
-		if ( ! is_object( $screen ) || self::handled_elsewhere() || false === strpos( (string) $screen->id, 'royal-mcp' ) ) {
+		$id   = is_object( $screen ) ? (string) $screen->id : '';
+		$ours = 'toplevel_page_' . Menu_Layout::PARENT === $id || 0 === strpos( $id, Menu_Layout::PARENT . '_page_' ) || 'admin_page_' . Help_Page::SLUG === $id;
+		if ( ! $ours || self::handled_elsewhere() ) {
 			return;
 		}
 		// Runs before the notice hooks fire, after every notice has hooked in.
@@ -60,7 +62,7 @@ class Other_Notices {
 					if ( self::is_own( $fn ) ) {
 						continue;
 					}
-					self::$held[] = $fn;
+					self::$held[] = [ $fn, (int) ( $cb['accepted_args'] ?? 1 ) ];
 					remove_action( $hook, $fn, $priority );
 				}
 			}
@@ -94,24 +96,46 @@ class Other_Notices {
 	 * script leaves it in the row instead of moving it under the heading.
 	 */
 	public static function render() {
-		$parts = [];
-		foreach ( self::$held as $fn ) {
+		$parts  = [];
+		$extras = '';
+		foreach ( self::$held as $held ) {
+			list( $fn, $accepted ) = $held;
 			if ( ! is_callable( $fn ) ) {
 				continue;
 			}
+			$level = ob_get_level();
 			ob_start();
-			call_user_func( $fn );
-			$out = trim( (string) ob_get_clean() );
-			if ( '' !== $out ) {
+			try {
+				// The same argument do_action( 'admin_notices' ) hands each callback.
+				call_user_func_array( $fn, array_slice( [ '' ], 0, max( 0, $accepted ) ) );
+			} catch ( \Throwable $e ) {
+				// Another plugin's notice failing must not take the screen down.
+				unset( $e );
+			}
+			$out = '';
+			while ( ob_get_level() > $level ) {
+				$out = (string) ob_get_clean() . $out;
+			}
+			$out = trim( $out );
+			if ( '' === $out ) {
+				continue;
+			}
+			// Only output that holds a notice is folded; scripts, styles and pop-ups print as they would.
+			if ( preg_match( '/<div\b[^>]*?\sclass=(["\'])[^"\']*(?<![\w-])(notice|updated|error)(?![\w-])/i', $out ) ) {
 				$parts[] = $out;
+			} else {
+				$extras .= $out . "\n";
 			}
 		}
 		self::$held = [];
+		if ( '' !== $extras ) {
+			echo $extras; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- other plugins' own output, printed as they would print it
+		}
 		if ( ! $parts ) {
 			return;
 		}
 		$html = preg_replace_callback(
-			'/(<div\b[^>]*\bclass=)(["\'])([^"\']*)\2/i',
+			'/(<div\b[^>]*?\sclass=)(["\'])([^"\']*)\2/i',
 			static function ( $m ) {
 				return preg_match( '/(^|\s)(notice|updated|error)(\s|$)/', $m[3] ) && ! preg_match( '/(^|\s)inline(\s|$)/', $m[3] )
 					? $m[1] . $m[2] . $m[3] . ' inline' . $m[2]
@@ -119,7 +143,7 @@ class Other_Notices {
 			},
 			implode( "\n", $parts )
 		);
-		$has_error = (bool) preg_match( '/class=["\'][^"\']*\b(notice-error|error)\b/', $html );
+		$has_error = (bool) preg_match( '/<div\b[^>]*?\sclass=(["\'])(?=[^"\']*(?<![\w-])(notice|updated)(?![\w-]))[^"\']*(?<![\w-])(notice-error|error)(?![\w-])/i', $html );
 		$label     = sprintf(
 			/* translators: %d: number of notices */
 			_n( '%d notice from other plugins', '%d notices from other plugins', count( $parts ), 'royal-mcp' ),
