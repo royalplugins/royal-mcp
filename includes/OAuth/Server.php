@@ -309,30 +309,55 @@ class Server {
     }
 
     /**
-     * The canonical MCP endpoint path — the one the Help page tells users to
-     * paste and the one every discovery document falls back to.
-     */
-    /**
      * The resources this server issues tokens for (RFC 8707): every MCP endpoint
-     * address of this site, and the site address itself. Compared without scheme
-     * and trailing slash.
+     * address of this site (under the site path and at the domain root, with the
+     * standard and the site's own REST prefix), the site address and the domain
+     * root, on the site's own hosts. Compared as normalize_resource() keys.
      */
     public static function accepted_resources() {
-        $out = [ self::normalize_resource( home_url( '/' ) ) => true ];
-        foreach ( self::mcp_resource_paths() as $path ) {
-            $out[ self::normalize_resource( self::canonical_resource_url( $path ) ) ] = true;
+        $hosts = [];
+        foreach ( [ home_url( '/' ), site_url( '/' ) ] as $u ) {
+            $k = self::normalize_resource( $u );
+            if ( '' !== $k ) {
+                $hosts[ strtok( $k, '/' ) ] = true;
+            }
+        }
+        $home_path = rtrim( (string) wp_parse_url( home_url( '/' ), PHP_URL_PATH ), '/' );
+        $prefix    = '/' . trim( (string) rest_get_url_prefix(), '/' );
+        $paths     = [ '' => true, $home_path => true ];
+        foreach ( self::mcp_resource_paths() as $p ) {
+            foreach ( [ $p, preg_replace( '#^/wp-json(?=/|$)#', $prefix, $p ) ] as $q ) {
+                $paths[ rtrim( $q, '/' ) ]              = true;
+                $paths[ rtrim( $home_path . $q, '/' ) ] = true;
+            }
+        }
+        $out = [];
+        foreach ( array_keys( $hosts ) as $h ) {
+            foreach ( array_keys( $paths ) as $p ) {
+                $out[ $h . $p ] = true;
+            }
         }
         return $out;
     }
 
-    /** host + path, lower-case host, no scheme, query or trailing slash. */
+    /** host + path: lower-case host without www. or a default port, no scheme, query or trailing slash. */
     public static function normalize_resource( $url ) {
         $parts = wp_parse_url( (string) $url );
         if ( ! is_array( $parts ) || empty( $parts['host'] ) ) {
             return '';
         }
-        return strtolower( (string) $parts['host'] ) . ( isset( $parts['port'] ) ? ':' . (int) $parts['port'] : '' ) . rtrim( (string) ( $parts['path'] ?? '' ), '/' );
+        $host = preg_replace( '/^www\./', '', strtolower( (string) $parts['host'] ) );
+        $port = isset( $parts['port'] ) ? (int) $parts['port'] : 0;
+        if ( $port && ! in_array( $port, [ 80, 443 ], true ) ) {
+            $host .= ':' . $port;
+        }
+        return $host . rtrim( (string) ( $parts['path'] ?? '' ), '/' );
     }
+
+    /**
+     * The canonical MCP endpoint path — the one the Help page tells users to
+     * paste and the one every discovery document falls back to.
+     */
 
     /**
      * The resource a request names, checked: '' when none is named, null when one is
@@ -1073,6 +1098,13 @@ class Server {
             $this->json_error( 'invalid_request', 'Missing required parameters: code, client_id, code_verifier, redirect_uri.', 400 );
         }
 
+        // A resource this server does not serve is refused before the code is used.
+        $req_resource = self::requested_resource( $_POST['resource'] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- requested_resource() unslashes, sanitizes and checks it
+        if ( null === $req_resource ) {
+            $this->log_event( 'invalid_target', 'Token request named a resource this server does not serve.', 400 );
+            $this->json_error( 'invalid_target', 'The requested resource is not served by this authorization server.', 400 );
+        }
+
         // Consume the code (single-use).
         $code_data = Token_Store::consume_auth_code( $code );
         if ( ! $code_data ) {
@@ -1114,15 +1146,10 @@ class Server {
             $this->json_error( 'invalid_grant', 'Authorization code is invalid or expired.', 400 );
         }
 
-        // The token is bound to one resource of this site (RFC 8707): the one the
-        // authorization named, or the one named now; the two may not differ.
+        // The token is bound to this site (RFC 8707): to the resource the authorization
+        // named, or else to the one named now (both are already checked as this site's).
         $code_resource = (string) ( $code_data['resource'] ?? '' );
-        $req_resource  = self::requested_resource( $_POST['resource'] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- requested_resource() unslashes, sanitizes and checks it
-        if ( null === $req_resource || ( '' !== $code_resource && '' !== $req_resource && self::normalize_resource( $code_resource ) !== self::normalize_resource( $req_resource ) ) ) {
-            $this->log_event( 'invalid_target', 'Token request named a resource this server does not serve, or another one than the authorization.', 400 );
-            $this->json_error( 'invalid_target', 'The requested resource is not served by this authorization server, or differs from the one authorized.', 400 );
-        }
-        $bound = '' !== $code_resource ? $code_resource : (string) $req_resource;
+        $bound         = '' !== $code_resource ? $code_resource : (string) $req_resource;
 
         // Issue tokens.
         $tokens = Token_Store::create_token_pair( $client_id, $code_data['user_id'], $code_data['scope'] ?? '', $bound );
@@ -1162,6 +1189,13 @@ class Server {
             }
         }
 
+        // A resource this server does not serve is refused before the token is used.
+        $req_resource = self::requested_resource( $_POST['resource'] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- requested_resource() unslashes, sanitizes and checks it
+        if ( null === $req_resource ) {
+            $this->log_event( 'invalid_target', 'Refresh named a resource this server does not serve.', 400 );
+            $this->json_error( 'invalid_target', 'The requested resource is not served by this authorization server.', 400 );
+        }
+
         // Consume the refresh token (rotation: it stops working after a short grace window).
         $reused     = false;
         $token_data = Token_Store::consume_refresh_token( $refresh_token, $reused );
@@ -1185,13 +1219,8 @@ class Server {
             $this->json_error( 'invalid_grant', 'Refresh token is invalid, expired, or revoked.', 400 );
         }
 
-        // A refresh keeps the resource the tokens were bound to; naming another is refused.
-        $bound        = (string) ( $token_data['resource'] ?? '' );
-        $req_resource = self::requested_resource( $_POST['resource'] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- requested_resource() unslashes, sanitizes and checks it
-        if ( null === $req_resource || ( '' !== $bound && '' !== $req_resource && self::normalize_resource( $bound ) !== self::normalize_resource( $req_resource ) ) ) {
-            $this->log_event( 'invalid_target', 'Refresh named a resource this server does not serve, or another one than the tokens were issued for.', 400 );
-            $this->json_error( 'invalid_target', 'The requested resource is not served by this authorization server, or differs from the one the tokens were issued for.', 400 );
-        }
+        // A refresh keeps the resource the tokens were bound to.
+        $bound = (string) ( $token_data['resource'] ?? '' );
         if ( '' === $bound ) {
             $bound = (string) $req_resource;
         }

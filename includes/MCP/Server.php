@@ -1173,6 +1173,10 @@ class Server {
      *
      * @return string Real client IP, or 127.0.0.1 if nothing usable.
      */
+    public static function resolve_client_ip() {
+        return self::resolve_client_ip_now();
+    }
+
     /** Cloudflare's published edge ranges (cloudflare.com/ips); a site can update them with royal_mcp_cloudflare_ranges. */
     const CLOUDFLARE_RANGES = [
         '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22', '141.101.64.0/18', '108.162.192.0/18',
@@ -1186,6 +1190,9 @@ class Server {
         $bin = @inet_pton( (string) $ip ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- an unparsable address is simply not Cloudflare's
         if ( false === $bin ) {
             return false;
+        }
+        if ( 16 === strlen( $bin ) && str_repeat( "\0", 10 ) . "\xff\xff" === substr( $bin, 0, 12 ) ) {
+            $bin = substr( $bin, 12 ); // IPv4-mapped address (::ffff:a.b.c.d) as some dual-stack servers report it
         }
         foreach ( (array) apply_filters( 'royal_mcp_cloudflare_ranges', self::CLOUDFLARE_RANGES ) as $cidr ) {
             $parts = explode( '/', (string) $cidr, 2 );
@@ -1206,7 +1213,7 @@ class Server {
         return false;
     }
 
-    public static function resolve_client_ip() {
+    private static function resolve_client_ip_now() {
         // CF-Connecting-IP is only meaningful when Cloudflare's edge is the
         // last hop before origin. Any request path that reaches origin
         // directly can spoof both CF-Connecting-IP and CF-Ray, so header
