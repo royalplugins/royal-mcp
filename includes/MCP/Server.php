@@ -1099,6 +1099,11 @@ class Server {
      */
     private function validate_bearer_token($raw_token) {
         $token_data = \Royal_MCP\OAuth\Token_Store::validate_token($raw_token);
+        // A token bound to a resource (RFC 8707) is accepted only by this site's own MCP server.
+        if ( $token_data && '' !== (string) ( $token_data['resource'] ?? '' )
+            && ! isset( \Royal_MCP\OAuth\Server::accepted_resources()[ \Royal_MCP\OAuth\Server::normalize_resource( (string) $token_data['resource'] ) ] ) ) {
+            $token_data = false;
+        }
 
         if (!$token_data) {
             $response = new \WP_REST_Response([
@@ -1168,21 +1173,55 @@ class Server {
      *
      * @return string Real client IP, or 127.0.0.1 if nothing usable.
      */
+    /** Cloudflare's published edge ranges (cloudflare.com/ips); a site can update them with royal_mcp_cloudflare_ranges. */
+    const CLOUDFLARE_RANGES = [
+        '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22', '141.101.64.0/18', '108.162.192.0/18',
+        '190.93.240.0/20', '188.114.96.0/20', '197.234.240.0/22', '198.41.128.0/17', '162.158.0.0/15', '104.16.0.0/13',
+        '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22',
+        '2400:cb00::/32', '2606:4700::/32', '2803:f800::/32', '2405:b500::/32', '2405:8100::/32', '2a06:98c0::/29', '2c0f:f248::/32',
+    ];
+
+    /** Whether an address is inside one of Cloudflare's edge ranges. */
+    public static function is_cloudflare_ip( $ip ) {
+        $bin = @inet_pton( (string) $ip ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- an unparsable address is simply not Cloudflare's
+        if ( false === $bin ) {
+            return false;
+        }
+        foreach ( (array) apply_filters( 'royal_mcp_cloudflare_ranges', self::CLOUDFLARE_RANGES ) as $cidr ) {
+            $parts = explode( '/', (string) $cidr, 2 );
+            $net   = @inet_pton( $parts[0] ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+            if ( false === $net || strlen( $net ) !== strlen( $bin ) ) {
+                continue;
+            }
+            $bits  = isset( $parts[1] ) ? (int) $parts[1] : strlen( $bin ) * 8;
+            $bytes = intdiv( $bits, 8 );
+            if ( substr( $bin, 0, $bytes ) !== substr( $net, 0, $bytes ) ) {
+                continue;
+            }
+            $rest = $bits % 8;
+            if ( 0 === $rest || ( ( ord( $bin[ $bytes ] ) ^ ord( $net[ $bytes ] ) ) & ( 0xFF << ( 8 - $rest ) ) & 0xFF ) === 0 ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static function resolve_client_ip() {
         // CF-Connecting-IP is only meaningful when Cloudflare's edge is the
         // last hop before origin. Any request path that reaches origin
         // directly can spoof both CF-Connecting-IP and CF-Ray, so header
         // presence alone is not proof that CF is actually fronting the
-        // request. Gate this on an explicit opt-in filter — either
-        // royal_mcp_trust_cloudflare_ip (boolean) or the trusted-proxies
-        // list also used by X-Forwarded-For below. Sites behind CF and
-        // without a hardened firewall in front of origin should return true
-        // from the filter; sites reachable both directly and through CF
-        // should list CF's origin-facing IP in trusted_proxies instead.
+        // request. It is trusted when the connection itself comes from one of
+        // Cloudflare's edge ranges (is_cloudflare_ip), or when a site says so
+        // with royal_mcp_trust_cloudflare_ip or lists the address in the
+        // trusted-proxies list also used by X-Forwarded-For below.
         $cf_ip           = isset($_SERVER['HTTP_CF_CONNECTING_IP']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_IP'])) : '';
         $trusted_proxies = (array) apply_filters('royal_mcp_trusted_proxies', []);
         $remote_addr     = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
-        $trust_cf        = apply_filters('royal_mcp_trust_cloudflare_ip', false)
+        // A request that reaches the site from Cloudflare's own published addresses is
+        // Cloudflare's: its CF-Connecting-IP is trusted with no setting. Anyone else who
+        // sends the header directly is not trusted.
+        $trust_cf        = apply_filters('royal_mcp_trust_cloudflare_ip', self::is_cloudflare_ip( $remote_addr ))
                            || ( ! empty( $trusted_proxies ) && in_array( $remote_addr, $trusted_proxies, true ) );
         if ('' !== $cf_ip && $trust_cf && filter_var($cf_ip, FILTER_VALIDATE_IP)) {
             return $cf_ip;

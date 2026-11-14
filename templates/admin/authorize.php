@@ -207,6 +207,9 @@ $royal_mcp_redirect_host = isset( $rmcp_oauth['redirect_host'] ) ? $rmcp_oauth['
             <input type="hidden" name="code_challenge_method" value="<?php echo esc_attr( $rmcp_oauth['code_challenge_method'] ); ?>">
             <input type="hidden" name="state" value="<?php echo esc_attr( $rmcp_oauth['state'] ); ?>">
             <input type="hidden" name="scope" value="<?php echo esc_attr( $rmcp_oauth['scope'] ); ?>">
+            <?php if ( ! empty( $rmcp_oauth['resource'] ) ) : ?>
+            <input type="hidden" name="resource" value="<?php echo esc_attr( $rmcp_oauth['resource'] ); ?>">
+            <?php endif; ?>
 
             <div class="auth-buttons">
                 <button type="submit" name="authorize_action" value="deny" class="btn-deny">

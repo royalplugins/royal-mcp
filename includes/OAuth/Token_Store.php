@@ -126,6 +126,7 @@ class Token_Store {
             created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             revoked tinyint(1) DEFAULT 0 NOT NULL,
             rotated_at datetime DEFAULT NULL,
+            resource varchar(255) DEFAULT '' NOT NULL,
             PRIMARY KEY  (id),
             UNIQUE KEY token_hash (token_hash),
             KEY client_id (client_id),
@@ -172,6 +173,7 @@ class Token_Store {
             code_challenge varchar(255) NOT NULL,
             code_challenge_method varchar(10) NOT NULL DEFAULT 'S256',
             scope varchar(255) DEFAULT '',
+            resource varchar(255) DEFAULT '' NOT NULL,
             used tinyint(1) DEFAULT 0 NOT NULL,
             expires_at datetime NOT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -234,8 +236,8 @@ class Token_Store {
                 'code_challenge_method' => isset( $data['code_challenge_method'] ) ? (string) $data['code_challenge_method'] : 'S256',
                 'scope'                 => isset( $data['scope'] ) ? (string) $data['scope'] : '',
                 'expires_at'            => gmdate( 'Y-m-d H:i:s', time() + self::AUTH_CODE_TTL ),
-            ],
-            [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' ]
+            ] + ( self::has_resource_columns() ? [ 'resource' => isset( $data['resource'] ) ? substr( (string) $data['resource'], 0, 255 ) : '' ] : [] ),
+            self::has_resource_columns() ? [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ] : [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' ]
         );
     }
 
@@ -274,7 +276,7 @@ class Token_Store {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
         $row = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT user_id, client_id, redirect_uri, code_challenge, code_challenge_method, scope FROM `{$table}` WHERE code_hash = %s LIMIT 1",
+                "SELECT user_id, client_id, redirect_uri, code_challenge, code_challenge_method, scope" . ( self::has_resource_columns() ? ', resource' : '' ) . " FROM `{$table}` WHERE code_hash = %s LIMIT 1",
                 $hash
             ),
             ARRAY_A
@@ -295,13 +297,13 @@ class Token_Store {
      * @param string $scope     Space-separated scopes.
      * @return array [ 'access_token' => …, 'refresh_token' => …, 'expires_in' => … ]
      */
-    public static function create_token_pair( $client_id, $user_id, $scope = '' ) {
+    public static function create_token_pair( $client_id, $user_id, $scope = '', $resource = '' ) {
         $access_token  = bin2hex( random_bytes( 32 ) );
         $refresh_token = bin2hex( random_bytes( 32 ) );
         $access_ttl    = self::get_access_token_ttl( (int) $user_id, (string) $client_id );
 
-        self::store_token( $access_token, 'access', $client_id, $user_id, $scope, $access_ttl );
-        self::store_token( $refresh_token, 'refresh', $client_id, $user_id, $scope, self::REFRESH_TOKEN_TTL );
+        self::store_token( $access_token, 'access', $client_id, $user_id, $scope, $access_ttl, $resource );
+        self::store_token( $refresh_token, 'refresh', $client_id, $user_id, $scope, self::REFRESH_TOKEN_TTL, $resource );
 
         // Mark the client as "has completed an authorization at least once" so
         // gc_stale_clients() never removes a client whose tokens merely expired
@@ -329,21 +331,53 @@ class Token_Store {
     /**
      * Store a single token (hashed) in the database.
      */
-    private static function store_token( $raw_token, $type, $client_id, $user_id, $scope, $ttl ) {
+    private static function store_token( $raw_token, $type, $client_id, $user_id, $scope, $ttl, $resource = '' ) {
         global $wpdb;
+        $row = [
+            'token_hash' => hash( 'sha256', $raw_token ),
+            'token_type' => $type,
+            'client_id'  => $client_id,
+            'user_id'    => $user_id,
+            'scope'      => $scope,
+            'expires_at' => gmdate( 'Y-m-d H:i:s', time() + $ttl ),
+        ];
+        $formats = [ '%s', '%s', '%s', '%d', '%s', '%s' ];
+        if ( self::has_resource_columns() ) {
+            $row['resource'] = substr( (string) $resource, 0, 255 );
+            $formats[]       = '%s';
+        }
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $wpdb->insert(
-            self::tokens_table(),
-            [
-                'token_hash' => hash( 'sha256', $raw_token ),
-                'token_type' => $type,
-                'client_id'  => $client_id,
-                'user_id'    => $user_id,
-                'scope'      => $scope,
-                'expires_at' => gmdate( 'Y-m-d H:i:s', time() + $ttl ),
-            ],
-            [ '%s', '%s', '%s', '%d', '%s', '%s' ]
-        );
+        $wpdb->insert( self::tokens_table(), $row, $formats );
+    }
+
+    /**
+     * Whether the tokens and codes tables have the resource column (RFC 8707). A table
+     * made by an older version gets it on the next table update; until then tokens are
+     * simply not bound, so sign-in never breaks over it.
+     */
+    public static function has_resource_columns() {
+        static $has = null;
+        if ( null !== $has ) {
+            return $has;
+        }
+        global $wpdb;
+        $probe = static function () use ( $wpdb ) {
+            $ok = true;
+            foreach ( [ self::tokens_table(), self::auth_codes_table() ] as $table ) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+                $ok = $ok && (bool) $wpdb->get_var( $wpdb->prepare( "SHOW COLUMNS FROM `{$table}` LIKE %s", 'resource' ) );
+            }
+            return $ok;
+        };
+        $has = $probe();
+        if ( ! $has && ! get_transient( 'royal_mcp_resource_column_failed' ) ) {
+            self::create_tables();
+            $has = $probe();
+            if ( ! $has ) {
+                set_transient( 'royal_mcp_resource_column_failed', 1, HOUR_IN_SECONDS );
+            }
+        }
+        return $has;
     }
 
     /**

@@ -312,6 +312,47 @@ class Server {
      * The canonical MCP endpoint path — the one the Help page tells users to
      * paste and the one every discovery document falls back to.
      */
+    /**
+     * The resources this server issues tokens for (RFC 8707): every MCP endpoint
+     * address of this site, and the site address itself. Compared without scheme
+     * and trailing slash.
+     */
+    public static function accepted_resources() {
+        $out = [ self::normalize_resource( home_url( '/' ) ) => true ];
+        foreach ( self::mcp_resource_paths() as $path ) {
+            $out[ self::normalize_resource( self::canonical_resource_url( $path ) ) ] = true;
+        }
+        return $out;
+    }
+
+    /** host + path, lower-case host, no scheme, query or trailing slash. */
+    public static function normalize_resource( $url ) {
+        $parts = wp_parse_url( (string) $url );
+        if ( ! is_array( $parts ) || empty( $parts['host'] ) ) {
+            return '';
+        }
+        return strtolower( (string) $parts['host'] ) . ( isset( $parts['port'] ) ? ':' . (int) $parts['port'] : '' ) . rtrim( (string) ( $parts['path'] ?? '' ), '/' );
+    }
+
+    /**
+     * The resource a request names, checked: '' when none is named, null when one is
+     * named that this server does not serve (the caller answers invalid_target).
+     */
+    private static function requested_resource( $raw ) {
+        if ( null === $raw || '' === $raw ) {
+            return '';
+        }
+        if ( is_array( $raw ) ) {
+            $raw = 1 === count( $raw ) ? reset( $raw ) : null;
+        }
+        if ( ! is_string( $raw ) ) {
+            return null;
+        }
+        $url  = esc_url_raw( trim( wp_unslash( $raw ) ) );
+        $norm = self::normalize_resource( $url );
+        return ( '' !== $norm && isset( self::accepted_resources()[ $norm ] ) && false === strpos( $url, '#' ) ) ? $url : null;
+    }
+
     public static function default_resource_path() {
         $paths = self::mcp_resource_paths();
         return isset( $paths[0] ) ? $paths[0] : '/wp-json/royal-mcp/v1/mcp';
@@ -762,8 +803,8 @@ class Server {
         $code_challenge_method = isset( $_GET['code_challenge_method'] ) ? sanitize_text_field( wp_unslash( $_GET['code_challenge_method'] ) ) : '';
         $state                 = self::state_param( $_GET['state'] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- state_param() unslashes and validates
         $scope                 = isset( $_GET['scope'] ) ? sanitize_text_field( wp_unslash( $_GET['scope'] ) ) : 'mcp:full';
-        $resource_indicator    = isset( $_GET['resource'] ) ? esc_url_raw( wp_unslash( $_GET['resource'] ) ) : '';
-        if ( '' !== $resource_indicator ) {
+        $resource_indicator    = self::requested_resource( $_GET['resource'] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- requested_resource() unslashes, sanitizes and checks it against this site's own resources
+        if ( null !== $resource_indicator && '' !== $resource_indicator ) {
             $this->log_event( 'resource_indicator', 'authorize resource=' . $resource_indicator, 200, 'success' );
         }
 
@@ -815,6 +856,12 @@ class Server {
             $this->authorize_error( $redirect_uri, $state, 'invalid_request', 'PKCE with code_challenge_method=S256 is required.' );
         }
 
+        // A token is only issued for this site's own MCP server (RFC 8707).
+        if ( null === $resource_indicator ) {
+            $this->log_event( 'invalid_target', 'Authorize named a resource this server does not serve.', 400 );
+            $this->authorize_error( $redirect_uri, $state, 'invalid_target', 'The requested resource is not served by this authorization server.' );
+        }
+
         // Ensure user is logged into WordPress.
         if ( ! is_user_logged_in() ) {
             // Build the full authorize URL with all params to come back after login.
@@ -829,7 +876,7 @@ class Server {
                         'code_challenge_method' => $code_challenge_method,
                         'state'                 => $state,
                         'scope'                 => $scope,
-                    ]
+                    ] + ( '' !== $resource_indicator ? [ 'resource' => $resource_indicator ] : [] )
                 ),
                 self::authorize_page_url()
             );
@@ -866,6 +913,7 @@ class Server {
             'code_challenge_method' => $code_challenge_method,
             'state'                 => $state,
             'scope'                 => $scope,
+            'resource'              => $resource_indicator,
             'user_display_name'     => $current_user->display_name,
             'site_name'             => $site_name,
             'nonce'                 => wp_create_nonce( 'royal_mcp_authorize' ),
@@ -901,6 +949,7 @@ class Server {
         $code_challenge_method = isset( $_POST['code_challenge_method'] ) ? sanitize_text_field( wp_unslash( $_POST['code_challenge_method'] ) ) : '';
         $state                 = self::state_param( $_POST['state'] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- state_param() unslashes and validates
         $scope                 = isset( $_POST['scope'] ) ? sanitize_text_field( wp_unslash( $_POST['scope'] ) ) : 'mcp:full';
+        $resource_indicator    = self::requested_resource( $_POST['resource'] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- requested_resource() unslashes, sanitizes and checks it against this site's own resources
         $action                = isset( $_POST['authorize_action'] ) ? sanitize_text_field( wp_unslash( $_POST['authorize_action'] ) ) : '';
 
         // User denied. Send them back only to an address registered for a known client.
@@ -948,6 +997,11 @@ class Server {
             wp_die( esc_html__( 'Your account is not allowed to connect AI clients to this site. Ask a site administrator.', 'royal-mcp' ), '', [ 'response' => 403 ] );
         }
 
+        if ( null === $resource_indicator ) {
+            $this->log_event( 'invalid_target', 'Authorize POST named a resource this server does not serve.', 400 );
+            $this->authorize_error( $redirect_uri, $state, 'invalid_target', 'The requested resource is not served by this authorization server.' );
+        }
+
         // Generate authorization code.
         $code = bin2hex( random_bytes( 32 ) );
 
@@ -958,6 +1012,7 @@ class Server {
             'code_challenge'        => $code_challenge,
             'code_challenge_method' => $code_challenge_method,
             'scope'                 => $scope,
+            'resource'              => (string) $resource_indicator,
         ] );
 
         // Redirect back to the client with the code.
@@ -1059,14 +1114,21 @@ class Server {
             $this->json_error( 'invalid_grant', 'Authorization code is invalid or expired.', 400 );
         }
 
-        // Issue tokens.
-        $tokens = Token_Store::create_token_pair( $client_id, $code_data['user_id'], $code_data['scope'] ?? '' );
+        // The token is bound to one resource of this site (RFC 8707): the one the
+        // authorization named, or the one named now; the two may not differ.
+        $code_resource = (string) ( $code_data['resource'] ?? '' );
+        $req_resource  = self::requested_resource( $_POST['resource'] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- requested_resource() unslashes, sanitizes and checks it
+        if ( null === $req_resource || ( '' !== $code_resource && '' !== $req_resource && self::normalize_resource( $code_resource ) !== self::normalize_resource( $req_resource ) ) ) {
+            $this->log_event( 'invalid_target', 'Token request named a resource this server does not serve, or another one than the authorization.', 400 );
+            $this->json_error( 'invalid_target', 'The requested resource is not served by this authorization server, or differs from the one authorized.', 400 );
+        }
+        $bound = '' !== $code_resource ? $code_resource : (string) $req_resource;
 
-        // Include resource indicator if client sent one (RFC 8707).
-        $resource = isset( $_POST['resource'] ) ? esc_url_raw( wp_unslash( $_POST['resource'] ) ) : '';
-        if ( ! empty( $resource ) ) {
-            $tokens['resource'] = $resource;
-            $this->log_event( 'resource_indicator', 'token resource=' . $resource, 200, 'success' );
+        // Issue tokens.
+        $tokens = Token_Store::create_token_pair( $client_id, $code_data['user_id'], $code_data['scope'] ?? '', $bound );
+        if ( '' !== $bound ) {
+            $tokens['resource'] = $bound;
+            $this->log_event( 'resource_indicator', 'token resource=' . $bound, 200, 'success' );
         }
 
         $this->log_event( 'token_issued', 'Access + refresh tokens issued via authorization_code grant.', 200, 'success' );
@@ -1123,8 +1185,22 @@ class Server {
             $this->json_error( 'invalid_grant', 'Refresh token is invalid, expired, or revoked.', 400 );
         }
 
+        // A refresh keeps the resource the tokens were bound to; naming another is refused.
+        $bound        = (string) ( $token_data['resource'] ?? '' );
+        $req_resource = self::requested_resource( $_POST['resource'] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- requested_resource() unslashes, sanitizes and checks it
+        if ( null === $req_resource || ( '' !== $bound && '' !== $req_resource && self::normalize_resource( $bound ) !== self::normalize_resource( $req_resource ) ) ) {
+            $this->log_event( 'invalid_target', 'Refresh named a resource this server does not serve, or another one than the tokens were issued for.', 400 );
+            $this->json_error( 'invalid_target', 'The requested resource is not served by this authorization server, or differs from the one the tokens were issued for.', 400 );
+        }
+        if ( '' === $bound ) {
+            $bound = (string) $req_resource;
+        }
+
         // Issue new token pair.
-        $tokens = Token_Store::create_token_pair( $client_id, (int) $token_data['user_id'], $token_data['scope'] ?? '' );
+        $tokens = Token_Store::create_token_pair( $client_id, (int) $token_data['user_id'], $token_data['scope'] ?? '', $bound );
+        if ( '' !== $bound ) {
+            $tokens['resource'] = $bound;
+        }
         // A revocation that landed while this refresh was running covers the new pair too.
         if ( Token_Store::token_is_revoked( (int) $token_data['id'] ) ) {
             Token_Store::revoke_connection( $client_id, (int) $token_data['user_id'] );
