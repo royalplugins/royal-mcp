@@ -251,6 +251,7 @@ class Dashboard_Page {
 
 		// ---- connection doctor
 		Connection_Doctor::render_card();
+		\Royal_MCP\MCP\Support\Agent_Readiness::render_card();
 
 		// ---- needs attention
 		echo '<div class="royal-mcp-dash-card">';

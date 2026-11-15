@@ -37,6 +37,7 @@ class Tool_Capabilities {
 			'wp_get_site_status'            => 'manage_options',
 			'wp_get_mcp_coexistence'        => 'manage_options',
 			'wp_security_triage'            => 'manage_options',
+			'wp_audit_agent_readiness'      => 'manage_options',
 			'wp_revoke_preview_links'       => 'edit_posts',
 			'wp_clone_post_as_draft'        => 'edit_posts',
 			'wp_get_php_errors'             => 'manage_options',
