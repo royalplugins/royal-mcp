@@ -175,7 +175,7 @@ class Royal_MCP_Chrome {
         if ( ! class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false ) ) {
             $slots['royally'] = [
                 'text'  => __( 'One MCP connection for all your sites, Cloudflare, UptimeRobot and more, with approvals and undo. Royal MCP Pro comes with it.', 'royal-mcp' ),
-                'label' => __( 'See Royally', 'royal-mcp' ),
+                'label' => __( 'Check out Royal MCP Pro', 'royal-mcp' ),
                 'url'   => $this->campaign_url( self::ROYALLY_URL_BASE, 'chrome_banner_royally' ),
             ];
         }
@@ -298,7 +298,7 @@ class Royal_MCP_Chrome {
     public function register_upgrade_menu(): void {
         add_submenu_page(
             'royal-mcp',
-            __( 'Royally', 'royal-mcp' ),
+            __( 'Royal MCP Pro', 'royal-mcp' ),
             '<span class="royal-mcp-upgrade-menu-text">' . esc_html__( 'Upgrade To Pro', 'royal-mcp' ) . '</span>',
             'manage_options',
             self::UPGRADE_MENU_SLUG,

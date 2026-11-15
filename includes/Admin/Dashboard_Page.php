@@ -328,7 +328,7 @@ class Dashboard_Page {
 		echo '<div class="royal-mcp-dash-card royal-mcp-dash-upgrade">';
 		echo '<h2>' . esc_html__( 'One connection for everything your AI manages', 'royal-mcp' ) . '</h2>';
 		echo '<p>' . esc_html__( 'Royally puts your whole stack behind one MCP connection: every WordPress site you run, plus Cloudflare, UptimeRobot, Notion and other MCP servers. Each change can wait for your approval, is recorded and can be undone. Royal MCP Pro comes with it.', 'royal-mcp' ) . '</p>';
-		echo '<p><a class="button button-primary" style="' . esc_attr( $btn ) . '" target="_blank" rel="noopener" href="' . esc_url( add_query_arg( [ 'utm_source' => 'royal_mcp_free', 'utm_medium' => 'free_plugin', 'utm_content' => 'dashboard_upgrade_card', 'utm_campaign' => 'royal_mcp_admin' ], 'https://royalplugins.com/royally/' ) ) . '"><span>' . esc_html__( 'See Royally', 'royal-mcp' ) . '</span>' . self::icon( 'arrow' ) . '</a></p>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- icon() returns fixed SVG markup
+		echo '<p><a class="button button-primary" style="' . esc_attr( $btn ) . '" target="_blank" rel="noopener" href="' . esc_url( add_query_arg( [ 'utm_source' => 'royal_mcp_free', 'utm_medium' => 'free_plugin', 'utm_content' => 'dashboard_upgrade_card', 'utm_campaign' => 'royal_mcp_admin' ], 'https://royalplugins.com/royally/' ) ) . '"><span>' . esc_html__( 'Upgrade To Pro', 'royal-mcp' ) . '</span>' . self::icon( 'arrow' ) . '</a></p>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- icon() returns fixed SVG markup
 		echo '</div>';
 
 		echo '</div></div>';

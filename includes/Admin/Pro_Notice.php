@@ -75,7 +75,7 @@ class Pro_Notice {
                 <?php esc_html_e( 'With Royally your AI reaches more than 1,700 MCP tools and 4,800 actions across your WordPress sites and the services you run them with, from one place instead of a connector per app. The Royal MCP Pro plugin is included: Royally is a hybrid plugin and cloud solution.', 'royal-mcp' ); ?>
             </p>
             <p style="margin: 0;">
-                <a href="<?php echo esc_url( $pro_url ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary" style="background:#1d4ed8;border-color:#1e40af;color:#fff;"><?php esc_html_e( 'See Royally', 'royal-mcp' ); ?></a>
+                <a href="<?php echo esc_url( $pro_url ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary" style="background:#1d4ed8;border-color:#1e40af;color:#fff;"><?php esc_html_e( 'See Royal MCP Pro', 'royal-mcp' ); ?></a>
                 &nbsp;
                 <a href="<?php echo esc_url( $dismiss_url ); ?>" class="royal-mcp-pro-notice-dismiss" style="margin-left: 6px;"><?php esc_html_e( 'Dismiss', 'royal-mcp' ); ?></a>
             </p>
