@@ -660,7 +660,9 @@ class Server {
         if ( $count >= 10 ) {
             $this->json_error( 'rate_limit', 'Too many registration attempts. Try again later.', 429 );
         }
-        set_transient( $transient_key, $count + 1, 60 );
+        if ( ! \Royal_MCP\Admin\Connection_Doctor::is_probe_request() ) {
+            set_transient( $transient_key, $count + 1, 60 );
+        }
 
         // Parse body.
         $body = json_decode( file_get_contents( 'php://input' ), true );
@@ -1029,6 +1031,10 @@ class Server {
             $this->authorize_error( $redirect_uri, $state, 'invalid_target', 'The requested resource is not served by this authorization server.' );
         }
 
+        if ( empty( $code_challenge ) || 'S256' !== $code_challenge_method ) {
+            $this->authorize_error( $redirect_uri, $state, 'invalid_request', 'PKCE with code_challenge_method=S256 is required.' );
+        }
+
         // Access level picked on the consent screen: only someone who may manage Royal MCP
         // sets it (it applies to every user of this client, as on the Connections page).
         $picked = isset( $_POST['access_level'] ) ? sanitize_text_field( wp_unslash( $_POST['access_level'] ) ) : '';
@@ -1036,7 +1042,7 @@ class Server {
             && current_user_can( \Royal_MCP\Admin\Settings_Page::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from Settings_Page::admin_capability()
             $prior_level = \Royal_MCP\MCP\Support\Access_Levels::for_client( $client_id );
             $level_saved = false;
-            if ( $picked !== $prior_level ) {
+            if ( $picked !== $prior_level || \Royal_MCP\MCP\Support\Access_Levels::is_inherited( $client_id ) ) {
                 try {
                     \Royal_MCP\MCP\Support\Access_Levels::set_client( $client_id, $picked );
                     $level_saved = true;

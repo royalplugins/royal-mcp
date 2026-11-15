@@ -4880,6 +4880,13 @@ class Server {
         if ('success' === $status && preg_match('/^[a-f0-9]{32}$/', $logged_undo_token)) {
             $response_meta['change_id'] = \Royal_MCP\MCP\Undo_Store::change_id($logged_undo_token);
         }
+        if ('success' === $status && is_array($result) && isset($result['structuredContent']['verified'])) {
+            $lv = $result['structuredContent']['verified'];
+            $response_meta['verified'] = true === $lv ? 'verified' : ( is_string($lv) ? substr($lv, 0, 20) : 'not_checked' );
+            if (!empty($result['structuredContent']['landed']) && is_array($result['structuredContent']['landed'])) {
+                $response_meta['landed'] = array_slice(array_map(static function ($v) { return substr((string) $v, 0, 40); }, $result['structuredContent']['landed']), 0, 20);
+            }
+        }
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Intentional direct insert to the logs table.
         $wpdb->insert(
@@ -5177,7 +5184,134 @@ class Server {
      * since that hash was read; content reads and writes report the current hash.
      */
     private function execute_tool($name, $args) {
-        $name  = (string) $name;
+        $name = (string) $name;
+        // Verify-after-write: a write that names a post is read back afterwards, and its
+        // reply says what landed (verified), that the post reads back unchanged, or that
+        // it was not checked.
+        $is_write = $this->is_builtin_tool_name( $name ) && empty( self::annotations_for( $name )['readOnlyHint'] )
+            && ! ( is_array( $args ) && ! empty( $args['dry_run'] ) );
+        $vpid   = $is_write ? $this->verify_target_post( $name, $args ) : 0;
+        $before = $vpid > 0 ? self::verify_fingerprint( $vpid ) : null;
+        $result = $this->execute_tool_scoped( $name, $args );
+        return $is_write ? self::stamp_verified( $result, $name, $vpid, $before ) : $result;
+    }
+
+    /** Argument keys that name the post a write changes (not a source it copies from). */
+    const VERIFY_POST_ARGS = [ 'post_id', 'id', 'page_id', 'media_id', 'attachment_id', 'menu_item_id', 'revision_id' ];
+
+    /** The post a write targets, or 0. */
+    private function verify_target_post( $name, $args ) {
+        $scope = $this->item_scope( $name, $args );
+        if ( null === $scope || 'edit_post' !== $scope[0] ) {
+            return 0;
+        }
+        foreach ( self::VERIFY_POST_ARGS as $key ) {
+            if ( isset( $args[ $key ] ) && is_numeric( $args[ $key ] ) && (int) $args[ $key ] > 0 ) {
+                $post = get_post( (int) $args[ $key ] );
+                if ( ! $post ) {
+                    return 0;
+                }
+                // A revision restore changes the post the revision belongs to.
+                return 'revision' === $post->post_type ? (int) $post->post_parent : (int) $post->ID;
+            }
+        }
+        return 0;
+    }
+
+    /** What a post holds now, by part: its fields, custom fields, terms. Null when it does not exist. */
+    private static function verify_fingerprint( $post_id ) {
+        global $wpdb;
+        clean_post_cache( (int) $post_id );
+        $post = get_post( (int) $post_id );
+        if ( ! $post ) {
+            return null;
+        }
+        $fields = [];
+        foreach ( [ 'post_title', 'post_content', 'post_excerpt', 'post_status', 'post_name', 'post_parent', 'menu_order', 'post_password', 'comment_status', 'ping_status', 'post_date_gmt', 'post_author', 'post_mime_type' ] as $f ) {
+            $fields[ $f ] = md5( (string) $post->$f );
+        }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $meta = $wpdb->get_results( $wpdb->prepare( "SELECT meta_key, meta_value FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key NOT IN ( '_edit_lock', '_edit_last' ) AND meta_key NOT LIKE %s ORDER BY meta_id", (int) $post_id, $wpdb->esc_like( '_royal_mcp_' ) . '%' ), ARRAY_N );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $terms = $wpdb->get_col( $wpdb->prepare( "SELECT term_taxonomy_id FROM {$wpdb->term_relationships} WHERE object_id = %d ORDER BY term_taxonomy_id", (int) $post_id ) );
+        return [ 'fields' => $fields, 'meta' => md5( (string) wp_json_encode( $meta ) ), 'terms' => md5( implode( ',', (array) $terms ) ) ];
+    }
+
+    /** Adds verified / landed to a successful write's reply. */
+    private static function stamp_verified( $result, $name, $vpid, $before ) {
+        if ( ! is_array( $result ) || ! empty( $result['isError'] ) ) {
+            return $result;
+        }
+        // A plain result array (wrapped into an envelope later) is stamped at its root.
+        $plain = ! \Royal_MCP\MCP\Support\Envelope::is_envelope( $result );
+        if ( ! $plain && ( ! isset( $result['structuredContent'] ) || ! is_array( $result['structuredContent'] ) ) ) {
+            return $result;
+        }
+        // A plain list (e.g. several items) stays a list.
+        if ( $plain && [] !== $result && array_keys( $result ) === range( 0, count( $result ) - 1 ) ) {
+            return $result;
+        }
+        $sc = $plain ? $result : $result['structuredContent'];
+        if ( 'dry_run' === ( $sc['state'] ?? '' ) || array_key_exists( 'verified', $sc ) && is_bool( $sc['verified'] ) && ! isset( $sc['saved_fields'] ) ) {
+            return $result;
+        }
+        $labels = [ 'post_title' => 'title', 'post_content' => 'content', 'post_excerpt' => 'excerpt', 'post_status' => 'status', 'post_name' => 'slug', 'post_parent' => 'parent', 'menu_order' => 'order', 'post_password' => 'password', 'comment_status' => 'comments', 'ping_status' => 'pings', 'post_date_gmt' => 'date', 'post_author' => 'author', 'post_mime_type' => 'file type' ];
+        $note   = '';
+        if ( isset( $sc['saved_fields'] ) && is_array( $sc['saved_fields'] ) ) {
+            $state  = 'verified';
+            $landed = array_map( 'strval', array_keys( $sc['saved_fields'] ) );
+        } elseif ( $vpid > 0 && null !== $before ) {
+            $after = self::verify_fingerprint( $vpid );
+            if ( null === $after ) {
+                $state  = 'verified';
+                $landed = [ 'deleted' ];
+            } else {
+                $landed = [];
+                foreach ( $before['fields'] as $f => $h ) {
+                    if ( $after['fields'][ $f ] !== $h ) {
+                        $landed[] = $labels[ $f ] ?? $f;
+                    }
+                }
+                if ( $after['meta'] !== $before['meta'] ) {
+                    $landed[] = 'custom fields';
+                }
+                if ( $after['terms'] !== $before['terms'] ) {
+                    $landed[] = 'terms';
+                }
+                $state = $landed ? 'verified' : 'unchanged';
+                if ( ! $landed ) {
+                    /* translators: %d: post ID */
+                    $note = sprintf( ' Read back: post %d is unchanged.', (int) $vpid );
+                }
+            }
+        } else {
+            $created = (int) ( $sc['post_id'] ?? ( $sc['id'] ?? 0 ) );
+            if ( $created > 0 && false !== strpos( (string) $name, '_create_' ) && get_post( $created ) ) {
+                $state  = 'verified';
+                $landed = [ 'created' ];
+            } else {
+                $state  = 'not_checked';
+                $landed = [];
+            }
+        }
+        $sc['verified'] = 'verified' === $state ? true : ( 'unchanged' === $state ? 'unchanged' : 'not_checked' );
+        if ( $landed ) {
+            $sc['landed'] = array_values( array_unique( $landed ) );
+        }
+        if ( $plain ) {
+            if ( '' !== $note && isset( $sc['message'] ) && is_string( $sc['message'] ) ) {
+                $sc['message'] = rtrim( $sc['message'] ) . $note;
+            }
+            return $sc;
+        }
+        $result['structuredContent'] = $sc;
+        if ( '' !== $note && isset( $result['content'][0]['text'] ) && is_string( $result['content'][0]['text'] ) ) {
+            $result['content'][0]['text'] = rtrim( $result['content'][0]['text'] ) . $note;
+        }
+        return $result;
+    }
+
+    private function execute_tool_scoped($name, $args) {
         $scope = $this->item_scope( $name, $args );
         // An administrator who may act on the item (or on everything) keeps the exact answer.
         if ( null === $scope || current_user_can( $scope[0], $scope[1] ) ) {

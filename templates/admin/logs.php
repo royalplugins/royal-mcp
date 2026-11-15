@@ -190,6 +190,17 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
                         <span class="status-badge status-<?php echo esc_attr($royal_mcp_status_class); ?>">
                             <?php echo esc_html($royal_mcp_status_label); ?>
                         </span>
+                        <?php
+                        $royal_mcp_vresp = json_decode((string) $royal_mcp_log->response_data, true);
+                        $royal_mcp_ver   = is_array($royal_mcp_vresp) ? (string) ($royal_mcp_vresp['verified'] ?? '') : '';
+                        if ('verified' === $royal_mcp_ver) {
+                            $royal_mcp_landed = is_array($royal_mcp_vresp['landed'] ?? null) ? implode(', ', array_map('strval', $royal_mcp_vresp['landed'])) : '';
+                            /* translators: %s: what changed, e.g. "title, content" */
+                            echo '<br><span class="description">' . esc_html('' !== $royal_mcp_landed ? sprintf(__('Read back: %s changed', 'royal-mcp'), $royal_mcp_landed) : __('Read back: saved', 'royal-mcp')) . '</span>';
+                        } elseif ('unchanged' === $royal_mcp_ver) {
+                            echo '<br><span class="description">' . esc_html__('Read back: nothing changed', 'royal-mcp') . '</span>';
+                        }
+                        ?>
                     </td>
                     <td class="column-details">
                         <button type="button"

@@ -32,8 +32,11 @@ class Connection_Doctor {
 	/** Whether a header value is the live one-time probe value. */
 	public static function is_probe_request_value( $sent ) {
 		$sent = (string) $sent;
-		$want = (string) get_transient( self::PROBE_KEY );
-		return '' !== $sent && '' !== $want && hash_equals( $want, $sent );
+		if ( ! preg_match( '/^[A-Za-z0-9]{32}$/', $sent ) ) {
+			return false;
+		}
+		$want = (string) get_transient( self::PROBE_KEY . '_' . md5( $sent ) );
+		return '' !== $want && hash_equals( $want, $sent );
 	}
 
 	public static function register() {
@@ -43,7 +46,16 @@ class Connection_Doctor {
 	/** The last run, or null. */
 	public static function last() {
 		$r = get_option( self::RESULT_OPTION, null );
-		return is_array( $r ) && isset( $r['steps'] ) ? $r : null;
+		if ( ! is_array( $r ) || ! isset( $r['steps'] ) || ! is_array( $r['steps'] ) ) {
+			return null;
+		}
+		$r['ok']            = ! empty( $r['ok'] );
+		$r['checked_at']    = (int) ( $r['checked_at'] ?? 0 );
+		$r['first_problem'] = is_array( $r['first_problem'] ?? null ) ? $r['first_problem'] + [ 'label' => '' ] : [ 'label' => '' ];
+		$r['steps']         = array_values( array_filter( array_map( static function ( $s ) {
+			return is_array( $s ) ? $s + [ 'key' => '', 'label' => '', 'status' => 'info', 'detail' => '', 'link' => '', 'link_text' => '' ] : null;
+		}, $r['steps'] ) ) );
+		return $r;
 	}
 
 	public static function handle_run() {
@@ -128,9 +140,9 @@ class Connection_Doctor {
 			return self::step( 'registration', $label, 'skipped', __( 'The discovery document did not name a registration address on this site.', 'royal-mcp' ) );
 		}
 		$probe = wp_generate_password( 32, false );
-		set_transient( self::PROBE_KEY, $probe, MINUTE_IN_SECONDS );
+		set_transient( self::PROBE_KEY . '_' . md5( $probe ), $probe, MINUTE_IN_SECONDS );
 		$res = wp_remote_post( $url, [ 'timeout' => 5, 'redirection' => 0, 'sslverify' => false, 'headers' => [ 'Content-Type' => 'application/json', self::PROBE_HEADER => $probe ], 'body' => '' ] );
-		delete_transient( self::PROBE_KEY );
+		delete_transient( self::PROBE_KEY . '_' . md5( $probe ) );
 		if ( is_wp_error( $res ) ) {
 			return self::step( 'registration', $label, 'warn', __( 'The site could not reach its own registration address to check it (loopback blocked or timed out).', 'royal-mcp' ) );
 		}
@@ -148,21 +160,24 @@ class Connection_Doctor {
 		global $wpdb;
 		$table = $wpdb->prefix . 'royal_mcp_logs';
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix
-		$call = $wpdb->get_var( "SELECT MAX(timestamp) FROM `{$table}` WHERE action LIKE 'tools/call:%' AND status = 'success'" );
+		$since = gmdate( 'Y-m-d H:i:s', time() - 30 * DAY_IN_SECONDS - DAY_IN_SECONDS );
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix
-		$sign = $wpdb->get_var( "SELECT MAX(timestamp) FROM `{$table}` WHERE action = 'oauth:token' AND status = 'success'" );
+		$call = $wpdb->get_var( $wpdb->prepare( "SELECT timestamp FROM `{$table}` WHERE timestamp >= %s AND action LIKE 'tools/call:%%' AND status = 'success' ORDER BY id DESC LIMIT 1", $since ) );
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix
+		$sign = $wpdb->get_var( $wpdb->prepare( "SELECT timestamp FROM `{$table}` WHERE timestamp >= %s AND action = 'oauth:token' AND status = 'success' ORDER BY id DESC LIMIT 1", $since ) );
 		$fmt  = trim( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ) );
 		$when = static function ( $ts ) use ( $fmt ) {
-			return $ts ? wp_date( $fmt, strtotime( $ts . ' UTC' ) ) : __( 'never logged', 'royal-mcp' );
+			// Shown as the Activity Log shows the same column.
+			return $ts ? mysql2date( $fmt, $ts ) : __( 'none in the last 30 days', 'royal-mcp' );
 		};
 		/* translators: 1: date of the last sign-in, 2: date of the last tool call */
 		$detail = sprintf( __( 'Last AI sign-in: %1$s. Last tool call: %2$s.', 'royal-mcp' ), $when( $sign ), $when( $call ) );
 		// The last refused sign-in or MCP request, with the reason the log recorded.
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix
-		$refused = $wpdb->get_row( "SELECT action, response_data, timestamp FROM `{$table}` WHERE status = 'error' AND ( action LIKE 'oauth:%' OR action LIKE 'mcp:%' ) ORDER BY id DESC LIMIT 1", ARRAY_A );
+		$refused = $wpdb->get_row( $wpdb->prepare( "SELECT action, response_data, timestamp FROM `{$table}` WHERE timestamp >= %s AND status = 'error' AND ( action LIKE 'oauth:%%' OR action LIKE 'mcp:%%' ) ORDER BY id DESC LIMIT 1", $since ), ARRAY_A );
 		if ( $refused ) {
 			$data   = json_decode( (string) $refused['response_data'], true );
-			$reason = is_array( $data ) ? (string) ( $data['description'] ?? ( $data['error']['message'] ?? ( $data['message'] ?? ( $data['code'] ?? '' ) ) ) ) : '';
+			$reason = is_array( $data ) ? (string) ( $data['description'] ?? ( $data['error_message'] ?? ( $data['error']['message'] ?? ( $data['message'] ?? ( $data['error_code'] ?? ( $data['code'] ?? '' ) ) ) ) ) ) : '';
 			$reason = '' !== $reason ? $reason : (string) $refused['action'];
 			/* translators: 1: date, 2: what was refused (e.g. oauth:token), 3: the reason recorded */
 			$detail .= ' ' . sprintf( __( 'Last refused request: %1$s, %2$s: %3$s', 'royal-mcp' ), $when( $refused['timestamp'] ), (string) $refused['action'], wp_html_excerpt( wp_strip_all_tags( $reason ), 200, '...' ) );
