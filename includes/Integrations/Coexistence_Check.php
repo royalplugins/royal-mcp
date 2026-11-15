@@ -48,7 +48,7 @@ class Coexistence_Check {
 				$unknown = true;
 			}
 		}
-		set_transient( self::CHAIN_TRANSIENT, $report, $unknown ? 5 * MINUTE_IN_SECONDS : self::CHAIN_TTL );
+		set_transient( self::CHAIN_TRANSIENT, $report, $unknown ? HOUR_IN_SECONDS : self::CHAIN_TTL );
 		return $report;
 	}
 
@@ -173,9 +173,21 @@ class Coexistence_Check {
 		$same  = static function ( $a, $b ) {
 			return is_string( $a ) && is_string( $b ) && rtrim( $a, '/' ) === rtrim( $b, '/' );
 		};
-		// The authorize address changes with the rewrite rules (a cached copy may name the
-		// other form), so Royal MCP's own document is recognised by issuer and token endpoint.
-		return ( $same( $doc['issuer'] ?? null, $issuer )
+		// The authorize address depends on the rewrite rules, so a cached copy may name the
+		// other of the two forms Royal MCP advertises; either is Royal MCP's.
+		$authorize = [ (string) ( $ours['authorization_endpoint'] ?? '' ) ];
+		$ns        = OAuth_Server::namespace_issuer();
+		if ( '' !== $ns ) {
+			$authorize[] = $ns . '/oauth/authorize';
+			if ( class_exists( '\Royal_MCP_Plugin' ) ) {
+				$authorize[] = OAuth_Server::canonical_resource_url( '/' ) . '/' . \Royal_MCP_Plugin::namespace_authorize_slug();
+			}
+		}
+		$auth_ok = false;
+		foreach ( $authorize as $candidate ) {
+			$auth_ok = $auth_ok || $same( $doc['authorization_endpoint'] ?? null, $candidate );
+		}
+		return ( $same( $doc['issuer'] ?? null, $issuer ) && $auth_ok
 			&& $same( $doc['token_endpoint'] ?? null, $ours['token_endpoint'] ?? '' ) ) ? 'royal_mcp' : 'other';
 	}
 

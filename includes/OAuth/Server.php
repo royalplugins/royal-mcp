@@ -1182,7 +1182,10 @@ class Server {
             $this->json_error( 'invalid_grant', 'Refresh token is invalid, expired, or revoked.', 400 );
         }
         $client = Token_Store::get_client( $client_id );
-        if ( $client && 'client_secret_post' === ( $client['token_endpoint_auth_method'] ?? 'none' ) ) {
+        if ( ! $client || Token_Store::is_pending_approval( $client ) ) {
+            $this->json_error( 'invalid_grant', 'Refresh token is invalid, expired, or revoked.', 400 );
+        }
+        if ( 'client_secret_post' === ( $client['token_endpoint_auth_method'] ?? 'none' ) ) {
             $client_secret = isset( $_POST['client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['client_secret'] ) ) : '';
             if ( empty( $client_secret ) || ! hash_equals( $client['client_secret_hash'], hash( 'sha256', $client_secret ) ) ) {
                 $this->json_error( 'invalid_client', 'Client authentication failed.', 401 );

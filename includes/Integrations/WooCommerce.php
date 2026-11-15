@@ -629,8 +629,10 @@ class WooCommerce {
 	public static function save_coupon_exact( $coupon ) {
 		$id      = (int) $coupon->get_id();
 		$excerpt = (string) $coupon->get_description( 'edit' );
-		$keep    = static function ( $data, $postarr ) use ( $id, $excerpt ) {
-			if ( isset( $data['post_type'] ) && 'shop_coupon' === $data['post_type'] && $id === (int) ( $postarr['ID'] ?? 0 ) ) {
+		$done    = false;
+		$keep    = static function ( $data, $postarr ) use ( $id, $excerpt, &$done ) {
+			if ( ! $done && isset( $data['post_type'] ) && 'shop_coupon' === $data['post_type'] && $id === (int) ( $postarr['ID'] ?? 0 ) ) {
+				$done                 = 0 === $id; // a new coupon: only its own insert, not another made during the save
 				$data['post_excerpt'] = wp_slash( $excerpt );
 			}
 			return $data;

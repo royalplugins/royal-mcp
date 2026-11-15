@@ -166,6 +166,9 @@ class Change_View {
 				return [ [ 'manage_options' ] ];
 			case 'wp_update_menu_item':
 			case 'wp_delete_menu_item':
+			case 'wp_delete_menu':
+			case 'wp_update_global_styles':
+			case 'wp_update_block_template':
 			case 'wp_reorder_menu_items':
 			case 'wp_update_theme_mod':
 			case 'wp_update_widget':

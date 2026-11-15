@@ -68,6 +68,9 @@ class Tool_Capabilities {
 			'wp_create_menu_item'   => 'edit_theme_options',
 			'wp_update_menu_item'   => 'edit_theme_options',
 			'wp_delete_menu_item'   => 'edit_theme_options',
+			'wp_delete_menu'        => 'edit_theme_options',
+			'wp_update_global_styles'  => 'edit_theme_options',
+			'wp_update_block_template' => 'edit_theme_options',
 			'wp_reorder_menu_items' => 'edit_theme_options',
 
 			// ==================== Core: comments moderation ====================
