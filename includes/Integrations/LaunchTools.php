@@ -57,12 +57,16 @@ class LaunchTools {
 		// IndexNow accepts URLs only under the folder its key file sits in, so the key is also served
 		// at the site's root as /<key>.txt (the address search engines check first). No file is written.
 		add_action( 'parse_request', static function () {
-			$key = get_option( 'royal_mcp_indexnow_key', '' );
-			if ( ! is_string( $key ) || 32 !== strlen( $key ) || ! ctype_xdigit( $key ) || empty( $_SERVER['REQUEST_URI'] ) ) {
+			if ( empty( $_SERVER['REQUEST_URI'] ) ) {
 				return;
 			}
 			$asked = (string) wp_parse_url( esc_url_raw( wp_unslash( $_SERVER['REQUEST_URI'] ) ), PHP_URL_PATH ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- compared to a fixed path only
-			if ( $asked !== (string) wp_parse_url( self::indexnow_key_url( $key ), PHP_URL_PATH ) ) {
+			// Only an address shaped like a key file reads the stored key (other requests skip the lookup).
+			if ( ! preg_match( '#/[0-9a-f]{32}\.txt$#', $asked ) ) {
+				return;
+			}
+			$key = get_option( 'royal_mcp_indexnow_key', '' );
+			if ( ! is_string( $key ) || 32 !== strlen( $key ) || ! ctype_xdigit( $key ) || $asked !== (string) wp_parse_url( self::indexnow_key_url( $key ), PHP_URL_PATH ) ) {
 				return;
 			}
 			if ( ! headers_sent() ) {
@@ -673,6 +677,7 @@ class LaunchTools {
 		}
 
 		$structured['quality'] = self::aggregate_quality_signals( $engine['steps'] );
+		$warnings              = array_merge( $warnings, self::not_sent_notes( $engine['steps'] ) );
 		if ( ! empty( $warnings ) ) {
 			$structured['warnings'] = $warnings;
 		}
@@ -1227,6 +1232,9 @@ class LaunchTools {
 			'rolled_back'          => ! empty( $engine['rolled_back'] ),
 			'quality'              => $quality,
 		];
+		if ( self::not_sent_notes( $engine['steps'] ) ) {
+			$structured['warnings'] = self::not_sent_notes( $engine['steps'] );
+		}
 
 		$failing_step_text = '';
 		if ( $engine['aborted'] ) {
@@ -2443,7 +2451,7 @@ class LaunchTools {
 			'status'  => $ok ? 'ok' : 'error',
 			'message' => $ok
 				? sprintf( 'IndexNow accepted (HTTP %d). Cannot-recall — submission is one-way.', $code )
-				: sprintf( 'IndexNow rejected (HTTP %d): %s', $code, wp_remote_retrieve_body( $resp ) ),
+				: sprintf( 'IndexNow rejected (HTTP %d): %s', $code, substr( wp_strip_all_tags( (string) wp_remote_retrieve_body( $resp ) ), 0, 300 ) ),
 			'data'    => [
 				'url'          => $url,
 				'host'         => $host,
@@ -2469,6 +2477,18 @@ class LaunchTools {
 			$r['message'] = 'not sent: ' . (string) ( $r['message'] ?? '' );
 		}
 		return $r;
+	}
+
+	/** One line per search-engine push that was asked for but not sent, for the reply's warnings. */
+	private static function not_sent_notes( array $steps ) {
+		$out = [];
+		foreach ( $steps as $s ) {
+			$msg = (string) ( $s['message'] ?? '' );
+			if ( 'skipped' === ( $s['status'] ?? '' ) && 0 === strpos( $msg, 'not sent: ' ) ) {
+				$out[] = sprintf( '%s: %s', (string) ( $s['name'] ?? 'push' ), $msg );
+			}
+		}
+		return $out;
 	}
 
 	private static function get_or_create_indexnow_key() {
@@ -2553,10 +2573,6 @@ class LaunchTools {
 		];
 	}
 
-	/**
-	 * Purge a post's page in every active cache plugin (the same layers wp_purge_and_verify_url
-	 * clears). $url overrides the permalink, for a post that no longer exists.
-	 */
 	/**
 	 * Purge a post's page in every active cache plugin (the same layers wp_purge_and_verify_url
 	 * clears). $url overrides the permalink, for a post that no longer exists. A purge never
