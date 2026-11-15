@@ -1756,6 +1756,9 @@ class Server {
         if ( 'wp_update_custom_css' === ( $snapshot['op'] ?? '' ) ) {
             return \Royal_MCP\MCP\Support\Post_Access::custom_css_refusal();
         }
+        if ( in_array( (string) ( $snapshot['op'] ?? '' ), [ 'wp_update_theme_mod', 'wp_update_theme_design' ], true ) ) {
+            return \Royal_MCP\MCP\Support\Post_Access::theme_writes_refusal();
+        }
         $target = isset( $snapshot['target'] ) && is_array( $snapshot['target'] ) ? $snapshot['target'] : [];
         $pre    = isset( $snapshot['pre_op_state'] ) && is_array( $snapshot['pre_op_state'] ) ? $snapshot['pre_op_state'] : [];
         $types  = [ (string) ( $target['post_type'] ?? '' ), (string) ( $pre['row']['post_type'] ?? '' ) ];
