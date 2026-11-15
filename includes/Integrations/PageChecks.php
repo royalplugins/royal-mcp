@@ -878,7 +878,12 @@ class PageChecks {
 			ob_start();
 			try {
 				$detail = $fn();
-				$out[]  = [ 'layer' => $layer, 'purged' => true, 'detail' => is_string( $detail ) ? $detail : '' ];
+				// A layer may answer [ purged, detail, queued ] when it only queues the purge or caches nothing here.
+				if ( is_array( $detail ) ) {
+					$out[] = [ 'layer' => $layer, 'purged' => (bool) $detail[0], 'detail' => (string) ( $detail[1] ?? '' ), 'queued' => ! empty( $detail[2] ) ];
+				} else {
+					$out[] = [ 'layer' => $layer, 'purged' => true, 'detail' => is_string( $detail ) ? $detail : '' ];
+				}
 			} catch ( \Throwable $e ) {
 				$out[] = [ 'layer' => $layer, 'purged' => false, 'detail' => (string) Location_Filter::clean( $e->getMessage(), 160 ) ];
 			}
@@ -904,18 +909,24 @@ class PageChecks {
 				if ( $post_id ) {
 					do_action( 'litespeed_purge_post', $post_id );
 				}
-				return 'purge queued; LiteSpeed carries it out when this reply is sent';
+				if ( defined( 'LITESPEED_ALLOWED' ) && ! LITESPEED_ALLOWED ) {
+					return [ false, 'LiteSpeed is not serving pages on this server, so it caches nothing to purge', false ];
+				}
+				return [ true, 'purge queued; LiteSpeed carries it out when this reply is sent', true ];
 			} );
 		}
 		if ( function_exists( 'w3tc_flush_url' ) ) {
 			$try( 'w3tc', static function () use ( $url, $post_id ) {
-				if ( false === w3tc_flush_url( $url ) ) {
-					throw new \Exception( 'W3 Total Cache reported that the page was not flushed.' );
+				$on = true;
+				if ( class_exists( '\\W3TC\\Dispatcher' ) && method_exists( '\\W3TC\\Dispatcher', 'config' ) ) {
+					$config = \W3TC\Dispatcher::config();
+					$on     = is_object( $config ) && method_exists( $config, 'get_boolean' ) ? (bool) $config->get_boolean( 'pgcache.enabled' ) : true;
 				}
+				w3tc_flush_url( $url );
 				if ( $post_id && function_exists( 'w3tc_flush_post' ) ) {
 					w3tc_flush_post( $post_id );
 				}
-				return '';
+				return $on ? [ true, 'purge queued; W3 Total Cache carries it out at the end of this request', true ] : [ false, 'the W3 Total Cache page cache is switched off', false ];
 			} );
 		}
 		if ( function_exists( 'rocket_clean_files' ) ) {
@@ -924,9 +935,14 @@ class PageChecks {
 				return '';
 			} );
 		}
-		if ( function_exists( 'wpsc_delete_url_cache' ) ) {
-			$try( 'wp_super_cache', static function () use ( $url ) {
-				if ( false === wpsc_delete_url_cache( $url ) ) {
+		if ( function_exists( 'wpsc_delete_url_cache' ) || function_exists( 'wp_cache_post_change' ) ) {
+			$try( 'wp_super_cache', static function () use ( $url, $post_id ) {
+				// By post where possible: WP Super Cache does not delete addresses with a query string (?p=123).
+				if ( $post_id && function_exists( 'wp_cache_post_change' ) ) {
+					wp_cache_post_change( $post_id );
+					return 'by post';
+				}
+				if ( ! function_exists( 'wpsc_delete_url_cache' ) || false === wpsc_delete_url_cache( $url ) ) {
 					throw new \Exception( 'WP Super Cache reported that the page was not removed.' );
 				}
 				return '';

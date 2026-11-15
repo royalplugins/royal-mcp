@@ -1752,6 +1752,11 @@ class Server {
     }
 
     /** Why undoing this operation may not write a theme post now, or null. */
+    /** content is required by the create tools' schema; a call without it is refused, never inserted as NULL. */
+    private static function required_content() {
+        throw new \Exception( 'content is required (pass an empty string for an empty post).' );
+    }
+
     private static function undo_theme_refusal( array $snapshot ) {
         if ( 'wp_update_custom_css' === ( $snapshot['op'] ?? '' ) ) {
             return \Royal_MCP\MCP\Support\Post_Access::custom_css_refusal();
@@ -5736,7 +5741,7 @@ class Server {
                 // status allowlist matches schema enum; future requires post_date in the future.
                 $post_data = [
                     'post_title' => \Royal_MCP\MCP\Support\SafeText::field($args['title']),
-                    'post_content' => wp_slash($args['content']),
+                    'post_content' => wp_slash(is_string($args['content'] ?? null) ? $args['content'] : self::required_content()),
                     'post_status' => in_array((string) ($args['status'] ?? 'draft'), ['publish', 'draft', 'future', 'pending', 'private'], true) ? (string) ($args['status'] ?? 'draft') : 'draft',
                     'post_type' => $post_type,
                 ];
@@ -6173,7 +6178,7 @@ class Server {
                 // See wp_create_post above for the wp_slash + no-wp_kses_post rationale.
                 $page_data = [
                     'post_title' => \Royal_MCP\MCP\Support\SafeText::field($args['title']),
-                    'post_content' => wp_slash($args['content']),
+                    'post_content' => wp_slash(is_string($args['content'] ?? null) ? $args['content'] : self::required_content()),
                     'post_status' => $page_status,
                     'post_type' => 'page',
                 ];

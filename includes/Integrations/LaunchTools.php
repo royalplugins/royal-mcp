@@ -495,7 +495,7 @@ class LaunchTools {
 				'condition'  => $post_purge,
 				'run'        => static function () use ( &$created_post_id, $status, &$post_purge_result ) {
 
-					if ( ! in_array( (string) $status, [ 'publish', 'inherit', 'future' ], true ) ) {
+					if ( ! in_array( (string) $status, [ 'publish', 'inherit' ], true ) ) {
 						return [
 							'status'  => 'skipped',
 							'message' => sprintf( 'cache purge skipped: post status "%s" has no public URL to invalidate', (string) $status ),
@@ -582,6 +582,10 @@ class LaunchTools {
 
 		if ( $engine['aborted'] && $mode === 'strict' && ! empty( $rollback_list ) ) {
 			self::run_rollback( array_reverse( $rollback_list ) );
+			// The post's page was purged and may have been cached again before it was removed: purge its address once more.
+			if ( 'ok' === ( $post_purge_result['status'] ?? '' ) && ! empty( $post_purge_result['data']['url'] ) ) {
+				self::purge_cache_for_post( 0, (string) $post_purge_result['data']['url'] );
+			}
 			$engine['rolled_back']    = true;
 			$engine['rollback_count'] = count( $rollback_list );
 			$created_post_id  = 0;
@@ -705,6 +709,9 @@ class LaunchTools {
 	}
 
 	private static function handle_seo_optimize_for_launch( array $args ) {
+		// Redirect group state belongs to this run only (one PHP process can run the tool several times).
+		self::$redirection_group_id      = null;
+		self::$redirection_group_created = 0;
 		$post_id = isset( $args['post_id'] ) ? (int) $args['post_id'] : 0;
 		if ( $post_id <= 0 ) {
 			return self::error_envelope( 'invalid_args', 'post_id is required.' );
@@ -905,7 +912,7 @@ class LaunchTools {
 				'condition'  => $purge_cache_flag,
 				'run'        => static function () use ( $post_id, &$cache_purge_data ) {
 					$post_obj = get_post( $post_id );
-					if ( $post_obj && ! in_array( (string) $post_obj->post_status, [ 'publish', 'inherit', 'future' ], true ) ) {
+					if ( $post_obj && ! in_array( (string) $post_obj->post_status, [ 'publish', 'inherit' ], true ) ) {
 						return [
 							'status'  => 'skipped',
 							'message' => sprintf( 'cache purge skipped: post status "%s" has no public URL to invalidate', (string) $post_obj->post_status ),
@@ -1011,7 +1018,10 @@ class LaunchTools {
 								}
 								// A pattern rule (often a catch-all) is not a redirect for this address; it is reported, not treated as a conflict.
 								if ( method_exists( $ex, 'is_regex' ) && $ex->is_regex() ) {
-									$regex_ids[] = (int) $ex->get_id();
+									$pattern = method_exists( $ex, 'get_url' ) ? (string) $ex->get_url() : '';
+									if ( '' !== $pattern && 1 === @preg_match( '@' . str_replace( '@', '\\@', $pattern ) . '@', $source ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- a stored pattern may be invalid
+										$regex_ids[] = (int) $ex->get_id();
+									}
 								} else {
 									$existing_ids[] = (int) $ex->get_id();
 								}
@@ -1072,16 +1082,20 @@ class LaunchTools {
 					if ( ! empty( $created ) ) {
 						$made_group = self::$redirection_group_created;
 						$rollback_stack[] = static function () use ( $created, $made_group ) {
+							$stuck = [];
 							foreach ( $created as $rid ) {
 								$item = \Red_Item::get_by_id( $rid );
 								if ( is_object( $item ) && method_exists( $item, 'delete' ) ) {
 									$item->delete();
 								}
 								if ( \Red_Item::get_by_id( $rid ) ) {
-									throw new \Exception( sprintf( 'redirect #%d could not be deleted', (int) $rid ) );
+									$stuck[] = (int) $rid;
 								}
 							}
 							self::remove_group_if_empty( $made_group );
+							if ( $stuck ) {
+								throw new \Exception( sprintf( 'redirect(s) #%s could not be deleted', implode( ', #', $stuck ) ) );
+							}
 						};
 					}
 					return [ 'status' => 'ok', 'data' => $result_data ];
@@ -1126,6 +1140,10 @@ class LaunchTools {
 				} catch ( \Throwable $e ) {
 					$rollback_errors[] = self::error_message( $e );
 				}
+			}
+			// The page was purged and may have been cached again before the rollback: purge it once more.
+			if ( null !== $cache_purge_data ) {
+				self::purge_cache_for_post( $post_id );
 			}
 			$engine['rolled_back']    = ! $rollback_errors;
 			$engine['rollback_count'] = count( $rollback_stack );
@@ -1903,7 +1921,6 @@ class LaunchTools {
 		if ( $post_exists && ( $seo_meta_restored || $redirects_deleted > 0 ) ) {
 			$post_obj = get_post( $post_id );
 			if ( $post_obj && in_array( (string) $post_obj->post_status, [ 'publish', 'inherit' ], true ) ) {
-				$deps = self::probe_dependencies();
 				$cache_purge_on_undo = self::purge_cache_for_post( $post_id );
 				if ( is_array( $cache_purge_on_undo ) && ( $cache_purge_on_undo['status'] ?? '' ) === 'ok' ) {
 					$summary_parts[] = 'cache purged';
@@ -2504,28 +2521,41 @@ class LaunchTools {
 	 * Purge a post's page in every active cache plugin (the same layers wp_purge_and_verify_url
 	 * clears). $url overrides the permalink, for a post that no longer exists.
 	 */
+	/**
+	 * Purge a post's page in every active cache plugin (the same layers wp_purge_and_verify_url
+	 * clears). $url overrides the permalink, for a post that no longer exists. A purge never
+	 * fails the launch: when nothing could be purged the step is "skipped" and says why.
+	 */
 	private static function purge_cache_for_post( $post_id, $url = '' ) {
 		$post_id = (int) $post_id;
 		$url     = '' !== (string) $url ? (string) $url : ( $post_id > 0 ? (string) get_permalink( $post_id ) : '' );
 		if ( '' === $url ) {
 			return [ 'status' => 'skipped', 'message' => 'no public address to purge', 'data' => [ 'layers' => [] ] ];
 		}
+		if ( ! \Royal_MCP\Integrations\PageChecks::on_site( $url ) ) {
+			return [ 'status' => 'skipped', 'message' => 'the page address is not on this site, so its cache was not touched', 'data' => [ 'url' => $url, 'layers' => [] ] ];
+		}
 		$layers = \Royal_MCP\Integrations\PageChecks::purge_layers( $url, get_post( $post_id ) ? $post_id : 0 );
 		$caches = array_values( array_filter( $layers, static function ( $l ) { return 'object_cache' !== ( $l['layer'] ?? '' ); } ) );
 		$done   = array_values( array_filter( $caches, static function ( $l ) { return ! empty( $l['purged'] ); } ) );
 		$failed = array_values( array_filter( $caches, static function ( $l ) { return empty( $l['purged'] ); } ) );
+		$queued = array_values( array_filter( $done, static function ( $l ) { return ! empty( $l['queued'] ); } ) );
+		$names  = static function ( array $list ) { return implode( ', ', array_column( $list, 'layer' ) ); };
+		$data   = [ 'url' => $url, 'layers' => $layers, 'purged' => array_column( $done, 'layer' ), 'queued' => array_column( $queued, 'layer' ), 'not_purged' => array_column( $failed, 'layer' ) ];
 		if ( ! $caches ) {
-			return [ 'status' => 'skipped', 'message' => 'no page cache plugin is active (ForgeCache, LiteSpeed Cache, W3 Total Cache, WP Rocket, WP Super Cache, Cloudflare)', 'data' => [ 'url' => $url, 'layers' => $layers ] ];
+			return [ 'status' => 'skipped', 'message' => 'no page cache plugin is active (ForgeCache, LiteSpeed Cache, W3 Total Cache, WP Rocket, WP Super Cache, Cloudflare)', 'data' => $data ];
 		}
-		$names = static function ( array $list ) { return implode( ', ', array_column( $list, 'layer' ) ); };
 		if ( ! $done ) {
-			return [ 'status' => 'error', 'message' => 'no cache layer could be purged: ' . $names( $failed ), 'data' => [ 'url' => $url, 'layers' => $layers ] ];
+			return [ 'status' => 'skipped', 'message' => 'no cache layer could be purged: ' . $names( $failed ), 'data' => $data ];
 		}
-		return [
-			'status'  => 'ok',
-			'message' => 'purged: ' . $names( $done ) . ( $failed ? '; not purged: ' . $names( $failed ) : '' ),
-			'data'    => [ 'url' => $url, 'layers' => $layers, 'purged' => array_column( $done, 'layer' ), 'not_purged' => array_column( $failed, 'layer' ) ],
-		];
+		$msg = 'purged: ' . $names( $done );
+		if ( $queued ) {
+			$msg .= ' (' . $names( $queued ) . ': queued, carried out at the end of this request)';
+		}
+		if ( $failed ) {
+			$msg .= '; not purged: ' . $names( $failed );
+		}
+		return [ 'status' => 'ok', 'message' => $msg, 'data' => $data ];
 	}
 
 	private static function read_seo_meta_universal( $post_id, array $deps ) {
