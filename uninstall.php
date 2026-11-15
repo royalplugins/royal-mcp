@@ -165,6 +165,7 @@ function royal_mcp_uninstall_site() {
         delete_transient('royal_mcp_rotation_column_failed');
         delete_transient('royal_mcp_resource_column_failed');
         $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '\\_transient\\_royal\\_mcp\\_doctor\\_probe%' OR option_name LIKE '\\_transient\\_timeout\\_royal\\_mcp\\_doctor\\_probe%'");
+        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '\\_transient\\_royal\\_mcp\\_sitekit\\_%' OR option_name LIKE '\\_transient\\_timeout\\_royal\\_mcp\\_sitekit\\_%'");
 
         // Cleared with the tables so a reinstall recreates them.
         delete_option('royal_mcp_db_version');

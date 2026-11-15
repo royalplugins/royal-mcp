@@ -84,6 +84,23 @@ class SiteKit {
 		throw new \Exception( 'Unknown Site Kit tool.' );
 	}
 
+	/**
+	 * Report answers are kept for 5 minutes per user and query, so an agent asking the same
+	 * question again does not spend another Google API call.
+	 */
+	private static function cached_report( $route, array $params ) {
+		$key = 'royal_mcp_sitekit_' . md5( get_current_user_id() . '|' . $route . '|' . wp_json_encode( $params ) );
+		$hit = get_transient( $key );
+		if ( is_array( $hit ) ) {
+			return new \WP_REST_Response( $hit['data'], 200 );
+		}
+		$res = self::get( $route, $params );
+		if ( ! $res->is_error() ) {
+			set_transient( $key, [ 'data' => json_decode( (string) wp_json_encode( $res->get_data() ), true ) ], 5 * MINUTE_IN_SECONDS );
+		}
+		return $res;
+	}
+
 	/** GET a Site Kit route as the current user. */
 	private static function get( $route, array $params = [] ) {
 		$req = new \WP_REST_Request( 'GET', self::REST_ROOT . $route );
@@ -98,7 +115,9 @@ class SiteKit {
 		$err    = $res->as_error();
 		$code   = (string) $err->get_error_code();
 		$status = (int) $res->get_status();
+		$text   = strtolower( (string) $err->get_error_message() );
 		$map    = [
+			'missing_required_setting'    => 'module_not_set_up',
 			'module_not_active'           => 'module_not_active',
 			'invalid_module_slug'         => 'module_not_active',
 			'rest_forbidden'              => 'no_access',
@@ -107,20 +126,28 @@ class SiteKit {
 			'invalid_param'               => 'invalid_args',
 			'rest_invalid_param'          => 'invalid_args',
 		];
-		$reason = $map[ $code ] ?? ( 401 === $status || 403 === $status ? 'no_access' : 'site_kit_error' );
+		if ( 429 === $status || false !== strpos( $text, 'quota' ) || false !== strpos( $text, 'rate limit' ) ) {
+			$reason = 'rate_limited';
+		} else {
+			$reason = $map[ $code ] ?? ( 401 === $status || 403 === $status ? 'no_access' : 'site_kit_error' );
+		}
 		return [
 			'state'   => 'unavailable',
 			'reason'  => $reason,
 			'message' => wp_strip_all_tags( (string) $err->get_error_message() ),
 			'hint'    => 'no_access' === $reason || 'not_connected' === $reason
 				? 'Your WordPress account needs Site Kit access: sign in to Site Kit (Site Kit > Dashboard) or ask the Site Kit owner to share the module with your role.'
-				: ( 'module_not_active' === $reason ? 'Set up the module in Site Kit > Settings.' : '' ),
+				: ( in_array( $reason, [ 'module_not_active', 'module_not_set_up' ], true ) ? 'Set up the module in Site Kit > Settings.'
+				: ( 'rate_limited' === $reason ? 'Google\'s limit for this site was reached; wait a few minutes before asking again.' : '' ) ),
 		];
 	}
 
 	private static function date_range( array $args ) {
 		$valid = static function ( $d ) {
-			return is_string( $d ) && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $d ) && false !== strtotime( $d . ' 00:00:00 UTC' );
+			if ( ! is_string( $d ) || ! preg_match( '/^(\d{4})-(\d{2})-(\d{2})\z/', $d, $m ) ) {
+				return false;
+			}
+			return checkdate( (int) $m[2], (int) $m[3], (int) $m[1] ) && (int) $m[1] >= 2000;
 		};
 		$end   = isset( $args['end_date'] ) && '' !== $args['end_date'] ? $args['end_date'] : gmdate( 'Y-m-d', time() - DAY_IN_SECONDS );
 		if ( ! $valid( $end ) ) {
@@ -132,6 +159,10 @@ class SiteKit {
 		}
 		if ( $start > $end ) {
 			throw new \Exception( 'start_date must be on or before end_date.' );
+		}
+		// Google keeps Search Console data for 16 months; longer ranges only cost quota.
+		if ( strtotime( $end . ' 00:00:00 UTC' ) - strtotime( $start . ' 00:00:00 UTC' ) > 490 * DAY_IN_SECONDS ) {
+			throw new \Exception( 'The date range may be at most 16 months.' );
 		}
 		return [ $start, $end ];
 	}
@@ -199,13 +230,19 @@ class SiteKit {
 			}
 			$params['url'] = $url;
 		}
-		$res = self::get( '/modules/search-console/data/searchanalytics', $params );
+		$res = self::cached_report( '/modules/search-console/data/searchanalytics', $params );
 		if ( $res->is_error() ) {
 			return self::unavailable( $res );
 		}
+		$raw = json_decode( (string) wp_json_encode( $res->get_data() ), true );
+		if ( null !== $raw && ! is_array( $raw ) ) {
+			return [ 'state' => 'unavailable', 'reason' => 'site_kit_error', 'message' => 'Site Kit returned an answer that is not a list of rows.', 'hint' => '' ];
+		}
 		$rows = [];
-		foreach ( (array) $res->get_data() as $r ) {
-			$r = (array) json_decode( (string) wp_json_encode( $r ), true );
+		foreach ( (array) $raw as $r ) {
+			if ( ! is_array( $r ) ) {
+				continue;
+			}
 			$row = [];
 			foreach ( $dims as $i => $d ) {
 				$row[ $d ] = (string) ( $r['keys'][ $i ] ?? '' );
@@ -235,7 +272,7 @@ class SiteKit {
 		if ( $dims ) {
 			$params['dimensions'] = array_map( static function ( $d ) { return [ 'name' => $d ]; }, $dims );
 		}
-		$res = self::get( '/modules/analytics-4/data/report', $params );
+		$res = self::cached_report( '/modules/analytics-4/data/report', $params );
 		if ( $res->is_error() ) {
 			return self::unavailable( $res );
 		}

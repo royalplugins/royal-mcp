@@ -384,6 +384,8 @@ class Server {
         'snippets_recently_active',
         'complianz_status',
         'wp_security_triage',
+        'sitekit_search_console_report',
+        'sitekit_analytics_report',
         '_active_profile_notice',
     ];
 
