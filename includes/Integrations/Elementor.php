@@ -261,14 +261,6 @@ class Elementor {
 	}
 
 	/**
-	 * Execute an Elementor MCP tool.
-	 *
-	 * @param string $name Tool name.
-	 * @param array  $args Tool arguments.
-	 * @return mixed Result data.
-	 * @throws \Exception If tool fails.
-	 */
-	/**
 	 * What a post created by a tool looks like now (title, content, Elementor data,
 	 * modified time), so its undo can tell whether someone edited it since.
 	 */
@@ -280,6 +272,14 @@ class Elementor {
 		return md5( $post->post_title . "\0" . $post->post_content . "\0" . (string) get_post_meta( $post->ID, '_elementor_data', true ) . "\0" . $post->post_modified_gmt );
 	}
 
+	/**
+	 * Execute an Elementor MCP tool.
+	 *
+	 * @param string $name Tool name.
+	 * @param array  $args Tool arguments.
+	 * @return mixed Result data.
+	 * @throws \Exception If tool fails.
+	 */
 	public static function execute_tool( $name, $args ) {
 		// Umbrella cap check runs BEFORE is_available for anti-fingerprint: unprivileged
 		// callers get "no permission" not "Elementor is not active", so plugin presence
@@ -507,15 +507,9 @@ class Elementor {
 	}
 
 	/**
-	 * Render post_content from the target's _elementor_data using Elementor's
-	 * own plain-text pipeline (Plugin::$instance->db->save_plain_text()). Returns
-	 * true on success. Returns false if Elementor's Plugin singleton or its db
-	 * component isn't reachable in this request context; caller then leaves
-	 * post_content untouched.
-	 */
-	/**
 	 * True when Elementor's plain-text pass gives no text for this post, so a
-	 * rebuild would store nothing. False when it gives text or cannot be asked.
+	 * rebuild would store nothing. False when it gives text; null when it
+	 * cannot be asked.
 	 */
 	private static function renders_no_text( $post_id ) {
 		if ( ! class_exists( '\\Elementor\\Plugin' ) ) {
@@ -551,6 +545,13 @@ class Elementor {
 		}
 	}
 
+	/**
+	 * Render post_content from the target's _elementor_data using Elementor's
+	 * own plain-text pipeline (Plugin::$instance->db->save_plain_text()). Returns
+	 * true on success. Returns false if Elementor's Plugin singleton or its db
+	 * component isn't reachable in this request context; caller then leaves
+	 * post_content untouched.
+	 */
 	private static function populate_post_content_from_elementor( $post_id ) {
 		if ( ! class_exists( '\\Elementor\\Plugin' ) ) {
 			return false;

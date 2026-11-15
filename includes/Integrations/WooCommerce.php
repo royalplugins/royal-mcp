@@ -15,9 +15,6 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class WooCommerce {
 
-	/**
-	 * Check if WooCommerce is available.
-	 */
 	/** Tools whose reply is a key => count map; ignored_args would read as data there. */
 	const MAP_REPLIES = [ 'wc_get_coupon_count' ];
 
@@ -30,6 +27,9 @@ class WooCommerce {
 	/** Order statuses the order tools do not change away from. */
 	const ORDER_STATUS_LOCKED = [ 'refunded', 'checkout-draft', 'trash', 'auto-draft' ];
 
+	/**
+	 * Check if WooCommerce is available.
+	 */
 	public static function is_available() {
 		return class_exists( 'WooCommerce' );
 	}
@@ -614,15 +614,6 @@ class WooCommerce {
 	}
 
 	/**
-	 * Save a product so backslashes in its description and short description survive.
-	 * WooCommerce passes these fields to WordPress unslashed, so WordPress's unslash on save drops
-	 * every backslash (block attributes, JSON). The text set on the product (already filtered for
-	 * users without unfiltered_html) is put back just before the write, with the processing
-	 * WordPress gives post content: invalid entities converted, tags balanced when the site asks
-	 * for it, emoji encoded where the posts table cannot store them. On a new product the first
-	 * product written in the call is the one.
-	 */
-	/**
 	 * Save a coupon with its description exactly as given: WordPress unslashes what it
 	 * saves, so backslashes in the description would otherwise be lost.
 	 */
@@ -645,6 +636,15 @@ class WooCommerce {
 		}
 	}
 
+	/**
+	 * Save a product so backslashes in its description and short description survive.
+	 * WooCommerce passes these fields to WordPress unslashed, so WordPress's unslash on save drops
+	 * every backslash (block attributes, JSON). The text set on the product (already filtered for
+	 * users without unfiltered_html) is put back just before the write, with the processing
+	 * WordPress gives post content: invalid entities converted, tags balanced when the site asks
+	 * for it, emoji encoded where the posts table cannot store them. On a new product the first
+	 * product written in the call is the one.
+	 */
 	public static function save_product_exact( $product ) {
 		$id      = (int) $product->get_id();
 		$content = (string) $product->get_description( 'edit' );
@@ -3004,10 +3004,6 @@ class WooCommerce {
 	}
 
 	/**
-	 * Sanitize an incoming address payload (billing or shipping) to the WC-expected shape.
-	 * Only the address keys WC recognises are kept — arbitrary caller input is dropped.
-	 */
-	/**
 	 * Serialize a WC product's attributes ([slug => WC_Product_Attribute])
 	 * into a plain-array snapshot so the storage round-trip through the
 	 * undo envelope preserves position/visible/variation/options exactly.
@@ -3040,11 +3036,6 @@ class WooCommerce {
 	}
 
 	/**
-	 * A hash of what a product, variation, coupon or order looks like now, or of a product's
-	 * attribute set. A tool stores it with its undo token so the undo can tell whether the item
-	 * was edited since. '' when the item cannot be read.
-	 */
-	/**
 	 * Order meta WooCommerce itself writes during routine processing (emails sent,
 	 * stock and sales recorded, coupon holds, cart hashes, editor locks). Left out of
 	 * the order undo fingerprint so those saves do not count as a later edit.
@@ -3069,6 +3060,11 @@ class WooCommerce {
 		return array_map( 'intval', (array) $ids );
 	}
 
+	/**
+	 * A hash of what a product, variation, coupon or order looks like now, or of a product's
+	 * attribute set. A tool stores it with its undo token so the undo can tell whether the item
+	 * was edited since. '' when the item cannot be read.
+	 */
 	public static function undo_fingerprint( $kind, $id ) {
 		$id = (int) $id;
 		if ( $id <= 0 ) {
@@ -3224,6 +3220,10 @@ class WooCommerce {
 		return $out;
 	}
 
+	/**
+	 * Sanitize an incoming address payload (billing or shipping) to the WC-expected shape.
+	 * Only the address keys WC recognises are kept — arbitrary caller input is dropped.
+	 */
 	private static function sanitize_address_fields( array $address ): array {
 		$allowed = [ 'first_name', 'last_name', 'company', 'address_1', 'address_2', 'city', 'state', 'postcode', 'country', 'email', 'phone' ];
 		$out = [];
@@ -3301,10 +3301,6 @@ class WooCommerce {
 	}
 
 	/**
-	 * Return the order's current billing or shipping address as an associative array —
-	 * used by wc_update_order to merge partial address updates with existing values.
-	 */
-	/**
 	 * Why an order's status must not be changed by these tools, or null.
 	 * Subscriptions share the order classes but are not orders.
 	 *
@@ -3321,6 +3317,10 @@ class WooCommerce {
 		return null;
 	}
 
+	/**
+	 * Return the order's current billing or shipping address as an associative array —
+	 * used by wc_update_order to merge partial address updates with existing values.
+	 */
 	private static function current_address( \WC_Order $order, string $type ): array {
 		$getter_prefix = 'get_' . $type . '_';
 		return [

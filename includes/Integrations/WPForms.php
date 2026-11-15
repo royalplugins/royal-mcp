@@ -245,16 +245,6 @@ class WPForms {
 	}
 
 	/**
-	 * Normalize a single WP_Post (post_type=wpforms) to the flat entry shape
-	 * documented in the wpforms_list_forms schema.
-	 *
-	 * Field count is derived from the decoded schema's fields array — a
-	 * missing/malformed schema collapses to 0 rather than fataling. Timestamps
-	 * are int seconds (post_date_gmt / post_modified_gmt via strtotime) to
-	 * match the numeric-cast invariant. is_active tracks post_status='publish'
-	 * (WPForms stores drafts + trashed forms with different statuses).
-	 */
-	/**
 	 * Input boxes one field shows a visitor: field_count counts field
 	 * definitions, while a first/last name, an address or a date and time
 	 * render several boxes, and layout fields render none.
@@ -295,6 +285,16 @@ class WPForms {
 		}
 	}
 
+	/**
+	 * Normalize a single WP_Post (post_type=wpforms) to the flat entry shape
+	 * documented in the wpforms_list_forms schema.
+	 *
+	 * Field count is derived from the decoded schema's fields array; a
+	 * missing/malformed schema collapses to 0 rather than fataling.
+	 * rendered_input_count adds up the input boxes those fields show.
+	 * is_active tracks post_status='publish' (WPForms stores drafts +
+	 * trashed forms with different statuses).
+	 */
 	private static function format_form_entry( $post ) {
 		$form_id = isset( $post->ID ) ? (int) $post->ID : 0;
 		$title   = isset( $post->post_title ) ? (string) $post->post_title : '';
@@ -323,14 +323,9 @@ class WPForms {
 			$ts = strtotime( (string) $post->post_modified_gmt . ' UTC' );
 			$modified_at = $ts ? (int) $ts : 0;
 		}
-
-		// Timestamps carry both int seconds (backwards compat for any caller
-		// integrating against the initial WPForms integration ship) and an
-		// ISO 8601 UTC string. Every other Royal MCP time field returns ISO
-		// 8601 (gmdate('c', $ts)) so consumers can locale-format without a
-		// second lookup; the int-only shape forced callers to know it was UTC
-		// and format themselves, cascading timezone-offset bugs if they
-		// assumed local time.
+		// Timestamps carry an ISO 8601 UTC string, as every other Royal MCP time
+		// field does, plus the int seconds, so callers can format them without
+		// having to know the int is UTC.
 		return [
 			'form_id'         => $form_id,
 			'title'           => $title,

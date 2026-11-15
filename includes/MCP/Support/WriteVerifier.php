@@ -122,6 +122,9 @@ final class WriteVerifier {
         ];
     }
 
+    /** Exception code of the "silently dropped" error, so callers can tell it apart. */
+    const DROPPED_CODE = 4291;
+
     /**
      * Throw an Exception if the diff reports any silent-drops.
      *
@@ -133,9 +136,6 @@ final class WriteVerifier {
      * @param string $tool_name Optional tool identifier for the error message.
      * @throws \Exception When silent_drops is non-empty.
      */
-    /** Exception code of the "silently dropped" error, so callers can tell it apart. */
-    const DROPPED_CODE = 4291;
-
     public static function throw_if_dropped( array $diff, string $tool_name = '' ) : void {
         if ( empty( $diff['silent_drops'] ) ) {
             return;

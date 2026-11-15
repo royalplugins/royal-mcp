@@ -356,13 +356,6 @@ class ACF {
 	}
 
 	/**
-	 * Flatten ACF return values that aren't JSON-encodable as-is. ACF returns
-	 * WP_Post / WP_User / WP_Term objects for post_object / user / taxonomy
-	 * fields when "Return Format" is set to "Object" — we collapse those to a
-	 * small array the LLM can reason about, while passing scalars and plain
-	 * arrays through untouched.
-	 */
-	/**
 	 * Field value with the credential redaction post meta reads get; a
 	 * password-type field is always withheld.
 	 */
@@ -424,6 +417,13 @@ class ACF {
 		return $value;
 	}
 
+	/**
+	 * Flatten ACF return values that aren't JSON-encodable as-is. ACF returns
+	 * WP_Post / WP_User / WP_Term objects for post_object / user / taxonomy
+	 * fields when "Return Format" is set to "Object"; those collapse to a
+	 * small array the LLM can reason about. Scalars pass through and arrays
+	 * are flattened item by item.
+	 */
 	private static function flatten_value( $value ) {
 		if ( is_null( $value ) || is_scalar( $value ) ) {
 			return $value;

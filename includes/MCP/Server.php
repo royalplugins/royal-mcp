@@ -388,11 +388,6 @@ class Server {
 
     /** Exact hints for tools whose annotations other systems rely on. */
     const ANNOTATION_OVERRIDES = [
-        'yoast_bulk_update_meta'        => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
-        'rankmath_bulk_update_meta'     => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
-        'seopress_bulk_update_meta'     => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
-        'aioseo_bulk_update_meta'       => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
-        'seobolt_bulk_update_meta'      => [ 'readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false ],
         'royal_mcp_undo_last_operation' => [ 'readOnlyHint' => false, 'destructiveHint' => true ],
         'mcp_undo_last_operation'       => [ 'readOnlyHint' => false, 'destructiveHint' => true ],
         'wp_clone_post_as_draft'        => [ 'readOnlyHint' => false, 'destructiveHint' => false, 'idempotentHint' => false ],
@@ -1257,19 +1252,6 @@ class Server {
         return '' !== $remote_addr ? $remote_addr : '127.0.0.1';
     }
 
-    /**
-     * Check rate limit for an IP + tier. Emits a proper Retry-After header
-     * and includes retry_after_seconds in the JSON body so MCP clients (and
-     * their LLM narrators) have a concrete small number to honor instead of
-     * fabricating a default backoff. Both bucket size and window duration
-     * filterable at runtime.
-     *
-     * @param string $ip   Real client IP (from resolve_client_ip()), or a
-     *                     'user:<id>' bucket for signed-in calls on the abilities route.
-     * @param string $tier 'anon' | 'authed' | 'abilities' — anon gets the anon
-     *                     ceiling, the others the authed one.
-     * @return bool|WP_REST_Response True if allowed, 429 error response if limited.
-     */
     /** The budget of the last rate-limit check this request; sent back as RateLimit-* headers. */
     private $rate_state = null;
 
@@ -1298,6 +1280,19 @@ class Server {
         return $response;
     }
 
+    /**
+     * Check rate limit for an IP + tier. Emits a proper Retry-After header
+     * and includes retry_after_seconds in the JSON body so MCP clients (and
+     * their LLM narrators) have a concrete small number to honor instead of
+     * fabricating a default backoff. Both bucket size and window duration
+     * filterable at runtime.
+     *
+     * @param string $ip   Real client IP (from resolve_client_ip()), or a
+     *                     'user:<id>' bucket for signed-in calls on the abilities route.
+     * @param string $tier 'anon' | 'authed' | 'abilities' — anon gets the anon
+     *                     ceiling, the others the authed one.
+     * @return bool|WP_REST_Response True if allowed, 429 error response if limited.
+     */
     private function check_rate_limit($ip, $tier = 'anon') {
         $tier_ceiling = ($tier === 'anon') ? $this->rate_limit_max_anon : $this->rate_limit_max_authed;
 
@@ -1539,11 +1534,6 @@ class Server {
         return $s;  // pass-through for unknown states
     }
 
-    /**
-     * The refusal an undo returns when its target changed after the tracked write. Nothing is
-     * changed and the token is kept, so the caller can look first and then undo again with
-     * force: true.
-     */
     /**
      * A version or requirement string from an update offer: text and numbers only, so a malformed
      * offer (an array or object) reads as "unknown" instead of "Array".
@@ -1839,6 +1829,11 @@ class Server {
         return '';
     }
 
+    /**
+     * The refusal an undo returns when its target changed after the tracked write. Nothing is
+     * changed and the token is kept, so the caller can look first and then undo again with
+     * force: true.
+     */
     private static function undo_drift_refusal( $what_changed, $force_does = 'restore the earlier state anyway', array $extra = [] ) {
         return new \Royal_MCP\MCP\Support\Tool_Refusal( 'edited_since_write', sprintf( 'Cannot undo: %s The undo token stays valid: undo again with force: true to %s.', $what_changed, $force_does ), $extra );
     }
@@ -1862,10 +1857,6 @@ class Server {
     }
 
     /**
-     * What a widget looks like now (its sidebar and settings as the widgets endpoint returns
-     * them), so its undo can tell whether it changed since. '' when it cannot be read.
-     */
-    /**
      * A multi-widget's stored settings: [widget object, number, settings or null when none are stored].
      *
      * @param string $widget_id Widget id such as block-3.
@@ -1885,6 +1876,10 @@ class Server {
         return [ $object, $number, ( is_array( $settings ) && array_key_exists( $number, $settings ) && is_array( $settings[ $number ] ) ) ? $settings[ $number ] : null ];
     }
 
+    /**
+     * What a widget looks like now (its sidebar and settings as the widgets endpoint returns
+     * them), so its undo can tell whether it changed since. '' when it cannot be read.
+     */
     private static function widget_undo_hash( $widget_id ) {
         $request = new \WP_REST_Request( 'GET', '/wp/v2/widgets/' . $widget_id );
         $request->set_param( 'context', 'edit' );
@@ -1899,12 +1894,6 @@ class Server {
         return md5( (string) wp_json_encode( [ $data['sidebar'] ?? null, $data['instance'] ?? null ] ) );
     }
 
-    /**
-     * Build a read-after-write response for wp_update_post / wp_update_page.
-     *
-     * Reads the post back from DB post-mutation so the response reflects stored values.
-     * Text fields skip diff-check (sanitizers always modify); int/enum/password fields participate.
-     */
     /**
      * The template argument of a page tool, checked against what the theme offers.
      *
@@ -1926,6 +1915,12 @@ class Server {
         return $template;
     }
 
+    /**
+     * Build a read-after-write response for wp_update_post / wp_update_page.
+     *
+     * Reads the post back from DB post-mutation so the response reflects stored values.
+     * Text fields skip diff-check (sanitizers always modify); int/enum/password fields participate.
+     */
     private static function build_update_response(int $post_id, array $args, array $data, string $message): array {
         $saved_post = get_post($post_id);
         $saved_fields = [];
@@ -2548,10 +2543,6 @@ class Server {
     }
 
     /**
-     * Undo for a create: moving the new post to the trash. The fields are added
-     * to the tool's own result so the response keeps its shape.
-     */
-    /**
      * A draft copy of a post the caller can edit. Builder pages and products
      * have their own copy tools, which also carry the layout or the stock and
      * SKU settings. Custom fields with serialized objects are left out, as are
@@ -2708,6 +2699,10 @@ class Server {
         return array_merge( $out, self::create_undo_fields( $new_id, (string) $source->post_type ) );
     }
 
+    /**
+     * Undo for a create: moving the new post to the trash. The fields are added
+     * to the tool's own result so the response keeps its shape.
+     */
     private static function create_undo_fields( $post_id, $post_type ) {
         $post = get_post( (int) $post_id );
         if ( ! $post ) {
@@ -2812,8 +2807,8 @@ class Server {
         // Rate limit — tier heuristic based on the PRESENCE of authentication
         // material, not its validity. Running before full auth resolution
         // preserves the method-first invariant (unknown JSON-RPC methods
-        // return -32601 regardless of auth state per 2025-11-25 spec + 1.5.0
-        // architecture) and protects auth resolution from flooding. Cost:
+        // return -32601 regardless of auth state per the 2025-11-25 spec)
+        // and protects auth resolution from flooding. Cost:
         // a bad-Bearer flood gets the authed tier ceiling — accepted because
         // each request 401s cheaply and the method-first ordering matters more.
         $auth_header    = (string) $request->get_header('Authorization');
@@ -4865,6 +4860,11 @@ class Server {
         return $tools;
     }
 
+    /** A tool or argument name as the log keeps it: its letters, digits, dot, underscore and hyphen, 64 characters at most. */
+    private static function log_name( $name ) {
+        return substr( (string) preg_replace( '/[^A-Za-z0-9_.\-]+/', '', is_scalar( $name ) ? (string) $name : '' ), 0, 64 );
+    }
+
     /**
      * Log an MCP tool call to wp_royal_mcp_logs.
      *
@@ -4875,11 +4875,6 @@ class Server {
      * without leaking "what data." Error messages from the tool dispatcher are
      * our own strings, safe to log. Gives every /mcp tool call an Activity Log entry.
      */
-    /** A tool or argument name as the log keeps it: its letters, digits, dot, underscore and hyphen, 64 characters at most. */
-    private static function log_name( $name ) {
-        return substr( (string) preg_replace( '/[^A-Za-z0-9_.\-]+/', '', is_scalar( $name ) ? (string) $name : '' ), 0, 64 );
-    }
-
     private function log_tool_call($tool_name, $args, $status, $error_message, $start_time = null, $result = null, $exception = null) {
         global $wpdb;
         // The call is over: a pre-change backup armed for it must not fire on a later write.
@@ -14788,9 +14783,6 @@ class Server {
     }
 
     /**
-     * Set or remove the featured image on a post. media_id=0 removes it.
-     */
-    /**
      * Detect which SEO plugin is active.
      *
      * @return string 'yoast', 'rankmath', or 'none'.
@@ -14799,6 +14791,10 @@ class Server {
         return \Royal_MCP\MCP\Support\Seo_Plugin::detect();
     }
 
+    /**
+     * Set or remove the featured image on a post (media_id=0 removes it),
+     * then run the post write hooks.
+     */
     private function apply_featured_media($post_id, $media_id) {
         $this->set_featured_media_meta($post_id, $media_id);
         \Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
@@ -14857,11 +14853,6 @@ class Server {
         return $this->sideload_media_from_bytes($body, $filename, $title, $caption, $alt_text, $images_only, $image_opts);
     }
 
-    /**
-     * Download a public file for the media library.
-     *
-     * @return array [file bytes, filename with an extension]
-     */
     /**
      * Whether an IPv4 or IPv6 address is public: not private, loopback, link-local, unique-local,
      * shared (carrier-grade NAT), benchmarking or reserved. An IPv6 address that carries an IPv4 one
@@ -14952,6 +14943,11 @@ class Server {
         return [$bare, (string) $ips[0]];
     }
 
+    /**
+     * Download a public file for the media library.
+     *
+     * @return array [file bytes, filename with an extension]
+     */
     private function download_media($url, $filename, $images_only, $allow_http = false) {
         $parts = wp_parse_url($url);
         // Redirects are followed here, not by the HTTP client, so every hop gets the same checks,
@@ -15842,10 +15838,6 @@ class Server {
     }
 
     /**
-     * Hard denylist for option writes. These can never be written via MCP,
-     * regardless of allowlist or admin toggle.
-     */
-    /**
      * Return the effective readable-options allowlist for wp_get_option +
      * the write⊆readable invariant check in wp_update_option. Single source
      * of truth so both handlers stay in sync.
@@ -16143,6 +16135,10 @@ class Server {
         return false;
     }
 
+    /**
+     * Hard denylist for option writes. These can never be written via MCP,
+     * regardless of allowlist or admin toggle.
+     */
     private function is_denylisted_option($name) {
         $name_lc = strtolower($name);
 

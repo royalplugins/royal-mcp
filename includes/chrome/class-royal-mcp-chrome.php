@@ -27,7 +27,7 @@ class Royal_MCP_Chrome {
     const ROYALLY_URL_BASE             = 'https://royalplugins.com/royally/';
     const AFFILIATE_URL_BASE           = 'https://royalplugins.com/affiliates/';
     // Placeholder slug of the side-menu upgrade entry; its link is swapped for the Royally address.
-    const FM_MENU_SLUG                 = 'royal-mcp-pro-external';
+    const UPGRADE_MENU_SLUG            = 'royal-mcp-pro-external';
 
     /** @var self|null */
     private static $instance = null;
@@ -48,8 +48,8 @@ class Royal_MCP_Chrome {
 
         // The upgrade entry is for sites that do not run Royal MCP Pro.
         if ( ! class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false ) ) {
-            add_action( 'admin_menu',            [ $this, 'register_founding_members_menu' ], 21 );
-            add_action( 'admin_enqueue_scripts', [ $this, 'inject_founding_members_menu_target_blank' ], 100 );
+            add_action( 'admin_menu',            [ $this, 'register_upgrade_menu' ], 21 );
+            add_action( 'admin_enqueue_scripts', [ $this, 'inject_upgrade_menu_target_blank' ], 100 );
         }
     }
 
@@ -295,13 +295,13 @@ class Royal_MCP_Chrome {
      * ================================================================ */
 
     /** The "Upgrade" entry in the side menu, which leads to the Royally page. */
-    public function register_founding_members_menu(): void {
+    public function register_upgrade_menu(): void {
         add_submenu_page(
             'royal-mcp',
             __( 'Royally', 'royal-mcp' ),
             '<span class="royal-mcp-upgrade-menu-text">' . esc_html__( 'Upgrade To Pro', 'royal-mcp' ) . '</span>',
             'manage_options',
-            self::FM_MENU_SLUG,
+            self::UPGRADE_MENU_SLUG,
             '__return_true'
         );
 
@@ -309,7 +309,7 @@ class Royal_MCP_Chrome {
         global $submenu;
         if ( isset( $submenu['royal-mcp'] ) ) {
             foreach ( $submenu['royal-mcp'] as $idx => $item ) {
-                if ( isset( $item[2] ) && self::FM_MENU_SLUG === $item[2] ) {
+                if ( isset( $item[2] ) && self::UPGRADE_MENU_SLUG === $item[2] ) {
                     $submenu['royal-mcp'][ $idx ][2] = $this->campaign_url( self::ROYALLY_URL_BASE, 'admin_menu_upgrade' ); // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- the menu API has no outside links
                 }
             }
@@ -320,7 +320,7 @@ class Royal_MCP_Chrome {
      * The menu API has no link attributes, so a small script makes the upgrade
      * entry, and only that entry, open in a new tab.
      */
-    public function inject_founding_members_menu_target_blank(): void {
+    public function inject_upgrade_menu_target_blank(): void {
         if ( ! is_admin() ) {
             return;
         }

@@ -355,11 +355,6 @@ class Server {
     }
 
     /**
-     * The canonical MCP endpoint path — the one the Help page tells users to
-     * paste and the one every discovery document falls back to.
-     */
-
-    /**
      * The resource a request names, checked: '' when none is named, null when one is
      * named that this server does not serve (the caller answers invalid_target).
      */
@@ -378,6 +373,10 @@ class Server {
         return ( '' !== $norm && isset( self::accepted_resources()[ $norm ] ) && false === strpos( $url, '#' ) ) ? $url : null;
     }
 
+    /**
+     * The canonical MCP endpoint path: the one the Help page tells users to
+     * paste and the one every discovery document falls back to.
+     */
     public static function default_resource_path() {
         $paths = self::mcp_resource_paths();
         return isset( $paths[0] ) ? $paths[0] : '/wp-json/royal-mcp/v1/mcp';
@@ -489,17 +488,6 @@ class Server {
      * ----------------------------------------------------------------*/
 
     /**
-     * Build the OAuth 2.1 Authorization Server metadata payload.
-     *
-     * Reads endpoint paths from the same filterable source
-     * register_oauth_rewrites() uses so discovery advertises whatever the
-     * site actually serves — customers who relocate via
-     * royal_mcp_oauth_rewrite_paths get correct discovery URLs
-     * automatically, no separate metadata filter needed.
-     *
-     * @return array The AS metadata document.
-     */
-    /**
      * Site-relative path of the authorization server scoped to our REST
      * namespace, e.g. /wp-json/royal-mcp/v1.
      */
@@ -524,10 +512,19 @@ class Server {
     }
 
     /**
+     * Build the OAuth 2.1 Authorization Server metadata payload.
+     *
+     * Reads endpoint paths from the same filterable source
+     * register_oauth_rewrites() uses, so discovery advertises whatever the
+     * site actually serves: sites that relocate the endpoints via
+     * royal_mcp_oauth_rewrite_paths get correct discovery URLs with no
+     * separate metadata filter.
+     *
      * @param bool $scoped The document for the namespace issuer: its token,
      *                     registration and revocation endpoints are under the
      *                     namespace. The site-root document (false) is kept
      *                     for clients that read it without discovery.
+     * @return array The AS metadata document.
      */
     public static function build_authorization_server_metadata( $scoped = false ) {
         // Same https-aware canonical base as the PRM `resource` — discovery

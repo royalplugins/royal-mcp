@@ -751,11 +751,6 @@ class Core {
 	// PARTIAL SCHEMAS — reused across multiple tools
 	// =============================================================
 
-	/**
-	 * Post/page summary shape returned by list endpoints (wp_get_posts, wp_get_pages).
-	 * Loose additionalProperties=true because list handlers may include extras like
-	 * featured_media_url that are host/plugin dependent.
-	 */
 	/** Fields of one change row, shared by the list and the detail view. */
 	private static function change_summary_properties(): array {
 		return array(
@@ -819,6 +814,11 @@ class Core {
 		);
 	}
 
+	/**
+	 * Post/page summary shape returned by list endpoints (wp_get_posts, wp_get_pages).
+	 * Loose additionalProperties=true because list handlers may include extras like
+	 * featured_media_url that are host/plugin dependent.
+	 */
 	private static function post_summary_schema(): array {
 		return array(
 			'type'                 => 'object',

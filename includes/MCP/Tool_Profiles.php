@@ -30,9 +30,6 @@ class Tool_Profiles {
      */
     private static $override_profile = null;
 
-    /**
-     * Register the profile filter. Called from plugin bootstrap.
-     */
     /** The stock profiles: name → tool-name prefixes kept. */
     const STOCK_PROFILES = [
         'core'     => [ 'wp_', 'royal_mcp_', 'mcp_' ],
@@ -44,6 +41,9 @@ class Tool_Profiles {
         return array_keys( self::STOCK_PROFILES );
     }
 
+    /**
+     * Register the profile filter. Called from plugin bootstrap.
+     */
     public static function register() {
         add_filter( 'royal_mcp_tools', [ __CLASS__, 'apply_profile' ], 20 );
     }

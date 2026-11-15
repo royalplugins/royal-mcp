@@ -35,12 +35,6 @@ class Server_Card {
         return $response;
     }
 
-    /**
-     * Build the card (or return the cached version). Cache invalidation is
-     * time-based (5 min) plus manual — options-page save handlers can call
-     * delete_transient( self::CACHE_KEY ) when a change materially affects
-     * the card contents (e.g. webmcp_enabled toggle).
-     */
     /** Royal MCP's issuer path while another plugin owns the site-root sign-in documents, else ''. */
     private static function own_sign_in_path(): string {
         if ( '' === \Royal_MCP\OAuth\Server::namespace_issuer() || ! class_exists( '\Royal_MCP\Integrations\Coexistence_Check' )
@@ -50,6 +44,12 @@ class Server_Card {
         return (string) \Royal_MCP\OAuth\Server::namespace_issuer_path();
     }
 
+    /**
+     * Build the card (or return the cached version). Cache invalidation is
+     * time-based (5 min) plus manual — options-page save handlers can call
+     * delete_transient( self::CACHE_KEY ) when a change materially affects
+     * the card contents (e.g. webmcp_enabled toggle).
+     */
     public static function build_or_cached(): array {
         $cached = get_transient( self::CACHE_KEY );
         // A cached card built before another plugin took (or left) the site-root sign-in

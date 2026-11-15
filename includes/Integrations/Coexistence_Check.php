@@ -261,7 +261,6 @@ class Coexistence_Check {
 		return (string) preg_replace( '#^(https?://)' . preg_quote( $host, '#' ) . '#i', '${1}' . $alt, (string) $url, 1 );
 	}
 
-	/** Addresses MCP clients and AI crawlers read at the site root. */
 	/**
 	 * Other MCP servers Royal MCP knows by name: how to tell they are there, the MCP
 	 * endpoint they serve, which discovery addresses they answer, and how to fix a clash.
@@ -281,6 +280,7 @@ class Coexistence_Check {
 		'ai-puffer'        => [ 'name' => 'AI Puffer', 'folders' => [ 'gpt3-ai-content-generator' ], 'constant' => '', 'namespace' => '', 'endpoint' => '', 'root_oauth' => false, 'takes' => '', 'fix' => 'Turn off the MCP feature in AI Puffer if this site does not need it.' ],
 	];
 
+	/** Addresses MCP clients and AI crawlers read at the site root. */
 	const SHARED_PATHS = [
 		'/.well-known/oauth-authorization-server',
 		'/.well-known/oauth-protected-resource',
@@ -959,7 +959,6 @@ class Coexistence_Check {
 		];
 	}
 
-	/** Plugin name for the plugin folder a class file sits in. */
 	/**
 	 * Name of the plugin whose bundled MCP sign-in library is loaded (Rank
 	 * Math and others ship one), or '' when none is.
@@ -980,6 +979,7 @@ class Coexistence_Check {
 		);
 	}
 
+	/** Plugin name for the plugin folder a class file sits in. */
 	private static function plugin_name_for_class( $class ) {
 		try {
 			$file = ( new \ReflectionClass( $class ) )->getFileName();

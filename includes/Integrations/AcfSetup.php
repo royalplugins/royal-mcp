@@ -187,7 +187,7 @@ class AcfSetup {
 		}
 		$summary = (string) ( $result['restored_state_summary'] ?? 'Done.' );
 		unset( $result['restored_state_summary'], $result['remaining_payload'] );
-		// A handler that left things alone because they changed since says so; the token then stays usable.
+		// A handler that left things alone (changed since, still holding values, or in use) says so; the refusal keeps the token usable.
 		$reasons = array_column( (array) ( $result['skipped'] ?? [] ), 'reason' );
 		if ( isset( $result['restored'] ) && false === $result['restored'] && ! $force && array_intersect( $reasons, [ 'edited_since_write', 'changed_since_write', 'has_values', 'in_use' ] ) ) {
 			throw new Tool_Refusal( 'edited_since_write', esc_html( $summary ), [ 'skipped' => $result['skipped'] ] );

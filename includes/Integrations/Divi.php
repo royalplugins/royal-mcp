@@ -571,11 +571,6 @@ class Divi {
 	}
 
 	/**
-	 * Dispatch a divi_* tool call to its handler. Umbrella cap check runs
-	 * first so unprivileged callers can't fingerprint whether Divi is
-	 * present on the site — matches sibling integration pattern.
-	 */
-	/**
 	 * Divi builder presence check. Divi 4 defines ET_BUILDER_VERSION; Divi 5
 	 * defines ET_CORE_VERSION and exposes et_builder_d5_enabled(). Either
 	 * signals Divi is loaded.
@@ -587,6 +582,11 @@ class Divi {
 			|| class_exists( 'ET_Builder_Element' );
 	}
 
+	/**
+	 * Dispatch a divi_* tool call to its handler. Umbrella cap check runs
+	 * first so unprivileged callers can't fingerprint whether Divi is
+	 * present on the site — matches sibling integration pattern.
+	 */
 	public static function execute_tool( $name, $args ) {
 		// Cap check first — matches sibling integration pattern so callers
 		// can't fingerprint whether Divi is present via error-message differences.

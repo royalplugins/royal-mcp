@@ -726,10 +726,6 @@ class Block_Tools {
 	}
 
 	/**
-	 * parse_blocks() reads an empty JSON object as an empty array, which would be written back as [].
-	 * An attribute its block type declares as an object goes back as {}.
-	 */
-	/**
 	 * parse_blocks(), with every empty JSON object of the markup kept as an object
 	 * (parse_blocks() reads {} as an empty array, which would be written back as []).
 	 * Block comments open in the same order parse_blocks() walks the tree.
@@ -785,6 +781,10 @@ class Block_Tools {
 		return $value;
 	}
 
+	/**
+	 * parse_blocks() reads an empty JSON object as an empty array, which would be written back as [].
+	 * An attribute its block type declares as an object goes back as {}.
+	 */
 	private static function keep_object_attributes( array $list ) {
 		$registry = \WP_Block_Type_Registry::get_instance();
 		foreach ( $list as $i => $block ) {

@@ -18,10 +18,10 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class LaunchTools {
 
-	/** Redirect group used for this request's redirects (null until looked up). */
+	/** Redirect group the current run adds its redirects to (null until looked up). */
 	private static $redirection_group_id = null;
 
-	/** A redirect group created during this request (0 when none). */
+	/** A redirect group the current run created (0 when none). */
 	private static $redirection_group_created = 0;
 
 	/** Tool => [ handler, undo handler or null, the WordPress capability it needs ]. */
@@ -209,13 +209,13 @@ class LaunchTools {
 		return null;
 	}
 
-	/** A short print of a post's stored SEO title, description and focus keyword. */
+	/** A hash of a post's stored SEO title, description and focus keyword. */
 	private static function seo_print( $post_id ) {
 		$now = self::read_seo_meta_universal( (int) $post_id, self::probe_dependencies() );
 		return md5( (string) ( $now['title'] ?? '' ) . '|' . (string) ( $now['description'] ?? '' ) . '|' . (string) ( $now['focus_keyword'] ?? '' ) );
 	}
 
-	/** A print of a redirect's whole definition (the same as the Redirection tools use), or '' when it is gone. */
+	/** A fingerprint of a redirect's whole definition (the same one the Redirection tools use), or '' when it is gone. */
 	private static function redirect_print( $id ) {
 		if ( method_exists( '\\Royal_MCP\\Integrations\\Redirection', 'fingerprint' ) ) {
 			return \Royal_MCP\Integrations\Redirection::fingerprint( (int) $id );
@@ -1702,7 +1702,7 @@ class LaunchTools {
 					return self::error_envelope( 'aborted', sprintf( 'Post %d could not be saved (%s). strict mode: the %d posts already rewritten were put back; nothing is changed.', $pid, $upd->get_error_message(), count( $snapshot ) ), [ 'failed_post_id' => $pid ] );
 				}
 			} else {
-				// The content as stored after the write, so an undo can tell a later edit from this change.
+				// The original content for the undo, plus a hash of what was stored, so an undo can tell a later edit from this change.
 				$snapshot[] = [ 'post_id' => $pid, 'post_content' => $orig, 'written' => md5( (string) get_post_field( 'post_content', $pid, 'raw' ) ) ];
 				$result['updated'][] = $pid;
 				$content_length_before += strlen( $orig );
@@ -1909,7 +1909,7 @@ class LaunchTools {
 					$item  = \Red_Item::get_by_id( (int) $rid );
 					$print = (string) ( $payload['redirect_prints'][ (int) $rid ] ?? '' );
 					if ( is_object( $item ) && '' !== $print && empty( $token_row['force'] ) && self::redirect_print( (int) $rid ) !== $print ) {
-						// Pointed somewhere else since: it is someone's redirect now.
+						// Changed since it was created: someone else's redirect now, so it stays.
 						$summary_parts[] = sprintf( 'Redirect #%d was changed after it was created and was left in place', (int) $rid );
 						continue;
 					}
@@ -2274,7 +2274,7 @@ class LaunchTools {
 	}
 
 	private static function restore_seo_meta_universal( $post_id, $title, $desc, $focus_kw, array $deps, $prefer_plugin = '' ) {
-		// The same SEO plugin wp_update_seo_meta writes to, so both tools always agree.
+		// The plugin the snapshot was read from when given, else the same SEO plugin wp_update_seo_meta writes to.
 		$seo_detected = \Royal_MCP\MCP\Support\Seo_Plugin::detect();
 		$pid = (int) $post_id;
 
@@ -2611,7 +2611,7 @@ class LaunchTools {
 	}
 
 	private static function read_seo_meta_universal( $post_id, array $deps ) {
-		// The same SEO plugin wp_update_seo_meta writes to, so both tools always agree.
+		// Reads from the same SEO plugin wp_update_seo_meta writes to, so both tools always agree.
 		$seo_detected = \Royal_MCP\MCP\Support\Seo_Plugin::detect();
 		$pid = (int) $post_id;
 		if ( 'yoast' === $seo_detected ) {
