@@ -334,12 +334,9 @@ class Composers {
 				];
 				break;
 			case 'aioseo':
-				if ( ! \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_model_available() ) {
-					return [
-						'ok'      => false,
-						'plugin'  => 'aioseo',
-						'message' => 'AIOSEO is not fully loaded, so its SEO fields were not written. Use wp_update_seo_meta after the post is created.',
-					];
+				$aio_refusal = \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_refusal();
+				if ( '' !== $aio_refusal ) {
+					return [ 'ok' => false, 'plugin' => 'aioseo', 'message' => $aio_refusal ];
 				}
 				$map = \Royal_MCP\MCP\Support\Seo_Plugin::field_maps()['aioseo'];
 				break;
@@ -359,7 +356,10 @@ class Composers {
 		}
 		// AIOSEO serves from its own table: copy the fields there through its save routine.
 		if ( 'aioseo' === $plugin && $fields ) {
-			\Royal_MCP\MCP\Support\Seo_Plugin::aioseo_sync( $post_id, $fields );
+			$aio = \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_write( $post_id, array_filter( [ 'title' => $title, 'description' => $desc, 'focus_keyword' => $focus_kw ], 'strlen' ) );
+			if ( true !== $aio ) {
+				return [ 'ok' => false, 'plugin' => 'aioseo', 'message' => (string) $aio, 'fields_written' => [] ];
+			}
 		}
 
 		return [ 'ok' => true, 'plugin' => $plugin, 'fields_written' => $fields ];

@@ -12469,6 +12469,10 @@ class Server {
                             if ( $arg_key === 'slug' ) {
                                 return (string) get_post_field( 'post_name', $undo_seo_pid );
                             }
+                            // AIOSEO serves from its own table: read what it holds there.
+                            if ( $undo_seo_adapt === 'aioseo' && null !== ( $undo_aio_value = \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_value( $undo_seo_pid, $arg_key ) ) ) {
+                                return $undo_aio_value;
+                            }
                             if ( $arg_key === 'noindex' ) {
                                 if ( $undo_seo_adapt === 'yoast' )    return get_post_meta( $undo_seo_pid, '_yoast_wpseo_meta-robots-noindex', true ) === '1';
                                 if ( $undo_seo_adapt === 'rankmath' ) return in_array( 'noindex', (array) get_post_meta( $undo_seo_pid, 'rank_math_robots', true ), true );
@@ -12487,6 +12491,11 @@ class Server {
                             if ( $current !== $applied && ! $undo_force ) {
                                 throw self::undo_drift_refusal( sprintf( 'SEO field %s on post %d was changed after this write.', esc_html( (string) $arg_key ), $undo_seo_pid ), 'restore the earlier values anyway' );
                             }
+                        }
+                        $undo_aio_prior   = isset( $undo_seo_pre['aioseo_prior'] ) && is_array( $undo_seo_pre['aioseo_prior'] ) ? $undo_seo_pre['aioseo_prior'] : null;
+                        $undo_aio_applied = isset( $undo_seo_pre['aioseo_applied'] ) && is_array( $undo_seo_pre['aioseo_applied'] ) ? $undo_seo_pre['aioseo_applied'] : null;
+                        if ( $undo_seo_adapt === 'aioseo' && null !== $undo_aio_prior && null !== $undo_aio_applied && ! $undo_force && \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_row_state( $undo_seo_pid ) != $undo_aio_applied ) { // phpcs:ignore Universal.Operators.StrictComparisons -- database values come back as strings
+                            throw self::undo_drift_refusal( sprintf( 'The All in One SEO settings of post %d were changed after this write.', $undo_seo_pid ), 'restore the earlier values anyway' );
                         }
                         // Fields that had no stored value before the write are removed, not set to ''.
                         $undo_seo_absent = ( isset( $undo_seo_pre['prior_absent'] ) && is_array( $undo_seo_pre['prior_absent'] ) ) ? array_map( 'strval', $undo_seo_pre['prior_absent'] ) : [];
@@ -12542,8 +12551,8 @@ class Server {
                                 }
                             }
                         }
-                        if ( $undo_seo_adapt === 'aioseo' ) {
-                            \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_sync( $undo_seo_pid, array_values( array_diff( array_keys( $undo_seo_prior ), [ 'slug' ] ) ) );
+                        if ( $undo_seo_adapt === 'aioseo' && null !== $undo_aio_prior ) {
+                            \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_restore( $undo_seo_pid, $undo_aio_prior );
                         }
                         wp_cache_delete( $undo_seo_pid, 'post_meta' );
                         clean_post_cache( $undo_seo_pid );
@@ -13956,6 +13965,16 @@ class Server {
                     $seo_prior_raw[ $raw_arg ] = [ 'key' => $raw_key, 'exists' => $raw_exists, 'value' => $raw_exists ? get_post_meta( $post_id, $raw_key, true ) : null ];
                 }
 
+                // AIOSEO: its own table first, so a refusal leaves everything as it was.
+                $seo_aio_prior = null;
+                if ( $detected === 'aioseo' && array_diff_key( $seo_requested, [ 'slug' => true ] ) ) {
+                    $seo_aio_prior = \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_row_state( $post_id );
+                    $seo_aio_res   = \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_write( $post_id, array_diff_key( $seo_requested, [ 'slug' => true ] ) );
+                    if ( true !== $seo_aio_res ) {
+                        throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'seo_plugin_refused', 'Nothing was written. ' . (string) $seo_aio_res );
+                    }
+                }
+
                 // Execute — per-adapter write branches, unchanged from original logic.
                 foreach ( $field_map as $arg_key => $meta_key ) {
                     if ( array_key_exists( $arg_key, $seo_requested ) && $arg_key !== 'noindex' && $arg_key !== 'slug' ) {
@@ -13985,9 +14004,6 @@ class Server {
                         update_post_meta( $post_id, '_seobolt_robots_noindex', $noindex_bool ? '1' : '' );
                     }
                 }
-                if ( $detected === 'aioseo' ) {
-                    \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_sync( $post_id, array_keys( array_diff_key( $seo_requested, [ 'slug' => true ] ) ) );
-                }
                 if ( array_key_exists( 'slug', $seo_requested ) ) {
                     $update_result = wp_update_post( [
                         'ID'        => $post_id,
@@ -14005,6 +14021,9 @@ class Server {
                 $seo_actual = [];
                 foreach ( array_keys( $seo_requested ) as $arg_key ) {
                     $seo_actual[ $arg_key ] = $seo_read( $arg_key );
+                    if ( $detected === 'aioseo' && in_array( $arg_key, [ 'title', 'description' ], true ) && '' === $seo_actual[ $arg_key ] && '' !== $seo_requested[ $arg_key ] && $seo_requested[ $arg_key ] === \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_default_format( $post_id, $arg_key ) ) {
+                        $seo_actual[ $arg_key ] = $seo_requested[ $arg_key ];
+                    }
                 }
 
                 // Diff. Slug is a well-known silent-modify (WP appends -2, -3
@@ -14026,7 +14045,7 @@ class Server {
                             'prior_values'   => $seo_before,
                             'applied_values' => $seo_actual,
                             'prior_raw'      => $seo_prior_raw,
-                        ],
+                        ] + ( null !== $seo_aio_prior ? [ 'aioseo_prior' => $seo_aio_prior, 'aioseo_applied' => \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_row_state( $post_id ) ] : [] ),
                     ] );
                 }
 

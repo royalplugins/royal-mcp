@@ -2203,7 +2203,10 @@ class LaunchTools {
 			if ( $title !== '' ) { update_post_meta( $post_id, '_aioseo_title', wp_slash( $title ) ); $wrote_any = true; }
 			if ( $desc  !== '' ) { update_post_meta( $post_id, '_aioseo_description', wp_slash( $desc ) ); $wrote_any = true; }
 			if ( $focus_kw !== '' ) { update_post_meta( $post_id, '_aioseo_focus_keyphrase', wp_slash( $focus_kw ) ); $wrote_any = true; }
-			\Royal_MCP\MCP\Support\Seo_Plugin::aioseo_sync( $post_id, array_keys( array_filter( [ 'title' => $title, 'description' => $desc, 'focus_keyword' => $focus_kw ], 'strlen' ) ) );
+			$aio = \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_write( $post_id, array_filter( [ 'title' => $title, 'description' => $desc, 'focus_keyword' => $focus_kw ], 'strlen' ) );
+			if ( true !== $aio ) {
+				return [ 'ok' => false, 'plugin' => 'aioseo', 'message' => (string) $aio ];
+			}
 		}
 
 		elseif ( 'seopress' === $seo_detected ) {
@@ -2271,7 +2274,7 @@ class LaunchTools {
 		$desc     === '' ? delete_post_meta( $pid, $keys['d'] ) : update_post_meta( $pid, $keys['d'], wp_slash( (string) $desc ) );
 		$focus_kw === '' ? delete_post_meta( $pid, $keys['k'] ) : update_post_meta( $pid, $keys['k'], wp_slash( (string) $focus_kw ) );
 		if ( 'aioseo' === $selected_plugin ) {
-			\Royal_MCP\MCP\Support\Seo_Plugin::aioseo_sync( $pid, [ 'title', 'description', 'focus_keyword' ] );
+			\Royal_MCP\MCP\Support\Seo_Plugin::aioseo_write( $pid, [ 'title' => (string) $title, 'description' => (string) $desc, 'focus_keyword' => (string) $focus_kw ] );
 		}
 
 		return [
