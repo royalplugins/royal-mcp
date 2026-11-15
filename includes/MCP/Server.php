@@ -21,6 +21,7 @@ use Royal_MCP\Integrations\Wordfence as WordfenceIntegration;
 use Royal_MCP\Integrations\LiteSpeed as LiteSpeedIntegration;
 use Royal_MCP\Integrations\ContactForm7 as CF7Integration;
 use Royal_MCP\Integrations\MonsterInsights as MonsterInsightsIntegration;
+use Royal_MCP\Integrations\SiteKit as SiteKitIntegration;
 use Royal_MCP\Integrations\W3TotalCache as W3TCIntegration;
 use Royal_MCP\Integrations\Duplicator as DuplicatorIntegration;
 use Royal_MCP\Integrations\BackupStatus as BackupStatusIntegration;
@@ -2377,6 +2378,7 @@ class Server {
         $tools = array_merge( $tools, LiteSpeedIntegration::get_tools() );
         $tools = array_merge( $tools, CF7Integration::get_tools() );
         $tools = array_merge( $tools, MonsterInsightsIntegration::get_tools() );
+        $tools = array_merge( $tools, SiteKitIntegration::get_tools() );
         $tools = array_merge( $tools, TablePressIntegration::get_tools() );
         $tools = array_merge( $tools, CodeSnippetsIntegration::get_tools() );
         $tools = array_merge( $tools, ComplianzIntegration::get_tools() );
@@ -3805,6 +3807,7 @@ class Server {
             'litespeed_'           => [ 'LiteSpeed Cache', [ LiteSpeedIntegration::class, 'is_available' ] ],
             'cf7_'                 => [ 'Contact Form 7', [ CF7Integration::class, 'is_available' ] ],
             'monsterinsights_'     => [ 'MonsterInsights', [ MonsterInsightsIntegration::class, 'is_available' ] ],
+            'sitekit_'             => [ 'Site Kit by Google', [ SiteKitIntegration::class, 'is_available' ] ],
             'w3tc_'                => [ 'W3 Total Cache', [ W3TCIntegration::class, 'is_available' ] ],
             'duplicator_'          => [ 'Duplicator', [ DuplicatorIntegration::class, 'is_available' ] ],
             'ai1wm_get_backup_status'    => [ 'All-in-One WP Migration', [ BackupStatusIntegration::class, 'ai1wm_active' ] ],
@@ -4880,11 +4883,12 @@ class Server {
         if ('success' === $status && preg_match('/^[a-f0-9]{32}$/', $logged_undo_token)) {
             $response_meta['change_id'] = \Royal_MCP\MCP\Undo_Store::change_id($logged_undo_token);
         }
-        if ('success' === $status && is_array($result) && isset($result['structuredContent']['verified'])) {
-            $lv = $result['structuredContent']['verified'];
+        $lsc = is_array($result) ? ( isset($result['structuredContent']) && is_array($result['structuredContent']) ? $result['structuredContent'] : $result ) : [];
+        if ('success' === $status && isset($lsc['verified'])) {
+            $lv = $lsc['verified'];
             $response_meta['verified'] = true === $lv ? 'verified' : ( is_string($lv) ? substr($lv, 0, 20) : 'not_checked' );
-            if (!empty($result['structuredContent']['landed']) && is_array($result['structuredContent']['landed'])) {
-                $response_meta['landed'] = array_slice(array_map(static function ($v) { return substr((string) $v, 0, 40); }, $result['structuredContent']['landed']), 0, 20);
+            if (!empty($lsc['landed']) && is_array($lsc['landed'])) {
+                $response_meta['landed'] = array_slice(array_map(static function ($v) { return substr((string) $v, 0, 40); }, $lsc['landed']), 0, 20);
             }
         }
 
@@ -5199,8 +5203,29 @@ class Server {
     /** Argument keys that name the post a write changes (not a source it copies from). */
     const VERIFY_POST_ARGS = [ 'post_id', 'id', 'page_id', 'media_id', 'attachment_id', 'menu_item_id', 'revision_id' ];
 
+    /**
+     * Tools whose write lands on the post they name (its fields, terms, featured image,
+     * and for meta / builder tools its custom fields). Anything else is not read back
+     * here: comments, preview links, caches, orders and other plugins' ids are not posts
+     * the write changes.
+     */
+    private static function verify_post_tool( $name ) {
+        if ( in_array( $name, [ 'wp_create_comment', 'wp_delete_comment', 'wp_create_preview_link', 'wp_revoke_preview_links', 'wp_purge_and_verify_url', 'wp_clone_post_as_draft' ], true ) ) {
+            return false;
+        }
+        return (bool) preg_match( '/^(wp_(update|delete|replace|insert|move|add|set|restore)_(post|page|block|blocks|text_in_blocks|block_attributes|in_post|in_page|post_meta|post_terms|featured_image|media|revision|menu_item)$|elementor_(?!get_|list_)|divi_(?!get_|list_))/', (string) $name );
+    }
+
+    /** Whether custom fields are what the tool writes (so a change there is its own). */
+    private static function verify_meta_tool( $name ) {
+        return (bool) preg_match( '/(_post_meta$|^elementor_|^divi_|^wp_update_media$)/', (string) $name );
+    }
+
     /** The post a write targets, or 0. */
     private function verify_target_post( $name, $args ) {
+        if ( ! self::verify_post_tool( $name ) ) {
+            return 0;
+        }
         $scope = $this->item_scope( $name, $args );
         if ( null === $scope || 'edit_post' !== $scope[0] ) {
             return 0;
@@ -5234,6 +5259,7 @@ class Server {
         $meta = $wpdb->get_results( $wpdb->prepare( "SELECT meta_key, meta_value FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key NOT IN ( '_edit_lock', '_edit_last' ) AND meta_key NOT LIKE %s ORDER BY meta_id", (int) $post_id, $wpdb->esc_like( '_royal_mcp_' ) . '%' ), ARRAY_N );
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $terms = $wpdb->get_col( $wpdb->prepare( "SELECT term_taxonomy_id FROM {$wpdb->term_relationships} WHERE object_id = %d ORDER BY term_taxonomy_id", (int) $post_id ) );
+        $fields['_thumbnail_id'] = md5( (string) get_post_meta( (int) $post_id, '_thumbnail_id', true ) );
         return [ 'fields' => $fields, 'meta' => md5( (string) wp_json_encode( $meta ) ), 'terms' => md5( implode( ',', (array) $terms ) ) ];
     }
 
@@ -5252,14 +5278,17 @@ class Server {
             return $result;
         }
         $sc = $plain ? $result : $result['structuredContent'];
-        if ( 'dry_run' === ( $sc['state'] ?? '' ) || array_key_exists( 'verified', $sc ) && is_bool( $sc['verified'] ) && ! isset( $sc['saved_fields'] ) ) {
+        // A tool's own answer (or one already given by a nested call) is kept.
+        if ( 'dry_run' === ( $sc['state'] ?? '' ) || array_key_exists( 'verified', $sc ) || 'execute_tool' === $name ) {
             return $result;
         }
-        $labels = [ 'post_title' => 'title', 'post_content' => 'content', 'post_excerpt' => 'excerpt', 'post_status' => 'status', 'post_name' => 'slug', 'post_parent' => 'parent', 'menu_order' => 'order', 'post_password' => 'password', 'comment_status' => 'comments', 'ping_status' => 'pings', 'post_date_gmt' => 'date', 'post_author' => 'author', 'post_mime_type' => 'file type' ];
+        $labels = [ 'post_title' => 'title', 'post_content' => 'content', 'post_excerpt' => 'excerpt', 'post_status' => 'status', 'post_name' => 'slug', 'post_parent' => 'parent', 'menu_order' => 'order', 'post_password' => 'password', 'comment_status' => 'comments', 'ping_status' => 'pings', 'post_date_gmt' => 'date', 'post_author' => 'author', 'post_mime_type' => 'file type', '_thumbnail_id' => 'featured image' ];
         $note   = '';
-        if ( isset( $sc['saved_fields'] ) && is_array( $sc['saved_fields'] ) ) {
-            $state  = 'verified';
-            $landed = array_map( 'strval', array_keys( $sc['saved_fields'] ) );
+        if ( ( $vpid <= 0 || null === $before ) && isset( $sc['saved_fields'] ) && is_array( $sc['saved_fields'] ) ) {
+            // The tool read its own write back; a flat list names the fields, a map has them as keys.
+            $saved  = $sc['saved_fields'];
+            $landed = array_map( 'strval', ( [] !== $saved && array_keys( $saved ) === range( 0, count( $saved ) - 1 ) ) ? array_values( $saved ) : array_keys( $saved ) );
+            $state  = $landed ? 'verified' : 'unchanged';
         } elseif ( $vpid > 0 && null !== $before ) {
             $after = self::verify_fingerprint( $vpid );
             if ( null === $after ) {
@@ -5272,7 +5301,8 @@ class Server {
                         $landed[] = $labels[ $f ] ?? $f;
                     }
                 }
-                if ( $after['meta'] !== $before['meta'] ) {
+                // Other plugins write meta on every save, so a meta change counts only for meta / builder tools.
+                if ( $after['meta'] !== $before['meta'] && self::verify_meta_tool( $name ) ) {
                     $landed[] = 'custom fields';
                 }
                 if ( $after['terms'] !== $before['terms'] ) {
@@ -5285,8 +5315,9 @@ class Server {
                 }
             }
         } else {
-            $created = (int) ( $sc['post_id'] ?? ( $sc['id'] ?? 0 ) );
-            if ( $created > 0 && false !== strpos( (string) $name, '_create_' ) && get_post( $created ) ) {
+            // Only tools that create a post report it as created (other creates return other ids).
+            $created = (int) ( $sc['post_id'] ?? ( in_array( $name, [ 'wp_create_post', 'wp_create_page' ], true ) ? ( $sc['id'] ?? 0 ) : 0 ) );
+            if ( $created > 0 && preg_match( '/^(wp_create_(post|page)|elementor_clone_page|divi_clone_page|elementor_import_template)$/', (string) $name ) && get_post( $created ) ) {
                 $state  = 'verified';
                 $landed = [ 'created' ];
             } else {
@@ -14563,6 +14594,9 @@ class Server {
                 }
                 if ( strpos( $name, 'monsterinsights_' ) === 0 ) {
                     return MonsterInsightsIntegration::execute_tool( $name, $args );
+                }
+                if ( strpos( $name, 'sitekit_' ) === 0 ) {
+                    return SiteKitIntegration::execute_tool( $name, $args );
                 }
                 if ( strpos( $name, 'tablepress_' ) === 0 ) {
                     return TablePressIntegration::execute_tool( $name, $args );

@@ -50,6 +50,7 @@ class Registrar {
 			'solid_'       => 'solid-security',
 			'cf7_'         => 'contact-form-7',
 			'monsterinsights_' => 'monsterinsights',
+			'sitekit_'     => 'site-kit',
 			'w3tc_'        => 'w3-total-cache',
 			'duplicator_'  => 'duplicator',
 			'bp_'          => 'buddypress',
