@@ -1288,9 +1288,6 @@ class Royal_MCP_Plugin {
     }
 }
 
-// Royal MCP's own MCP requests are signed in on WordPress's standard step, after cookies and Application Passwords.
-add_filter( 'determine_current_user', [ 'Royal_MCP\\MCP\\Server', 'early_user' ], 30 );
-
 // Initialize the plugin
 function royal_mcp_init() {
     return Royal_MCP_Plugin::get_instance();
