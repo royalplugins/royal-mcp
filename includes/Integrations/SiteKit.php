@@ -96,7 +96,7 @@ class SiteKit {
 		}
 		$res = self::get( $route, $params );
 		if ( ! $res->is_error() ) {
-			set_transient( $key, [ 'data' => json_decode( (string) wp_json_encode( $res->get_data() ), true ) ], 5 * MINUTE_IN_SECONDS );
+			set_transient( $key, [ 'data' => json_decode( (string) wp_json_encode( $res->get_data() ), true ) ], 5 * MINUTE_IN_SECONDS ); // audit:transient-ttl-only -- a short answer cache for identical report questions; Google's figures do not change within it
 		}
 		return $res;
 	}

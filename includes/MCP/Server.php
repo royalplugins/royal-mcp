@@ -1021,6 +1021,81 @@ class Server {
      * @param array  $settings Plugin settings.
      * @return bool|WP_REST_Response True if valid, error response if invalid.
      */
+    /**
+     * WordPress's determine_current_user step for Royal MCP's own MCP addresses: a request
+     * with a valid API key or OAuth access token is signed in from the start of the request,
+     * as Application Passwords are, so plugins that set themselves up for the current user
+     * on `init` (Site Kit, for one) see the right account. Only when nobody is signed in yet;
+     * the same checks as the endpoint (key / token, binding, client approved, account may
+     * connect); anything else leaves the request signed out and the endpoint answers as before.
+     *
+     * @param int|false $user_id User already determined, if any.
+     * @return int|false
+     */
+    public static function early_user( $user_id ) {
+        if ( $user_id || ! self::is_mcp_address_request() ) {
+            return $user_id;
+        }
+        $settings = get_option( 'royal_mcp_settings', [] );
+        if ( ! is_array( $settings ) || empty( $settings['enabled'] ) ) {
+            return $user_id;
+        }
+        $auth = '';
+        foreach ( [ 'HTTP_AUTHORIZATION', 'REDIRECT_HTTP_AUTHORIZATION' ] as $k ) {
+            if ( ! empty( $_SERVER[ $k ] ) && is_string( $_SERVER[ $k ] ) ) {
+                $auth = trim( sanitize_text_field( wp_unslash( $_SERVER[ $k ] ) ) );
+                break;
+            }
+        }
+        if ( ! preg_match( '/^Bearer\s+(\S{16,512})$/i', $auth, $m ) ) {
+            return $user_id;
+        }
+        $token = $m[1];
+        // API key.
+        $stored_hash  = isset( $settings['api_key_hash'] ) ? (string) $settings['api_key_hash'] : '';
+        $stored_plain = isset( $settings['api_key'] ) ? (string) $settings['api_key'] : '';
+        $key_ok       = '' !== $stored_hash ? hash_equals( $stored_hash, hash( 'sha256', $token ) ) : ( '' !== $stored_plain && hash_equals( $stored_plain, $token ) );
+        if ( $key_ok ) {
+            $uid = isset( $settings['api_key_user_id'] ) ? (int) $settings['api_key_user_id'] : 0;
+            return ( $uid > 0 && \Royal_MCP\MCP\Support\Route_Roles::is_site_user( $uid ) && \Royal_MCP\MCP\Support\Route_Roles::connect_allowed( $uid ) ) ? $uid : $user_id;
+        }
+        // OAuth access token.
+        $row = \Royal_MCP\OAuth\Token_Store::validate_token( $token );
+        if ( ! $row ) {
+            return $user_id;
+        }
+        if ( '' !== (string) ( $row['resource'] ?? '' ) && ! isset( \Royal_MCP\OAuth\Server::accepted_resources()[ \Royal_MCP\OAuth\Server::normalize_resource( (string) $row['resource'] ) ] ) ) {
+            return $user_id;
+        }
+        $client = \Royal_MCP\OAuth\Token_Store::get_client( (string) $row['client_id'] );
+        if ( ! $client || \Royal_MCP\OAuth\Token_Store::is_pending_approval( $client ) ) {
+            return $user_id;
+        }
+        $uid = (int) $row['user_id'];
+        return ( $uid > 0 && \Royal_MCP\MCP\Support\Route_Roles::is_site_user( $uid ) && \Royal_MCP\MCP\Support\Route_Roles::connect_allowed( $uid ) ) ? $uid : $user_id;
+    }
+
+    /** Whether this request is for one of Royal MCP's MCP addresses (pretty or ?rest_route=). */
+    private static function is_mcp_address_request() {
+        $route = isset( $_GET['rest_route'] ) && is_string( $_GET['rest_route'] ) ? sanitize_text_field( wp_unslash( $_GET['rest_route'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- compared against fixed paths only
+        if ( '' !== $route ) {
+            return (bool) preg_match( '#^/royal-mcp/v1(/mcp|/messages)?/?$#', $route );
+        }
+        $uri  = isset( $_SERVER['REQUEST_URI'] ) ? (string) wp_parse_url( wp_unslash( $_SERVER['REQUEST_URI'] ), PHP_URL_PATH ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- compared against fixed paths only
+        $base = rtrim( (string) wp_parse_url( home_url( '/' ), PHP_URL_PATH ), '/' );
+        $path = '/' . ltrim( rtrim( substr( $uri, strlen( $base ) ), '/' ), '/' );
+        if ( 0 !== strpos( $uri, $base . '/' ) && $uri !== $base ) {
+            return false;
+        }
+        $prefix = '/' . trim( (string) rest_get_url_prefix(), '/' );
+        foreach ( \Royal_MCP\OAuth\Server::mcp_resource_paths() as $p ) {
+            if ( $path === $p || $path === preg_replace( '#^/wp-json(?=/|$)#', $prefix, $p ) ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private function validate_api_key_value($api_key, $settings = null) {
         if (null === $settings) {
             $settings = get_option('royal_mcp_settings', []);
