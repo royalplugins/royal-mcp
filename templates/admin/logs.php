@@ -23,6 +23,16 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
         <?php endif; ?>
     <?php endif; ?>
 
+    <?php // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only flag set by our own redirect ?>
+    <?php if ( isset( $_GET['royal_mcp_retention'] ) ) : ?>
+        <?php // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only flag set by our own redirect ?>
+        <?php if ( 'saved' === sanitize_key( wp_unslash( $_GET['royal_mcp_retention'] ) ) ) : ?>
+            <div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'How long entries are kept was saved.', 'royal-mcp' ); ?></p></div>
+        <?php else : ?>
+            <div class="notice notice-warning is-dismissible"><p><?php esc_html_e( 'Nothing was saved: pick one of the periods in the list.', 'royal-mcp' ); ?></p></div>
+        <?php endif; ?>
+    <?php endif; ?>
+
     <?php
     // Royal AI Firewall cross-link — deep-link if active, wp.org install pointer otherwise.
     $royal_mcp_raif_active = defined('ROYAL_AI_FIREWALL_VERSION');
@@ -75,20 +85,48 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
         <?php endif; ?>
     </div>
 
+    <?php
+    $royal_mcp_keep_days   = \Royal_MCP\Admin\Settings_Page::log_retention_days();
+    $royal_mcp_keep_choice = \Royal_MCP\Admin\Settings_Page::log_retention_choice();
+    ?>
     <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin:0 0 12px;">
-        <input type="hidden" name="action" value="<?php echo esc_attr( \Royal_MCP\Admin\Settings_Page::CLEAR_LOG_ACTION ); ?>">
-        <?php wp_nonce_field( \Royal_MCP\Admin\Settings_Page::CLEAR_LOG_ACTION ); ?>
-        <span class="description" style="margin-right:12px;">
+        <input type="hidden" name="action" value="<?php echo esc_attr( \Royal_MCP\Admin\Settings_Page::LOG_RETENTION_ACTION ); ?>">
+        <?php wp_nonce_field( \Royal_MCP\Admin\Settings_Page::LOG_RETENTION_ACTION ); ?>
+        <label for="royal-mcp-log-retention" style="margin-right:8px;"><?php esc_html_e( 'Keep entries for', 'royal-mcp' ); ?></label>
+        <select id="royal-mcp-log-retention" name="royal_mcp_log_retention">
+            <?php foreach ( \Royal_MCP\Admin\Settings_Page::LOG_RETENTION_CHOICES as $royal_mcp_choice ) : ?>
+                <option value="<?php echo esc_attr( (string) $royal_mcp_choice ); ?>" <?php selected( $royal_mcp_keep_choice, $royal_mcp_choice ); ?>>
+                    <?php
+                    if ( 0 === $royal_mcp_choice ) {
+                        esc_html_e( 'until I clear them', 'royal-mcp' );
+                    } else {
+                        /* translators: %s: number of days */
+                        echo esc_html( sprintf( _n( '%s day', '%s days', $royal_mcp_choice, 'royal-mcp' ), number_format_i18n( $royal_mcp_choice ) ) );
+                    }
+                    ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+        <button type="submit" class="button"><?php esc_html_e( 'Save', 'royal-mcp' ); ?></button>
+        <span class="description" style="margin-left:12px;">
             <?php
-            $royal_mcp_keep_days = \Royal_MCP\Admin\Settings_Page::log_retention_days();
-            if ( $royal_mcp_keep_days > 0 ) {
-                /* translators: %s: number of days */
-                echo esc_html( sprintf( _n( 'Entries are kept for %s day, then deleted.', 'Entries are kept for %s days, then deleted.', $royal_mcp_keep_days, 'royal-mcp' ), number_format_i18n( $royal_mcp_keep_days ) ) );
-            } else {
-                esc_html_e( 'Entries are kept until you clear them.', 'royal-mcp' );
+            if ( $royal_mcp_keep_days !== $royal_mcp_keep_choice ) {
+                if ( $royal_mcp_keep_days > 0 ) {
+                    /* translators: %s: number of days */
+                    echo esc_html( sprintf( _n( 'Code on this site overrides this setting: entries are kept for %s day.', 'Code on this site overrides this setting: entries are kept for %s days.', $royal_mcp_keep_days, 'royal-mcp' ), number_format_i18n( $royal_mcp_keep_days ) ) );
+                } else {
+                    esc_html_e( 'Code on this site overrides this setting: entries are kept until you clear them.', 'royal-mcp' );
+                }
+            } elseif ( $royal_mcp_keep_days > 0 ) {
+                esc_html_e( 'Older entries are deleted once a day.', 'royal-mcp' );
             }
             ?>
         </span>
+    </form>
+
+    <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin:0 0 12px;">
+        <input type="hidden" name="action" value="<?php echo esc_attr( \Royal_MCP\Admin\Settings_Page::CLEAR_LOG_ACTION ); ?>">
+        <?php wp_nonce_field( \Royal_MCP\Admin\Settings_Page::CLEAR_LOG_ACTION ); ?>
         <label style="margin-right:8px;">
             <input type="checkbox" name="royal_mcp_clear_confirm" value="1" required>
             <?php esc_html_e( 'Delete every entry now', 'royal-mcp' ); ?>

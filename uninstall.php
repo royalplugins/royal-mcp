@@ -47,6 +47,7 @@ function royal_mcp_uninstall_site() {
     delete_option('royal_mcp_rewrite_version');
     delete_option('royal_mcp_connection_doctor');
     delete_option('royal_mcp_agent_readiness');
+    delete_option('royal_mcp_log_retention_days');
     delete_option('royal_mcp_db_upgrade_last_failed_at');
     delete_option('royal_mcp_tables_checked_at');
 

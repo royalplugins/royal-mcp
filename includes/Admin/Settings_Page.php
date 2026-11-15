@@ -16,6 +16,8 @@ class Settings_Page {
     const DISABLE_KEY_ACTION = 'royal_mcp_disable_api_key';
     const CLEAR_LOG_ACTION   = 'royal_mcp_clear_activity_log';
     const EXPORT_LOG_ACTION  = 'royal_mcp_export_activity_log';
+    /** admin-post action (and nonce action) that saves how long Activity Log entries are kept. */
+    const LOG_RETENTION_ACTION = 'royal_mcp_set_log_retention';
     /** Most entries one export holds, newest first. */
     const LOG_EXPORT_MAX     = 50000;
     /** Longest exported cell (bytes), under a spreadsheet's own cell limit. */
@@ -23,8 +25,12 @@ class Settings_Page {
     /** Column names of the Activity Log export. */
     const LOG_EXPORT_COLUMNS = [ 'id', 'timestamp', 'source', 'action', 'status', 'tool', 'user_id', 'auth', 'client_id', 'access_level', 'route', 'arg_keys', 'error', 'change_id' ];
 
-    /** Days an Activity Log entry is kept. */
+    /** Days an Activity Log entry is kept unless the owner picks another period. */
     const LOG_RETENTION_DAYS = 90;
+    /** Option holding the owner's choice of retention period (days; 0 keeps entries until cleared). */
+    const LOG_RETENTION_OPTION = 'royal_mcp_log_retention_days';
+    /** Periods the Activity Log screen offers. */
+    const LOG_RETENTION_CHOICES = [ 30, 90, 180, 365, 0 ];
 
     /**
      * Record an API key event (created or rotated) in the activity log, with where it came from.
@@ -94,6 +100,7 @@ class Settings_Page {
         add_action('admin_post_' . self::DISABLE_KEY_ACTION, [$this, 'handle_disable_api_key']);
         add_action('admin_post_' . self::CLEAR_LOG_ACTION, [$this, 'handle_clear_activity_log']);
         add_action('admin_post_' . self::EXPORT_LOG_ACTION, [$this, 'handle_export_activity_log']);
+        add_action('admin_post_' . self::LOG_RETENTION_ACTION, [$this, 'handle_set_log_retention']);
     }
 
     /**
@@ -657,10 +664,53 @@ class Settings_Page {
     public static function log_retention_days() {
         /**
          * Filter how many days Activity Log entries are kept. Return 0 to keep them all.
+         * Receives the period chosen on the Activity Log screen (90 days until one is chosen).
          *
          * @param int $days Days.
          */
-        return max( 0, (int) apply_filters( 'royal_mcp_log_retention_days', self::LOG_RETENTION_DAYS ) );
+        return max( 0, (int) apply_filters( 'royal_mcp_log_retention_days', self::log_retention_choice() ) );
+    }
+
+    /** The period chosen on the Activity Log screen, before any filter. */
+    public static function log_retention_choice() {
+        $stored = get_option( self::LOG_RETENTION_OPTION, null );
+        if ( null !== $stored && is_numeric( $stored ) && in_array( (int) $stored, self::LOG_RETENTION_CHOICES, true ) ) {
+            return (int) $stored;
+        }
+        return self::LOG_RETENTION_DAYS;
+    }
+
+    /** The Activity Log screen's retention form: save the chosen period and record who changed it. */
+    public function handle_set_log_retention() {
+        if ( ! current_user_can( self::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from admin_capability(); per-site retention of the per-site log table
+            wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
+        }
+        check_admin_referer( self::LOG_RETENTION_ACTION );
+        $raw  = isset( $_POST['royal_mcp_log_retention'] ) ? sanitize_text_field( wp_unslash( $_POST['royal_mcp_log_retention'] ) ) : '';
+        $days = ctype_digit( $raw ) ? (int) $raw : -1;
+        $done = 'invalid';
+        if ( in_array( $days, self::LOG_RETENTION_CHOICES, true ) ) {
+            $before = self::log_retention_choice();
+            update_option( self::LOG_RETENTION_OPTION, $days, false );
+            $done = 'saved';
+            if ( $before !== $days && self::log_table_exists() ) {
+                global $wpdb;
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- insert into our own log table
+                $wpdb->insert(
+                    $wpdb->prefix . 'royal_mcp_logs',
+                    [
+                        'mcp_server'    => 'MCP Server',
+                        'action'        => 'settings:activity_log_retention_changed',
+                        'request_data'  => wp_json_encode( [ 'source' => 'settings', 'by' => (int) get_current_user_id(), 'from_days' => $before, 'to_days' => $days ] ),
+                        'response_data' => wp_json_encode( [ 'status' => 'success' ] ),
+                        'status'        => 'success',
+                    ],
+                    [ '%s', '%s', '%s', '%s', '%s' ]
+                );
+            }
+        }
+        wp_safe_redirect( add_query_arg( [ 'page' => 'royal-mcp-logs', 'royal_mcp_retention' => $done ], admin_url( 'admin.php' ) ) );
+        exit;
     }
 
     /** Whether this site has the Activity Log table. */
