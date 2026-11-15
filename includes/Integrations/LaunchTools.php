@@ -54,6 +54,25 @@ class LaunchTools {
 				},
 			] );
 		} );
+		// IndexNow accepts URLs only under the folder its key file sits in, so the key is also served
+		// at the site's root as /<key>.txt (the address search engines check first). No file is written.
+		add_action( 'parse_request', static function () {
+			$key = get_option( 'royal_mcp_indexnow_key', '' );
+			if ( ! is_string( $key ) || 32 !== strlen( $key ) || ! ctype_xdigit( $key ) || empty( $_SERVER['REQUEST_URI'] ) ) {
+				return;
+			}
+			$asked = (string) wp_parse_url( esc_url_raw( wp_unslash( $_SERVER['REQUEST_URI'] ) ), PHP_URL_PATH ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- compared to a fixed path only
+			if ( $asked !== (string) wp_parse_url( self::indexnow_key_url( $key ), PHP_URL_PATH ) ) {
+				return;
+			}
+			if ( ! headers_sent() ) {
+				status_header( 200 );
+				header( 'Content-Type: text/plain; charset=utf-8' );
+				header( 'X-Robots-Tag: noindex' );
+			}
+			echo esc_html( $key );
+			exit;
+		}, 0 );
 		// The key is compared byte for byte, so it goes out as plain text, not as a JSON string.
 		add_filter( 'rest_pre_serve_request', static function ( $served, $result, $request ) {
 			if ( $served || ! $request instanceof \WP_REST_Request || '/royal-mcp/v1' . self::KEY_ROUTE !== strtolower( untrailingslashit( $request->get_route() ) ) ) {
@@ -552,7 +571,7 @@ class LaunchTools {
 					if ( ( $r['status'] ?? '' ) === 'ok' ) {
 						$sa_indexnow_data = $r['data'] ?? null;
 					}
-					return $r;
+					return self::push_result( $r );
 				},
 			];
 		}
@@ -569,7 +588,7 @@ class LaunchTools {
 					if ( ( $r['status'] ?? '' ) === 'ok' ) {
 						$sa_gsc_data = $r['data'] ?? null;
 					}
-					return $r;
+					return self::push_result( $r );
 				},
 			];
 		}
@@ -1111,7 +1130,7 @@ class LaunchTools {
 					if ( ( $r['status'] ?? '' ) === 'ok' ) {
 						$indexnow_data = $r['data'] ?? null;
 					}
-					return $r;
+					return self::push_result( $r );
 				},
 			],
 
@@ -1124,7 +1143,7 @@ class LaunchTools {
 					if ( ( $r['status'] ?? '' ) === 'ok' ) {
 						$gsc_data = $r['data'] ?? null;
 					}
-					return $r;
+					return self::push_result( $r );
 				},
 			],
 
@@ -2405,7 +2424,7 @@ class LaunchTools {
 		$payload = [
 			'host'        => $host,
 			'key'         => $key,
-			'keyLocation' => rest_url( 'royal-mcp/v1/indexnow-key' ),
+			'keyLocation' => self::indexnow_key_url( $key ),
 			'urlList'     => [ $url ],
 		];
 		$resp = wp_safe_remote_post( 'https://api.indexnow.org/indexnow', [
@@ -2433,6 +2452,23 @@ class LaunchTools {
 				'http_status'  => $code,
 			],
 		];
+	}
+
+	/** Where the site's IndexNow key is served: the site root, which covers every page URL. */
+	private static function indexnow_key_url( $key ) {
+		return home_url( '/' . $key . '.txt' );
+	}
+
+	/**
+	 * A search-engine push that did not go through is reported, not treated as a failed launch:
+	 * it is one-way and best effort, and must not take back the changes it was announcing.
+	 */
+	private static function push_result( array $r ) {
+		if ( 'error' === ( $r['status'] ?? '' ) ) {
+			$r['status']  = 'skipped';
+			$r['message'] = 'not sent: ' . (string) ( $r['message'] ?? '' );
+		}
+		return $r;
 	}
 
 	private static function get_or_create_indexnow_key() {
