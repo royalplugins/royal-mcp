@@ -1404,6 +1404,11 @@ class Server {
     private function log_event( $code, $description, $http_status, $log_status = 'error' ) {
         global $wpdb;
 
+        // The Connection Doctor's own registration probe is not a client: not logged.
+        if ( \Royal_MCP\Admin\Connection_Doctor::is_probe_request() ) {
+            return;
+        }
+
         // Read public OAuth identifiers from POST first (token/register/authorize-POST),
         // fall back to GET (authorize-GET). Avoid $_REQUEST — its contents depend on PHP's
         // request_order config and can include $_COOKIE on some hosts.

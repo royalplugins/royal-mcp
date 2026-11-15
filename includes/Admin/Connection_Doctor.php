@@ -21,6 +21,20 @@ class Connection_Doctor {
 
 	const RESULT_OPTION = 'royal_mcp_connection_doctor';
 	const RUN_ACTION    = 'royal_mcp_run_connection_doctor';
+	const PROBE_HEADER  = 'X-Royal-MCP-Doctor';
+	const PROBE_KEY     = 'royal_mcp_doctor_probe';
+
+	/** Whether this request is the Doctor's own registration probe (it is not written to the Activity Log). */
+	public static function is_probe_request() {
+		return self::is_probe_request_value( isset( $_SERVER['HTTP_X_ROYAL_MCP_DOCTOR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_X_ROYAL_MCP_DOCTOR'] ) ) : '' );
+	}
+
+	/** Whether a header value is the live one-time probe value. */
+	public static function is_probe_request_value( $sent ) {
+		$sent = (string) $sent;
+		$want = (string) get_transient( self::PROBE_KEY );
+		return '' !== $sent && '' !== $want && hash_equals( $want, $sent );
+	}
 
 	public static function register() {
 		add_action( 'admin_post_' . self::RUN_ACTION, [ __CLASS__, 'handle_run' ] );
@@ -113,7 +127,10 @@ class Connection_Doctor {
 		if ( '' === $url || $host( $url ) !== $host( home_url( '/' ) ) ) {
 			return self::step( 'registration', $label, 'skipped', __( 'The discovery document did not name a registration address on this site.', 'royal-mcp' ) );
 		}
-		$res = wp_remote_post( $url, [ 'timeout' => 5, 'redirection' => 0, 'sslverify' => false, 'headers' => [ 'Content-Type' => 'application/json' ], 'body' => '' ] );
+		$probe = wp_generate_password( 32, false );
+		set_transient( self::PROBE_KEY, $probe, MINUTE_IN_SECONDS );
+		$res = wp_remote_post( $url, [ 'timeout' => 5, 'redirection' => 0, 'sslverify' => false, 'headers' => [ 'Content-Type' => 'application/json', self::PROBE_HEADER => $probe ], 'body' => '' ] );
+		delete_transient( self::PROBE_KEY );
 		if ( is_wp_error( $res ) ) {
 			return self::step( 'registration', $label, 'warn', __( 'The site could not reach its own registration address to check it (loopback blocked or timed out).', 'royal-mcp' ) );
 		}
@@ -140,6 +157,16 @@ class Connection_Doctor {
 		};
 		/* translators: 1: date of the last sign-in, 2: date of the last tool call */
 		$detail = sprintf( __( 'Last AI sign-in: %1$s. Last tool call: %2$s.', 'royal-mcp' ), $when( $sign ), $when( $call ) );
+		// The last refused sign-in or MCP request, with the reason the log recorded.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix
+		$refused = $wpdb->get_row( "SELECT action, response_data, timestamp FROM `{$table}` WHERE status = 'error' AND ( action LIKE 'oauth:%' OR action LIKE 'mcp:%' ) ORDER BY id DESC LIMIT 1", ARRAY_A );
+		if ( $refused ) {
+			$data   = json_decode( (string) $refused['response_data'], true );
+			$reason = is_array( $data ) ? (string) ( $data['description'] ?? ( $data['error']['message'] ?? ( $data['message'] ?? ( $data['code'] ?? '' ) ) ) ) : '';
+			$reason = '' !== $reason ? $reason : (string) $refused['action'];
+			/* translators: 1: date, 2: what was refused (e.g. oauth:token), 3: the reason recorded */
+			$detail .= ' ' . sprintf( __( 'Last refused request: %1$s, %2$s: %3$s', 'royal-mcp' ), $when( $refused['timestamp'] ), (string) $refused['action'], wp_html_excerpt( wp_strip_all_tags( $reason ), 200, '...' ) );
+		}
 		return self::step( 'activity', __( 'Real clients seen', 'royal-mcp' ), $call ? 'ok' : 'info', $detail, admin_url( 'admin.php?page=royal-mcp-logs' ), __( 'Activity Log', 'royal-mcp' ) );
 	}
 

@@ -164,6 +164,7 @@ function royal_mcp_uninstall_site() {
         delete_transient('royal_mcp_issuer_kind_column_failed');
         delete_transient('royal_mcp_rotation_column_failed');
         delete_transient('royal_mcp_resource_column_failed');
+        delete_transient('royal_mcp_doctor_probe');
 
         // Cleared with the tables so a reinstall recreates them.
         delete_option('royal_mcp_db_version');
