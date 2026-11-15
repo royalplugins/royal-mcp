@@ -18,6 +18,12 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class LaunchTools {
 
+	/** Redirect group used for this request's redirects (null until looked up). */
+	private static $redirection_group_id = null;
+
+	/** A redirect group created during this request (0 when none). */
+	private static $redirection_group_created = 0;
+
 	/** Tool => [ handler, undo handler or null, the WordPress capability it needs ]. */
 	const TOOLS = [
 		'wp_publish_and_launch'         => [ 'handle_publish_and_launch', 'undo_publish_and_launch', 'publish_posts' ],
@@ -186,8 +192,11 @@ class LaunchTools {
 		return md5( (string) ( $now['title'] ?? '' ) . '|' . (string) ( $now['description'] ?? '' ) . '|' . (string) ( $now['focus_keyword'] ?? '' ) );
 	}
 
-	/** A short print of a redirect's source and target, or '' when it is gone. */
+	/** A print of a redirect's whole definition (the same as the Redirection tools use), or '' when it is gone. */
 	private static function redirect_print( $id ) {
+		if ( method_exists( '\\Royal_MCP\\Integrations\\Redirection', 'fingerprint' ) ) {
+			return \Royal_MCP\Integrations\Redirection::fingerprint( (int) $id );
+		}
 		$item = class_exists( '\\Red_Item' ) ? \Red_Item::get_by_id( (int) $id ) : null;
 		if ( ! is_object( $item ) || ! method_exists( $item, 'get_url' ) ) {
 			return '';
@@ -292,6 +301,7 @@ class LaunchTools {
 		$created_media_id = 0;
 		$rollback_list    = []; 
 
+		$post_purge_result = null;
 		$steps = [
 			[
 				'name'       => 'pre_backup_via_sitevault',
@@ -482,8 +492,8 @@ class LaunchTools {
 			[
 				'name'       => 'post_purge_cache',
 				'reversible' => false,
-				'condition'  => $post_purge && $deps['forgecache']['available'],
-				'run'        => static function () use ( &$created_post_id, $deps, $status ) {
+				'condition'  => $post_purge,
+				'run'        => static function () use ( &$created_post_id, $status, &$post_purge_result ) {
 
 					if ( ! in_array( (string) $status, [ 'publish', 'inherit', 'future' ], true ) ) {
 						return [
@@ -492,7 +502,8 @@ class LaunchTools {
 							'data'    => [ 'post_status' => (string) $status ],
 						];
 					}
-					return self::invoke_forgecache_purge( $deps );
+					$post_purge_result = self::purge_cache_for_post( (int) $created_post_id );
+					return $post_purge_result;
 				},
 			],
 		];
@@ -588,7 +599,7 @@ class LaunchTools {
 					} ) ),
 					'indexnow_pushed'        => $sa_indexnow_data,
 					'gsc_pushed'             => $sa_gsc_data,
-					'cache_purged_on_create' => $post_purge && $deps['forgecache']['available'] && in_array( (string) $status, [ 'publish', 'future' ], true ),
+					'cache_purged_on_create' => 'ok' === ( $post_purge_result['status'] ?? '' ),
 				] );
 		}
 
@@ -889,6 +900,27 @@ class LaunchTools {
 			],
 
 			[
+				'name'       => 'cache_purge',
+				'reversible' => false,
+				'condition'  => $purge_cache_flag,
+				'run'        => static function () use ( $post_id, &$cache_purge_data ) {
+					$post_obj = get_post( $post_id );
+					if ( $post_obj && ! in_array( (string) $post_obj->post_status, [ 'publish', 'inherit', 'future' ], true ) ) {
+						return [
+							'status'  => 'skipped',
+							'message' => sprintf( 'cache purge skipped: post status "%s" has no public URL to invalidate', (string) $post_obj->post_status ),
+							'data'    => [ 'post_status' => (string) $post_obj->post_status ],
+						];
+					}
+					$r = self::purge_cache_for_post( $post_id );
+					if ( ( $r['status'] ?? '' ) === 'ok' ) {
+						$cache_purge_data = $r['data'] ?? null;
+					}
+					return $r;
+				},
+			],
+
+			[
 				'name'       => 'verify_schema',
 				'reversible' => false,
 				'read_only'  => true,  
@@ -943,6 +975,7 @@ class LaunchTools {
 					$failed    = [];
 					$conflicts = []; 
 					$self_skips = []; 
+					$regex_matches = [];
 					foreach ( $add_301_slugs as $slug ) {
 						$source = '/' . ltrim( (string) $slug, '/' );
 						if ( substr( $source, -1 ) !== '/' ) {
@@ -969,16 +1002,26 @@ class LaunchTools {
 						}
 
 						if ( method_exists( '\\Red_Item', 'get_for_url' ) ) {
-							$existing = \Red_Item::get_for_url( $source, 'redirection' );
-							if ( ! empty( $existing ) ) {
-								$existing_ids = [];
-								foreach ( $existing as $ex ) {
-									if ( is_object( $ex ) && method_exists( $ex, 'get_id' ) ) {
-										$existing_ids[] = (int) $ex->get_id();
-									}
+							$existing     = (array) \Red_Item::get_for_url( $source );
+							$existing_ids = [];
+							$regex_ids    = [];
+							foreach ( $existing as $ex ) {
+								if ( ! is_object( $ex ) || ! method_exists( $ex, 'get_id' ) ) {
+									continue;
 								}
+								// A pattern rule (often a catch-all) is not a redirect for this address; it is reported, not treated as a conflict.
+								if ( method_exists( $ex, 'is_regex' ) && $ex->is_regex() ) {
+									$regex_ids[] = (int) $ex->get_id();
+								} else {
+									$existing_ids[] = (int) $ex->get_id();
+								}
+							}
+							if ( $existing_ids ) {
 								$conflicts[] = [ 'source' => $source, 'existing_ids' => $existing_ids ];
 								continue;
+							}
+							if ( $regex_ids ) {
+								$regex_matches[] = [ 'source' => $source, 'pattern_redirect_ids' => $regex_ids ];
 							}
 						}
 						$redirect = \Red_Item::create( [
@@ -1007,6 +1050,13 @@ class LaunchTools {
 						'existing_conflicts' => $conflicts,
 						'self_redirect_skipped' => $self_skips,
 					];
+					if ( $regex_matches ) {
+						// Redirection checks rules in order: a pattern rule placed before these may still answer first.
+						$result_data['also_matched_by_pattern_redirects'] = $regex_matches;
+					}
+					if ( self::$redirection_group_created > 0 ) {
+						$result_data['group_created'] = self::$redirection_group_created;
+					}
 
 					if ( empty( $created ) && empty( $failed ) && ! empty( $conflicts ) ) {
 						return [
@@ -1020,13 +1070,18 @@ class LaunchTools {
 					}
 					$redirect_ids_created = $created;
 					if ( ! empty( $created ) ) {
-						$rollback_stack[] = static function () use ( $created ) {
+						$made_group = self::$redirection_group_created;
+						$rollback_stack[] = static function () use ( $created, $made_group ) {
 							foreach ( $created as $rid ) {
 								$item = \Red_Item::get_by_id( $rid );
 								if ( is_object( $item ) && method_exists( $item, 'delete' ) ) {
 									$item->delete();
 								}
+								if ( \Red_Item::get_by_id( $rid ) ) {
+									throw new \Exception( sprintf( 'redirect #%d could not be deleted', (int) $rid ) );
+								}
 							}
+							self::remove_group_if_empty( $made_group );
 						};
 					}
 					return [ 'status' => 'ok', 'data' => $result_data ];
@@ -1059,40 +1114,24 @@ class LaunchTools {
 				},
 			],
 
-			[
-				'name'       => 'cache_purge',
-				'reversible' => false,
-				'condition'  => $purge_cache_flag,
-				'run'        => static function () use ( $post_id, &$cache_purge_data ) {
-					$post_obj = get_post( $post_id );
-					if ( $post_obj && ! in_array( (string) $post_obj->post_status, [ 'publish', 'inherit', 'future' ], true ) ) {
-						return [
-							'status'  => 'skipped',
-							'message' => sprintf( 'cache purge skipped: post status "%s" has no public URL to invalidate', (string) $post_obj->post_status ),
-							'data'    => [ 'post_status' => (string) $post_obj->post_status ],
-						];
-					}
-					$r = self::purge_cache_for_post( $post_id );
-					if ( ( $r['status'] ?? '' ) === 'ok' ) {
-						$cache_purge_data = $r['data'] ?? null;
-					}
-					return $r;
-				},
-			],
 		];
 
 		$engine = self::run_steps( $steps, $mode );
 
 		if ( $engine['aborted'] && $mode === 'strict' && ! empty( $rollback_stack ) ) {
+			$rollback_errors = [];
 			foreach ( array_reverse( $rollback_stack ) as $fn ) {
 				try {
 					$fn();
 				} catch ( \Throwable $e ) {
-
+					$rollback_errors[] = self::error_message( $e );
 				}
 			}
-			$engine['rolled_back']    = true;
+			$engine['rolled_back']    = ! $rollback_errors;
 			$engine['rollback_count'] = count( $rollback_stack );
+			if ( $rollback_errors ) {
+				$engine['rollback_errors'] = $rollback_errors;
+			}
 			$seo_meta_snapshot        = null; 
 		}
 
@@ -1107,6 +1146,7 @@ class LaunchTools {
 					'seo_meta_snapshot'    => $seo_meta_snapshot,
 					'redirect_ids_created' => $redirect_ids_created,
 					'redirect_prints'      => array_combine( array_map( 'intval', (array) $redirect_ids_created ), array_map( [ __CLASS__, 'redirect_print' ], (array) $redirect_ids_created ) ),
+					'redirect_group_created' => self::$redirection_group_created,
 
 					'sitevault_snapshot'   => $sitevault_snapshot_data,
 					'indexnow_pushed'      => $indexnow_data,
@@ -1668,9 +1708,11 @@ class LaunchTools {
 		$media_id = (int) ( $payload['media_id'] ?? 0 );
 
 		$pre_status = null;
+		$pre_url    = '';
 		if ( $post_id > 0 ) {
 			$existing = get_post( $post_id );
 			$pre_status = $existing ? (string) $existing->post_status : null;
+			$pre_url    = $existing ? (string) get_permalink( $existing ) : '';
 		}
 
 		$post_deleted  = false;
@@ -1693,10 +1735,7 @@ class LaunchTools {
 
 		$cache_purge_on_undo = null;
 		if ( $post_deleted && in_array( (string) $pre_status, [ 'publish', 'inherit' ], true ) ) {
-			$deps = self::probe_dependencies();
-			if ( ! empty( $deps['forgecache']['available'] ) ) {
-				$cache_purge_on_undo = self::invoke_forgecache_purge( $deps );
-			}
+			$cache_purge_on_undo = self::purge_cache_for_post( 0, $pre_url );
 		}
 
 		$cannot_recall = [];
@@ -1835,6 +1874,9 @@ class LaunchTools {
 					} else {
 						$redirects_gone++;
 					}
+				}
+				if ( self::remove_group_if_empty( (int) ( $payload['redirect_group_created'] ?? 0 ) ) ) {
+					$summary_parts[] = 'Removed the empty redirect group this operation had created';
 				}
 				if ( $redirects_gone > 0 ) {
 					$summary_parts[] = sprintf( 'Deleted %d of %d 301 redirects (%d already gone — deleted manually before undo)', $redirects_deleted, count( $rids ), $redirects_gone );
@@ -2140,44 +2182,6 @@ class LaunchTools {
 		}
 	}
 
-	private static function invoke_forgecache_purge( array $deps ) {
-		if ( ! $deps['forgecache']['available'] ) {
-			return [ 'status' => 'skipped', 'message' => 'ForgeCache not installed on this site.' ];
-		}
-		if ( ! current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- the page cache is per site
-			return [ 'status' => 'skipped', 'message' => 'Clearing the whole cache needs an administrator; the cache was not cleared.' ];
-		}
-		$version = $deps['forgecache']['version'] ?? null;
-
-		if ( ! is_callable( [ '\\ForgeCache_Cache', 'clear_all_cache_static' ] ) ) {
-			return [
-				'status'  => 'skipped',
-				'message' => 'ForgeCache active per constant, but ForgeCache_Cache::clear_all_cache_static is not callable. Invoke the fc_clear_cache MCP tool manually.',
-				'data'    => [ 'detected_version' => $version, 'reason' => 'purge_api_not_callable' ],
-			];
-		}
-		try {
-			\ForgeCache_Cache::clear_all_cache_static();
-			return [
-				'status'  => 'ok',
-				'message' => sprintf( 'ForgeCache %s cache cleared.', $version ? $version : '' ),
-				'data'    => [
-					'detected_version' => $version,
-					'method'           => 'ForgeCache_Cache::clear_all_cache_static',
-				],
-			];
-		} catch ( \Throwable $e ) {
-			return [
-				'status'  => 'error',
-				'message' => sprintf( 'ForgeCache purge threw: %s', self::error_message( $e ) ),
-				'data'    => [
-					'detected_version' => $version,
-					'method'           => 'ForgeCache_Cache::clear_all_cache_static',
-				],
-			];
-		}
-	}
-
 	private static function write_seo_meta_universal( $post_id, $title, $desc, $focus_kw, array $deps ) {
 		// The same SEO plugin wp_update_seo_meta writes to, so both tools always agree.
 		$seo_detected = \Royal_MCP\MCP\Support\Seo_Plugin::detect();
@@ -2449,8 +2453,29 @@ class LaunchTools {
 		if ( is_wp_error( $new ) || ! is_object( $new ) || ! method_exists( $new, 'get_id' ) ) {
 			return 0;
 		}
-		self::$redirection_group_id = (int) $new->get_id();
+		self::$redirection_group_id      = (int) $new->get_id();
+		self::$redirection_group_created = self::$redirection_group_id;
 		return self::$redirection_group_id;
+	}
+
+	/** Delete a redirect group this tool created, once it holds no redirects. */
+	private static function remove_group_if_empty( $group_id ) {
+		$group_id = (int) $group_id;
+		if ( $group_id <= 0 || ! class_exists( '\\Red_Group' ) ) {
+			return false;
+		}
+		$group = \Red_Group::get( $group_id, true );
+		if ( ! is_object( $group ) || ! method_exists( $group, 'delete' ) ) {
+			return false;
+		}
+		if ( method_exists( $group, 'get_total_redirects' ) && (int) $group->get_total_redirects() > 0 ) {
+			return false;
+		}
+		$group->delete();
+		if ( self::$redirection_group_id === $group_id ) {
+			self::$redirection_group_id = null;
+		}
+		return true;
 	}
 
 	private static function push_gsc_for_post( $post_id ) {
@@ -2475,94 +2500,31 @@ class LaunchTools {
 		];
 	}
 
-	private static function purge_cache_for_post( $post_id ) {
-		$url                = get_permalink( (int) $post_id );
-		$tried              = [];
-		$installed_inactive = []; 
-
-		if ( ! function_exists( 'is_plugin_active' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+	/**
+	 * Purge a post's page in every active cache plugin (the same layers wp_purge_and_verify_url
+	 * clears). $url overrides the permalink, for a post that no longer exists.
+	 */
+	private static function purge_cache_for_post( $post_id, $url = '' ) {
+		$post_id = (int) $post_id;
+		$url     = '' !== (string) $url ? (string) $url : ( $post_id > 0 ? (string) get_permalink( $post_id ) : '' );
+		if ( '' === $url ) {
+			return [ 'status' => 'skipped', 'message' => 'no public address to purge', 'data' => [ 'layers' => [] ] ];
 		}
-		$plugin_active = static function ( $folder_prefix ) {
-			$active = (array) get_option( 'active_plugins', [] );
-			foreach ( $active as $slug ) {
-				if ( strpos( $slug, $folder_prefix . '/' ) === 0 ) {
-					return true;
-				}
-			}
-			return false;
-		};
-
-		$fc_installed = defined( 'FORGECACHE_VERSION' )
-			|| class_exists( '\\ForgeCache_Cache' )
-			|| $plugin_active( 'forgecache' );
-		if ( $fc_installed ) {
-			if ( function_exists( 'forgecache_purge_url' ) && is_string( $url ) ) {
-				$tried[] = 'forgecache';
-				if ( (bool) forgecache_purge_url( $url ) ) {
-					return [ 'status' => 'ok', 'message' => 'ForgeCache purged', 'data' => [ 'plugin' => 'forgecache', 'url' => $url, 'scope' => 'url', 'method' => 'forgecache_purge_url' ] ];
-				}
-			} elseif ( is_callable( [ '\\ForgeCache_Cache', 'clear_all_cache_static' ] ) && current_user_can( 'manage_options' ) ) { // audit:multisite-manage-options-safe -- the page cache is per site
-
-				$tried[] = 'forgecache';
-				try {
-					call_user_func( [ '\\ForgeCache_Cache', 'clear_all_cache_static' ] );
-					return [ 'status' => 'ok', 'message' => 'ForgeCache purged (site-wide via class method)', 'data' => [ 'plugin' => 'forgecache', 'url' => $url, 'scope' => 'all', 'method' => 'ForgeCache_Cache::clear_all_cache_static' ] ];
-				} catch ( \Throwable $e ) {
-					$installed_inactive[] = 'forgecache';
-				}
-			} else {
-				$installed_inactive[] = 'forgecache';
-			}
+		$layers = \Royal_MCP\Integrations\PageChecks::purge_layers( $url, get_post( $post_id ) ? $post_id : 0 );
+		$caches = array_values( array_filter( $layers, static function ( $l ) { return 'object_cache' !== ( $l['layer'] ?? '' ); } ) );
+		$done   = array_values( array_filter( $caches, static function ( $l ) { return ! empty( $l['purged'] ); } ) );
+		$failed = array_values( array_filter( $caches, static function ( $l ) { return empty( $l['purged'] ); } ) );
+		if ( ! $caches ) {
+			return [ 'status' => 'skipped', 'message' => 'no page cache plugin is active (ForgeCache, LiteSpeed Cache, W3 Total Cache, WP Rocket, WP Super Cache, Cloudflare)', 'data' => [ 'url' => $url, 'layers' => $layers ] ];
 		}
-
-		$wpr_installed = defined( 'WP_ROCKET_VERSION' ) || class_exists( '\\WP_Rocket\\Plugin' )
-			|| $plugin_active( 'wp-rocket' );
-		if ( $wpr_installed ) {
-			if ( function_exists( 'rocket_clean_post' ) ) {
-				$tried[] = 'wp-rocket';
-				rocket_clean_post( (int) $post_id );
-				return [ 'status' => 'ok', 'message' => 'WP Rocket purged post cache', 'data' => [ 'plugin' => 'wp-rocket', 'url' => $url, 'scope' => 'post' ] ];
-			}
-			$installed_inactive[] = 'wp-rocket';
-		}
-
-		$w3tc_installed = defined( 'W3TC' ) || defined( 'W3TC_VERSION' ) || class_exists( '\\W3TC\\Root_Environment' )
-			|| $plugin_active( 'w3-total-cache' );
-		if ( $w3tc_installed ) {
-			if ( function_exists( 'w3tc_pgcache_flush_post' ) ) {
-				$tried[] = 'w3-total-cache';
-				w3tc_pgcache_flush_post( (int) $post_id );
-				return [ 'status' => 'ok', 'message' => 'W3 Total Cache purged post cache', 'data' => [ 'plugin' => 'w3-total-cache', 'url' => $url, 'scope' => 'post' ] ];
-			}
-			$installed_inactive[] = 'w3-total-cache';
-		}
-
-		$wpsc_installed = defined( 'WPCACHEHOME' ) || function_exists( 'wp_super_cache_init' )
-			|| $plugin_active( 'wp-super-cache' );
-		if ( $wpsc_installed ) {
-			if ( function_exists( 'wp_cache_post_change' ) ) {
-				$tried[] = 'wp-super-cache';
-				wp_cache_post_change( (int) $post_id );
-				return [ 'status' => 'ok', 'message' => 'WP Super Cache purged post cache', 'data' => [ 'plugin' => 'wp-super-cache', 'url' => $url, 'scope' => 'post' ] ];
-			}
-			$installed_inactive[] = 'wp-super-cache';
-		}
-
-		if ( ! empty( $installed_inactive ) ) {
-			return [
-				'status'  => 'skipped',
-				'message' => sprintf(
-					'cache plugin(s) installed but purge capability not currently exposed: %s. Enable the page-cache module in the plugin admin to unlock post-scoped purge.',
-					implode( ', ', $installed_inactive )
-				),
-				'data'    => [ 'installed_inactive' => $installed_inactive, 'tried' => $tried ],
-			];
+		$names = static function ( array $list ) { return implode( ', ', array_column( $list, 'layer' ) ); };
+		if ( ! $done ) {
+			return [ 'status' => 'error', 'message' => 'no cache layer could be purged: ' . $names( $failed ), 'data' => [ 'url' => $url, 'layers' => $layers ] ];
 		}
 		return [
-			'status'  => 'skipped',
-			'message' => 'no cache plugin detected (ForgeCache / WP Rocket / W3 Total Cache / WP Super Cache)',
-			'data'    => [ 'installed_inactive' => [], 'tried' => $tried ],
+			'status'  => 'ok',
+			'message' => 'purged: ' . $names( $done ) . ( $failed ? '; not purged: ' . $names( $failed ) : '' ),
+			'data'    => [ 'url' => $url, 'layers' => $layers, 'purged' => array_column( $done, 'layer' ), 'not_purged' => array_column( $failed, 'layer' ) ],
 		];
 	}
 

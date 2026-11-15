@@ -869,8 +869,8 @@ class PageChecks {
 		return Envelope::success( $status . ': ' . $text, $data );
 	}
 
-	/** Purge one URL (or its post) in every cache plugin that is active. */
-	private static function purge_layers( $url, $post_id ) {
+	/** Purge one URL (or its post) in every cache plugin that is active. Shared with the launch tools. */
+	public static function purge_layers( $url, $post_id ) {
 		$out = [];
 		$try = static function ( $layer, callable $fn ) use ( &$out ) {
 			// Whatever the cache plugin prints, or does to the output buffers, is undone afterwards.
@@ -897,7 +897,10 @@ class PageChecks {
 		}
 		if ( defined( 'LSCWP_V' ) || class_exists( '\\LiteSpeed\\Core' ) ) {
 			$try( 'litespeed', static function () use ( $url, $post_id ) {
-				do_action( 'litespeed_purge_url', $url );
+				// LiteSpeed keys a page by its path on the site.
+				$path = (string) wp_parse_url( (string) $url, PHP_URL_PATH );
+				$qs   = (string) wp_parse_url( (string) $url, PHP_URL_QUERY );
+				do_action( 'litespeed_purge_url', ( '' === $path ? '/' : $path ) . ( '' !== $qs ? '?' . $qs : '' ) );
 				if ( $post_id ) {
 					do_action( 'litespeed_purge_post', $post_id );
 				}
