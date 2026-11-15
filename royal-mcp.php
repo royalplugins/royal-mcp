@@ -24,7 +24,13 @@ if (!defined('ABSPATH')) {
 // vendored copy of this file has already run), bail cleanly and register
 // an activation-time refusal so the user sees a clear error instead of a
 // silently-inert plugin when they try to activate Free alongside Pro.
-if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
+// Plugins load in name order, so this file runs before Pro's: when Pro is active too, step aside
+// here as well, and Pro runs on its own copy (two copies at once would register every tool twice).
+$royal_mcp_pro_active = file_exists( WP_PLUGIN_DIR . '/royal-mcp-pro/royal-mcp-pro.php' ) && (
+	in_array( 'royal-mcp-pro/royal-mcp-pro.php', (array) get_option( 'active_plugins', array() ), true )
+	|| ( is_multisite() && isset( ( (array) get_site_option( 'active_sitewide_plugins', array() ) )['royal-mcp-pro/royal-mcp-pro.php'] ) )
+);
+if ( class_exists( 'Royal_MCP_Plugin', false ) || ( $royal_mcp_pro_active && wp_normalize_path( __FILE__ ) === wp_normalize_path( WP_PLUGIN_DIR . '/royal-mcp/royal-mcp.php' ) ) ) {
     register_activation_hook( __FILE__, function () {
         if ( ! function_exists( 'is_plugin_active' ) ) {
             include_once ABSPATH . 'wp-admin/includes/plugin.php';
