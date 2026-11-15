@@ -45,6 +45,7 @@ function royal_mcp_uninstall_site() {
     // Rewrite-version marker + last-failed-upgrade timestamp. Removing the marker
     // makes a reinstall flush its rewrite rules again.
     delete_option('royal_mcp_rewrite_version');
+    delete_option('royal_mcp_connection_doctor');
     delete_option('royal_mcp_db_upgrade_last_failed_at');
     delete_option('royal_mcp_tables_checked_at');
 

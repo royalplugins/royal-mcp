@@ -1127,6 +1127,7 @@ class Royal_MCP_Plugin {
             new Royal_MCP\Admin\Help_Page();
             \Royal_MCP\Admin\Dashboard_Page::register();
             \Royal_MCP\Admin\Other_Notices::register();
+            \Royal_MCP\Admin\Connection_Doctor::register();
             \Royal_MCP\Admin\Skills_Page::register();
             \Royal_MCP\Admin\Menu_Layout::register();
             \Royal_MCP\Admin\Context_Page::register();

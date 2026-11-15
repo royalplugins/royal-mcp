@@ -377,3 +377,14 @@
 		flex-direction: column;
 	}
 }
+
+/* Connection Doctor */
+.royal-mcp-doctor-steps { list-style: none; margin: 8px 0 12px; padding: 0; }
+.royal-mcp-doctor-steps li { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; border-top: 1px solid #f0f0f1; }
+.royal-mcp-doctor-steps li:first-child { border-top: 0; }
+.royal-mcp-doctor-mark { flex: 0 0 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #fff; background: #8c8f94; }
+.royal-mcp-doctor-steps li.is-ok .royal-mcp-doctor-mark { background: #00a32a; }
+.royal-mcp-doctor-steps li.is-problem .royal-mcp-doctor-mark { background: #d63638; }
+.royal-mcp-doctor-steps li.is-warn .royal-mcp-doctor-mark { background: #dba617; }
+.royal-mcp-doctor-detail { display: block; color: #50575e; font-size: 13px; margin-top: 2px; }
+.royal-mcp-doctor-first { color: #d63638; }

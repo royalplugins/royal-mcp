@@ -249,6 +249,9 @@ class Dashboard_Page {
 
 		echo '<div class="royal-mcp-dash-cols"><div class="royal-mcp-dash-main">';
 
+		// ---- connection doctor
+		Connection_Doctor::render_card();
+
 		// ---- needs attention
 		echo '<div class="royal-mcp-dash-card">';
 		echo '<h2>' . esc_html__( 'Needs your attention', 'royal-mcp' ) . '</h2>';
