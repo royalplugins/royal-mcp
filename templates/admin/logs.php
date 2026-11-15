@@ -26,8 +26,13 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
     <?php // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only flag set by our own redirect ?>
     <?php if ( isset( $_GET['royal_mcp_retention'] ) ) : ?>
         <?php // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only flag set by our own redirect ?>
-        <?php if ( 'saved' === sanitize_key( wp_unslash( $_GET['royal_mcp_retention'] ) ) ) : ?>
+        <?php $royal_mcp_retention_done = sanitize_key( wp_unslash( $_GET['royal_mcp_retention'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only flag ?>
+        <?php if ( 'saved' === $royal_mcp_retention_done ) : ?>
             <div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'How long entries are kept was saved.', 'royal-mcp' ); ?></p></div>
+        <?php elseif ( 'network' === $royal_mcp_retention_done ) : ?>
+            <div class="notice notice-warning is-dismissible"><p><?php esc_html_e( 'Nothing was saved: on a network, only a network administrator can keep entries until they are cleared.', 'royal-mcp' ); ?></p></div>
+        <?php elseif ( 'failed' === $royal_mcp_retention_done ) : ?>
+            <div class="notice notice-error is-dismissible"><p><?php esc_html_e( 'The setting could not be saved. Try again.', 'royal-mcp' ); ?></p></div>
         <?php else : ?>
             <div class="notice notice-warning is-dismissible"><p><?php esc_html_e( 'Nothing was saved: pick one of the periods in the list.', 'royal-mcp' ); ?></p></div>
         <?php endif; ?>

@@ -686,27 +686,32 @@ class Settings_Page {
             wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
         }
         check_admin_referer( self::LOG_RETENTION_ACTION );
-        $raw  = isset( $_POST['royal_mcp_log_retention'] ) ? sanitize_text_field( wp_unslash( $_POST['royal_mcp_log_retention'] ) ) : '';
-        $days = ctype_digit( $raw ) ? (int) $raw : -1;
+        // Exactly one of the listed numbers, as the form sends it; nothing is cleaned up into a choice.
+        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- compared against a fixed list of digit strings below
+        $raw  = isset( $_POST['royal_mcp_log_retention'] ) && is_string( $_POST['royal_mcp_log_retention'] ) ? wp_unslash( $_POST['royal_mcp_log_retention'] ) : '';
+        $days = in_array( $raw, array_map( 'strval', self::LOG_RETENTION_CHOICES ), true ) ? (int) $raw : -1;
         $done = 'invalid';
+        // On a network, keeping a site's log for ever is a network administrator's call.
+        if ( 0 === $days && is_multisite() && ! current_user_can( 'manage_network_options' ) ) {
+            $done = 'network';
+            $days = -1;
+        }
         if ( in_array( $days, self::LOG_RETENTION_CHOICES, true ) ) {
-            $before = self::log_retention_choice();
+            $before           = self::log_retention_choice();
+            $before_effective = self::log_retention_days();
             update_option( self::LOG_RETENTION_OPTION, $days, false );
-            $done = 'saved';
-            if ( $before !== $days && self::log_table_exists() ) {
-                global $wpdb;
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- insert into our own log table
-                $wpdb->insert(
-                    $wpdb->prefix . 'royal_mcp_logs',
-                    [
-                        'mcp_server'    => 'MCP Server',
-                        'action'        => 'settings:activity_log_retention_changed',
-                        'request_data'  => wp_json_encode( [ 'source' => 'settings', 'by' => (int) get_current_user_id(), 'from_days' => $before, 'to_days' => $days ] ),
-                        'response_data' => wp_json_encode( [ 'status' => 'success' ] ),
-                        'status'        => 'success',
-                    ],
-                    [ '%s', '%s', '%s', '%s', '%s' ]
-                );
+            if ( $days !== self::log_retention_choice() ) {
+                $done = 'failed';
+            } else {
+                $done = 'saved';
+                if ( $before !== $days && self::log_table_exists() ) {
+                    self::log_setting_change(
+                        'settings:activity_log_retention_changed',
+                        [ 'days' => $before, 'in_force' => $before_effective ],
+                        [ 'days' => $days, 'in_force' => self::log_retention_days() ],
+                        'settings'
+                    );
+                }
             }
         }
         wp_safe_redirect( add_query_arg( [ 'page' => 'royal-mcp-logs', 'royal_mcp_retention' => $done ], admin_url( 'admin.php' ) ) );
