@@ -12542,6 +12542,9 @@ class Server {
                                 }
                             }
                         }
+                        if ( $undo_seo_adapt === 'aioseo' ) {
+                            \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_sync( $undo_seo_pid, array_values( array_diff( array_keys( $undo_seo_prior ), [ 'slug' ] ) ) );
+                        }
                         wp_cache_delete( $undo_seo_pid, 'post_meta' );
                         clean_post_cache( $undo_seo_pid );
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
@@ -13815,10 +13818,10 @@ class Server {
                     return [
                         'plugin'        => 'aioseo',
                         'post_id'       => $post_id,
-                        'title'         => (string) get_post_meta($post_id, '_aioseo_title', true),
-                        'description'   => (string) get_post_meta($post_id, '_aioseo_description', true),
-                        'focus_keyword' => (string) get_post_meta($post_id, '_aioseo_focus_keyphrase', true),
-                        'noindex'       => (bool) get_post_meta($post_id, '_aioseo_noindex', true),
+                        'title'         => (string) ( \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_value( $post_id, 'title' ) ?? get_post_meta($post_id, '_aioseo_title', true) ),
+                        'description'   => (string) ( \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_value( $post_id, 'description' ) ?? get_post_meta($post_id, '_aioseo_description', true) ),
+                        'focus_keyword' => (string) ( \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_value( $post_id, 'focus_keyword' ) ?? get_post_meta($post_id, '_aioseo_focus_keyphrase', true) ),
+                        'noindex'       => (bool) ( \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_value( $post_id, 'noindex' ) ?? get_post_meta($post_id, '_aioseo_noindex', true) ),
                         'slug'          => $slug,
                     ];
                 }
@@ -13880,6 +13883,10 @@ class Server {
                 $seo_read = function( $arg_key ) use ( $post_id, $detected, $field_map ) {
                     if ( $arg_key === 'slug' ) {
                         return (string) get_post_field( 'post_name', $post_id );
+                    }
+                    // AIOSEO serves from its own table: read what it holds there.
+                    if ( $detected === 'aioseo' && null !== ( $aio_value = \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_value( $post_id, $arg_key ) ) ) {
+                        return $aio_value;
                     }
                     if ( $arg_key === 'noindex' ) {
                         if ( $detected === 'yoast' )    return get_post_meta( $post_id, '_yoast_wpseo_meta-robots-noindex', true ) === '1';
@@ -13977,6 +13984,9 @@ class Server {
                     } elseif ( $detected === 'seobolt' ) {
                         update_post_meta( $post_id, '_seobolt_robots_noindex', $noindex_bool ? '1' : '' );
                     }
+                }
+                if ( $detected === 'aioseo' ) {
+                    \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_sync( $post_id, array_keys( array_diff_key( $seo_requested, [ 'slug' => true ] ) ) );
                 }
                 if ( array_key_exists( 'slug', $seo_requested ) ) {
                     $update_result = wp_update_post( [

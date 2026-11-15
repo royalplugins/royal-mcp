@@ -2179,38 +2179,41 @@ class LaunchTools {
 	}
 
 	private static function write_seo_meta_universal( $post_id, $title, $desc, $focus_kw, array $deps ) {
+		// The same SEO plugin wp_update_seo_meta writes to, so both tools always agree.
+		$seo_detected = \Royal_MCP\MCP\Support\Seo_Plugin::detect();
 		$wrote_any = false;
 		$plugin = 'none';
 
-		if ( class_exists( '\\WPSEO_Meta' ) ) {
+		if ( 'yoast' === $seo_detected ) {
 			$plugin = 'yoast';
 			if ( $title !== '' ) { update_post_meta( $post_id, '_yoast_wpseo_title', wp_slash( $title ) ); $wrote_any = true; }
 			if ( $desc  !== '' ) { update_post_meta( $post_id, '_yoast_wpseo_metadesc', wp_slash( $desc ) ); $wrote_any = true; }
 			if ( $focus_kw !== '' ) { update_post_meta( $post_id, '_yoast_wpseo_focuskw', wp_slash( $focus_kw ) ); $wrote_any = true; }
 		}
 
-		elseif ( defined( 'RANK_MATH_VERSION' ) || class_exists( '\\RankMath' ) ) {
+		elseif ( 'rankmath' === $seo_detected ) {
 			$plugin = 'rankmath';
 			if ( $title !== '' ) { update_post_meta( $post_id, 'rank_math_title', wp_slash( $title ) ); $wrote_any = true; }
 			if ( $desc  !== '' ) { update_post_meta( $post_id, 'rank_math_description', wp_slash( $desc ) ); $wrote_any = true; }
 			if ( $focus_kw !== '' ) { update_post_meta( $post_id, 'rank_math_focus_keyword', wp_slash( $focus_kw ) ); $wrote_any = true; }
 		}
 
-		elseif ( function_exists( 'aioseo' ) || class_exists( '\\AIOSEO\\Plugin' ) ) {
+		elseif ( 'aioseo' === $seo_detected ) {
 			$plugin = 'aioseo';
 			if ( $title !== '' ) { update_post_meta( $post_id, '_aioseo_title', wp_slash( $title ) ); $wrote_any = true; }
 			if ( $desc  !== '' ) { update_post_meta( $post_id, '_aioseo_description', wp_slash( $desc ) ); $wrote_any = true; }
-			if ( $focus_kw !== '' ) { update_post_meta( $post_id, '_aioseo_keywords', wp_slash( $focus_kw ) ); $wrote_any = true; }
+			if ( $focus_kw !== '' ) { update_post_meta( $post_id, '_aioseo_focus_keyphrase', wp_slash( $focus_kw ) ); $wrote_any = true; }
+			\Royal_MCP\MCP\Support\Seo_Plugin::aioseo_sync( $post_id, array_keys( array_filter( [ 'title' => $title, 'description' => $desc, 'focus_keyword' => $focus_kw ], 'strlen' ) ) );
 		}
 
-		elseif ( defined( 'SEOPRESS_VERSION' ) || function_exists( 'seopress_get_service' ) ) {
+		elseif ( 'seopress' === $seo_detected ) {
 			$plugin = 'seopress';
 			if ( $title !== '' ) { update_post_meta( $post_id, '_seopress_titles_title', wp_slash( $title ) ); $wrote_any = true; }
 			if ( $desc  !== '' ) { update_post_meta( $post_id, '_seopress_titles_desc', wp_slash( $desc ) ); $wrote_any = true; }
 			if ( $focus_kw !== '' ) { update_post_meta( $post_id, '_seopress_analysis_target_kw', wp_slash( $focus_kw ) ); $wrote_any = true; }
 		}
 
-		elseif ( $deps['seobolt']['available'] ) {
+		elseif ( 'seobolt' === $seo_detected ) {
 			$plugin = 'seobolt';
 			if ( $title !== '' ) { update_post_meta( $post_id, '_seobolt_meta_title', wp_slash( $title ) ); $wrote_any = true; }
 			if ( $desc  !== '' ) { update_post_meta( $post_id, '_seobolt_meta_description', wp_slash( $desc ) ); $wrote_any = true; }
@@ -2220,12 +2223,14 @@ class LaunchTools {
 	}
 
 	private static function restore_seo_meta_universal( $post_id, $title, $desc, $focus_kw, array $deps, $prefer_plugin = '' ) {
+		// The same SEO plugin wp_update_seo_meta writes to, so both tools always agree.
+		$seo_detected = \Royal_MCP\MCP\Support\Seo_Plugin::detect();
 		$pid = (int) $post_id;
 
 		$key_maps = [
 			'yoast'    => [ 't' => '_yoast_wpseo_title',       'd' => '_yoast_wpseo_metadesc',    'k' => '_yoast_wpseo_focuskw' ],
 			'rankmath' => [ 't' => 'rank_math_title',          'd' => 'rank_math_description',    'k' => 'rank_math_focus_keyword' ],
-			'aioseo'   => [ 't' => '_aioseo_title',            'd' => '_aioseo_description',      'k' => '_aioseo_keywords' ],
+			'aioseo'   => [ 't' => '_aioseo_title',            'd' => '_aioseo_description',      'k' => '_aioseo_focus_keyphrase' ],
 			'seopress' => [ 't' => '_seopress_titles_title',   'd' => '_seopress_titles_desc',    'k' => '_seopress_analysis_target_kw' ],
 			'seobolt'  => [ 't' => '_seobolt_meta_title',      'd' => '_seobolt_meta_description', 'k' => '_seobolt_focus_keyword' ],
 		];
@@ -2239,15 +2244,15 @@ class LaunchTools {
 		}
 
 		if ( $selected_plugin === null ) {
-			if ( class_exists( '\\WPSEO_Meta' ) ) {
+			if ( 'yoast' === $seo_detected ) {
 				$selected_plugin = 'yoast';
-			} elseif ( defined( 'RANK_MATH_VERSION' ) || class_exists( '\\RankMath' ) ) {
+			} elseif ( 'rankmath' === $seo_detected ) {
 				$selected_plugin = 'rankmath';
-			} elseif ( function_exists( 'aioseo' ) || class_exists( '\\AIOSEO\\Plugin' ) ) {
+			} elseif ( 'aioseo' === $seo_detected ) {
 				$selected_plugin = 'aioseo';
-			} elseif ( defined( 'SEOPRESS_VERSION' ) || function_exists( 'seopress_get_service' ) ) {
+			} elseif ( 'seopress' === $seo_detected ) {
 				$selected_plugin = 'seopress';
-			} elseif ( ! empty( $deps['seobolt']['available'] ) ) {
+			} elseif ( 'seobolt' === $seo_detected ) {
 				$selected_plugin = 'seobolt';
 			}
 		}
@@ -2265,6 +2270,9 @@ class LaunchTools {
 		$title    === '' ? delete_post_meta( $pid, $keys['t'] ) : update_post_meta( $pid, $keys['t'], wp_slash( (string) $title ) );
 		$desc     === '' ? delete_post_meta( $pid, $keys['d'] ) : update_post_meta( $pid, $keys['d'], wp_slash( (string) $desc ) );
 		$focus_kw === '' ? delete_post_meta( $pid, $keys['k'] ) : update_post_meta( $pid, $keys['k'], wp_slash( (string) $focus_kw ) );
+		if ( 'aioseo' === $selected_plugin ) {
+			\Royal_MCP\MCP\Support\Seo_Plugin::aioseo_sync( $pid, [ 'title', 'description', 'focus_keyword' ] );
+		}
 
 		return [
 			'ok'                      => true,
@@ -2556,8 +2564,10 @@ class LaunchTools {
 	}
 
 	private static function read_seo_meta_universal( $post_id, array $deps ) {
+		// The same SEO plugin wp_update_seo_meta writes to, so both tools always agree.
+		$seo_detected = \Royal_MCP\MCP\Support\Seo_Plugin::detect();
 		$pid = (int) $post_id;
-		if ( class_exists( '\\WPSEO_Meta' ) ) {
+		if ( 'yoast' === $seo_detected ) {
 			return [
 				'ok'            => true,
 				'plugin'        => 'yoast',
@@ -2566,7 +2576,7 @@ class LaunchTools {
 				'focus_keyword' => (string) get_post_meta( $pid, '_yoast_wpseo_focuskw', true ),
 			];
 		}
-		if ( defined( 'RANK_MATH_VERSION' ) || class_exists( '\\RankMath' ) ) {
+		if ( 'rankmath' === $seo_detected ) {
 			return [
 				'ok'            => true,
 				'plugin'        => 'rankmath',
@@ -2575,16 +2585,16 @@ class LaunchTools {
 				'focus_keyword' => (string) get_post_meta( $pid, 'rank_math_focus_keyword', true ),
 			];
 		}
-		if ( function_exists( 'aioseo' ) || class_exists( '\\AIOSEO\\Plugin' ) ) {
+		if ( 'aioseo' === $seo_detected ) {
 			return [
 				'ok'            => true,
 				'plugin'        => 'aioseo',
-				'title'         => (string) get_post_meta( $pid, '_aioseo_title', true ),
-				'description'   => (string) get_post_meta( $pid, '_aioseo_description', true ),
-				'focus_keyword' => (string) get_post_meta( $pid, '_aioseo_keywords', true ),
+				'title'         => (string) ( \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_value( $pid, 'title' ) ?? get_post_meta( $pid, '_aioseo_title', true ) ),
+				'description'   => (string) ( \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_value( $pid, 'description' ) ?? get_post_meta( $pid, '_aioseo_description', true ) ),
+				'focus_keyword' => (string) ( \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_value( $pid, 'focus_keyword' ) ?? get_post_meta( $pid, '_aioseo_focus_keyphrase', true ) ),
 			];
 		}
-		if ( defined( 'SEOPRESS_VERSION' ) || function_exists( 'seopress_get_service' ) ) {
+		if ( 'seopress' === $seo_detected ) {
 			return [
 				'ok'            => true,
 				'plugin'        => 'seopress',
@@ -2593,7 +2603,7 @@ class LaunchTools {
 				'focus_keyword' => (string) get_post_meta( $pid, '_seopress_analysis_target_kw', true ),
 			];
 		}
-		if ( ! empty( $deps['seobolt']['available'] ) ) {
+		if ( 'seobolt' === $seo_detected ) {
 			return [
 				'ok'            => true,
 				'plugin'        => 'seobolt',

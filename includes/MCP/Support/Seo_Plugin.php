@@ -138,6 +138,70 @@ class Seo_Plugin {
 		];
 	}
 
+	/** Whether AIOSEO's own post model (its wp_aioseo_posts table) can be used. */
+	public static function aioseo_model_available() {
+		return function_exists( 'aioseo' ) && class_exists( '\AIOSEO\Plugin\Common\Models\Post' ) && method_exists( '\AIOSEO\Plugin\Common\Models\Post', 'savePost' );
+	}
+
+	/**
+	 * Copy the given fields from the post meta into AIOSEO's own table, which is what AIOSEO
+	 * serves, through AIOSEO's save routine (patch: only these fields change).
+	 *
+	 * @param int      $post_id Post ID.
+	 * @param string[] $fields  title | description | focus_keyword | noindex.
+	 * @return bool Whether AIOSEO took the data.
+	 */
+	public static function aioseo_sync( $post_id, array $fields ) {
+		if ( ! self::aioseo_model_available() ) {
+			return false;
+		}
+		$map  = self::field_maps()['aioseo'];
+		$data = [];
+		foreach ( $fields as $field ) {
+			if ( 'noindex' === $field ) {
+				$noindex = (bool) get_post_meta( $post_id, self::NOINDEX_KEYS['aioseo'], true );
+				$data['noindex'] = $noindex;
+				if ( $noindex ) {
+					// AIOSEO only reads the per-post robots flags once the post leaves the site default.
+					$data['default'] = false;
+				}
+				continue;
+			}
+			if ( isset( $map[ $field ] ) ) {
+				$data[ $field ] = (string) get_post_meta( $post_id, $map[ $field ], true );
+			}
+		}
+		if ( ! $data ) {
+			return false;
+		}
+		$res = \AIOSEO\Plugin\Common\Models\Post::savePost( (int) $post_id, $data );
+		if ( isset( aioseo()->meta->metaData ) && method_exists( aioseo()->meta->metaData, 'bustPostCache' ) ) {
+			aioseo()->meta->metaData->bustPostCache( (int) $post_id );
+		}
+		return ! is_string( $res );
+	}
+
+	/**
+	 * A field as AIOSEO itself holds it (its table), or null when the model is not available.
+	 *
+	 * @return string|bool|null
+	 */
+	public static function aioseo_value( $post_id, $field ) {
+		if ( ! self::aioseo_model_available() ) {
+			return null;
+		}
+		$p = \AIOSEO\Plugin\Common\Models\Post::getPost( (int) $post_id );
+		switch ( $field ) {
+			case 'noindex':
+				return empty( $p->robots_default ) && ! empty( $p->robots_noindex );
+			case 'title':
+			case 'description':
+			case 'focus_keyword':
+				return (string) ( $p->$field ?? '' );
+		}
+		return null;
+	}
+
 	/**
 	 * The SEO plugin a post meta key belongs to, and the wp_update_seo_meta
 	 * field that writes it (null when no field covers that key).
