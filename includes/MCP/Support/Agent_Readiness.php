@@ -21,18 +21,43 @@ class Agent_Readiness {
 
 	const LEVELS = [ 'Not ready', 'Basic web presence', 'Bot-aware', 'Agent-readable', 'Agent-integrated', 'Agent-native' ];
 
-	const AI_BOTS = [ 'GPTBot', 'ChatGPT-User', 'OAI-SearchBot', 'ClaudeBot', 'Claude-User', 'Claude-SearchBot', 'anthropic-ai', 'Google-Extended', 'PerplexityBot', 'Perplexity-User', 'CCBot', 'Bytespider', 'Applebot-Extended', 'Meta-ExternalAgent', 'Amazonbot' ];
+	const AI_BOTS = [ 'GPTBot', 'ChatGPT-User', 'OAI-SearchBot', 'ClaudeBot', 'Claude-User', 'Claude-SearchBot', 'anthropic-ai', 'Google-Extended', 'Google-CloudVertexBot', 'PerplexityBot', 'Perplexity-User', 'CCBot', 'Bytespider', 'Applebot-Extended', 'Meta-ExternalAgent', 'Amazonbot', 'DuckAssistBot', 'MistralAI-User', 'cohere-ai' ];
 
-	/** Set when the site could not reach itself: later checks are reported as not checked. */
+	/** The whole run stays inside this many seconds. */
+	const RUN_BUDGET = 25;
+
+	/** Set when any request could not be made or was blocked: the result says so. */
 	private static $unreachable = false;
+	/** Network failures in a row; after two the site cannot reach itself and the rest is skipped. */
+	private static $fails_in_row = 0;
+	/** When the run started. */
+	private static $started = 0.0;
 
 	public static function register() {
 		add_action( 'admin_post_' . self::RUN_ACTION, [ __CLASS__, 'handle_run' ] );
 	}
 
+	/** The stored result, cleaned (a damaged option gives null or safe values). */
 	public static function last() {
 		$r = get_option( self::RESULT_OPTION, null );
-		return is_array( $r ) && isset( $r['checks'], $r['level'] ) && is_array( $r['checks'] ) ? $r : null;
+		if ( ! is_array( $r ) || ! isset( $r['checks'], $r['level'] ) || ! is_array( $r['checks'] ) ) {
+			return null;
+		}
+		$str    = static function ( $v ) { return is_scalar( $v ) ? (string) $v : ''; };
+		$level  = max( 0, min( 5, (int) $r['level'] ) );
+		$checks = [];
+		foreach ( $r['checks'] as $ch ) {
+			if ( is_array( $ch ) ) {
+				$checks[] = [
+					'id'     => $str( $ch['id'] ?? '' ),
+					'label'  => $str( $ch['label'] ?? '' ),
+					'state'  => in_array( $ch['state'] ?? '', [ 'pass', 'fail', 'unknown', 'info' ], true ) ? $ch['state'] : 'unknown',
+					'detail' => $str( $ch['detail'] ?? '' ),
+					'fix'    => $str( $ch['fix'] ?? '' ),
+				];
+			}
+		}
+		return [ 'level' => $level, 'level_name' => self::LEVELS[ $level ], 'checked_at' => (int) ( $r['checked_at'] ?? 0 ), 'unreachable' => ! empty( $r['unreachable'] ), 'checks' => $checks, 'next' => $str( $r['next'] ?? '' ), 'not_checked' => $str( $r['not_checked'] ?? '' ) ];
 	}
 
 	public static function handle_run() {
@@ -45,22 +70,49 @@ class Agent_Readiness {
 		exit;
 	}
 
-	/** One GET to this site; null when the site could not reach itself. */
+	/**
+	 * One GET to this site, following up to three redirects on the site's own host only.
+	 * Null when the request could not be made, was blocked (401 / 403 / 429 / 5xx: a firewall
+	 * or maintenance page), the time budget is used up, or the site has already failed to
+	 * reach itself twice in a row.
+	 */
 	private static function fetch( $path, array $headers = [] ) {
-		if ( self::$unreachable ) {
-			return null;
-		}
-		$res = wp_remote_get( home_url( $path ), [ 'timeout' => 4, 'redirection' => 3, 'sslverify' => false, 'headers' => $headers, 'limit_response_size' => 262144 ] );
-		if ( is_wp_error( $res ) ) {
+		$left = self::RUN_BUDGET - ( microtime( true ) - self::$started );
+		if ( self::$fails_in_row >= 2 || $left < 1 ) {
 			self::$unreachable = true;
 			return null;
 		}
-		return [
-			'code' => (int) wp_remote_retrieve_response_code( $res ),
-			'type' => strtolower( (string) wp_remote_retrieve_header( $res, 'content-type' ) ),
-			'link' => wp_remote_retrieve_header( $res, 'link' ),
-			'body' => (string) wp_remote_retrieve_body( $res ),
-		];
+		$host = strtolower( (string) wp_parse_url( home_url( '/' ), PHP_URL_HOST ) );
+		$url  = home_url( $path );
+		for ( $hop = 0; $hop <= 3; $hop++ ) {
+			if ( strtolower( (string) wp_parse_url( $url, PHP_URL_HOST ) ) !== $host ) {
+				return [ 'code' => 0, 'type' => '', 'link' => '', 'body' => '' ]; // redirected off the site: not followed
+			}
+			$res = wp_remote_get( $url, [ 'timeout' => min( 4, max( 1, (int) floor( $left ) ) ), 'redirection' => 0, 'sslverify' => false, 'headers' => $headers, 'limit_response_size' => 262144 ] );
+			if ( is_wp_error( $res ) ) {
+				self::$fails_in_row++;
+				self::$unreachable = true;
+				return null;
+			}
+			self::$fails_in_row = 0;
+			$code = (int) wp_remote_retrieve_response_code( $res );
+			$loc  = (string) wp_remote_retrieve_header( $res, 'location' );
+			if ( $code >= 300 && $code < 400 && '' !== $loc ) {
+				$url = 0 === strpos( $loc, '/' ) ? home_url( $loc ) : $loc;
+				continue;
+			}
+			if ( in_array( $code, [ 401, 403, 429 ], true ) || $code >= 500 ) {
+				self::$unreachable = true;
+				return null;
+			}
+			return [
+				'code' => $code,
+				'type' => strtolower( (string) wp_remote_retrieve_header( $res, 'content-type' ) ),
+				'link' => wp_remote_retrieve_header( $res, 'link' ),
+				'body' => (string) wp_remote_retrieve_body( $res ),
+			];
+		}
+		return [ 'code' => 0, 'type' => '', 'link' => '', 'body' => '' ];
 	}
 
 	private static function json( $r ) {
@@ -71,7 +123,40 @@ class Agent_Readiness {
 		return is_array( $j ) ? $j : null;
 	}
 
-	private static function check( $id, $label, $state, $detail = '', $fix = '' ) {
+	/** robots.txt as lines without comments, blank lines or a leading byte-order mark. */
+	private static function robots_lines( $robots ) {
+		$robots = (string) preg_replace( '/^\xEF\xBB\xBF/', '', (string) $robots );
+		$out    = [];
+		foreach ( preg_split( '/\r\n|\r|\n/', $robots ) as $line ) {
+			$line = trim( (string) preg_replace( '/#.*$/', '', $line ) );
+			if ( '' !== $line ) {
+				$out[] = $line;
+			}
+		}
+		return implode( "\n", $out );
+	}
+
+	/** Whether any Link header names one of the given relation types (each link parsed on its own). */
+	private static function link_has_rel( $headers, array $rels ) {
+		foreach ( (array) $headers as $h ) {
+			foreach ( preg_split( '/,(?=\s*<)/', (string) $h ) as $link ) {
+				if ( preg_match( '/;\s*rel\s*=\s*(?:"([^"]*)"|([^;,\s]+))/i', $link, $m ) ) {
+					$vals = preg_split( '/\s+/', strtolower( '' !== $m[1] ? $m[1] : ( $m[2] ?? '' ) ) );
+					if ( array_intersect( $vals, $rels ) ) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * One check result. A "fail" whose request could not be made ($fetched null) is reported
+	 * as "unknown" instead.
+	 */
+	private static function check( $id, $label, $pass, $fetched, $fix = '', $detail = '', $fail_state = 'fail' ) {
+		$state = $pass ? 'pass' : ( null === $fetched ? 'unknown' : $fail_state );
 		return [ 'id' => $id, 'label' => $label, 'state' => $state, 'detail' => $detail, 'fix' => $fix ];
 	}
 
@@ -87,70 +172,84 @@ class Agent_Readiness {
 	/**
 	 * Run every check.
 	 *
-	 * @return array{level:int, level_name:string, checked_at:int, unreachable:bool, checks:array, next:string}
+	 * @return array{level:int, level_name:string, checked_at:int, unreachable:bool, checks:array, next:string, not_checked:string}
 	 */
 	public static function run() {
-		self::$unreachable = false;
-		$c        = [];
-		$raif     = self::plugin_active( 'royal-ai-firewall' );
-		$fc       = self::plugin_active( 'forgecache' );
-		$robots_r = self::fetch( '/robots.txt' );
-		$robots   = ( $robots_r && 200 === $robots_r['code'] ) ? $robots_r['body'] : '';
-		$na       = static function ( $r ) { return null === $r ? 'unknown' : null; };
+		self::$unreachable  = false;
+		self::$fails_in_row = 0;
+		self::$started      = microtime( true );
+		$c    = [];
+		$raif = self::plugin_active( 'royal-ai-firewall' );
+		$fc   = self::plugin_active( 'forgecache' );
 
 		// Discoverability.
-		$c['robotsTxt'] = $na( $robots_r ) ? self::check( 'robotsTxt', __( 'robots.txt', 'royal-mcp' ), 'unknown' )
-			: self::check( 'robotsTxt', __( 'robots.txt', 'royal-mcp' ), ( '' !== $robots && false !== strpos( $robots_r['type'], 'text/plain' ) && preg_match( '/^\s*user-agent\s*:/im', $robots ) ) ? 'pass' : 'fail', '', __( 'WordPress serves a robots.txt unless a file in the site root or the host replaces it. Make sure /robots.txt answers with plain text and at least one User-agent line.', 'royal-mcp' ) );
-		$sm   = self::fetch( '/sitemap.xml' );
-		$c['sitemap'] = ( null === $sm && '' === $robots ) ? self::check( 'sitemap', __( 'Sitemap', 'royal-mcp' ), 'unknown' )
-			: self::check( 'sitemap', __( 'Sitemap', 'royal-mcp' ), ( ( $sm && 200 === $sm['code'] && preg_match( '/<(urlset|sitemapindex)\b/i', $sm['body'] ) ) || preg_match( '/^\s*sitemap\s*:/im', $robots ) ) ? 'pass' : 'fail', '', __( 'WordPress has a built-in sitemap at /wp-sitemap.xml; an SEO plugin usually adds /sitemap.xml. Listing it in robots.txt (Sitemap: line) also counts.', 'royal-mcp' ) );
+		$robots_r = self::fetch( '/robots.txt' );
+		$robots_ok = $robots_r && 200 === $robots_r['code'] && false !== strpos( $robots_r['type'], 'text/plain' );
+		$robots   = $robots_ok ? self::robots_lines( $robots_r['body'] ) : '';
+		$c['robotsTxt'] = self::check( 'robotsTxt', __( 'robots.txt', 'royal-mcp' ), '' !== $robots && preg_match( '/^user-agent\s*:/im', $robots ), $robots_r, __( 'WordPress serves a robots.txt unless a file in the site root or the host replaces it. Make sure /robots.txt answers with plain text and at least one User-agent line.', 'royal-mcp' ) );
+		$sm = self::fetch( '/sitemap.xml' );
+		$sm_ok = ( $sm && 200 === $sm['code'] && preg_match( '/<(urlset|sitemapindex)\b/i', $sm['body'] ) ) || preg_match( '/^sitemap\s*:/im', $robots );
+		$c['sitemap'] = self::check( 'sitemap', __( 'Sitemap', 'royal-mcp' ), $sm_ok, ( null === $sm && null === $robots_r ) ? null : [], __( 'WordPress has a built-in sitemap at /wp-sitemap.xml; an SEO plugin usually adds /sitemap.xml. Listing it in robots.txt (Sitemap: line) also counts.', 'royal-mcp' ) );
+		if ( ! $sm_ok && null === $sm ) {
+			$c['sitemap']['state'] = 'unknown';
+		}
 		$home = self::fetch( '/' );
-		$link = $home ? implode( ', ', (array) $home['link'] ) : '';
-		$c['linkHeaders'] = null === $home ? self::check( 'linkHeaders', __( 'Link headers for agents', 'royal-mcp' ), 'unknown' )
-			: self::check( 'linkHeaders', __( 'Link headers for agents', 'royal-mcp' ), preg_match( '/rel="?[^"]*\b(service-desc|service-doc|describedby|api-catalog)\b/i', $link ) ? 'pass' : 'fail', '', __( 'A Link header on the home page that points agents at your API catalog or service description. Few sites send one yet; it is one of three basic checks (two are enough).', 'royal-mcp' ) );
+		$c['linkHeaders'] = self::check( 'linkHeaders', __( 'Link headers for agents', 'royal-mcp' ), $home && self::link_has_rel( $home['link'], [ 'service-desc', 'service-doc', 'describedby', 'api-catalog' ] ), $home, __( 'A Link header on the home page that points agents at your API catalog or service description. Few sites send one yet; it is one of three basic checks (two are enough).', 'royal-mcp' ) );
 
 		// Bot access control.
-		$bots = '/^\s*user-agent\s*:\s*(' . implode( '|', array_map( 'preg_quote', self::AI_BOTS ) ) . '|\*)\s*$/im';
+		$bots     = '/^user-agent\s*:\s*(' . implode( '|', array_map( static function ( $b ) { return preg_quote( $b, '/' ); }, self::AI_BOTS ) ) . '|\*)$/im';
 		$rule_fix = $raif ? __( 'Set your AI bot rules in Royal AI Firewall; it writes them into robots.txt.', 'royal-mcp' ) : __( 'Add rules for AI bots (GPTBot, ClaudeBot, Google-Extended and others) to robots.txt. Royal AI Firewall manages these rules for you.', 'royal-mcp' );
-		$c['robotsTxtAiRules'] = $na( $robots_r ) ? self::check( 'robotsTxtAiRules', __( 'Rules for AI bots in robots.txt', 'royal-mcp' ), 'unknown' )
-			: self::check( 'robotsTxtAiRules', __( 'Rules for AI bots in robots.txt', 'royal-mcp' ), ( '' !== $robots && preg_match( $bots, $robots ) ) ? 'pass' : 'fail', '', $rule_fix );
-		$c['contentSignals'] = $na( $robots_r ) ? self::check( 'contentSignals', __( 'Content signals (AI training / search / AI input)', 'royal-mcp' ), 'unknown' )
-			: self::check( 'contentSignals', __( 'Content signals (AI training / search / AI input)', 'royal-mcp' ), preg_match( '/^\s*content-signal\s*:.*\b(ai-train|search|ai-input)\s*=/im', $robots ) ? 'pass' : 'fail', '', $raif ? __( 'Royal AI Firewall can add Content-Signal lines that say whether your content may be used for AI training, search and AI answers.', 'royal-mcp' ) : __( 'Add Content-Signal lines to robots.txt saying whether your content may be used for AI training, search and AI answers. Royal AI Firewall can manage them.', 'royal-mcp' ) );
-		$wba = self::json( self::fetch( '/.well-known/http-message-signatures-directory' ) );
-		$c['webBotAuth'] = self::check( 'webBotAuth', __( 'Web Bot Auth key directory (for information)', 'royal-mcp' ), is_array( $wba ) && ! empty( $wba['keys'] ) ? 'pass' : ( self::$unreachable ? 'unknown' : 'info' ), __( 'Only sites that sign their own bot requests publish this; it does not lower the level.', 'royal-mcp' ) );
+		$c['robotsTxtAiRules'] = self::check( 'robotsTxtAiRules', __( 'Rules for AI bots in robots.txt', 'royal-mcp' ), '' !== $robots && preg_match( $bots, $robots ), $robots_r, $rule_fix );
+		$c['contentSignals'] = self::check( 'contentSignals', __( 'Content signals (AI training / search / AI input)', 'royal-mcp' ), (bool) preg_match( '/^content-signal\s*:.*\b(ai-train|search|ai-input)\s*=\s*(yes|no)\b/im', $robots ), $robots_r, $raif ? __( 'Royal AI Firewall can add Content-Signal lines that say whether your content may be used for AI training, search and AI answers.', 'royal-mcp' ) : __( 'Add Content-Signal lines to robots.txt saying whether your content may be used for AI training, search and AI answers. Royal AI Firewall can manage them.', 'royal-mcp' ) );
+		$wba_r = self::fetch( '/.well-known/http-message-signatures-directory' );
+		$wba   = self::json( $wba_r );
+		$c['webBotAuth'] = self::check( 'webBotAuth', __( 'Web Bot Auth key directory (for information)', 'royal-mcp' ), is_array( $wba ) && ! empty( $wba['keys'] ), $wba_r, '', __( 'Only sites that sign their own bot requests publish this; it does not lower the level.', 'royal-mcp' ), 'info' );
 
 		// Content accessibility.
 		$md = self::fetch( '/', [ 'Accept' => 'text/markdown' ] );
-		$c['markdownNegotiation'] = null === $md ? self::check( 'markdownNegotiation', __( 'Markdown for AI agents', 'royal-mcp' ), 'unknown' )
-			: self::check( 'markdownNegotiation', __( 'Markdown for AI agents', 'royal-mcp' ), false !== strpos( $md['type'], 'text/markdown' ) ? 'pass' : 'fail', '', $fc ? __( 'Switch on ForgeCache\'s agent mode so pages are served as markdown when an AI agent asks for it.', 'royal-mcp' ) : __( 'Serve pages as markdown when an agent asks for it (Accept: text/markdown). ForgeCache\'s agent mode does this.', 'royal-mcp' ) );
+		$c['markdownNegotiation'] = self::check( 'markdownNegotiation', __( 'Markdown for AI agents', 'royal-mcp' ), $md && false !== strpos( $md['type'], 'text/markdown' ), $md, $fc ? __( 'Switch on ForgeCache\'s agent mode so pages are served as markdown when an AI agent asks for it.', 'royal-mcp' ) : __( 'Serve pages as markdown when an agent asks for it (Accept: text/markdown). ForgeCache\'s agent mode does this.', 'royal-mcp' ) );
 
 		// Discovery.
-		$card = null;
-		foreach ( [ '/.well-known/mcp/server-card.json', '/.well-known/mcp/server-cards.json', '/.well-known/mcp.json' ] as $p ) {
-			$j = self::json( self::fetch( $p ) );
-			if ( is_array( $j ) && ( ! empty( $j['serverInfo']['name'] ) || ! empty( $j['name'] ) ) ) { $card = $j; break; }
-		}
 		$served_fix = __( 'Royal MCP serves this. If it fails, run the Connection Doctor: pretty permalinks, a security plugin or the host can block /.well-known/ addresses.', 'royal-mcp' );
-		$c['mcpServerCard'] = self::check( 'mcpServerCard', __( 'MCP server card', 'royal-mcp' ), $card ? 'pass' : ( self::$unreachable ? 'unknown' : 'fail' ), '', $served_fix );
-		$a2a = self::json( self::fetch( '/.well-known/agent-card.json' ) );
-		$c['a2aAgentCard'] = self::check( 'a2aAgentCard', __( 'A2A agent card', 'royal-mcp' ), ( is_array( $a2a ) && ! empty( $a2a['name'] ) && ! empty( $a2a['version'] ) && ! empty( $a2a['supportedInterfaces'] ) ) ? 'pass' : ( self::$unreachable ? 'unknown' : 'fail' ), '', __( 'For sites that run their own AI agent. Not needed for an MCP server; one integration check is enough for the level.', 'royal-mcp' ) );
-		$skills = self::json( self::fetch( '/.well-known/agent-skills/index.json' ) );
-		if ( ! is_array( $skills ) ) { $skills = self::json( self::fetch( '/.well-known/skills/index.json' ) ); }
-		$c['agentSkills'] = self::check( 'agentSkills', __( 'Agent skills index', 'royal-mcp' ), ( is_array( $skills ) && isset( $skills['skills'] ) && is_array( $skills['skills'] ) ) ? 'pass' : ( self::$unreachable ? 'unknown' : 'fail' ), '', $served_fix );
+		$card = false; $card_r = null;
+		foreach ( [ '/.well-known/mcp/server-card.json', '/.well-known/mcp/server-cards.json', '/.well-known/mcp.json' ] as $p ) {
+			$fr = self::fetch( $p );
+			$card_r = $card_r ?? $fr;
+			$j = self::json( $fr );
+			if ( is_array( $j ) && ( ! empty( $j['serverInfo']['name'] ) || ! empty( $j['name'] ) ) ) { $card = true; break; }
+		}
+		$c['mcpServerCard'] = self::check( 'mcpServerCard', __( 'MCP server card', 'royal-mcp' ), $card, $card_r, $served_fix );
+		$a2a_r = self::fetch( '/.well-known/agent-card.json' );
+		$a2a   = self::json( $a2a_r );
+		$c['a2aAgentCard'] = self::check( 'a2aAgentCard', __( 'A2A agent card', 'royal-mcp' ), is_array( $a2a ) && ! empty( $a2a['name'] ) && ! empty( $a2a['version'] ) && ! empty( $a2a['supportedInterfaces'] ), $a2a_r, __( 'For sites that run their own AI agent. Not needed for an MCP server; one integration check is enough for the level.', 'royal-mcp' ) );
+		$sk_r   = self::fetch( '/.well-known/agent-skills/index.json' );
+		$skills = self::json( $sk_r );
+		if ( ! is_array( $skills ) ) {
+			$sk_r2  = self::fetch( '/.well-known/skills/index.json' );
+			$skills = self::json( $sk_r2 );
+			$sk_r   = $sk_r ?? $sk_r2;
+		}
+		$c['agentSkills'] = self::check( 'agentSkills', __( 'Agent skills index', 'royal-mcp' ), is_array( $skills ) && isset( $skills['skills'] ) && is_array( $skills['skills'] ), $sk_r, $served_fix );
 		$settings = get_option( 'royal_mcp_settings', [] );
-		$c['webMcp'] = self::check( 'webMcp', __( 'WebMCP for browser agents', 'royal-mcp' ), ( is_array( $settings ) && ! empty( $settings['webmcp_enabled'] ) ) ? 'pass' : 'fail', __( 'Read from Royal MCP\'s own setting.', 'royal-mcp' ), __( 'Switch on WebMCP under Royal MCP > Settings so AI agents in the browser can use the site\'s tools.', 'royal-mcp' ) );
+		$c['webMcp'] = self::check( 'webMcp', __( 'WebMCP for browser agents', 'royal-mcp' ), is_array( $settings ) && ! empty( $settings['webmcp_enabled'] ), [], __( 'Switch on WebMCP under Royal MCP > Settings so AI agents in the browser can use the site\'s tools.', 'royal-mcp' ), __( 'Read from Royal MCP\'s own setting.', 'royal-mcp' ) );
 		$cat = self::fetch( '/.well-known/api-catalog' );
 		$cj  = $cat && 200 === $cat['code'] ? json_decode( $cat['body'], true ) : null;
-		$c['apiCatalog'] = self::check( 'apiCatalog', __( 'API catalog', 'royal-mcp' ), ( $cat && false !== strpos( $cat['type'], 'linkset+json' ) && is_array( $cj ) && ! empty( $cj['linkset'] ) ) ? 'pass' : ( self::$unreachable ? 'unknown' : 'fail' ), '', __( 'A list of the site\'s APIs for agents. No Royal plugin publishes one yet; the MCP server card already covers the integration level.', 'royal-mcp' ) );
-		$as = self::json( self::fetch( '/.well-known/oauth-authorization-server' ) );
-		if ( ! is_array( $as ) ) { $as = self::json( self::fetch( '/.well-known/openid-configuration' ) ); }
-		$c['oauthDiscovery'] = self::check( 'oauthDiscovery', __( 'Sign-in discovery (authorization server)', 'royal-mcp' ), ( is_array( $as ) && ! empty( $as['issuer'] ) && ! empty( $as['token_endpoint'] ) ) ? 'pass' : ( self::$unreachable ? 'unknown' : 'fail' ), '', $served_fix );
-		$prm = self::json( self::fetch( '/.well-known/oauth-protected-resource' ) );
-		$c['oauthProtectedResource'] = self::check( 'oauthProtectedResource', __( 'Sign-in discovery (protected resource)', 'royal-mcp' ), ( is_array( $prm ) && ! empty( $prm['resource'] ) && ! empty( $prm['authorization_servers'] ) ) ? 'pass' : ( self::$unreachable ? 'unknown' : 'fail' ), '', $served_fix );
+		$c['apiCatalog'] = self::check( 'apiCatalog', __( 'API catalog', 'royal-mcp' ), $cat && false !== strpos( $cat['type'], 'linkset+json' ) && is_array( $cj ) && ! empty( $cj['linkset'] ), $cat, __( 'A list of the site\'s APIs for agents. No Royal plugin publishes one yet; the MCP server card already covers the integration level.', 'royal-mcp' ) );
+		$as_r = self::fetch( '/.well-known/oauth-authorization-server' );
+		$as   = self::json( $as_r );
+		if ( ! is_array( $as ) ) {
+			$as_r2 = self::fetch( '/.well-known/openid-configuration' );
+			$as    = self::json( $as_r2 );
+			$as_r  = $as_r ?? $as_r2;
+		}
+		$c['oauthDiscovery'] = self::check( 'oauthDiscovery', __( 'Sign-in discovery (authorization server)', 'royal-mcp' ), is_array( $as ) && ! empty( $as['issuer'] ) && ! empty( $as['token_endpoint'] ), $as_r, $served_fix );
+		$prm_r = self::fetch( '/.well-known/oauth-protected-resource' );
+		$prm   = self::json( $prm_r );
+		$c['oauthProtectedResource'] = self::check( 'oauthProtectedResource', __( 'Sign-in discovery (protected resource)', 'royal-mcp' ), is_array( $prm ) && ! empty( $prm['resource'] ) && ! empty( $prm['authorization_servers'] ), $prm_r, $served_fix );
 		$am = self::fetch( '/auth.md' );
-		$c['authMd'] = self::check( 'authMd', __( 'auth.md', 'royal-mcp' ), ( $am && 200 === $am['code'] && 'pass' === $c['oauthDiscovery']['state'] && 'pass' === $c['oauthProtectedResource']['state'] ) ? 'pass' : ( self::$unreachable ? 'unknown' : 'fail' ), '', __( 'A short page telling agents how to sign in. Optional: sign-in discovery above already counts for the level.', 'royal-mcp' ) );
+		$c['authMd'] = self::check( 'authMd', __( 'auth.md', 'royal-mcp' ), $am && 200 === $am['code'] && 'pass' === $c['oauthProtectedResource']['state'], $am, __( 'A short page telling agents how to sign in. Optional: sign-in discovery above already counts for the level.', 'royal-mcp' ) );
 
-		$p = static function ( $id ) use ( $c ) { return 'pass' === $c[ $id ]['state']; };
+		$p  = static function ( $id ) use ( $c ) { return 'pass' === $c[ $id ]['state']; };
 		$l1 = ( (int) $p( 'robotsTxt' ) + (int) $p( 'sitemap' ) + (int) $p( 'linkHeaders' ) ) >= 2;
 		$l2 = $l1 && $p( 'robotsTxtAiRules' ) && $p( 'contentSignals' );
 		$l3 = $l2 && $p( 'markdownNegotiation' );
@@ -188,30 +287,29 @@ class Agent_Readiness {
 			echo '<p>' . esc_html__( 'Not run yet.', 'royal-mcp' ) . '</p>';
 		} else {
 			/* translators: 1: level number 0-5, 2: level name */
-			echo '<p><strong>' . esc_html( sprintf( __( 'Level %1$d of 5: %2$s', 'royal-mcp' ), (int) $last['level'], (string) ( $last['level_name'] ?? '' ) ) ) . '</strong></p>';
-			if ( ! empty( $last['unreachable'] ) ) {
-				echo '<p class="royal-mcp-doctor-first">' . esc_html__( 'The site could not reach its own addresses, so some checks could not run. The level may be higher than shown.', 'royal-mcp' ) . '</p>';
+			echo '<p><strong>' . esc_html( sprintf( __( 'Level %1$d of 5: %2$s', 'royal-mcp' ), $last['level'], $last['level_name'] ) ) . '</strong></p>';
+			if ( $last['unreachable'] ) {
+				echo '<p class="royal-mcp-doctor-first">' . esc_html__( 'Some addresses could not be checked (the site could not reach them in time, or a firewall or maintenance page answered). Those show as "?"; the level may be higher than shown.', 'royal-mcp' ) . '</p>';
 			}
 			$icons = [ 'pass' => '&#10003;', 'fail' => '&#10007;', 'unknown' => '?', 'info' => 'i' ];
 			$map   = [ 'pass' => 'ok', 'fail' => 'problem', 'unknown' => 'warn', 'info' => 'info' ];
 			echo '<ol class="royal-mcp-doctor-steps">';
-			foreach ( (array) $last['checks'] as $ch ) {
-				if ( ! is_array( $ch ) ) {
-					continue;
-				}
-				$state = (string) ( $ch['state'] ?? 'unknown' );
-				echo '<li class="is-' . esc_attr( $map[ $state ] ?? 'info' ) . '"><span class="royal-mcp-doctor-mark" aria-hidden="true">' . wp_kses( $icons[ $state ] ?? '?', [] ) . '</span><span><strong>' . esc_html( (string) ( $ch['label'] ?? '' ) ) . '</strong>';
-				$text = 'pass' === $state ? (string) ( $ch['detail'] ?? '' ) : trim( (string) ( $ch['detail'] ?? '' ) . ' ' . (string) ( $ch['fix'] ?? '' ) );
+			foreach ( $last['checks'] as $ch ) {
+				$state = $ch['state'];
+				echo '<li class="is-' . esc_attr( $map[ $state ] ) . '"><span class="royal-mcp-doctor-mark" aria-hidden="true">' . wp_kses( $icons[ $state ], [] ) . '</span><span><strong>' . esc_html( $ch['label'] ) . '</strong>';
+				$text = trim( $ch['detail'] . ' ' . $ch['fix'] );
 				if ( '' !== $text && 'pass' !== $state ) {
 					echo '<span class="royal-mcp-doctor-detail">' . esc_html( $text ) . '</span>';
 				}
 				echo '</span></li>';
 			}
 			echo '</ol>';
-			if ( ! empty( $last['next'] ) ) {
-				echo '<p>' . esc_html( (string) $last['next'] ) . '</p>';
+			if ( '' !== $last['next'] ) {
+				echo '<p>' . esc_html( $last['next'] ) . '</p>';
 			}
-			echo '<p class="royal-mcp-dash-sub">' . esc_html( (string) ( $last['not_checked'] ?? '' ) ) . '</p>';
+			if ( '' !== $last['not_checked'] ) {
+				echo '<p class="royal-mcp-dash-sub">' . esc_html( $last['not_checked'] ) . '</p>';
+			}
 		}
 		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
 		echo '<input type="hidden" name="action" value="' . esc_attr( self::RUN_ACTION ) . '">';
