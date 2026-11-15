@@ -169,6 +169,7 @@ class Change_View {
 			case 'wp_delete_menu':
 			case 'wp_update_global_styles':
 			case 'wp_update_block_template':
+			case 'wp_update_theme_design':
 			case 'wp_reorder_menu_items':
 			case 'wp_update_theme_mod':
 			case 'wp_update_widget':

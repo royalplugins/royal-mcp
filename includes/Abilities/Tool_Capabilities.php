@@ -71,6 +71,7 @@ class Tool_Capabilities {
 			'wp_delete_menu_item'   => 'edit_theme_options',
 			'wp_delete_menu'        => 'edit_theme_options',
 			'wp_update_global_styles'  => 'edit_theme_options',
+			'wp_update_theme_design'   => 'edit_theme_options',
 			'wp_update_block_template' => 'edit_theme_options',
 			'wp_reorder_menu_items' => 'edit_theme_options',
 
@@ -180,6 +181,8 @@ class Tool_Capabilities {
 			'wp_list_synced_patterns'    => 'edit_posts',
 			'wp_get_synced_pattern'      => 'edit_posts',
 			'wp_get_global_styles'       => 'edit_theme_options',
+			'wp_get_theme_design'        => 'edit_theme_options',
+			'spectra_get_global_styles'  => 'manage_options',
 			'wp_list_block_templates'    => 'edit_theme_options',
 			'wp_get_block_template'      => 'edit_theme_options',
 
