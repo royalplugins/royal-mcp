@@ -140,9 +140,10 @@ class Connection_Doctor {
 			return self::step( 'registration', $label, 'skipped', __( 'The discovery document did not name a registration address on this site.', 'royal-mcp' ) );
 		}
 		$probe = wp_generate_password( 32, false );
-		set_transient( self::PROBE_KEY . '_' . md5( $probe ), $probe, MINUTE_IN_SECONDS );
+		$probe_key = self::PROBE_KEY . '_' . md5( $probe );
+		set_transient( $probe_key, $probe, MINUTE_IN_SECONDS );
 		$res = wp_remote_post( $url, [ 'timeout' => 5, 'redirection' => 0, 'sslverify' => false, 'headers' => [ 'Content-Type' => 'application/json', self::PROBE_HEADER => $probe ], 'body' => '' ] );
-		delete_transient( self::PROBE_KEY . '_' . md5( $probe ) );
+		delete_transient( $probe_key );
 		if ( is_wp_error( $res ) ) {
 			return self::step( 'registration', $label, 'warn', __( 'The site could not reach its own registration address to check it (loopback blocked or timed out).', 'royal-mcp' ) );
 		}
