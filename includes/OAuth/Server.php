@@ -939,6 +939,8 @@ class Server {
             'state'                 => $state,
             'scope'                 => $scope,
             'resource'              => $resource_indicator,
+            'access_level'          => \Royal_MCP\MCP\Support\Access_Levels::for_client( $client_id ),
+            'can_set_access'        => current_user_can( \Royal_MCP\Admin\Settings_Page::admin_capability() ), // audit:multisite-manage-options-safe -- capability from Settings_Page::admin_capability()
             'user_display_name'     => $current_user->display_name,
             'site_name'             => $site_name,
             'nonce'                 => wp_create_nonce( 'royal_mcp_authorize' ),
@@ -1025,6 +1027,39 @@ class Server {
         if ( null === $resource_indicator ) {
             $this->log_event( 'invalid_target', 'Authorize POST named a resource this server does not serve.', 400 );
             $this->authorize_error( $redirect_uri, $state, 'invalid_target', 'The requested resource is not served by this authorization server.' );
+        }
+
+        // Access level picked on the consent screen: only someone who may manage Royal MCP
+        // sets it (it applies to every user of this client, as on the Connections page).
+        $picked = isset( $_POST['access_level'] ) ? sanitize_text_field( wp_unslash( $_POST['access_level'] ) ) : '';
+        if ( '' !== $picked && in_array( $picked, \Royal_MCP\MCP\Support\Access_Levels::LEVELS, true )
+            && current_user_can( \Royal_MCP\Admin\Settings_Page::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from Settings_Page::admin_capability()
+            $prior_level = \Royal_MCP\MCP\Support\Access_Levels::for_client( $client_id );
+            $level_saved = false;
+            if ( $picked !== $prior_level ) {
+                try {
+                    \Royal_MCP\MCP\Support\Access_Levels::set_client( $client_id, $picked );
+                    $level_saved = true;
+                } catch ( \InvalidArgumentException $e ) {
+                    $level_saved = false;
+                }
+            }
+            if ( $level_saved ) {
+                global $wpdb;
+                $who = wp_get_current_user();
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Intentional direct insert to the logs table.
+                $wpdb->insert(
+                    $wpdb->prefix . 'royal_mcp_logs',
+                    [
+                        'mcp_server'    => 'OAuth Server',
+                        'action'        => 'oauth:set_client_access',
+                        'request_data'  => wp_json_encode( [ 'user_id' => (int) $who->ID, 'user_login' => $who->user_login, 'client_id' => $client_id, 'where' => 'consent screen' ] ),
+                        'response_data' => wp_json_encode( [ 'previous' => $prior_level, 'next' => $picked ] ),
+                        'status'        => 'success',
+                    ],
+                    [ '%s', '%s', '%s', '%s', '%s' ]
+                );
+            }
         }
 
         // Generate authorization code.

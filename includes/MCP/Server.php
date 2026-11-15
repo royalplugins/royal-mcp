@@ -1274,7 +1274,11 @@ class Server {
     private $rate_state = null;
 
     private function note_rate_state($limit, $remaining, $reset) {
-        $this->rate_state = ['limit' => (int) $limit, 'remaining' => max(0, (int) $remaining), 'reset' => max(1, (int) $reset)];
+        $state = ['limit' => (int) $limit, 'remaining' => max(0, (int) $remaining), 'reset' => max(1, (int) $reset)];
+        // Several budgets can be checked in one request (address, then user): report the tightest.
+        if (null === $this->rate_state || $state['remaining'] < $this->rate_state['remaining']) {
+            $this->rate_state = $state;
+        }
         if (!has_filter('rest_post_dispatch', [$this, 'add_rate_limit_headers'])) {
             add_filter('rest_post_dispatch', [$this, 'add_rate_limit_headers'], 10, 3);
         }
@@ -9201,7 +9205,12 @@ class Server {
                     throw new \Exception('Menu not found: ' . esc_html((string) $dm_id));
                 }
                 $dm_items = [];
-                foreach ((array) wp_get_nav_menu_items($dm_id, ['post_status' => 'any']) as $dm_item) {
+                // Every item in the menu, read from the posts (wp_get_nav_menu_items leaves out
+                // items whose object is trashed or gone; the menu delete removes them too).
+                $dm_ids   = array_map('intval', (array) get_objects_in_term($dm_id, 'nav_menu'));
+                $dm_posts = $dm_ids ? get_posts(['post_type' => 'nav_menu_item', 'post_status' => 'any', 'post__in' => $dm_ids, 'numberposts' => -1, 'orderby' => 'menu_order', 'order' => 'ASC', 'suppress_filters' => true]) : [];
+                foreach ($dm_posts as $dm_post) {
+                    $dm_item = wp_setup_nav_menu_item($dm_post);
                     $dm_items[] = [
                         'id'          => (int) $dm_item->db_id,
                         'title'       => (string) $dm_item->title,
@@ -9214,13 +9223,20 @@ class Server {
                         'type'        => (string) $dm_item->type,
                         'xfn'         => (string) $dm_item->xfn,
                         'classes'     => is_array($dm_item->classes) ? array_values($dm_item->classes) : [],
-                        'description' => (string) ($dm_item->description ?? ''),
-                        'attr_title'  => (string) ($dm_item->attr_title ?? ''),
-                        'status'      => (string) $dm_item->post_status,
+                        'description' => (string) $dm_post->post_content,
+                        'attr_title'  => (string) $dm_post->post_excerpt,
+                        'raw_title'   => (string) $dm_post->post_title,
+                        'status'      => (string) $dm_post->post_status,
                     ];
                 }
                 $dm_locations = array_keys(array_filter((array) get_nav_menu_locations(), static function ($mid) use ($dm_id) { return (int) $mid === $dm_id; }));
-                $dm_state = ['name' => (string) $dm_menu->name, 'description' => (string) $dm_menu->description, 'items' => $dm_items, 'locations' => array_values($dm_locations)];
+                $dm_widgets = [];
+                foreach ((array) get_option('widget_nav_menu', []) as $dm_wkey => $dm_w) {
+                    if (is_array($dm_w) && (int) ($dm_w['nav_menu'] ?? 0) === $dm_id) {
+                        $dm_widgets[] = (string) $dm_wkey;
+                    }
+                }
+                $dm_state = ['name' => (string) $dm_menu->name, 'description' => (string) $dm_menu->description, 'items' => $dm_items, 'locations' => array_values($dm_locations), 'widgets' => $dm_widgets];
                 $dm_fits  = strlen(gzcompress((string) wp_json_encode($dm_state), 9)) <= 1024 * 1024;
                 $dm_res   = wp_delete_nav_menu($dm_id);
                 if (!$dm_res || is_wp_error($dm_res)) {
@@ -10958,15 +10974,20 @@ class Server {
                         if ( '' === $udm_name ) {
                             throw new \Exception('Undo snapshot has no menu to recreate.');
                         }
-                        $udm_same = wp_get_nav_menu_object( $udm_name );
+                        $udm_same = get_term_by( 'name', $udm_name, 'nav_menu' );
                         if ( $udm_same && ! $undo_force ) {
                             throw self::undo_drift_refusal( sprintf( 'a menu named "%s" exists again (menu %d).', esc_html( $udm_name ), (int) $udm_same->term_id ), 'recreate the deleted menu under a new name anyway', [ 'menu_id' => (int) $udm_same->term_id ] );
                         }
-                        $udm_create_name = $udm_same ? $udm_name . ' (restored)' : $udm_name;
-                        $udm_id = wp_create_nav_menu( $udm_create_name );
-                        if ( is_wp_error( $udm_id ) ) {
-                            throw new \Exception( esc_html( $udm_id->get_error_message() ) );
+                        $udm_create_name = $udm_name;
+                        for ( $udm_n = 1; $udm_n <= 20 && get_term_by( 'name', $udm_create_name, 'nav_menu' ); $udm_n++ ) {
+                            $udm_create_name = $udm_name . ( 1 === $udm_n ? ' (restored)' : ' (restored ' . $udm_n . ')' );
                         }
+                        $udm_id = wp_create_nav_menu( wp_slash( $udm_create_name ) );
+                        if ( is_wp_error( $udm_id ) ) {
+                            throw new \Exception( esc_html( wp_strip_all_tags( $udm_id->get_error_message() ) ) );
+                        }
+                        $udm_obj         = wp_get_nav_menu_object( (int) $udm_id );
+                        $udm_create_name = $udm_obj ? (string) $udm_obj->name : $udm_create_name;
                         if ( '' !== (string) ( $udm_pre['description'] ?? '' ) ) {
                             wp_update_term( (int) $udm_id, 'nav_menu', [ 'description' => wp_slash( (string) $udm_pre['description'] ) ] );
                         }
@@ -10975,7 +10996,7 @@ class Server {
                         $udm_map = [];
                         foreach ( $udm_items as $udm_row ) {
                             $udm_new = wp_update_nav_menu_item( (int) $udm_id, 0, wp_slash( [
-                                'menu-item-title'       => (string) $udm_row['title'],
+                                'menu-item-title'       => (string) ( array_key_exists( 'raw_title', $udm_row ) ? $udm_row['raw_title'] : $udm_row['title'] ),
                                 'menu-item-url'         => (string) $udm_row['url'],
                                 'menu-item-position'    => (int) $udm_row['position'],
                                 'menu-item-target'      => (string) $udm_row['target'],
@@ -11015,10 +11036,23 @@ class Server {
                         if ( $udm_back ) {
                             set_theme_mod( 'nav_menu_locations', $udm_locs );
                         }
+                        // Navigation Menu widgets that showed the deleted menu (and still point at its old id).
+                        $udm_widgets = (array) get_option( 'widget_nav_menu', [] );
+                        $udm_old     = (int) ( $undo_snapshot['target']['menu_id'] ?? 0 );
+                        $udm_wfixed  = 0;
+                        foreach ( (array) ( $udm_pre['widgets'] ?? [] ) as $udm_wkey ) {
+                            if ( isset( $udm_widgets[ $udm_wkey ] ) && is_array( $udm_widgets[ $udm_wkey ] ) && (int) ( $udm_widgets[ $udm_wkey ]['nav_menu'] ?? 0 ) === $udm_old ) {
+                                $udm_widgets[ $udm_wkey ]['nav_menu'] = (int) $udm_id;
+                                $udm_wfixed++;
+                            }
+                        }
+                        if ( $udm_wfixed ) {
+                            update_option( 'widget_nav_menu', $udm_widgets );
+                        }
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
                         return \Royal_MCP\MCP\Support\Envelope::success(
                             sprintf( 'Recreated menu "%s" as menu %d with %d of %d item(s)%s%s. Items have new IDs.', $udm_create_name, (int) $udm_id, count( $udm_map ), count( $udm_items ), $udm_back ? '; assigned again to ' . implode( ', ', $udm_back ) : '', $udm_taken ? '; not reassigned to ' . implode( ', ', $udm_taken ) . ' (another menu is there now)' : '' ),
-                            [ 'undone' => true, 'op' => $undo_op, 'restored' => true, 'menu_id' => (int) $udm_id, 'original_menu_id' => (int) ( $undo_snapshot['target']['menu_id'] ?? 0 ), 'items_restored' => count( $udm_map ), 'item_id_map' => $udm_map, 'locations_restored' => $udm_back, 'locations_taken' => $udm_taken ]
+                            [ 'undone' => true, 'op' => $undo_op, 'restored' => true, 'menu_id' => (int) $udm_id, 'original_menu_id' => (int) ( $undo_snapshot['target']['menu_id'] ?? 0 ), 'items_restored' => count( $udm_map ), 'item_id_map' => $udm_map, 'locations_restored' => $udm_back, 'locations_taken' => $udm_taken, 'widgets_repointed' => $udm_wfixed ]
                         );
 
                     case 'wp_delete_menu_item':

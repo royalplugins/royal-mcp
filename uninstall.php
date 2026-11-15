@@ -18,6 +18,9 @@ if (!defined('WP_UNINSTALL_PLUGIN')) {
     exit;
 }
 
+// WordPress's own widget option is only updated (a menu id), never owned by this plugin.
+// uninstall-audit: keep widget_nav_menu
+
 // Pro ships its own uninstall handler and shares these tables/options.
 if ( file_exists( WP_PLUGIN_DIR . '/royal-mcp-pro/royal-mcp-pro.php' ) ) {
     return;
@@ -159,6 +162,7 @@ function royal_mcp_uninstall_site() {
         delete_option('royal_mcp_oauth_namespace_clients');
         delete_transient('royal_mcp_issuer_kind_column_failed');
         delete_transient('royal_mcp_rotation_column_failed');
+        delete_transient('royal_mcp_resource_column_failed');
 
         // Cleared with the tables so a reinstall recreates them.
         delete_option('royal_mcp_db_version');

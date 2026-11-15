@@ -326,8 +326,8 @@ class Block_Tools {
 		$asked = [];
 		foreach ( [ 'styles', 'settings' ] as $part ) {
 			if ( isset( $args[ $part ] ) ) {
-				if ( ! is_array( $args[ $part ] ) && ! is_object( $args[ $part ] ) ) {
-					throw new \Exception( esc_html( $part ) . ' must be an object.' );
+				if ( ( ! is_array( $args[ $part ] ) && ! is_object( $args[ $part ] ) ) || ( is_array( $args[ $part ] ) && [] !== $args[ $part ] && self::is_list( $args[ $part ] ) ) ) {
+					throw new \Exception( esc_html( $part ) . ' must be an object in theme.json shape, e.g. {"color":{"background":"#ffffff"}}.' );
 				}
 				$asked[ $part ] = (array) json_decode( (string) wp_json_encode( $args[ $part ] ), true );
 			}
@@ -355,17 +355,18 @@ class Block_Tools {
 		foreach ( $asked as $part => $value ) {
 			$dropped = array_merge( $dropped, self::not_kept( $value, is_array( $saved ) ? ( $saved[ $part ] ?? null ) : null, $part ) );
 		}
-		$undo = $written === $prior ? [] : \Royal_MCP\MCP\Undo_Store::store( [
+		$changed = json_decode( $written, true ) !== json_decode( $prior, true );
+		$undo    = ! $changed ? [] : \Royal_MCP\MCP\Undo_Store::store( [
 			'op'           => 'wp_update_global_styles',
 			'summary'      => sprintf( 'Put the global styles (record %d) back as they were.', $id ),
 			'target'       => [ 'post_id' => $id ],
 			'pre_op_state' => [ 'prior_content' => $prior, 'written_content' => $written ],
 		] );
-		$text = $written === $prior ? 'Nothing changed: the global styles already had those values' : sprintf( 'Updated the global styles (%s)', implode( ', ', array_keys( $asked ) ) );
+		$text = ! $changed ? 'Nothing changed: the global styles already had those values, or WordPress kept none of them' : sprintf( 'Updated the global styles (%s)', implode( ', ', array_keys( $asked ) ) );
 		if ( $dropped ) {
 			$text .= sprintf( '. WordPress did not keep %d value(s): %s', count( $dropped ), implode( ', ', array_slice( $dropped, 0, 10 ) ) );
 		}
-		return Envelope::success( $text . '.', [ 'global_styles_id' => $id, 'changed' => $written !== $prior, 'not_kept' => array_values( $dropped ) ], $undo );
+		return Envelope::success( $text . '.', [ 'global_styles_id' => $id, 'changed' => $changed, 'not_kept' => array_values( $dropped ) ], $undo );
 	}
 
 	private static function update_template( array $args ) {
@@ -446,7 +447,7 @@ class Block_Tools {
 			throw new Tool_Refusal( 'edited_since_write', sprintf( 'Template %s was changed after this operation, so undoing it would also remove those later changes. Pass force: true to put the earlier version back anyway.', $id ) );
 		}
 		$route = ( 'wp_template_part' === $type ? '/wp/v2/template-parts/' : '/wp/v2/templates/' ) . $id;
-		if ( empty( $pre['was_customized'] ) && ! empty( $tpl->has_theme_file ) ) {
+		if ( empty( $pre['was_customized'] ) && 'custom' === $tpl->source && ! empty( $tpl->wp_id ) ) {
 			self::rest_write( 'DELETE', $route, [ 'force' => true ] );
 			return [ 'undone' => true, 'op' => $op, 'restored' => true, 'id' => $id, 'back_to_theme_file' => true ];
 		}
