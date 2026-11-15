@@ -233,7 +233,6 @@ class Tool_Capabilities {
 		if ( strpos( $tool_name, 'divi_' ) === 0 )      return 'edit_posts';
 		if ( strpos( $tool_name, 'yoast_' ) === 0 )     return 'edit_posts';
 		if ( strpos( $tool_name, 'redirection_' ) === 0 ) return 'manage_options';
-		if ( strpos( $tool_name, 'sitekit_' ) === 0 )   return 'manage_options';
 		// TablePress's own capabilities, which exist only while TablePress is active;
 		// each handler then checks the table.
 		if ( strpos( $tool_name, 'tablepress_' ) === 0 && ! \Royal_MCP\Integrations\TablePress::is_available() ) return 'manage_options';

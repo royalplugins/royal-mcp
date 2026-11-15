@@ -21,7 +21,6 @@ use Royal_MCP\Integrations\Wordfence as WordfenceIntegration;
 use Royal_MCP\Integrations\LiteSpeed as LiteSpeedIntegration;
 use Royal_MCP\Integrations\ContactForm7 as CF7Integration;
 use Royal_MCP\Integrations\MonsterInsights as MonsterInsightsIntegration;
-use Royal_MCP\Integrations\SiteKit as SiteKitIntegration;
 use Royal_MCP\Integrations\W3TotalCache as W3TCIntegration;
 use Royal_MCP\Integrations\Duplicator as DuplicatorIntegration;
 use Royal_MCP\Integrations\BackupStatus as BackupStatusIntegration;
@@ -384,8 +383,6 @@ class Server {
         'snippets_recently_active',
         'complianz_status',
         'wp_security_triage',
-        'sitekit_search_console_report',
-        'sitekit_analytics_report',
         '_active_profile_notice',
     ];
 
@@ -2380,7 +2377,6 @@ class Server {
         $tools = array_merge( $tools, LiteSpeedIntegration::get_tools() );
         $tools = array_merge( $tools, CF7Integration::get_tools() );
         $tools = array_merge( $tools, MonsterInsightsIntegration::get_tools() );
-        $tools = array_merge( $tools, SiteKitIntegration::get_tools() );
         $tools = array_merge( $tools, TablePressIntegration::get_tools() );
         $tools = array_merge( $tools, CodeSnippetsIntegration::get_tools() );
         $tools = array_merge( $tools, ComplianzIntegration::get_tools() );
@@ -3809,7 +3805,6 @@ class Server {
             'litespeed_'           => [ 'LiteSpeed Cache', [ LiteSpeedIntegration::class, 'is_available' ] ],
             'cf7_'                 => [ 'Contact Form 7', [ CF7Integration::class, 'is_available' ] ],
             'monsterinsights_'     => [ 'MonsterInsights', [ MonsterInsightsIntegration::class, 'is_available' ] ],
-            'sitekit_'             => [ 'Site Kit by Google', [ SiteKitIntegration::class, 'is_available' ] ],
             'w3tc_'                => [ 'W3 Total Cache', [ W3TCIntegration::class, 'is_available' ] ],
             'duplicator_'          => [ 'Duplicator', [ DuplicatorIntegration::class, 'is_available' ] ],
             'ai1wm_get_backup_status'    => [ 'All-in-One WP Migration', [ BackupStatusIntegration::class, 'ai1wm_active' ] ],
@@ -14596,9 +14591,6 @@ class Server {
                 }
                 if ( strpos( $name, 'monsterinsights_' ) === 0 ) {
                     return MonsterInsightsIntegration::execute_tool( $name, $args );
-                }
-                if ( strpos( $name, 'sitekit_' ) === 0 ) {
-                    return SiteKitIntegration::execute_tool( $name, $args );
                 }
                 if ( strpos( $name, 'tablepress_' ) === 0 ) {
                     return TablePressIntegration::execute_tool( $name, $args );

@@ -104,10 +104,6 @@ class Categories {
 				'label'       => __( 'Royal MCP: MonsterInsights', 'royal-mcp' ),
 				'description' => __( 'MonsterInsights analytics overview, top pages, sources and search queries.', 'royal-mcp' ),
 			),
-			'site-kit' => array(
-				'label'       => __( 'Royal MCP: Site Kit by Google', 'royal-mcp' ),
-				'description' => __( 'Search Console and Google Analytics reports through Site Kit.', 'royal-mcp' ),
-			),
 			'w3-total-cache' => array(
 				'label'       => __( 'Royal MCP: W3 Total Cache', 'royal-mcp' ),
 				'description' => __( 'W3 Total Cache configuration, purging and statistics.', 'royal-mcp' ),
