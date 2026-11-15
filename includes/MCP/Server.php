@@ -1033,9 +1033,23 @@ class Server {
      * @return int|false
      */
     public static function early_user( $user_id ) {
-        if ( $user_id || ! self::is_mcp_address_request() ) {
+        // The checks below run other plugins' capability filters, and some of those ask for
+        // the current user again, which runs this filter again: a nested call is answered
+        // with what WordPress already had, so it cannot loop.
+        static $running = false;
+        if ( $running || $user_id || ! self::is_mcp_address_request() ) {
             return $user_id;
         }
+        $running = true;
+        try {
+            return self::early_user_resolve( $user_id );
+        } finally {
+            $running = false;
+        }
+    }
+
+    /** The body of early_user(), run once per request at most at a time. */
+    private static function early_user_resolve( $user_id ) {
         $settings = get_option( 'royal_mcp_settings', [] );
         if ( ! is_array( $settings ) || empty( $settings['enabled'] ) ) {
             return $user_id;
