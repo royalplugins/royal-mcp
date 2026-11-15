@@ -131,7 +131,7 @@ class Connection_Doctor {
 		global $wpdb;
 		$table = $wpdb->prefix . 'royal_mcp_logs';
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix
-		$call = $wpdb->get_var( "SELECT MAX(timestamp) FROM `{$table}` WHERE action = 'mcp:tools/call' AND status = 'success'" );
+		$call = $wpdb->get_var( "SELECT MAX(timestamp) FROM `{$table}` WHERE action LIKE 'tools/call:%' AND status = 'success'" );
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix
 		$sign = $wpdb->get_var( "SELECT MAX(timestamp) FROM `{$table}` WHERE action = 'oauth:token' AND status = 'success'" );
 		$fmt  = trim( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ) );
