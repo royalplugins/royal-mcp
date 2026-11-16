@@ -118,10 +118,10 @@ $rmcp_wn_royally_slide_url = 'https://royalplugins.com/royally/?utm_source=royal
                 </div>
             </div>
 
-            <!-- SLIDE 5: Royally -->
+            <!-- SLIDE 5: Royal MCP Pro -->
             <div class="rmcp-wn-slide is-reversed">
                 <div class="rmcp-wn-slide-body">
-                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Royally', 'royal-mcp' ); ?></span>
+                    <span class="rmcp-wn-tag"><?php esc_html_e( 'Royal MCP Pro', 'royal-mcp' ); ?></span>
                     <h3><?php esc_html_e( 'One connection for everything your AI manages', 'royal-mcp' ); ?></h3>
                     <p><?php esc_html_e( 'Royally puts your whole stack behind one MCP connection: every WordPress site you run, plus Cloudflare, UptimeRobot, Notion and other MCP servers. Each change can wait for your approval, is recorded and can be undone. Royal MCP Pro comes with it.', 'royal-mcp' ); ?></p>
                     <a href="<?php echo esc_url( $rmcp_wn_royally_slide_url ); ?>" target="_blank" rel="noopener noreferrer" class="rmcp-wn-btn">
