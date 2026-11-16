@@ -57,7 +57,65 @@ class Agent_Readiness {
 				];
 			}
 		}
-		return [ 'level' => $level, 'level_name' => self::LEVELS[ $level ], 'checked_at' => (int) ( $r['checked_at'] ?? 0 ), 'unreachable' => ! empty( $r['unreachable'] ), 'checks' => $checks, 'next' => $str( $r['next'] ?? '' ), 'not_checked' => $str( $r['not_checked'] ?? '' ) ];
+		$by_id   = array_column( $checks, null, 'id' );
+		$counted = array_values( array_filter( $checks, static function ( $c ) { return 'info' !== $c['state']; } ) );
+		return [
+			'level'       => $level,
+			'level_name'  => self::LEVELS[ $level ],
+			'checked_at'  => (int) ( $r['checked_at'] ?? 0 ),
+			// Only a check the level depends on, and that could not be made, makes the level uncertain.
+			'unreachable' => (bool) array_filter( self::level_checks( $level ), static function ( $id ) use ( $by_id ) { return 'unknown' === ( $by_id[ $id ]['state'] ?? '' ); } ),
+			'checks'      => $checks,
+			'passed'      => count( array_filter( $counted, static function ( $c ) { return 'pass' === $c['state']; } ) ),
+			'counted'     => count( $counted ),
+			'next'        => self::next_hint( $level, $by_id ),
+			'not_checked' => $str( $r['not_checked'] ?? '' ),
+		];
+	}
+
+	/** Check ids the current level and the next one are decided by. */
+	private static function level_checks( $level ) {
+		$by_level = [
+			[ 'robotsTxt', 'sitemap', 'linkHeaders' ],
+			[ 'robotsTxtAiRules', 'contentSignals' ],
+			[ 'markdownNegotiation' ],
+			[ 'mcpServerCard', 'a2aAgentCard', 'agentSkills', 'apiCatalog' ],
+			[ 'webBotAuth', 'mcpServerCard', 'a2aAgentCard', 'agentSkills', 'apiCatalog', 'oauthDiscovery', 'oauthProtectedResource', 'authMd' ],
+		];
+		$ids = [];
+		for ( $i = 0; $i <= min( 4, (int) $level ); $i++ ) {
+			$ids = array_merge( $ids, $by_level[ $i ] );
+		}
+		return array_values( array_unique( $ids ) );
+	}
+
+	/** What the next level still needs, naming only the checks that do not pass yet. */
+	private static function next_hint( $level, array $by_id ) {
+		$open = static function ( array $ids ) use ( $by_id ) {
+			$out = [];
+			foreach ( $ids as $id ) {
+				if ( isset( $by_id[ $id ] ) && 'pass' !== $by_id[ $id ]['state'] ) {
+					$out[] = $by_id[ $id ]['label'];
+				}
+			}
+			return $out;
+		};
+		switch ( (int) $level ) {
+			case 0:
+				/* translators: %s: list of checks */
+				return sprintf( __( 'Next level: two of robots.txt, a sitemap and agent Link headers (not passing yet: %s).', 'royal-mcp' ), implode( ', ', $open( [ 'robotsTxt', 'sitemap', 'linkHeaders' ] ) ) );
+			case 1:
+				$need = $open( [ 'robotsTxtAiRules', 'contentSignals' ] );
+				/* translators: %s: list of checks */
+				return $need ? sprintf( __( 'Next level: %s.', 'royal-mcp' ), implode( ' and ', $need ) ) : '';
+			case 2:
+				return __( 'Next level: Markdown for AI agents.', 'royal-mcp' );
+			case 3:
+				return __( 'Next level: one integration document (the MCP server card Royal MCP serves counts).', 'royal-mcp' );
+			case 4:
+				return __( 'Next level: two of a Web Bot Auth key directory, all four integration documents, sign-in discovery.', 'royal-mcp' );
+		}
+		return '';
 	}
 
 	public static function handle_run() {
@@ -287,9 +345,11 @@ class Agent_Readiness {
 			echo '<p>' . esc_html__( 'Not run yet.', 'royal-mcp' ) . '</p>';
 		} else {
 			/* translators: 1: level number 0-5, 2: level name */
-			echo '<p><strong>' . esc_html( sprintf( __( 'Level %1$d of 5: %2$s', 'royal-mcp' ), $last['level'], $last['level_name'] ) ) . '</strong></p>';
+			echo '<p><strong>' . esc_html( sprintf( __( 'Level %1$d of 5: %2$s', 'royal-mcp' ), $last['level'], $last['level_name'] ) ) . '</strong>';
+			/* translators: 1: checks passing, 2: checks counted */
+			echo ' <span class="royal-mcp-dash-sub">' . esc_html( sprintf( __( '%1$d of %2$d checks pass', 'royal-mcp' ), $last['passed'], $last['counted'] ) ) . '</span></p>';
 			if ( $last['unreachable'] ) {
-				echo '<p class="royal-mcp-doctor-first">' . esc_html__( 'Some addresses could not be checked (the site could not reach them in time, or a firewall or maintenance page answered). Those show as "?"; the level may be higher than shown.', 'royal-mcp' ) . '</p>';
+				echo '<p class="royal-mcp-dash-sub">' . esc_html__( 'A check this level depends on could not be completed (the site did not answer in time, or a firewall or maintenance page answered). It shows as "?", so the level may be higher than shown; try Check again.', 'royal-mcp' ) . '</p>';
 			}
 			$icons = [ 'pass' => '&#10003;', 'fail' => '&#10007;', 'unknown' => '?', 'info' => 'i' ];
 			$map   = [ 'pass' => 'ok', 'fail' => 'problem', 'unknown' => 'warn', 'info' => 'info' ];

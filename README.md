@@ -220,33 +220,39 @@ Found a security issue? Report it privately through [royalplugins.com/contact](h
 
 ## Royal MCP Pro
 
-**Royal MCP gives one site owner a safe AI connection. [Royal MCP Pro](https://royalplugins.com/royal-mcp-pro/) is for running AI across real client work:** 400+ tools, bulk operations across many pages and products, deeper Elementor, Divi, WooCommerce and ACF authoring, cross-plugin workflows that run a whole job in one call, and a full audit trail.
+**Royal MCP gives one site owner a safe AI connection. [Royal MCP Pro](https://royalplugins.com/royal-mcp-pro/) is for running AI across real client work:** 470+ tools, bulk operations across many pages and products, deeper Elementor, Divi, WooCommerce and ACF authoring, cross-plugin workflows that run a whole job in one call, and a full audit trail.
 
-Pro is one plugin that includes everything in Royal MCP. When Pro is active, you run Pro on its own.
+Pro is one plugin that includes everything in Royal MCP; tools new in Royal MCP 2.0 come to Pro in its next update. When Pro is active, you run Pro on its own.
 
 | | Royal MCP (free) | Royal MCP Pro |
 |---|:---:|:---:|
-| **Tools** | 405 | **400+** |
+| **Tools** | 405 | **470+** |
 | Connect Claude, ChatGPT, Cursor and any MCP app (OAuth, API key or Application Password) | ✅ | ✅ |
 | Read-only and drafts-only modes, per-connection access levels | ✅ | ✅ |
 | Recent Changes and 72-hour undo on destructive writes | ✅ | ✅ Pro tools too |
 | Activity log of every tool call | ✅ | ✅ |
+| Launch check, publish and launch, SEO launch pass, monthly maintenance report, theme asset move | ✅ | ✅ |
+| Site-wide SEO audit; SEO meta read and write per post | ✅ | ✅ |
 | **Universal audit log** with filters, per-row undo, CSV export and 90-day retention | — | ✅ |
 | **Custom Endpoint Profiles**: choose which tools each AI connection can call | — | ✅ |
-| **Bulk find and replace** across posts, with a two-step commit | — | ✅ |
+| **Bulk site work**: find and replace across posts with a two-step commit, comment moderation, widgets and menus | — | ✅ +5 tools |
+| **Site admin**: create, delete and change users, login links, WordPress core update, WP-CLI commands, database clean-up | — | ✅ |
 | **Elementor**: clone, edit text and images, add widgets, apply templates | ✅ 15 tools | ✅ |
-| **Elementor Pro depth**: widget, container and section CRUD by ID, Theme Builder and display conditions, bulk widget settings, global variables and classes | — | ✅ +14 tools |
+| **Elementor Pro depth**: widget, container and section CRUD by ID, Theme Builder and display conditions, bulk widget settings, global variables and classes | — | ✅ +16 tools |
 | **WooCommerce**: products, variations, attributes, coupons, orders, customers, stats | ✅ 29 tools | ✅ |
 | **WooCommerce bulk**: prices, stock, categories, order status, deletion with confirmation, grouped products, bulk coupons | — | ✅ +12 tools |
+| **WooCommerce Subscriptions**: list, pause, resume and cancel, next payment date | — | ✅ +5 tools |
 | **Divi**: outline, validation, find and replace, clone, image swap | ✅ 9 tools | ✅ |
-| **Divi Pro**: library create, update and delete, Divi 4 to Divi 5 migrator, global preset bulk-apply | — | ✅ |
-| **ACF**: read and write field values, set up field groups and fields | ✅ 17 tools | ✅ |
-| **ACF Setup Suite**: field groups, fields, JSON import and export, options pages, post types and blocks | — | ✅ +15 tools |
-| **SEO**: meta read and write per post | ✅ | ✅ |
-| **SEO Agency Suite**: site-wide SEO audit and bulk meta writers | — | ✅ |
-| **Cross-plugin workflows**: launch-readiness check, monthly maintenance report, theme-swap asset migration, SEO launch in one call with rollback | — | ✅ |
-| **FormForge Pro** entries, analytics and form creation | — | ✅ |
-| **Royal Affiliate Pro** affiliates, referrals, campaigns and payouts | — | ✅ +25 tools |
+| **Divi Pro**: library create, update and delete, Divi 4 to Divi 5 migrator, global preset bulk-apply | — | ✅ +7 tools |
+| **ACF**: field values, field groups and fields, JSON import and export, post types | ✅ 17 tools | ✅ |
+| **ACF options pages and blocks** | — | ✅ +2 tools |
+| **SEO bulk meta writers** for Yoast, Rank Math, AIOSEO, SEOPress and SEObolt | — | ✅ +5 tools |
+| **Code snippets**: create, edit and activate (Code Snippets, WPCode); Free reads them and can deactivate a broken one | — | ✅ +7 tools |
+| **FormForge**: forms, entries, analytics, duplicate, create from a template | ✅ 6 tools | ✅ |
+| **FormForge bulk**: delete, export, resend notifications | — | ✅ +3 tools |
+| **Royal Affiliate Pro**: affiliates, referrals, campaigns, payouts, creatives; referral status, campaigns and challenges | ✅ 17 tools | ✅ |
+| **Royal Affiliate bulk**: approvals, payouts, coupons, commission rates, creatives, broadcasts, store credit, monthly reports | — | ✅ +10 tools |
+| **Redirection** rule sets and bulk import; **GuardPress** hardening and unblock; **SiteVault** restore | — | ✅ +5 tools |
 | Sites | Unlimited | 1, 5 or 100 |
 | Updates | WordPress.org | Direct from Royal Plugins |
 | Support | WordPress.org forum and GitHub Issues | Email support |
@@ -270,7 +276,7 @@ Royal MCP works with the rest of the Royal Plugins family. Each one adds its own
 
 | Plugin | What it does |
 |---|---|
-| [Royal MCP Pro](https://royalplugins.com/royal-mcp-pro/) | 400+ tools for agencies: bulk operations, deep builder and store authoring, audit log |
+| [Royal MCP Pro](https://royalplugins.com/royal-mcp-pro/) | 470+ tools for agencies: bulk operations, deep builder and store authoring, audit log |
 | [GuardPress](https://royalplugins.com/guardpress/) | Security: firewall, malware scanner, 2FA, login protection, activity log |
 | [SiteVault](https://royalplugins.com/sitevault/) | Automated backups, staging, encryption, migration ([free version](https://wordpress.org/plugins/sitevault-backup-restore-migration/)) |
 | [ForgeCache](https://royalplugins.com/forgecache/) | Page caching, CSS and JS optimization, lazy loading, CDN, Core Web Vitals |
