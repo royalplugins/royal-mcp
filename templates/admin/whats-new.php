@@ -43,7 +43,7 @@ $rmcp_wn_royally_slide_url = 'https://royalplugins.com/royally/?utm_source=royal
                 </div>
                 <div class="rmcp-wn-slide-body">
                     <span class="rmcp-wn-tag"><?php esc_html_e( 'Version 2.0', 'royal-mcp' ); ?></span>
-                    <p class="rmcp-wn-big-number"><?php esc_html_e( '380+ tools', 'royal-mcp' ); ?></p>
+                    <p class="rmcp-wn-big-number"><?php esc_html_e( '400+ MCP tools', 'royal-mcp' ); ?></p>
                     <h3><?php esc_html_e( 'Royal MCP 2.0 is here', 'royal-mcp' ); ?></h3>
                     <p><?php esc_html_e( 'A new dashboard, a simpler menu and the biggest tool expansion Royal MCP has had. It is still free, and it still runs only on your site.', 'royal-mcp' ); ?></p>
                 </div>
