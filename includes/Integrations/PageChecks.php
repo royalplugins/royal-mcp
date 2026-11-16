@@ -948,6 +948,22 @@ class PageChecks {
 				return '';
 			} );
 		}
+		if ( class_exists( '\\WPO_Page_Cache' ) && class_exists( '\\WPO_Cache_Config' ) && (bool) \WPO_Cache_Config::instance()->get_option( 'enable_page_caching', false ) ) {
+			$try( 'wp_optimize', static function () use ( $url, $post_id ) {
+				// By post where possible, except the page shown as the home page: WP-Optimize's per-post
+				// purge also removes every page below the post's address, which for the home page is the whole site.
+				$is_front = $post_id && 'page' === get_option( 'show_on_front' ) && (int) get_option( 'page_on_front' ) === (int) $post_id;
+				if ( $post_id && ! $is_front && method_exists( '\\WPO_Page_Cache', 'delete_single_post_cache' ) ) {
+					\WPO_Page_Cache::delete_single_post_cache( $post_id );
+					return 'by post';
+				}
+				if ( ! method_exists( '\\WPO_Page_Cache', 'delete_cache_by_url' ) ) {
+					throw new \Exception( 'This version of WP-Optimize has no per-page purge.' );
+				}
+				\WPO_Page_Cache::delete_cache_by_url( $url, false );
+				return '';
+			} );
+		}
 		if ( $post_id && class_exists( '\\CF\\WordPress\\Hooks' ) ) {
 			$try( 'cloudflare', static function () use ( $post_id ) {
 				$hooks = new \CF\WordPress\Hooks();
