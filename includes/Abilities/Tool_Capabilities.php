@@ -196,6 +196,8 @@ class Tool_Capabilities {
 			// ==================== ForgeCache: admin ops ====================
 			'fc_clear_cache'     => 'manage_options',
 			'fc_get_cache_stats' => 'manage_options',
+			'wpo_get_cache_status' => 'manage_options',
+			'akismet_get_status' => 'manage_options',
 			'fc_get_rum_stats'   => 'manage_options',
 		);
 	}
@@ -256,6 +258,12 @@ class Tool_Capabilities {
 		if ( strpos( $tool_name, 'rafp_' ) === 0 ) return 'manage_options';
 		// Subscriber data and sending: administrators only (each tool also needs MailPoet's own permission).
 		if ( strpos( $tool_name, 'mailpoet_' ) === 0 ) return 'manage_options';
+		if ( strpos( $tool_name, 'image_optimisation_' ) === 0 ) return 'manage_options';
+		if ( strpos( $tool_name, 'jetpack_' ) === 0 && 'jetpack_get_backup_status' !== $tool_name ) return 'manage_options';
+		if ( strpos( $tool_name, 'rsssl_' ) === 0 ) return 'manage_options';
+		if ( strpos( $tool_name, 'wpo_' ) === 0 ) return 'edit_posts';
+		if ( strpos( $tool_name, 'wpmailsmtp_' ) === 0 ) return 'manage_options';
+		if ( strpos( $tool_name, 'akismet_' ) === 0 ) return 'moderate_comments';
 		if ( strpos( $tool_name, 'snippets_' ) === 0 ) {
 			if ( function_exists( '\Code_Snippets\code_snippets' ) ) {
 				return \Code_Snippets\code_snippets()->get_cap();

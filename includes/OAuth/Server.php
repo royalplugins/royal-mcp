@@ -796,7 +796,7 @@ class Server {
         switch ( $reason ) {
             case 'fetch_failed':
                 /* translators: %s: address of the application's client information document */
-                return sprintf( __( 'This site could not fetch the application\'s client information document (%s), so the application cannot sign in. Try again in a few minutes. If it keeps failing, the site\'s host may be blocking outgoing requests, or that address is down.', 'royal-mcp' ), $address );
+                return sprintf( __( 'This site could not fetch the application\'s client information document (%s), so the application cannot sign in. Try again in a few minutes. If it keeps failing, the site\'s host may be blocking outgoing requests, or that address is down. The site owner can connect with manual credentials instead: Royal MCP > Settings > Advanced (manual OAuth credentials), generate a Client ID and Secret, save, then enter both in the application\'s connector settings.', 'royal-mcp' ), $address );
             case 'rate_limited':
                 return __( 'Too many sign-in attempts from your network in the last few minutes. Wait 10 minutes and try again.', 'royal-mcp' );
             case 'invalid_document':

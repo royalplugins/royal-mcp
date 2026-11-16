@@ -63,6 +63,11 @@ class Registrar {
 			'formforge_'   => 'formforge',
 			'rafp_'        => 'royal-affiliate',
 			'mailpoet_'    => 'mailpoet',
+			'image_optimisation_' => 'image-optimisation',
+			'rsssl_'       => 'really-simple-security',
+			'wpo_'         => 'wp-optimize',
+			'wpmailsmtp_'  => 'wpmailsmtp',
+			'akismet_'     => 'akismet',
 		);
 	}
 
@@ -188,6 +193,9 @@ class Registrar {
 			'ai1wm_get_backup_status'        => 'backup-status',
 			'wpvivid_get_backup_status'      => 'backup-status',
 			'jetpack_get_backup_status'      => 'backup-status',
+			'jetpack_get_stats'              => 'jetpack',
+			'jetpack_list_modules'           => 'jetpack',
+			'jetpack_set_module'             => 'jetpack',
 			'backwpup_get_backup_status'     => 'backup-status',
 			'rankmath_get_post_score'        => 'seo-reads',
 			'rankmath_get_404_logs'          => 'seo-reads',

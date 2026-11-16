@@ -49,6 +49,9 @@ function royal_mcp_uninstall_site() {
     delete_option('royal_mcp_agent_readiness');
     delete_option('royal_mcp_db_upgrade_last_failed_at');
     delete_option('royal_mcp_tables_checked_at');
+    delete_option('royal_mcp_wpmailsmtp_test_sends');
+    delete_option('royal_mcp_wpmailsmtp_test_lock');
+    delete_option('royal_mcp_akismet_recheck_lock');
 
     delete_transient('royal_mcp_cache');
     delete_transient('royal_mcp_authorize_rule_restore');

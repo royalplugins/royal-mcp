@@ -738,6 +738,12 @@ class Coexistence_Check {
 	 */
 	const OVERLAPPING_ABILITIES = [
 		'mailpoet/'    => [ 'plugin' => 'MailPoet', 'royal_mcp_tools' => 'mailpoet_*' ],
+		'imagify/'     => [ 'plugin' => 'Imagify', 'royal_mcp_tools' => 'image_optimisation_get_status' ],
+		'shortpixel/'  => [ 'plugin' => 'ShortPixel', 'royal_mcp_tools' => 'image_optimisation_get_status' ],
+		'jetpack/'     => [ 'plugin' => 'Jetpack', 'royal_mcp_tools' => 'jetpack_list_modules, jetpack_set_module' ],
+		'jetpack-stats/' => [ 'plugin' => 'Jetpack', 'royal_mcp_tools' => 'jetpack_get_stats' ],
+		'wp-mail-smtp/' => [ 'plugin' => 'WP Mail SMTP', 'royal_mcp_tools' => 'wpmailsmtp_*' ],
+		'akismet/'     => [ 'plugin' => 'Akismet', 'royal_mcp_tools' => 'akismet_*' ],
 		'woocommerce/' => [ 'plugin' => 'WooCommerce', 'royal_mcp_tools' => 'wc_*' ],
 	];
 

@@ -164,6 +164,30 @@ class Categories {
 				'label'       => __( 'Royal MCP: MailPoet', 'royal-mcp' ),
 				'description' => __( 'MailPoet lists and subscribers, newsletter drafts, test sends, guarded scheduling and sent-email statistics.', 'royal-mcp' ),
 			),
+			'image-optimisation' => array(
+				'label'       => __( 'Royal MCP: Image Optimisation', 'royal-mcp' ),
+				'description' => __( 'Image optimisation status from Smush, EWWW Image Optimizer, Imagify or ShortPixel: image counts, space saved, auto-optimise and bulk-run state.', 'royal-mcp' ),
+			),
+			'jetpack'       => array(
+				'label'       => __( 'Royal MCP: Jetpack', 'royal-mcp' ),
+				'description' => __( 'Jetpack site stats from WordPress.com, the module list, and switching modules on or off.', 'royal-mcp' ),
+			),
+			'really-simple-security' => array(
+				'label'       => __( 'Royal MCP: Really Simple Security', 'royal-mcp' ),
+				'description' => __( 'Really Simple Security SSL, hardening and certificate status, and stored vulnerability results.', 'royal-mcp' ),
+			),
+			'wp-optimize'   => array(
+				'label'       => __( 'Royal MCP: WP-Optimize', 'royal-mcp' ),
+				'description' => __( 'WP-Optimize page cache status and page cache purging.', 'royal-mcp' ),
+			),
+			'wpmailsmtp'    => array(
+				'label'       => __( 'Royal MCP: WP Mail SMTP', 'royal-mcp' ),
+				'description' => __( 'WP Mail SMTP sending status and last error, a rate-limited test email, and email log availability.', 'royal-mcp' ),
+			),
+			'akismet'       => array(
+				'label'       => __( 'Royal MCP: Akismet', 'royal-mcp' ),
+				'description' => __( 'Akismet status and settings, the Check for Spam recheck of pending comments, and spam statistics.', 'royal-mcp' ),
+			),
 		);
 	}
 
