@@ -86,11 +86,11 @@ $rmcp_wn_royally_slide_url = 'https://royalplugins.com/royally/?utm_source=royal
                 </div>
             </div>
 
-            <!-- SLIDE 3: more tools, shorter list -->
+            <!-- SLIDE 3: 100 more tools, shorter list -->
             <div class="rmcp-wn-slide is-reversed">
                 <div class="rmcp-wn-slide-body">
                     <span class="rmcp-wn-tag"><?php esc_html_e( 'New in v2.0', 'royal-mcp' ); ?></span>
-                    <h3><?php esc_html_e( '79 more tools, and a shorter list for your AI', 'royal-mcp' ); ?></h3>
+                    <h3><?php esc_html_e( '100 more tools, and a shorter list for your AI', 'royal-mcp' ); ?></h3>
                     <p><?php esc_html_e( 'Your AI can now install, update and switch plugins and themes, check a site before launch, write a monthly maintenance report and do more in ACF, GuardPress, SiteVault and other plugins.', 'royal-mcp' ); ?></p>
                     <p><?php esc_html_e( 'Tools for plugins that are not active on your site are left out, so your AI sees only what it can use here.', 'royal-mcp' ); ?></p>
                 </div>

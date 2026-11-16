@@ -10,11 +10,11 @@ License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Preview-On-WordPress-Playground: yes
 
-Connect Claude, ChatGPT or any AI app to WordPress. Drafts only mode, access levels per app and a 72-hour undo. 380+ tools, self-hosted.
+Connect Claude, ChatGPT or any AI app to WordPress. Drafts only mode, access levels per app and a 72-hour undo. 400+ tools, self-hosted.
 
 == Description ==
 
-**Let Claude, ChatGPT or any AI Agent work on your WordPress site, while you decide what it may touch. Free and 100% self-hosted. 380+ MCP tools.**
+**Let Claude, ChatGPT or any AI Agent work on your WordPress site, while you decide what it may touch. Free and 100% self-hosted. 400+ MCP tools.**
 
 [Royal MCP](https://royalplugins.com/royal-mcp/) is a free WordPress MCP plugin. It turns your site into an MCP server, so the AI app you already use can write and edit posts, update products, fill in SEO fields and edit Elementor or Divi pages when you ask it to. You choose how far each app can go, you can see what it changed, and tracked changes can be undone for 72 hours.
 
@@ -32,7 +32,7 @@ Connect Claude, ChatGPT or any AI app to WordPress. Drafts only mode, access lev
 * **Context** - write down what your site is for, its tone and what to leave alone. Every connected AI client gets it when it connects.
 * **Skills** - switch on a playbook for Elementor, Divi, WooCommerce or SiteVault and connected AI clients read it before that kind of work. Nothing to download.
 * **A shorter tool list** - tools for plugins that are not active on your site are left out, so the AI sees only what it can use.
-* **More tools** - plugin and theme management, launch and maintenance reports, page checks and more integrations.
+* **100 more tools** - plugin and theme management, launch and maintenance reports, page checks, theme colours and fonts, and new integrations for Akismet, Jetpack, WP Mail SMTP, WP-Optimize, Really Simple Security and image optimisers.
 
 = What you can ask for =
 
@@ -44,7 +44,7 @@ Connect Claude, ChatGPT or any AI app to WordPress. Drafts only mode, access lev
 * "Why did the site throw a PHP error this morning?"
 * "Show me what you changed today, then undo the last one."
 
-Royal MCP has 380+ MCP tools: 140 for WordPress itself and 244 across 38 plugins, including WooCommerce, Elementor, Divi, Advanced Custom Fields and Yoast SEO. The full list is further down this page.
+Royal MCP has 400+ MCP tools: 147 for WordPress itself and 258 across 46 plugins, including WooCommerce, Elementor, Divi, Advanced Custom Fields and Yoast SEO. The full list is further down this page.
 
 = Connect Claude to WordPress =
 
@@ -76,7 +76,7 @@ ChatGPT can then read your posts, write drafts, update product prices, moderate 
 
 = Plugins with dedicated MCP tools =
 
-38 plugins have their own tools. Each one is listed below with what your AI can do in it.
+46 plugins have their own tools. Each one is listed below with what your AI can do in it.
 
 **Not seeing yours?** MCP still works. WordPress core operations (posts, pages, media, users, taxonomies, custom fields, menus, options) cover most day-to-day AI workflows for any plugin — read/write ACF via `wp_get_post_meta` even without ACF-specific tools, edit posts on any custom post type, moderate any plugin's comments. Shared SEO meta tools automatically work with Rank Math, AIOSEO, SEOPress, and SEObolt. A dedicated integration layers specialized tools on top when that plugin exposes its own data model, request features/plugins support [here on the wp.org support forum](https://wordpress.org/support/plugin/royal-mcp/).
 
@@ -98,9 +98,9 @@ Royal MCP is designed to run next to the MCP tools other plugins ship, so your A
 
 The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) companion shows every AI agent hitting your site at the HTTP layer (training crawlers, retrieval bots, AI search engines), not just the ones connected through Royal MCP. Install both for a unified view across MCP tool calls and HTTP-layer bot hits.
 
-= 140 Core Tools + 244 Integration Tools =
+= 147 Core Tools + 258 Integration Tools =
 
-**WordPress Core (140 tools):**
+**WordPress Core (147 tools):**
 
 * Posts - create, read, update, delete, search, count, clone as a draft, sort by publish or last-modified date and find posts edited since a given date (any registered public post type, featured images supported)
 * Pages - full CRUD with parent page support
@@ -129,7 +129,7 @@ The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) c
 * Launch and Maintenance - publish and launch a page, check a site before launch, an SEO pass before launch, a monthly maintenance report, move theme assets to a new theme
 * Page Checks - validate a page's schema markup; purge one URL from the cache and check what is served; audit SEO fields across many posts
 * Skills - give the AI the site owner's chosen playbook for Elementor, Divi, WooCommerce or SiteVault work, one part at a time
-* Theme Appearance - get theme, read one or all theme mods, write theme mods (gated), read/write Custom CSS
+* Theme Appearance - get theme, read one or all theme mods, write theme mods (gated), read/write Custom CSS; read and change colours and fonts in Astra, GeneratePress, Kadence and Blocksy, with undo
 * Search + Permalink Structure - full-text content search; read/write permalinks (gated)
 * Options - read allowlisted core options, read plugin settings (sensitive keys redacted), write to allowlisted options when enabled
 
@@ -162,12 +162,18 @@ If the plugin is active on your WordPress site, its tools register automatically
 * **Ninja Forms (5 tools)** and **Fluent Forms (5 tools)** — forms and entries, personal details hidden by default
 * **Rank Math (2 tools)** — read a post's SEO score and the 404 log
 * **All-in-One WP Migration, WPvivid, BackWPup and Jetpack (1 tool each)** — read when the last backup ran and whether it finished
+* **Akismet (3 tools)** — key and spam status, run Akismet's spam check on pending comments, spam stats
+* **Jetpack (3 tools)** — site stats, list modules, switch a module on or off with undo (protection and sign-in modules need a confirm)
+* **WP Mail SMTP (3 tools)** — mailer status and last error, send a test email (5 an hour), email log where the plugin keeps one
+* **WP-Optimize (2 tools)** — page cache status, purge the whole cache or listed pages
+* **Really Simple Security (2 tools)** — SSL, hardening and certificate status, stored vulnerability results
+* **Smush, EWWW Image Optimizer, Imagify and ShortPixel (1 tool)** — optimised and unoptimised images, space saved, auto-optimise and bulk-run state
 
 = Royal Plugins Integrations (auto-detected) =
 
 Every Royal Plugin auto-exposes MCP tools alongside Royal MCP:
 
-* **Royal AI Firewall (8 tools)** — review AI bot traffic, dashboard stats, and set allow/block/challenge policies per bot signature, one bot or many at once with a preview and one undo
+* **Royal AI Firewall (8 tools)** — review AI bot traffic, dashboard stats, and set allow, block, log-only, rate-limit or paywall policies per bot, one bot or many at once with a preview and one undo
 * **GuardPress (12 tools)** — review your security score and dashboard summary, run vulnerability scans, read hardening, malware and file-integrity results, inspect failed logins and blocked IPs, block an IP
 * **SiteVault (11 tools)** — list backups, trigger new ones, check progress, review schedules, read a backup health summary, check that a backup file opens
 * **ForgeCache (4 tools)** — purge and inspect your page cache, and read real-user Core Web Vitals
@@ -225,7 +231,7 @@ Security. Many MCP servers have no authentication at all. Royal MCP requires sig
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
-No. WordPress 6.9 added the Abilities API (a primitive for registering AI-callable functions), and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations the bare primitive does not include: enforced API key auth, OAuth 2.1 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 140 ready-to-use WordPress core tools, and 244 integration tools for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Ninja Forms, Fluent Forms, Redirection, Solid Security, Wordfence, Contact Form 7, MailPoet, Relevanssi, MonsterInsights, W3 Total Cache, LiteSpeed Cache, Duplicator, BuddyPress, TablePress, Code Snippets, WPCode, and Complianz.
+No. WordPress 6.9 added the Abilities API (a primitive for registering AI-callable functions), and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations the bare primitive does not include: enforced API key auth, OAuth 2.1 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 147 ready-to-use WordPress core tools, and 258 integration tools for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Ninja Forms, Fluent Forms, Redirection, Solid Security, Wordfence, Contact Form 7, MailPoet, Relevanssi, MonsterInsights, W3 Total Cache, LiteSpeed Cache, Duplicator, BuddyPress, TablePress, Code Snippets, WPCode, and Complianz.
 
 = Does Royal MCP work with WooCommerce? =
 
@@ -337,7 +343,7 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 == Changelog ==
 
 = 2.0.0 =
-* New: A dashboard, a Context page that tells AI clients about your site, built-in skills, and 79 more tools including plugin and theme management.
+* New: A dashboard, a Context page that tells AI clients about your site, built-in skills, and 100 more tools including plugin and theme management.
 
 = 1.5.17 =
 * Security: Sign-in, undo and integration safeguards are stricter, and the Activity Log now keeps entries for 90 days and can be cleared.
@@ -904,7 +910,7 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 == Upgrade Notice ==
 
 = 2.0.0 =
-Major release: new Dashboard, Context and Skills screens and 79 more tools. Settings are now on two screens, Connections and Safety.
+Major release: new Dashboard, Context and Skills screens and 100 more tools. Settings are now on two screens, Connections and Safety.
 
 = 1.5.17 =
 Security release, recommended for all sites. Activity Log entries older than 90 days are removed by the daily cleanup.
