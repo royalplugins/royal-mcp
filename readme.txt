@@ -33,6 +33,8 @@ Connect Claude, ChatGPT or any AI app to WordPress. Drafts only mode, access lev
 * **Skills** - switch on a playbook for Elementor, Divi, WooCommerce or SiteVault and connected AI clients read it before that kind of work. Nothing to download.
 * **A shorter tool list** - tools for plugins that are not active on your site are left out, so the AI sees only what it can use.
 * **100 more tools** - plugin and theme management, launch and maintenance reports, page checks, theme colours and fonts, and new integrations for Akismet, Jetpack, WP Mail SMTP, WP-Optimize, Really Simple Security and image optimisers.
+* **Safer setting changes** - an AI client can change one part of a plugin setting without sending the whole thing back, a change that would overwrite a value Royal MCP keeps hidden from AI clients is refused, and you choose which settings an AI may read in full under Return as stored.
+* **Clearer tools** - every tool has a plain title, long lists come in pages, and dates include their time zone.
 
 = What you can ask for =
 
@@ -343,7 +345,7 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 == Changelog ==
 
 = 2.0.0 =
-* New: A dashboard, a Context page that tells AI clients about your site, built-in skills, and 100 more tools including plugin and theme management.
+* New: A dashboard, a Context page, built-in skills, 100 more tools including plugin and theme management, and safer setting changes.
 
 = 1.5.17 =
 * Security: Sign-in, undo and integration safeguards are stricter, and the Activity Log now keeps entries for 90 days and can be cleared.

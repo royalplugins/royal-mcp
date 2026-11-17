@@ -99,6 +99,16 @@ final class Envelope {
      *                             undo token could be stored.
      * @return array MCP-canonical tool-response envelope.
      */
+    /**
+     * The undo tool that accepts a token: mcp_undo_last_operation, unless Royal MCP Pro's own
+     * undo tool is present and the token is one of its 64-character tokens.
+     */
+    public static function undo_tool_for( string $token ) : string {
+        return ( 1 === preg_match( '/^[a-f0-9]{64}\z/', $token ) && class_exists( '\Royal_MCP_Pro\Undo\Tool' ) )
+            ? 'royal_mcp_undo_last_operation'
+            : 'mcp_undo_last_operation';
+    }
+
     public static function success( string $summary, array $struct = [], ?array $undo = null ) : array {
         $has_undo = is_array( $undo ) && ! empty( $undo['token'] );
         if ( $has_undo ) {
