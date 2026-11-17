@@ -56,7 +56,7 @@ class Elementor {
 			],
 			[
 				'name'        => 'elementor_replace_text',
-				'description' => 'Replace text in all text-bearing widget settings of an Elementor page. Walks the _elementor_data tree and substitutes matching strings in known text fields (heading title, text-editor content, button text, image caption, image alt / title on image + image-box + image-carousel + image-gallery + basic-gallery widgets, etc.). Case-sensitive by default. Classic and Elementor 4 (atomic) widgets alike. Response includes match count, an undo token, and a read-after-write verification block. Undo is refused while the page has been edited since (the token stays valid; force: true restores anyway). Optional dry_run=true reports match count without writing. Optional expected_count guards the write — aborts unless the actual match count equals this value. Optional sync_attachment_meta=true also updates the underlying WP media library _wp_attachment_image_alt postmeta so Elementor front-end renders (which read attachment metadata by default) reflect the new alt immediately without the user reopening the editor (sitewide blast radius — opt-in only). Note: _elementor_data stores text with HTML entities (& → &amp;, — → &mdash;, etc.); when 0 matches are returned and the search string contains special characters, try the HTML-entity-encoded form.',
+				'description' => 'Replace text in the text settings of every widget on one Elementor page (headings, text editor, buttons, image captions, alt and title text on image and gallery widgets, and similar), for classic and Elementor 4 (atomic) widgets. Case-sensitive unless case_insensitive is true. dry_run true reports the match count without writing; expected_count refuses the write unless the match count equals it. sync_attachment_meta true also updates the alt text stored on the media library image, which changes that image everywhere on the site (opt-in). Elementor stores text with HTML entities (&amp;, &mdash;), so when nothing matches and the search text has special characters, try the entity-encoded form. Returns the match count, an undo token and a read-after-write check. Undo is refused when the page was edited since (the token stays valid; force: true restores anyway).',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -2257,7 +2257,7 @@ class Elementor {
 				'id'            => (int) $tpl->ID,
 				'name'          => $tpl->post_title,
 				'type'          => $type,
-				'date_modified' => $tpl->post_modified_gmt,
+				'date_modified' => \Royal_MCP\MCP\Server::iso_utc_date( $tpl->post_modified_gmt ),
 			];
 		}
 

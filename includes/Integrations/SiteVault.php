@@ -97,7 +97,7 @@ class SiteVault {
 		return array_merge( [
 			[
 				'name'        => 'sv_get_backups',
-				'description' => 'List available SiteVault backups',
+				'description' => 'List SiteVault backups with ID, name, type, status, size, cloud sync state and created and completed times. Filter by status or type; limit defaults to 20 (max 50). Read-only. Requires manage_options (manage_network_options on multisite).',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -149,7 +149,7 @@ class SiteVault {
 			],
 			[
 				'name'        => 'sv_get_schedules',
-				'description' => 'List backup schedules',
+				'description' => 'List SiteVault backup schedules: ID, name, backup type, frequency, whether it is active, and the last and next run times. Takes no inputs. Read-only. Requires manage_options (manage_network_options on multisite).',
 				'inputSchema' => [ 'type' => 'object', 'properties' => new \stdClass() ],
 			],
 		], SiteVaultHealth::get_tools() );

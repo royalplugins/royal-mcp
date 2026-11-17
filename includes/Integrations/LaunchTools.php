@@ -1599,7 +1599,7 @@ class LaunchTools {
 			[
 				'compose_mode'        => $mode,
 				'window_days'         => $window_days,
-				'generated_at'        => current_time( 'mysql', true ) . 'Z',
+				'generated_at'        => gmdate( 'c' ),
 				'admin_view_url'      => admin_url( 'admin.php?page=royal-mcp-logs' ),
 				'dependencies_probed' => $deps,
 				'steps'               => $engine['steps'],

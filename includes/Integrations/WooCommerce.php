@@ -79,7 +79,7 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_create_product',
-				'description' => 'Create a WooCommerce product',
+				'description' => 'Create a WooCommerce product (simple, variable, grouped or external; default simple) with name and optional prices, descriptions, SKU, stock_quantity, category IDs. A draft unless status is publish (needs publish_products). Requires edit_products. Returns ID, URL and an undo token that deletes it.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -99,7 +99,7 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_update_product',
-				'description' => 'Update a WooCommerce product',
+				'description' => 'Update one WooCommerce product by id: name, prices, description, short_description, sku, status or stock_quantity; pass at least one. Saved fields are read back and checked. Requires edit_product on it, and publish_products to publish. Returns an undo token that restores the earlier values.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -403,7 +403,7 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_delete_variation',
-				'description' => 'Delete a product variation',
+				'description' => 'Delete one variation of a variable product; product_id must be its parent. force defaults to true (deleted for good); force false moves it to the trash. Requires delete_product on the variation. Returns an undo token: undo restores a trashed variation, or recreates a deleted one with a new ID.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
