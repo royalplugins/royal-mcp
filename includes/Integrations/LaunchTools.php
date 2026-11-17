@@ -2147,8 +2147,14 @@ class LaunchTools {
 		// Terms the run created go last, once the post that used them is gone, and only when nothing else uses them.
 		foreach ( $ops as $op ) {
 			if ( ( $op['op'] ?? '' ) === 'delete_term' && (int) ( $op['id'] ?? 0 ) > 0 ) {
+				clean_term_cache( (int) $op['id'], (string) ( $op['tax'] ?? '' ) );
 				$term = get_term( (int) $op['id'], (string) ( $op['tax'] ?? '' ) );
-				if ( $term && ! is_wp_error( $term ) && 0 === (int) $term->count ) {
+				if ( ! $term instanceof \WP_Term ) {
+					continue;
+				}
+				// The stored count leaves out drafts and other unpublished posts, so the links themselves are checked.
+				$users = get_objects_in_term( (int) $term->term_id, $term->taxonomy );
+				if ( is_array( $users ) && [] === $users ) {
 					wp_delete_term( (int) $term->term_id, $term->taxonomy );
 				}
 			}

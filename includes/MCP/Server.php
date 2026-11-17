@@ -65,6 +65,15 @@ use Royal_MCP\Integrations\Elementor_Coexistence;
  * This replaces the deprecated HTTP+SSE transport.
  */
 class Server {
+    /** @var array<int,array{tool:string,option:string,path:array,value:mixed}> Values handed over as stored in the call running now. */
+    private $as_stored_grants = [];
+    /** @var array<int,array{tool:string,option:string}> Options returned as stored by the last tool call. */
+    private static $as_stored_served = [];
+    /** @var array<string,array> Read views of option values, worked out once per value in a request (see option_read_view_pairs()). */
+    private $option_view_memo = [];
+    /** Seconds to wait, set when the calling user's own budget refused a tool call this request. */
+    private $user_rate_retry_after = null;
+
 
     /**
      * Rate limit: max requests per window per real client IP.
@@ -365,7 +374,8 @@ class Server {
                 return $result;
             }
             $result['structuredContent']['content_hash'] = $hash;
-            $result['content'][0]['text'] = rtrim( (string) $result['content'][0]['text'] ) . ' Content hash: ' . $hash . '.';
+            // On its own line, so the digest is read apart from the undo token earlier in the text.
+            $result['content'][0]['text'] = rtrim( (string) $result['content'][0]['text'] ) . "\n" . 'Content hash: ' . $hash . '.';
             return $result;
         }
         if ( ! isset( $result['content'] ) || is_string( $result['content'] ) ) {
@@ -491,17 +501,15 @@ class Server {
         if ( 'execute_tool' === $name ) {
             return true;
         }
-        // A tool another plugin adds may say that this call, by its arguments, only reads.
-        if ( is_array( $args ) && ! $this->is_builtin_tool_name( $name ) && apply_filters( 'royal_mcp_call_reads', false, $name, $args ) ) {
+        if ( self::is_dry_run_read( $name, $args ) ) {
             return true;
         }
-        // A preview that writes nothing is a read. Only the literal true counts, so no
-        // tool can read the same argument differently and write.
-        if ( is_array( $args ) && true === ( $args['dry_run'] ?? null ) && in_array( $name, self::DRY_RUN_READS, true ) ) {
+        // A call may only read by its arguments (a Pro tool's read action, or a tool another plugin adds).
+        if ( is_array( $args ) && $this->call_only_reads( (string) $name, $args ) ) {
             return true;
         }
-        // Royal MCP's own tools are classed by name, whatever the tool list says.
-        if ( $this->is_builtin_tool_name( $name ) ) {
+        // Royal MCP's own tools (shared and Pro) are classed by name, whatever the tool list says.
+        if ( $this->is_own_tool_name( $name ) ) {
             return ! empty( self::annotations_for( $name )['readOnlyHint'] );
         }
         if ( null === $this->read_only_allowed ) {
@@ -517,10 +525,13 @@ class Server {
 
     /** Whether drafts-only checks may treat the tool as read-only. */
     private function tool_is_read_only( $name, $args = null ) {
-        if ( is_array( $args ) && true === ( $args['dry_run'] ?? null ) && in_array( (string) $name, self::DRY_RUN_READS, true ) ) {
+        if ( self::is_dry_run_read( $name, $args ) ) {
             return true;
         }
-        if ( $this->is_builtin_tool_name( $name ) ) {
+        if ( is_array( $args ) && $this->call_only_reads( (string) $name, $args ) ) {
+            return true;
+        }
+        if ( $this->is_own_tool_name( $name ) ) {
             return ! empty( self::annotations_for( $name )['readOnlyHint'] );
         }
         return 'execute_tool' !== (string) $name && $this->allowed_in_read_only_mode( $name, $args );
@@ -1319,15 +1330,22 @@ class Server {
         $data = get_transient($transient_key);
         $now  = time();
 
+        // Only a user's own bucket goes into the RateLimit-* headers.
+        $own_bucket = 0 === strpos((string) $ip, 'user:');
+
         if ($data === false || ($now - (int) ($data['start'] ?? 0)) > $window) {
             set_transient($transient_key, ['count' => 1, 'start' => $now], $window); // audit:transient-ttl-only -- rate limit window
-            $this->note_rate_state($max, $max - 1, $window);
+            if ($own_bucket) {
+                $this->note_rate_state($max, $max - 1, $window);
+            }
             return true;
         }
 
         $data['count'] = (int) ($data['count'] ?? 0) + 1;
         set_transient($transient_key, $data, $window); // audit:transient-ttl-only -- rate limit window
-        $this->note_rate_state($max, $max - $data['count'], max(1, ((int) $data['start'] + $window) - $now));
+        if ($own_bucket) {
+            $this->note_rate_state($max, $max - $data['count'], max(1, ((int) $data['start'] + $window) - $now));
+        }
 
         if ($data['count'] > $max) {
             $retry_after = max(1, ((int) $data['start'] + $window) - $now);
@@ -2074,7 +2092,7 @@ class Server {
         if (array_key_exists('expected_count', $args) && intval($args['expected_count']) !== $occurrences) {
             throw new \Exception(sprintf('expected_count is %d but %d occurrence(s) found; content unchanged.', intval($args['expected_count']), $occurrences));
         }
-        if (!empty($args['dry_run'])) {
+        if (self::wants_dry_run($args)) {
             // Preview shape matches wp_update_option and wp_update_permalink_structure
             // so any agent that learned the {state, preview, would_execute} envelope
             // on one dry-run tool reads this one the same way. would_execute is
@@ -2352,9 +2370,9 @@ class Server {
             ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page). Each result includes content_length (bytes of stored content) for size triage.', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'pending', 'private', 'future', 'any'], 'description' => 'publish (default), one status, or any (every status you can read except trash), so a draft you just created can be found.']], 'required' => ['query']]],
 
             // Options
-            ['name' => 'wp_get_option', 'description' => 'Get a single WordPress option value. Requires manage_options capability. The option name must be in the readable allowlist — 13 defaults (blogname, blogdescription, siteurl, home, admin_email, posts_per_page, date_format, time_format, timezone_string, googlesitekit_analytics-4_settings, show_on_front, page_on_front, blog_public) plus any keys plugin authors opt in via the royal_mcp_readable_options filter, plus options an admin allowlists under Royal MCP settings (Allowlisted plugin options) while option writes are enabled. Values under credential-like names (keys, secrets, passwords, tokens) and values shaped like credentials are redacted; a short random value stored under an ordinary name cannot be told apart from normal data and is returned.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string']], 'required' => ['name']]],
+            ['name' => 'wp_get_option', 'description' => 'Get a single WordPress option value. Requires manage_options capability. The option name must be in the readable allowlist — 13 defaults (blogname, blogdescription, siteurl, home, admin_email, posts_per_page, date_format, time_format, timezone_string, googlesitekit_analytics-4_settings, show_on_front, page_on_front, blog_public) plus any keys plugin authors opt in via the royal_mcp_readable_options filter, plus options an admin allowlists under Royal MCP settings (Allowlisted plugin options) while option writes are enabled. Values are masked: values under credential-like names (keys, secrets, passwords, tokens) and values shaped like credentials are redacted; a short random value stored under an ordinary name cannot be told apart from normal data and is returned. An administrator can list an allowlisted option under Return as stored (Royal MCP settings); its value is then returned unmasked, except that credential fields, provider key formats, private keys and credentials in links inside it stay hidden, and the reply says as_stored: true. That never applies to protected options or names that look like credentials.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string']], 'required' => ['name']]],
             ['name' => 'wp_get_plugin_settings', 'description' => 'Get all options stored by a plugin, looked up by its slug or option prefix — options named <slug> or <slug>_* (e.g. "royal-affiliate-pro", or "rafp" for that plugin\'s rafp_* options). WordPress core option prefixes are refused (use wp_get_option). Sensitive keys (api keys, secrets, tokens, passwords) are redacted and protected options are left out.', 'inputSchema' => ['type' => 'object', 'properties' => ['plugin_slug' => ['type' => 'string', 'description' => 'Plugin slug, e.g. royalcomply or royal-affiliate-pro']], 'required' => ['plugin_slug']]],
-            ['name' => 'wp_update_option', 'description' => 'Update a WordPress option. Four gates in order: (1) manage_options capability on the caller; (2) master "Allow AI to write WordPress options" admin toggle enabled; (3) hard denylist (siteurl, home, admin_email, mailserver_*, upload_path, users_can_register, wp_user_roles, wp_capabilities, api_key/secret/*_pass/*_key patterns, royal_mcp_* namespace — permanent, cannot be filter-overridden); (4) write⊆readable invariant + writable allowlist (option must appear in both royal_mcp_readable_options AND royal_mcp_writable_options — plugin authors must opt into READS before opting into WRITES). Error text names which gate blocked. "Not in allowlist" is fixable by an administrator under Royal MCP settings (Allowlisted plugin options) or via filter opt-in; "permanently denylisted" is not. Set dry_run=true to preview the change (current + proposed value, autoload state, size delta) without writing.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'New value (any JSON type). Full overwrite — read first, merge in your client, then write back.'], 'dry_run' => ['type' => 'boolean', 'description' => 'Preview the write without persisting. Returns current/proposed value, autoload state, and size delta.']], 'required' => ['name', 'value']]],
+            ['name' => 'wp_update_option', 'description' => 'Update a WordPress option. Four gates in order: (1) manage_options capability on the caller; (2) master "Allow AI to write WordPress options" admin toggle enabled; (3) hard denylist (siteurl, home, admin_email, mailserver_*, upload_path, users_can_register, wp_user_roles, wp_capabilities, api_key/secret/*_pass/*_key patterns, royal_mcp_* namespace — permanent, cannot be filter-overridden); (4) write⊆readable invariant + writable allowlist (option must appear in both royal_mcp_readable_options AND royal_mcp_writable_options — plugin authors must opt into READS before opting into WRITES). Error text names which gate blocked. "Not in allowlist" is fixable by an administrator under Royal MCP settings (Allowlisted plugin options) or via filter opt-in; "permanently denylisted" is not. Set dry_run=true to preview the change (current + proposed value, autoload state, size delta) without writing. Send either value (the whole new value) or operations (changes to parts of a value that holds named values or lists, leaving the rest as it is): set one key, add an item to the end of a list, remove a list item by position or by a field, change one field of a list item. With operations the reply reports each change instead of sending the whole value back, and one undo restores the option as it was before the call. A whole value that still holds "[REDACTED]" (from a masked read) is refused (redacted_value): send operations, or read the option as stored first. A whole value over a current value a read shows in part hidden is refused (read_is_masked); for an option returned as stored, send expected_sha256 (the sha256 that read returned) with the whole value.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'expected_sha256' => ['type' => 'string', 'description' => 'sha256 from wp_get_option or wp_get_plugin_settings for an option returned as stored. Required for a whole value, and for operations that set parts an earlier masked read hid, of an option returned as stored; refused with expected_mismatch when the option changed since.'], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null'], 'description' => 'New value (any JSON type). Full overwrite — read first, merge in your client, then write back. Leave out when sending operations.'], 'operations' => ['type' => 'array', 'maxItems' => 50, 'description' => 'Changes to parts of the stored value, applied in order; if any one cannot be applied, none is. Each has op and path, and set / append also have value. path is a list of steps from the top of the value: a key (text), a position in a list (whole number, first item is 0), or a match such as {"id": 1234} that picks the one list item whose field has that value. Examples: {"op":"set","path":["last_run_finished"],"value":"2026-01-01"}; {"op":"append","path":["entries"],"value":{"id":7}}; {"op":"remove","path":["entries",{"id":1234}]}; {"op":"remove","path":["entries",0]}; {"op":"set","path":["entries",{"id":5678},"reason"],"value":"fixed"}.', 'items' => ['type' => 'object', 'properties' => ['op' => ['type' => 'string', 'enum' => ['set', 'append', 'remove']], 'path' => ['type' => 'array', 'items' => ['type' => ['string', 'integer', 'object']]], 'value' => ['type' => ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null']]], 'required' => ['op', 'path']]], 'dry_run' => ['type' => 'boolean', 'description' => 'Preview the write without persisting. Returns current/proposed value, autoload state, and size delta; with operations, the list of changes.']], 'required' => ['name']]],
 
             // Menus
             ['name' => 'wp_get_menus', 'description' => 'List all registered navigation menus (nav_menu taxonomy). Returns id, name, slug, count (items in the menu) and locations (the theme menu locations it is assigned to) for each. Use wp_get_menu_items to enumerate items within a specific menu.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -2757,10 +2775,6 @@ class Server {
         return array_merge( $out, self::create_undo_fields( $new_id, (string) $source->post_type ) );
     }
 
-    /**
-     * Undo for a create: moving the new post to the trash. The fields are added
-     * to the tool's own result so the response keeps its shape.
-     */
     private static function create_undo_fields( $post_id, $post_type ) {
         $post = get_post( (int) $post_id );
         if ( ! $post ) {
@@ -2773,7 +2787,7 @@ class Server {
             'pre_op_state' => [ 'modified_gmt' => (string) $post->post_modified_gmt ],
         ] );
         if ( empty( $undo['token'] ) ) {
-            return [];
+            return \Royal_MCP\MCP\Support\Envelope::undo_unavailable_fields();
         }
         return [
             'undo_available'  => true,
@@ -2849,6 +2863,9 @@ class Server {
      * Single endpoint for all MCP communication
      */
     public function handle_mcp($request) {
+        // Rate headers describe this request only (a long-running process may serve several).
+        $this->rate_state            = null;
+        $this->user_rate_retry_after = null;
         $method = isset($_SERVER['REQUEST_METHOD']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET';
 
         // Handle OPTIONS for CORS preflight
@@ -3034,6 +3051,8 @@ class Server {
         }
 
         $result = $this->process_method($method, $params, $id);
+        // Requests that did not check the caller's own budget still report it.
+        $this->note_own_rate_state();
 
         // Log the method call for admin observability. Skip tools/call — it
         // has its own per-tool log rows via log_tool_call() already. Logging
@@ -3051,6 +3070,14 @@ class Server {
             $this->store_session($new_session_id, $auth_fingerprint);
             $response = $this->json_response($result, 200);
             $response->header('Mcp-Session-Id', $new_session_id);
+            return $response;
+        }
+
+        // The calling user's own per-minute budget refused this call: HTTP 429 with Retry-After,
+        // the JSON-RPC error kept as the body.
+        if (null !== $this->user_rate_retry_after) {
+            $response = $this->json_response($result, 429);
+            $response->header('Retry-After', (string) $this->user_rate_retry_after);
             return $response;
         }
 
@@ -4371,6 +4398,8 @@ class Server {
             if ( true !== $rate_check ) {
                 $rate_data = $rate_check instanceof \WP_REST_Response ? (array) $rate_check->get_data() : [];
                 $this->log_tool_call( $name, $args, 'error', (string) ( $rate_data['error']['message'] ?? 'Rate limit exceeded.' ), microtime( true ), null, null );
+                // The reply goes out as HTTP 429 with Retry-After (see handle_post_message()).
+                $this->user_rate_retry_after = max( 1, (int) ( $rate_data['error']['data']['retry_after_seconds'] ?? 60 ) );
                 return [
                     'jsonrpc' => '2.0',
                     'id'      => $id,
@@ -4382,10 +4411,12 @@ class Server {
         $start = microtime(true);
 
         try {
+            $this->as_stored_grants = [];
+            self::$as_stored_served = [];
             $result = $this->run_tool($name, $args);
             // A skill is a fixed text shipped with the plugin, also when it is read through execute_tool.
             $skill_read = 'execute_tool' === $name && is_array( $args ) && 'mcp_get_skill' === ( $args['tool_name'] ?? '' );
-            $result = $skill_read ? $result : $this->scrub_tool_result($name, $result);
+            $result = $skill_read ? $result : $this->scrub_tool_result($name, $result, $args);
             $this->log_tool_call($name, $args, 'success', null, $start, $result, null);
 
             // If the tool already returned a pre-formed MCP envelope (isError
@@ -4430,7 +4461,7 @@ class Server {
                         'text' => 'Error: ' . $this->scrub_error_message($e->getMessage()),
                     ]],
                     'isError' => true, // audit:helper-bypass-safe -- tools/call error reply, completed by ensure_structured_content
-                    'structuredContent' => $e instanceof \Royal_MCP\MCP\Support\Tool_Refusal ? $e->structured() : [
+                    'structuredContent' => $e instanceof \Royal_MCP\MCP\Support\Tool_Refusal ? $this->scrub_refusal_details($e) : [
                         'error'   => 'exception',
                         'message' => $this->scrub_error_message($e->getMessage()),
                     ],
@@ -4496,6 +4527,7 @@ class Server {
             'rl_get_costs', 'rl_create_cost', 'rl_get_renewals', 'rl_get_keys',
             'wp_get_term', 'wp_get_theme_mod', 'wp_get_widget',
             'relevanssi_get_index_status', 'relevanssi_list_top_searches', 'relevanssi_list_zero_hit_searches', 'relevanssi_update_synonyms', 'relevanssi_add_stopword',
+            'akismet_get_status', 'wpmailsmtp_get_status', 'wpmailsmtp_get_email_log', 'rsssl_get_status',
         ];
         /**
          * Filter the tools whose replies get the strict credential checks on free text.
@@ -4517,72 +4549,48 @@ class Server {
      * are set aside and put back unchanged, in the structured content and in
      * its text copy alike.
      *
-     * @param string $name   Tool name.
-     * @param mixed  $result Tool result (envelope, array, string or scalar).
+     * execute_tool replies are checked under the name of the tool they ran, by that tool's
+     * rules (strict mode, unscrubbed tools, own fields), exactly as a direct call would be.
+     * A value an option tool handed over as stored during this call (grant_as_stored(), with
+     * credential fields inside already hidden) is set aside, the rest of the reply is checked,
+     * and the value is put back where it was. Nothing in the reply's shape grants that.
+     *
+     * @param string     $name   Tool name.
+     * @param mixed      $result Tool result (envelope, array, string or scalar).
+     * @param array|null $args   The call's arguments (execute_tool names the tool it ran there).
      * @return mixed
      */
-    private function scrub_tool_result( $name, $result ) {
+    private function scrub_tool_result( $name, $result, $args = null ) {
+        $grants                 = $this->as_stored_grants;
+        $this->as_stored_grants = [];
+        if ( 'execute_tool' === (string) $name && is_array( $args ) && isset( $args['tool_name'] ) && is_string( $args['tool_name'] )
+            && '' !== $args['tool_name'] && 'execute_tool' !== $args['tool_name'] ) {
+            $name = $args['tool_name'];
+        }
         if ( self::returns_credential_by_design( $name ) ) {
             return $result;
         }
-        $opts = [
-            'mode'         => self::strict_scrub_tool( $name ) ? 'strict' : 'content',
-            'exempt_keys'  => [ 'session_id', 'token_ttl', 'resultType', 'isError', 'client_id' ],
-            // Royal MCP's own undo and change fields, at any depth (lists of changes carry them too).
-            // _meta is set aside only at the reply's top level (scrub_reply_payload).
-            'skip_keys'    => [ 'undo', 'undo_token', 'template_undo_token', 'change_id' ],
-            // Royal MCP's own tokens, kept only at the top of the reply (and of structuredContent).
-            'own_fields'   => [ 'commit_token', 'confirm_token' ],
-            'content_keys' => self::scrub_content_keys(),
-        ];
-        // ACF's own group and field keys are identifiers the next call needs back.
-        if ( AcfSetupIntegration::handles( (string) $name ) ) {
-            $opts['exempt_keys'] = array_merge( $opts['exempt_keys'], AcfSetupIntegration::ID_FIELDS );
-        }
-        /**
-         * Filter how one tool's reply is scrubbed. Only add fields that hold
-         * Royal MCP's own tokens or ids; never remove keys or switch modes.
-         *
-         * @param array  $opts Scrub options: mode, exempt_keys, skip_keys, content_keys.
-         * @param string $name Tool name.
-         */
-        // A tool another plugin adds is not ours: its top-level fields get no exemption.
-        $ours = $this->is_builtin_tool_name( (string) $name )
-            || ( class_exists( '\\Royal_MCP_Pro\\License_Gate' ) && \Royal_MCP_Pro\License_Gate::is_pro_tool( (string) $name ) );
-        if ( ! $ours ) {
-            $opts['own_fields'] = [];
-            $opts['own_meta']   = false;
-        }
-        $filtered = $ours ? apply_filters( 'royal_mcp_scrub_tool_opts', $opts, (string) $name ) : null;
-        if ( is_array( $filtered ) ) {
-            foreach ( [ 'exempt_keys', 'skip_keys', 'own_fields' ] as $k ) {
-                if ( isset( $filtered[ $k ] ) && is_array( $filtered[ $k ] ) ) {
-                    $opts[ $k ] = array_values( array_unique( array_merge( $opts[ $k ], array_filter( $filtered[ $k ], 'is_string' ) ) ) );
+        $kept = [];
+        if ( is_array( $result ) ) {
+            foreach ( $grants as $i => $grant ) {
+                if ( $grant['tool'] !== (string) $name || ! $this->option_returned_as_stored( $grant['option'] ) ) {
+                    continue;
                 }
+                $found = false;
+                $node  = self::value_at_path( $result, $grant['path'], $found );
+                if ( ! $found || $node !== $grant['value'] ) {
+                    continue;
+                }
+                $result     = self::with_value_at_path( $result, $grant['path'], 'rmcp_as_stored_' . $i );
+                $kept[ $i ] = $grant;
             }
         }
-        if ( is_string( $result ) ) {
-            return \Royal_MCP\MCP\Support\Secret_Scrubber::scrub( $result, '', $opts );
-        }
-        if ( ! is_array( $result ) ) {
-            return $result;
-        }
-        $own_top = [];
-        foreach ( $opts['own_fields'] as $f ) {
-            if ( isset( $result[ $f ] ) && is_string( $result[ $f ] ) ) {
-                $own_top['r'][ $f ] = $result[ $f ];
-            }
-            if ( isset( $result['structuredContent'][ $f ] ) && is_string( $result['structuredContent'][ $f ] ) ) {
-                $own_top['s'][ $f ] = $result['structuredContent'][ $f ];
-            }
-        }
-        $result = $this->scrub_tool_result_body( $result, $opts, $own_top );
-        foreach ( (array) ( $own_top['r'] ?? [] ) as $f => $v ) {
-            $result[ $f ] = $v;
-        }
-        foreach ( (array) ( $own_top['s'] ?? [] ) as $f => $v ) {
-            if ( isset( $result['structuredContent'] ) && is_array( $result['structuredContent'] ) ) {
-                $result['structuredContent'][ $f ] = $v;
+        $result = $this->scrub_tool_result_checked( $name, $result );
+        foreach ( $kept as $i => $grant ) {
+            $found = false;
+            if ( is_array( $result ) && 'rmcp_as_stored_' . $i === self::value_at_path( $result, $grant['path'], $found ) && $found ) {
+                $result                   = self::with_value_at_path( $result, $grant['path'], $grant['value'] );
+                self::$as_stored_served[] = [ 'tool' => $grant['tool'], 'option' => $grant['option'] ];
             }
         }
         return $result;
@@ -4967,7 +4975,26 @@ class Server {
 
         $response_meta = [ 'status' => $status ];
         if ('error' === $status && $error_message) {
-            $response_meta['error'] = (string) $error_message;
+            $response_meta['error'] = $this->scrub_error_message((string) $error_message);
+        }
+        // A call that returned an option as stored (wp_get_option, wp_get_plugin_settings, wp_update_option,
+        // or one of them through execute_tool) is marked as such in the log.
+        if ('success' === $status) {
+            $as_stored_options = [];
+            foreach (self::$as_stored_served as $served) {
+                $as_stored_options[] = sanitize_text_field((string) ($served['option'] ?? ''));
+            }
+            if (is_array($result) && true === ($result['as_stored'] ?? null) && in_array((string) $tool_name, ['wp_get_option', 'execute_tool'], true)) {
+                $as_stored_options[] = sanitize_text_field((string) ($result['name'] ?? ''));
+            }
+            $as_stored_options = array_values(array_unique(array_filter($as_stored_options, 'strlen'))); // audit:strlen-safe -- every entry comes from sanitize_text_field()
+            if ([] !== $as_stored_options) {
+                $response_meta['as_stored'] = true;
+                $response_meta['option']    = $as_stored_options[0];
+                if (count($as_stored_options) > 1) {
+                    $response_meta['options'] = array_slice($as_stored_options, 0, 50);
+                }
+            }
         }
         $logged_undo_token = is_array($result) ? (string) ($result['structuredContent']['undo_token'] ?? ($result['undo']['token'] ?? '')) : '';
         if ('success' === $status && preg_match('/^[a-f0-9]{32}$/', $logged_undo_token)) {
@@ -5192,11 +5219,13 @@ class Server {
                     throw new \Exception( 'Royal MCP is currently disabled.' );
                 }
             }
+            $this->as_stored_grants = [];
+            self::$as_stored_served = [];
             $result = $this->run_tool( $name, $args );
             if ( $log ) {
                 $this->log_tool_call( $name, $args, 'success', '', $start, $result );
             }
-            return $this->scrub_tool_result( $name, $result );
+            return $this->scrub_tool_result( $name, $result, $args );
         } catch ( \Throwable $e ) {
             if ( $log ) {
                 $this->log_tool_call( $name, $args, 'error', $e->getMessage(), $start, null, $e );
@@ -5273,11 +5302,37 @@ class Server {
 
     /**
      * Every tool call, direct or through execute_tool: an undo holds a lock on its
+     * token so two undos of one change cannot both run (the second one waits, then
+     * finds the token used); a write that names a post is read back afterwards.
+     */
+    private function execute_tool($name, $args) {
+        if ( 'mcp_undo_last_operation' === (string) $name && is_array( $args ) ) {
+            $ul_token = \Royal_MCP\MCP\Undo_Store::token_from_args( $args );
+            if ( 1 === preg_match( '/^[a-f0-9]{32}\z/', $ul_token ) ) {
+                $ul_held = self::claim_undo_token( $ul_token );
+                if ( false === $ul_held ) {
+                    throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'busy', 'Another undo of this change is running. Try again in a moment; the token stays valid.' );
+                }
+                // The snapshot is read again from the database under the lock, so an undo
+                // that finished while this one waited is seen as used.
+                wp_cache_delete( \Royal_MCP\MCP\Undo_Store::OPTION_PREFIX . $ul_token, 'options' );
+                try {
+                    return $this->execute_tool_verified( $name, $args );
+                } finally {
+                    self::release_undo_token( $ul_token, $ul_held );
+                }
+            }
+        }
+        return $this->execute_tool_verified( $name, $args );
+    }
+
+    /**
+     * Every tool call, direct or through execute_tool: an undo holds a lock on its
      * token so two undos of one change cannot both run; a content write with
      * expected_hash holds a lock on the post and is refused when the post changed
      * since that hash was read; content reads and writes report the current hash.
      */
-    private function execute_tool($name, $args) {
+    private function execute_tool_verified( $name, $args ) {
         $name = (string) $name;
         // Verify-after-write: a write that names a post is read back afterwards, and its
         // reply says what landed (verified), that the post reads back unchanged, or that
@@ -5557,13 +5612,31 @@ class Server {
             }
         }
         // A write carrying the redaction marker would store the marker in place of the real value.
-        // The execute_tool passthrough is checked when it calls the tool it names;
-        // search terms (find, search, query) may name the marker to clean it up.
+        // The execute_tool passthrough is checked when it calls the tool it names. Only the find side
+        // of a find-and-replace tool may name the marker (to clean it up); every other argument of a
+        // write is checked.
         if ( ( null !== $this->request_auth_method || 'abilities' === $this->request_route )
             && 'execute_tool' !== $name
+            && ! $this->tool_is_read_only( $name, is_array( $args ) ? $args : null )
+            && \Royal_MCP\MCP\Support\Secret_Scrubber::contains_marker( is_array( $args ) && self::is_find_replace_tool( (string) $name ) ? array_diff_key( $args, array_flip( [ 'find', 'search', 'old_text', 'old_string', 'pattern', 'needle' ] ) ) : $args ) ) {
+            if ( 'wp_update_option' === $name ) {
+                throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'redacted_value', self::option_marker_refusal_message( is_array( $args ) && is_string( $args['name'] ?? null ) ? \Royal_MCP\MCP\Support\SafeText::field( $args['name'] ) : '', is_array( $args ) && isset( $args['operations'] ) ) );
+            }
+            throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'redacted_value', 'This request contains "[REDACTED]" or another placeholder Royal MCP shows in place of hidden data (such as [hidden], [email hidden] or [nested too deep]). Writing it would replace the real value with that text. Leave that field out or send the real value; to change text around a hidden value, use wp_replace_in_post, wp_replace_in_page or wp_replace_text_in_blocks.' );
+        }
+        // Whole-value writes (ACF, post fields, blocks, snippets, order meta, page-builder data and
+        // bridged ability writes): refused when a read shows the current value differently from how
+        // it is stored.
+        if ( null !== $this->request_auth_method || 'abilities' === $this->request_route ) {
+            $this->refuse_masked_integration_write( (string) $name, is_array( $args ) ? $args : [] );
+        }
+        // A tool from another plugin's ability given back the cut-off "partial" JSON text a read
+        // returned would store a damaged value.
+        if ( ( null !== $this->request_auth_method || 'abilities' === $this->request_route )
+            && 0 === strpos( (string) $name, \Royal_MCP\Abilities\Plugin_Abilities::TOOL_NAME_START )
             && ! $this->tool_is_read_only( $name )
-            && \Royal_MCP\MCP\Support\Secret_Scrubber::contains_marker( is_array( $args ) ? array_diff_key( $args, array_flip( [ 'find', 'search', 'query', 'old_text', 'old_string', 'pattern', 'needle' ] ) ) : $args ) ) {
-            throw new \Exception( 'This request contains "[REDACTED]", which Royal MCP shows in place of hidden credentials. Writing it would replace the real value with that text. Leave that field out or send the real value; to change text around a hidden value, use wp_replace_in_post, wp_replace_in_page or wp_replace_text_in_blocks.' );
+            && self::holds_cut_json( $args ) ) {
+            throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'redacted_value', 'This request holds the cut-off "partial" JSON text a read returned, not a whole value, so writing it would store a damaged value. Nothing was changed. Read less at a time (filters, paging) to get whole values, then send those.' );
         }
         // Snippet code and pending Customizer settings are changed through their own
         // plugin screens, never through the generic post write tools.
@@ -6425,11 +6498,16 @@ class Server {
                     $upg_response['undo_token']      = (string) $upg_page_undo['token'];
                     $upg_response['undo_expires_at'] = (string) $upg_page_undo['expires_at'];
                     $upg_response['undo_summary']    = (string) $upg_page_undo['summary'];
+                } elseif (\Royal_MCP\MCP\Support\Envelope::undo_not_stored($upg_page_undo)) {
+                    $upg_response = array_merge($upg_response, \Royal_MCP\MCP\Support\Envelope::undo_unavailable_fields());
                 }
                 if (!empty($upg_template_undo['token'])) {
                     // The template is a separate change with its own token.
                     $upg_response['template_undo_token']   = (string) $upg_template_undo['token'];
                     $upg_response['template_undo_summary'] = (string) $upg_template_undo['summary'];
+                } elseif (\Royal_MCP\MCP\Support\Envelope::undo_not_stored($upg_template_undo)) {
+                    $upg_response['template_undo_unavailable'] = true;
+                    $upg_response['template_undo_note']        = \Royal_MCP\MCP\Support\Envelope::UNDO_UNAVAILABLE_NOTE;
                 }
                 $upg_response['saved_fields'] = $upg_saved_fields;
                 return $upg_response;
@@ -7477,6 +7555,10 @@ class Server {
                 if ($tmeta_via_list) {
                     \Royal_MCP\MCP\Support\Protected_Meta::assert_value($tmeta_key, $tmeta_value, $term_id, 'term');
                 }
+                // The new value replaces the whole stored value, also parts a read hides.
+                if ($this->meta_read_is_masked('term', $term_id, $tmeta_key)) {
+                    throw self::read_is_masked_refusal(sprintf('meta key %s on term %d', esc_html($tmeta_key), $term_id), 'Change it in the WordPress admin instead.');
+                }
 
                 $tmeta_before = get_term_meta($term_id, $tmeta_key, true);
                 // A key that did not exist before is removed again on undo, not left empty.
@@ -7995,7 +8077,7 @@ class Server {
                     $value = get_post_meta($post_id, $key, true);
                     return ['key' => $key, 'value' => $this->redact_sensitive_keys($value, $key)];
                 }
-                return $this->redact_sensitive_keys(get_post_meta($post_id));
+                return self::scrub_all_post_meta((array) get_post_meta($post_id));
 
             case 'wp_update_post_meta':
                 $post_id = self::resolve_post_id_arg($args);
@@ -8031,6 +8113,10 @@ class Server {
                 $meta_value = self::filter_meta_value($args['value'], $meta_key, $post_id, 'wp_update_post_meta');
                 if ($meta_via_list) {
                     \Royal_MCP\MCP\Support\Protected_Meta::assert_value($meta_key, $meta_value, $post_id);
+                }
+                // The new value replaces every stored row of this key, also parts a read hides.
+                if ($this->meta_read_is_masked('post', $post_id, $meta_key)) {
+                    throw self::read_is_masked_refusal(sprintf('meta key %s on post %d', esc_html($meta_key), $post_id), 'Change it in the WordPress admin instead, or add a separate value with wp_add_post_meta.');
                 }
 
                 // Snapshot prior value BEFORE the write for both undo (restore
@@ -9011,6 +9097,10 @@ class Server {
                     throw new \Exception('You do not have permission to read site options.');
                 }
                 $name = \Royal_MCP\MCP\Support\SafeText::field($args['name']);
+                // Licence records stay unreadable even when a filter puts them on the readable list.
+                if (self::is_licence_option($name)) {
+                    throw new \Exception('Option is permanently denylisted (its name looks like a credential or a protected setting): ' . esc_html($name));
+                }
                 $allowed = $this->get_readable_options_allowlist();
                 if (!in_array($name, $allowed, true)) {
                     $rmcp_listed = get_option('royal_mcp_settings', []);
@@ -9021,6 +9111,17 @@ class Server {
                     throw new \Exception('Option not in readable allowlist: ' . esc_html($name) . '. A site administrator can add it under Royal MCP settings, Allowlisted plugin options (while option writes are enabled); plugin authors can opt their settings in via add_filter("royal_mcp_readable_options", ...).');
                 }
                 $option_value = get_option($name);
+                // The site owner chose to have this option returned as stored: its text is returned
+                // as it is, credential fields and key formats inside it stay hidden.
+                if ($this->option_returned_as_stored($name)) {
+                    $as_stored_value = $this->option_value_as_read($name, $option_value);
+                    $this->grant_as_stored('wp_get_option', $name, ['value'], $as_stored_value);
+                    $as_stored_reply = ['name' => $name, 'value' => $as_stored_value, 'as_stored' => true];
+                    // sha256 of the value as this read shows it (the stored value's own when nothing inside is
+                    // hidden): wp_update_option takes it as expected_sha256, proof the write was built from this read.
+                    $as_stored_reply['sha256'] = self::value_sha256($as_stored_value);
+                    return $as_stored_reply;
+                }
                 if ($this->option_is_credential_partner($name)
                     && !($option_value === '' || $option_value === null || $option_value === [] || $option_value === '0' || $option_value === false)) {
                     return ['name' => $name, 'value' => '[REDACTED]'];
@@ -9036,10 +9137,16 @@ class Server {
                 if ($this->is_core_option_prefix($slug)) {
                     throw new \Exception(sprintf('"%s" is a WordPress core option prefix. Use a plugin\'s slug or option prefix (e.g. its text domain), or wp_get_option for core options.', $slug));
                 }
-                return [
+                $plugin_shas    = [];
+                $plugin_options = $this->find_plugin_options($slug, $plugin_shas);
+                $plugin_reply   = [
                     'slug'    => $slug,
-                    'options' => $this->find_plugin_options($slug),
+                    'options' => $plugin_options,
                 ];
+                if ([] !== $plugin_shas) {
+                    $plugin_reply['sha256'] = $plugin_shas;
+                }
+                return $plugin_reply;
 
             case 'wp_update_option':
                 if (!current_user_can('manage_options')) {
@@ -9084,8 +9191,61 @@ class Server {
                 }
 
                 // Value is intentionally accepted as-is (any JSON type). update_option will serialize.
+                $opt_has_ops   = array_key_exists('operations', $args) && null !== $args['operations'];
+                $opt_has_value = array_key_exists('value', $args);
+                if ($opt_has_ops && $opt_has_value) {
+                    throw new \Royal_MCP\MCP\Support\Tool_Refusal('invalid_args', 'Send value (the whole new value) or operations (changes to parts of it), not both.');
+                }
+                if (!$opt_has_ops && !$opt_has_value) {
+                    throw new \Royal_MCP\MCP\Support\Tool_Refusal('invalid_args', 'value or operations is required.');
+                }
+                // A whole value that still holds the redaction marker came from a masked read:
+                // writing it back would replace the hidden parts with the marker text.
+                if (!$opt_has_ops && \Royal_MCP\MCP\Support\Secret_Scrubber::contains_marker($args['value'])) {
+                    throw new \Royal_MCP\MCP\Support\Tool_Refusal('redacted_value', self::option_marker_refusal_message($name));
+                }
                 $opt_value    = $args['value'] ?? null;
                 $opt_previous = get_option($name);
+                // expected_sha256 (the sha256 a read of the option as stored returned) proves the write was built
+                // from that read of the current value. One that names another value is refused.
+                $opt_sha_ok = false !== $opt_previous && self::expected_sha_matches($args, $this->option_returned_as_stored($name) ? $this->option_value_as_read($name, $opt_previous) : $opt_previous, 'option ' . esc_html((string) $name));
+                // Under "Return as stored", a client may still hold an earlier, masked read: without that proof the
+                // masked views count too.
+                $opt_strict_too = !$opt_sha_ok && $this->option_returned_as_stored($name);
+                // A whole value replaces every part, also the parts a read hides or shows changed: the client
+                // could only have built it from what it read, so it would overwrite data it never saw.
+                if (!$opt_has_ops && $this->option_read_is_masked($name, $opt_previous, $opt_strict_too)) {
+                    if ($opt_strict_too && !$this->option_read_is_masked($name, $opt_previous)) {
+                        throw self::read_is_masked_refusal('option ' . esc_html((string) $name), 'Read the option again (it is now returned as stored) and send expected_sha256 from that read, or send operations for the parts you mean to change.');
+                    }
+                    throw self::read_is_masked_refusal(
+                        'option ' . esc_html((string) $name),
+                        $this->option_returned_as_stored($name)
+                            ? 'Credential fields inside it stay hidden even under "Return as stored". Send operations (changes to parts of the value by path) for the parts you mean to change.'
+                            : 'Send operations (changes to parts of the value by path) for the parts you mean to change, or ask a site administrator to list this option under "Return as stored" in Royal MCP settings, then read it again before writing.'
+                    );
+                }
+                // Changes to parts of the value: worked out on a copy here, then stored and
+                // snapshotted for undo by the same code as a whole-value write.
+                $opt_changes = null;
+                if ($opt_has_ops) {
+                    if (false === $opt_previous) {
+                        throw new \Royal_MCP\MCP\Support\Tool_Refusal('option_not_found', 'This option has no value yet, so there is nothing to change in part. Send the whole value.');
+                    }
+                    // The report shows what a read of the whole option would show, no more.
+                    $opt_as_read = function ($opt_whole) use ($name) {
+                        return $this->option_value_as_read($name, $opt_whole);
+                    };
+                    // A set may not replace a part any read tool shows differently from how it is stored.
+                    $opt_read_views = function ($opt_whole) use ($name, $opt_strict_too, $opt_previous) {
+                        return $this->option_read_views($name, $opt_whole, $opt_strict_too, $opt_whole === $opt_previous);
+                    };
+                    list($opt_value, $opt_changes) = \Royal_MCP\MCP\Support\Option_Patch::apply($opt_previous, $args['operations'], $opt_as_read, $opt_read_views);
+                    $opt_new_bytes = strlen((string) maybe_serialize($opt_value));
+                    if ($opt_new_bytes > 1024 * 1024 && $opt_new_bytes > strlen((string) maybe_serialize($opt_previous))) {
+                        throw new \Royal_MCP\MCP\Support\Tool_Refusal('option_too_large', 'These changes would take the option over 1 MB, so nothing was changed.');
+                    }
+                }
 
                 // Detect whether the option row existed before the write. WP's
                 // update_option returns false both for "no change" and "row not
@@ -9098,16 +9258,37 @@ class Server {
                 // size delta without writing. Same gate outcomes as a real
                 // call so a caller can trust dry_run failures the same way
                 // they'd trust the write failures.
-                if ( ! empty( $args['dry_run'] ) ) {
+                if ( self::wants_dry_run( $args ) ) {
                     $opt_autoloaded_row  = wp_load_alloptions();
                     $opt_is_autoloaded   = is_array( $opt_autoloaded_row ) && array_key_exists( $name, $opt_autoloaded_row );
                     $opt_current_bytes   = strlen( (string) maybe_serialize( $opt_previous === false ? '' : $opt_previous ) );
                     $opt_proposed_bytes  = strlen( (string) maybe_serialize( $opt_value ) );
+                    if ( null !== $opt_changes ) {
+                        if ( $this->option_returned_as_stored( $name ) ) {
+                            $this->grant_as_stored( 'wp_update_option', $name, [ 'preview', 'changes' ], $opt_changes );
+                        }
+                        return [
+                            'state'   => 'dry_run',
+                            'preview' => [
+                                'option_name'      => $name,
+                                'changes'          => $opt_changes,
+                                'is_autoloaded'    => $opt_is_autoloaded,
+                                'size_delta_bytes' => $opt_proposed_bytes - $opt_current_bytes,
+                            ],
+                            'would_execute' => true,
+                            'message'       => sprintf( 'Dry run: %d change(s) would be made to option %s (size delta %+d bytes). Nothing was saved.', count( $opt_changes ), $name, $opt_proposed_bytes - $opt_current_bytes ),
+                        ];
+                    }
+                    // The preview shows the current value as a read would.
+                    $opt_current_seen = $this->option_value_as_read( $name, $opt_previous );
+                    if ( $this->option_returned_as_stored( $name ) ) {
+                        $this->grant_as_stored( 'wp_update_option', $name, [ 'preview', 'current_value' ], $opt_current_seen );
+                    }
                     return [
                         'state'   => 'dry_run',
                         'preview' => [
                             'option_name'      => $name,
-                            'current_value'    => $this->redact_sensitive_keys( $opt_previous, $name ),
+                            'current_value'    => $opt_current_seen,
                             'proposed_value'   => $opt_value,
                             'is_autoloaded'    => $opt_is_autoloaded,
                             'existed_before'   => $opt_existed_before,
@@ -9137,7 +9318,9 @@ class Server {
                 );
                 \Royal_MCP\MCP\Support\WriteVerifier::throw_if_dropped( $opt_diff, 'wp_update_option' );
 
-                $opt_reverse_json     = (string) wp_json_encode( [ 'prior_value' => $opt_previous, 'existed_before' => $opt_existed_before ] );
+                // Writes made with operations remember just the paths they changed, so undo can put back only those.
+                $opt_undo_paths = ( null !== $opt_changes && is_array( $opt_previous ) && is_array( $opt_actual ) ) ? \Royal_MCP\MCP\Support\Option_Patch::changed_paths( $opt_previous, $opt_actual ) : null;
+                $opt_reverse_json     = (string) wp_json_encode( [ 'prior_value' => $opt_previous, 'existed_before' => $opt_existed_before, 'paths' => $opt_undo_paths ] );
                 $opt_reverse_size_est = strlen( gzcompress( $opt_reverse_json, 9 ) );
                 $opt_undo_envelope    = null;
                 $opt_warnings         = [];
@@ -9148,11 +9331,11 @@ class Server {
                         'op'      => 'wp_update_option',
                         'summary' => sprintf( 'Restore option %s to prior value.', $name ),
                         'target'  => [ 'option_name' => $name ],
-                        'pre_op_state' => [
+                        'pre_op_state' => array_merge( [
                             'prior_value'    => $opt_previous,
                             'applied_value'  => $opt_actual,
                             'existed_before' => $opt_existed_before,
-                        ],
+                        ], null !== $opt_undo_paths ? [ 'paths' => $opt_undo_paths ] : [] ),
                     ]);
                 }
 
@@ -9164,11 +9347,24 @@ class Server {
                     [
                         'name'     => $name,
                         'updated'  => (bool) $opt_result,
-                        'previous' => $this->redact_sensitive_keys($opt_previous, $name),
+                        'previous' => $this->option_value_as_read($name, $opt_previous),
                         'sanitized_by' => $opt_sanitizer,
                     ],
                     \Royal_MCP\MCP\Support\WriteVerifier::response_partial( $opt_diff, (string) $name )
                 );
+                if ( null !== $opt_changes ) {
+                    // The caller sent changes, not the value: report them rather than send the whole value back.
+                    unset( $opt_struct['previous'], $opt_struct['saved_fields'], $opt_struct['modified_by_wp'], $opt_struct['input_mangled'] );
+                    $opt_struct['changes'] = $opt_changes;
+                }
+                // An option returned as stored is reported the same way a read returns it.
+                if ( $this->option_returned_as_stored( $name ) ) {
+                    foreach ( [ 'previous', 'changes' ] as $opt_seen_key ) {
+                        if ( array_key_exists( $opt_seen_key, $opt_struct ) ) {
+                            $this->grant_as_stored( 'wp_update_option', $name, [ 'structuredContent', $opt_seen_key ], $opt_struct[ $opt_seen_key ] );
+                        }
+                    }
+                }
                 if ( 'none' === $opt_sanitizer ) {
                     $opt_warnings[] = 'No sanitizer for this option is registered in this request (the plugin that owns it may register it only in wp-admin), so the value was saved as sent. Check it with wp_get_option.';
                 }
@@ -9176,9 +9372,9 @@ class Server {
                     $opt_struct['warnings'] = $opt_warnings;
                 }
                 $opt_summary = sprintf(
-                    'Updated option %s%s%s.',
+                    null !== $opt_changes ? 'Changed ' . count( $opt_changes ) . ' part(s) of option %s%s%s.' : 'Updated option %s%s%s.',
                     $name,
-                    ! empty( $opt_diff['silent_modifies'] ) ? ' (WP modified value)' : '',
+                    null === $opt_changes && ! empty( $opt_diff['silent_modifies'] ) ? ' (WP modified value)' : '',
                     $opt_undo_envelope !== null ? ', undo available' : ' (undo not available: value too large)'
                 );
                 return \Royal_MCP\MCP\Support\Envelope::success(
@@ -9420,7 +9616,7 @@ class Server {
                 if ( null === $mi_refusal && isset( $mi_requested['url'] ) && 'custom' !== $mi_current['type'] && $mi_requested['url'] !== $mi_current['url'] ) {
                     $mi_refusal = [ 'url_dropped', sprintf( 'The link was not saved (silently dropped: url): menu item %d links to a %s, so WordPress keeps that %s\'s own link. Nothing was changed; change the %s itself, or replace the item with a custom link.', $mi_item_id, $mi_current['object'], $mi_current['object'], $mi_current['object'] ) ];
                 }
-                $mi_preview = array_key_exists( 'dry_run', $args ) && ! in_array( $args['dry_run'], [ false, 0, '0', 'false', null, '' ], true );
+                $mi_preview = self::wants_dry_run( $args );
                 if ( $mi_preview ) {
                     return \Royal_MCP\MCP\Support\Envelope::success(
                         sprintf( '[dry-run] Menu item %d: %s.', $mi_item_id, null === $mi_refusal ? 'the write is allowed' : $mi_refusal[1] ),
@@ -10782,8 +10978,8 @@ class Server {
                                         }
                                         break;
                                     case 'status':         $var->set_status( (string) $v ); break;
-                                    case 'manage_stock':   $var->set_manage_stock( (bool) $v ); break;
-                                    case 'stock_quantity': $var->set_stock_quantity( null === $v ? null : (int) $v ); break;
+                                    case 'manage_stock':   $var->set_manage_stock( 'parent' === $v ? false : (bool) $v ); break;
+                                    case 'stock_quantity': $var->set_stock_quantity( null === $v ? '' : (int) $v ); break;
                                     case 'stock_status':   $var->set_stock_status( (string) $v ); break;
                                     case 'weight':         $var->set_weight( (string) $v ); break;
                                     case 'length':         $var->set_length( (string) $v ); break;
@@ -12007,8 +12203,8 @@ class Server {
                                 case 'sale_price':         $uv_undo_var->set_sale_price( (string) $prior ); break;
                                 case 'sku':                $uv_undo_var->set_sku( (string) $prior ); break;
                                 case 'status':             $uv_undo_var->set_status( (string) $prior ); break;
-                                case 'manage_stock':       $uv_undo_var->set_manage_stock( (bool) $prior ); break;
-                                case 'stock_quantity':     $uv_undo_var->set_stock_quantity( null === $prior ? null : (int) $prior ); break;
+                                case 'manage_stock':       $uv_undo_var->set_manage_stock( 'parent' === $prior ? false : (bool) $prior ); break;
+                                case 'stock_quantity':     $uv_undo_var->set_stock_quantity( null === $prior ? '' : (int) $prior ); break;
                                 case 'stock_status':       $uv_undo_var->set_stock_status( (string) $prior ); break;
                                 case 'weight':             $uv_undo_var->set_weight( (string) $prior ); break;
                                 case 'description':        $uv_undo_var->set_description( (string) $prior ); break;
@@ -12784,6 +12980,32 @@ class Server {
                         wp_cache_delete( $undo_opt_name, 'options' );
                         $oundo_current = get_option( $undo_opt_name );
                         $oundo_applied = $oundo_pre['applied_value'] ?? null;
+                        // A write made with operations records the paths it changed: only
+                        // those are checked and put back, so later edits elsewhere in the
+                        // same option are kept.
+                        $oundo_paths = ( isset( $oundo_pre['paths'] ) && is_array( $oundo_pre['paths'] ) && is_array( $oundo_current ) ) ? $oundo_pre['paths'] : null;
+                        if ( null !== $oundo_paths ) {
+                            $oundo_drift = \Royal_MCP\MCP\Support\Option_Patch::drifted_paths( $oundo_current, $oundo_paths );
+                            if ( $oundo_drift && ! $undo_force ) {
+                                throw self::undo_drift_refusal( sprintf( 'option %s changed at %s after this operation wrote it.', esc_html( $undo_opt_name ), esc_html( implode( ', ', array_slice( $oundo_drift, 0, 10 ) ) ) ), 'put back the earlier values at those paths anyway' );
+                            }
+                            update_option( $undo_opt_name, \Royal_MCP\MCP\Support\Option_Patch::restore_paths( $oundo_current, $oundo_paths ) );
+                            wp_cache_delete( $undo_opt_name, 'options' );
+                            \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
+                            return \Royal_MCP\MCP\Support\Envelope::success(
+                                sprintf( 'Restored %d changed path(s) of option %s; the rest of it was left as it is.', count( $oundo_paths ), $undo_opt_name ),
+                                [
+                                    'undone'         => true,
+                                    'op'             => $undo_op,
+                                    'target'         => $oundo_target,
+                                    'restored'       => true,
+                                    'restored_paths' => array_map( static function ( $c ) {
+                                        return \Royal_MCP\MCP\Support\Option_Patch::label( array_values( (array) ( $c['path'] ?? [] ) ) );
+                                    }, $oundo_paths ),
+                                    'row_removed'    => false,
+                                ]
+                            );
+                        }
                         if ( $oundo_current !== $oundo_applied && ! $undo_force ) {
                             throw self::undo_drift_refusal( sprintf( 'option %s changed after this operation wrote it.', esc_html( $undo_opt_name ) ) );
                         }
@@ -13636,6 +13858,10 @@ class Server {
                 $tm_existed      = array_key_exists( $mod_name, $tm_all_before );
                 $tm_value        = $args['value'] ?? null;
                 $tm_previous     = $tm_existed ? $tm_all_before[ $mod_name ] : null;
+                // The new value replaces the whole mod, also parts a read hides.
+                if ( $this->theme_mod_read_is_masked( $mod_name, $tm_all_before ) ) {
+                    throw self::read_is_masked_refusal( 'theme mod ' . esc_html( $mod_name ), 'Change it in the Customizer instead.' );
+                }
 
                 set_theme_mod( $mod_name, $tm_value );
 
@@ -13719,7 +13945,22 @@ class Server {
                     $css_gate = \Royal_MCP\MCP\Support\Post_Access::style_close_refusal( $css_new );
                 }
                 $css_refusal = null === $css_gate ? null : [ $css_gate->error_code(), $css_gate->getMessage() ];
-                if ( isset( $args['expected_sha256'] ) ) {
+                // CSS that wp_get_custom_css shows in part hidden is never replaced as a whole, and its sha256 is not given out.
+                $css_seen   = $this->scrub_tool_result_checked( 'wp_get_custom_css', [ 'css' => (string) $css_before, 'theme_slug' => $css_theme, 'post_id' => 0 ] );
+                $css_masked = self::read_differs( is_array( $css_seen ) && array_key_exists( 'css', $css_seen ) ? $css_seen['css'] : \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER, (string) $css_before );
+                if ( null === $css_refusal && $css_masked ) {
+                    try {
+                        $this->refuse_whole_write_over_masked( 'wp_update_custom_css', 'the custom CSS of theme ' . esc_html( $css_theme ), (string) $css_before, static function () use ( $css_seen ) {
+                            return is_array( $css_seen ) && array_key_exists( 'css', $css_seen ) ? $css_seen['css'] : \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER;
+                        }, $args, 'Change it under Appearance, Customize, Additional CSS instead.' );
+                    } catch ( \Royal_MCP\MCP\Support\Tool_Refusal $css_masked_refusal ) {
+                        $css_refusal = [ $css_masked_refusal->error_code(), $css_masked_refusal->getMessage() ];
+                    }
+                }
+                if ( $css_masked ) {
+                    $css_sha = null;
+                }
+                if ( isset( $args['expected_sha256'] ) && null !== $css_sha ) {
                     if ( ! is_string( $args['expected_sha256'] ) || ! preg_match( '/^[a-f0-9]{64}$/i', $args['expected_sha256'] ) ) {
                         throw new \Royal_MCP\MCP\Support\Tool_Refusal('invalid_args', 'expected_sha256 must be the 64-character sha256 (hex) of the CSS as you read it.');
                     }
@@ -13727,7 +13968,7 @@ class Server {
                         $css_refusal = [ 'expected_mismatch', 'The custom CSS changed since it was read (expected_sha256 does not match); read it again before writing.' ];
                     }
                 }
-                $css_preview = array_key_exists( 'dry_run', $args ) && ! in_array( $args['dry_run'], [ false, 0, '0', 'false', null, '' ], true );
+                $css_preview = self::wants_dry_run( $args );
                 if ( $css_preview ) {
                     return \Royal_MCP\MCP\Support\Envelope::success(
                         sprintf( '[dry-run] Custom CSS for theme %s: %s.', $css_theme, null === $css_refusal ? 'the write is allowed' : $css_refusal[1] ),
@@ -13905,6 +14146,13 @@ class Server {
                 $widget_id = isset($args['id']) ? sanitize_text_field((string) $args['id']) : '';
                 if ($widget_id === '') {
                     throw new \Exception('Widget id is required.');
+                }
+                // New settings replace the whole widget instance, also parts a read hides.
+                if (isset($args['instance']) || isset($args['form_data'])) {
+                    $uw_views = $this->widget_settings_views($widget_id);
+                    if (null !== $uw_views && self::read_differs($uw_views[1], $uw_views[0])) {
+                        throw self::read_is_masked_refusal('widget ' . esc_html($widget_id), 'Change it under Appearance, Widgets instead.');
+                    }
                 }
 
                 // Snapshot BEFORE-state via GET /wp/v2/widgets/<id> for undo.
@@ -14357,7 +14605,7 @@ class Server {
                 // Preview-only branch: report the current + proposed structures,
                 // scope the impact to the post types actually affected, and
                 // return without touching the option or flushing rewrite rules.
-                if ( ! empty( $args['dry_run'] ) ) {
+                if ( self::wants_dry_run( $args ) ) {
                     // Only the `post` post type uses `permalink_structure` for
                     // its URLs. Pages own the hierarchical page-slug rewrite;
                     // WooCommerce products own `/product/`; every other public
@@ -15535,18 +15783,22 @@ class Server {
         wp_cache_delete( (int) $post_id, 'post_meta' );
     }
 
-    /** A reused item's response; with an undo when the call changed its title, caption or alt text. */
+    /**
+     * A reused item's response; with an undo when the call changed its title, caption or
+     * alt text, or a note when that change could not get one.
+     */
     private function reuse_response($attachment_id, $undo) {
         $response = $this->media_upload_response($attachment_id, true);
-        if (empty($undo['token'])) {
+        if (!is_array($undo)) {
             return $response;
         }
-        return \Royal_MCP\MCP\Support\Envelope::success(sprintf('This file is already in the media library: returned item %d and set the title, caption or alt text asked for. Undo puts the earlier values back.', (int) $attachment_id), $response, $undo);
+        return \Royal_MCP\MCP\Support\Envelope::success(sprintf('This file is already in the media library: returned item %d and set the title, caption or alt text asked for.%s', (int) $attachment_id, empty($undo['token']) ? '' : ' Undo puts the earlier values back.'), $response, $undo);
     }
 
     /**
      * On a reuse, the title, caption and alt text the caller asked for are set on the existing
-     * item. Returns an undo (the media field undo) when any of them changed, else [].
+     * item. Returns an undo (the media field undo) when any of them changed, [] when they
+     * changed but no undo could be kept, and null when nothing changed.
      */
     private function apply_reuse_fields($attachment_id, $title, $caption, $alt_text) {
         // An item handed out again is not deleted by the first upload's undo without force.
@@ -15584,7 +15836,10 @@ class Server {
                 $applied[$field] = $value;
             }
         }
-        if (!$prior || strlen(gzcompress((string) wp_json_encode($prior), 9)) > 1024 * 1024) {
+        if (!$prior) {
+            return null;
+        }
+        if (strlen(gzcompress((string) wp_json_encode($prior), 9)) > 1024 * 1024) {
             return [];
         }
         return \Royal_MCP\MCP\Undo_Store::store([
@@ -15901,8 +16156,9 @@ class Server {
      * Uses a LIKE match on slug + slug_with_underscores. Sensitive keys inside
      * the returned values are redacted via redact_sensitive_keys().
      */
-    private function find_plugin_options($slug) {
+    private function find_plugin_options($slug, &$shas = null) {
         global $wpdb;
+        $shas = [];
         $slug = sanitize_key($slug);
         if (empty($slug)) return [];
 
@@ -15954,7 +16210,17 @@ class Server {
                 $result[$row->option_name] = '[REDACTED]';
                 continue;
             }
-            $result[$row->option_name] = $this->redact_sensitive_keys($value, $row->option_name);
+            // Read the same way wp_get_option reads it: as stored when listed so, masked otherwise.
+            $result[$row->option_name] = $this->option_value_as_read($row->option_name, $value);
+            if ($this->option_returned_as_stored($row->option_name)) {
+                $this->grant_as_stored('wp_get_plugin_settings', $row->option_name, ['options', $row->option_name], $result[$row->option_name]);
+                // sha256 of the value as read here, for expected_sha256 (given only when the row is the value wp_update_option sees).
+                if (!self::read_differs($value, get_option($row->option_name))) {
+                    $shas[$row->option_name] = self::value_sha256($result[$row->option_name]);
+                    // The digest names the value just read; it is kept out of the reply's credential checks like that value.
+                    $this->grant_as_stored('wp_get_plugin_settings', $row->option_name, ['sha256', $row->option_name], $shas[$row->option_name]);
+                }
+            }
         }
         return $result;
     }
@@ -16528,10 +16794,6 @@ class Server {
         return false;
     }
 
-    /**
-     * Hard denylist for option writes. These can never be written via MCP,
-     * regardless of allowlist or admin toggle.
-     */
     private function is_denylisted_option($name) {
         $name_lc = strtolower($name);
 
@@ -16568,6 +16830,9 @@ class Server {
         // Royal MCP namespaces are reserved (Pro keeps its own settings under rmcp_pro_).
         if (strpos($name_lc, 'royal_mcp_') === 0) return true;
         if (strpos($name_lc, 'rmcp_pro_') === 0) return true;
+
+        // Licence records and the site-link state are never read or written through MCP.
+        if (self::is_licence_option($name_lc)) return true;
 
         // Rows named as holding sensitive data, whatever their inner keys are called.
         if (preg_match('/(^|[_\-.])sensitive([_\-.]|$)/', $name_lc) && !preg_match('/case[_\-.]?(in)?sensitive/', $name_lc)) return true;
@@ -16608,5 +16873,2148 @@ class Server {
     public function handle_message($request) {
         // Forward to new handler
         return $this->handle_mcp($request);
+    }
+
+    /**
+     * Note the signed-in caller's own per-minute budget for the RateLimit-* headers without
+     * counting this request against it (requests other than tool calls are counted per address).
+     */
+    private function note_own_rate_state() {
+        $uid = (int) get_current_user_id();
+        if ($uid <= 0 || null !== $this->rate_state) {
+            return;
+        }
+        $max    = (int) apply_filters('royal_mcp_rate_limit_max', $this->rate_limit_max_authed, 'authed');
+        $window = (int) apply_filters('royal_mcp_rate_limit_window', $this->rate_limit_window);
+        if ($max < 1)    { $max = $this->rate_limit_max_authed; }
+        if ($window < 1) { $window = $this->rate_limit_window; }
+        $data = get_transient('royal_mcp_rate_' . md5('user:' . $uid));
+        $now  = time();
+        if (!is_array($data) || ($now - (int) ($data['start'] ?? 0)) > $window) {
+            $this->note_rate_state($max, $max, $window);
+            return;
+        }
+        $this->note_rate_state($max, $max - (int) ($data['count'] ?? 0), max(1, ((int) $data['start'] + $window) - $now));
+    }
+
+    /**
+     * Whether a call asks for a preview. Only a clear "no" commits: false, 0, "0", "false",
+     * "no", "off" or "" (trimmed, any case). Any other value given previews; a missing or
+     * null value means the tool's own default.
+     *
+     * @param array  $args    Tool arguments.
+     * @param bool   $default What the tool does when the argument is not given.
+     * @param string $key     Argument name.
+     */
+    public static function wants_dry_run( array $args, $default = false, $key = 'dry_run' ) {
+        if ( ! array_key_exists( $key, $args ) || null === $args[ $key ] ) {
+            return (bool) $default;
+        }
+        $value = $args[ $key ];
+        if ( is_string( $value ) ) {
+            $value = strtolower( trim( $value ) );
+        }
+        return ! in_array( $value, [ false, 0, 0.0, '0', 'false', 'no', 'off', '' ], true );
+    }
+
+    /**
+     * Whether one call, by its arguments, only reads: a Pro tool's read actions
+     * as Pro classes them, or what a tool another plugin adds says of itself.
+     */
+    private function call_only_reads( $name, array $args ) {
+        if ( class_exists( '\\Royal_MCP_Pro\\License_Gate' ) && \Royal_MCP_Pro\License_Gate::is_pro_tool( $name ) ) {
+            return class_exists( '\\Royal_MCP_Pro\\Tool_Registry' ) && \Royal_MCP_Pro\Tool_Registry::call_reads( $name, $args );
+        }
+        return ! $this->is_builtin_tool_name( $name ) && (bool) apply_filters( 'royal_mcp_call_reads', false, $name, $args );
+    }
+
+    /**
+     * Whether a call is a preview that writes nothing. Only the literal true counts.
+     * Every read-only and drafts gate uses this one check.
+     */
+    public static function is_dry_run_read( $name, $args ) {
+        return is_array( $args ) && true === ( $args['dry_run'] ?? null ) && in_array( (string) $name, self::DRY_RUN_READS, true );
+    }
+
+    /** A shared-server built-in or a Pro tool (is_builtin_tool_name covers both). */
+    private function is_own_tool_name( $name ) {
+        return $this->is_builtin_tool_name( $name );
+    }
+
+    /** scrub_tool_result() once the tool whose rules apply is known and as-stored values are set aside. */
+    private function scrub_tool_result_checked( $name, $result ) {
+        $opts = [
+            'mode'         => self::strict_scrub_tool( $name ) ? 'strict' : 'content',
+            'exempt_keys'  => [ 'session_id', 'token_ttl', 'resultType', 'isError', 'client_id' ],
+            // Royal MCP's own undo and change fields, at any depth (lists of changes carry them too).
+            // _meta is set aside only at the reply's top level (scrub_reply_payload).
+            'skip_keys'    => [ 'undo', 'undo_token', 'template_undo_token', 'change_id' ],
+            // Royal MCP's own tokens, kept only at the top of the reply (and of structuredContent).
+            'own_fields'   => [ 'commit_token', 'confirm_token' ],
+            'content_keys' => self::scrub_content_keys(),
+        ];
+        // ACF's own group and field keys are identifiers the next call needs back.
+        if ( AcfSetupIntegration::handles( (string) $name ) ) {
+            $opts['exempt_keys'] = array_merge( $opts['exempt_keys'], AcfSetupIntegration::ID_FIELDS );
+        }
+        // All of a post's meta: each stored value is checked under its own meta key, as the single-key read checks it.
+        if ( 'wp_get_post_meta' === (string) $name && self::is_all_post_meta_reply( $result ) ) {
+            $opts['name_list_items'] = true;
+        }
+        /**
+         * Filter how one tool's reply is scrubbed. Only add fields that hold
+         * Royal MCP's own tokens or ids; never remove keys or switch modes.
+         *
+         * @param array  $opts Scrub options: mode, exempt_keys, skip_keys, content_keys.
+         * @param string $name Tool name.
+         */
+        // A tool another plugin adds is not ours: its top-level fields get no exemption.
+        $ours = $this->is_builtin_tool_name( (string) $name )
+            || ( class_exists( '\\Royal_MCP_Pro\\License_Gate' ) && \Royal_MCP_Pro\License_Gate::is_pro_tool( (string) $name ) );
+        if ( ! $ours ) {
+            $opts['own_fields'] = [];
+            $opts['own_meta']   = false;
+        }
+        $filtered = $ours ? apply_filters( 'royal_mcp_scrub_tool_opts', $opts, (string) $name ) : null;
+        if ( is_array( $filtered ) ) {
+            foreach ( [ 'exempt_keys', 'skip_keys', 'own_fields' ] as $k ) {
+                if ( isset( $filtered[ $k ] ) && is_array( $filtered[ $k ] ) ) {
+                    $opts[ $k ] = array_values( array_unique( array_merge( $opts[ $k ], array_filter( $filtered[ $k ], 'is_string' ) ) ) );
+                }
+            }
+        }
+        if ( is_string( $result ) ) {
+            return \Royal_MCP\MCP\Support\Secret_Scrubber::scrub( $result, '', $opts );
+        }
+        if ( ! is_array( $result ) ) {
+            return $result;
+        }
+        $own_top = [];
+        foreach ( $opts['own_fields'] as $f ) {
+            if ( isset( $result[ $f ] ) && is_string( $result[ $f ] ) ) {
+                $own_top['r'][ $f ] = $result[ $f ];
+            }
+            if ( isset( $result['structuredContent'][ $f ] ) && is_string( $result['structuredContent'][ $f ] ) ) {
+                $own_top['s'][ $f ] = $result['structuredContent'][ $f ];
+            }
+        }
+        $result = $this->scrub_tool_result_body( $result, $opts, $own_top );
+        foreach ( (array) ( $own_top['r'] ?? [] ) as $f => $v ) {
+            $result[ $f ] = $v;
+        }
+        foreach ( (array) ( $own_top['s'] ?? [] ) as $f => $v ) {
+            if ( isset( $result['structuredContent'] ) && is_array( $result['structuredContent'] ) ) {
+                $result['structuredContent'][ $f ] = $v;
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * A refusal's structured details with credentials replaced (strict checks), its error code kept.
+     *
+     * @param \Royal_MCP\MCP\Support\Tool_Refusal $e Refusal.
+     * @return array
+     */
+    private function scrub_refusal_details( \Royal_MCP\MCP\Support\Tool_Refusal $e ) {
+        try {
+            $details = (array) \Royal_MCP\MCP\Support\Secret_Scrubber::scrub( $e->structured(), '', [ 'mode' => 'strict' ] );
+        } catch ( \Throwable $t ) {
+            $details = [];
+        }
+        $details['error']   = $e->error_code();
+        $details['message'] = $this->scrub_error_message( $e->getMessage() );
+        return $details;
+    }
+
+    /** Option row that stands in for the database lock where the database has no named locks. */
+    const UNDO_LOCK_PREFIX = 'royal_mcp_undolock_';
+
+    /** Seconds after which a stand-in lock row left by a request that died is taken over. */
+    const UNDO_LOCK_STALE = 120;
+
+    /**
+     * Lock one undo token for this request. Returns 'named' or 'row' when held (which
+     * kind), false when another request holds it. Without named locks, a row added
+     * with add_option stands in: adding a row whose name exists fails, so only one
+     * request gets it.
+     *
+     * @return string|false
+     */
+    private static function claim_undo_token( $token ) {
+        $named = self::named_lock( 'undo_' . $token, 15 );
+        if ( true === $named ) {
+            return 'named';
+        }
+        if ( false === $named ) {
+            return false;
+        }
+        $row = self::UNDO_LOCK_PREFIX . $token;
+        if ( add_option( $row, (string) time(), '', 'no' ) ) {
+            return 'row';
+        }
+        wp_cache_delete( $row, 'options' );
+        $since = (int) get_option( $row, 0 );
+        if ( $since > 0 && $since < time() - self::UNDO_LOCK_STALE ) {
+            delete_option( $row );
+            if ( add_option( $row, (string) time(), '', 'no' ) ) {
+                return 'row';
+            }
+        }
+        return false;
+    }
+
+    private static function release_undo_token( $token, $held ) {
+        if ( 'named' === $held ) {
+            self::release_named_lock( 'undo_' . $token );
+        } elseif ( 'row' === $held ) {
+            delete_option( self::UNDO_LOCK_PREFIX . $token );
+        }
+    }
+
+    /** Find-and-replace tools, whose find side may name the marker to replace it. */
+    private static function is_find_replace_tool( $name ) {
+        return 1 === preg_match( '/(?:^|_)(?:replace_in_(?:post|page)|replace_text(?:_in_blocks|_sitewide)?|find_and_replace|replace_widget_content|replace_widget_setting)$/', (string) $name );
+    }
+
+    /**
+     * Refuse an ACF field update or a bulk widget update that would replace a value AI clients read
+     * hidden in whole or in part (see read_differs()). The read is run the way the read tool runs it.
+     *
+     * @param string $name Tool name.
+     * @param array  $args Arguments.
+     * @throws \Royal_MCP\MCP\Support\Tool_Refusal When the current value is read hidden.
+     */
+    private function refuse_masked_integration_write( $name, array $args ) {
+        if ( 'acf_update_field' === $name && class_exists( '\Royal_MCP\Integrations\ACF' ) && \Royal_MCP\Integrations\ACF::is_available() ) {
+            if ( ! array_key_exists( 'field_name', $args ) && ! array_key_exists( 'post_id', $args ) ) {
+                return;
+            }
+            // The post id is read the way the field read and the update read it; one that cannot be read is refused.
+            $acf_pid   = \Royal_MCP\MCP\Support\Post_Access::id_value( $args['post_id'] ?? null );
+            $acf_field = is_scalar( $args['field_name'] ?? null ) ? sanitize_text_field( (string) $args['field_name'] ) : '';
+            if ( null === $acf_pid || $acf_pid <= 0 || '' === $acf_field ) {
+                throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', 'field_name and post_id are required: post_id must be a positive whole number. Nothing was changed.' );
+            }
+            $before = \Royal_MCP\MCP\Support\Secret_Scrubber::change_count();
+            try {
+                $read = \Royal_MCP\Integrations\ACF::execute_tool( 'acf_get_field', [ 'field_name' => $acf_field, 'post_id' => $acf_pid ] );
+                $read = $this->scrub_tool_result_checked( 'acf_get_field', $read );
+            } catch ( \Throwable $e ) {
+                // The update gives its own answer for a post that is not there or that the caller may not edit.
+                if ( ! get_post( $acf_pid ) || ! current_user_can( 'edit_post', $acf_pid ) ) {
+                    return;
+                }
+                // Any other failed read: the current value could not be checked, so it is not replaced.
+                throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'read_is_masked', sprintf( 'The current value of ACF field %s on post %d could not be read to check whether part of it is hidden from AI clients, so nothing was changed. Change it in the WordPress admin instead.', esc_html( $acf_field ), (int) $acf_pid ) );
+            }
+            $seen = is_array( $read ) ? ( $read['value'] ?? null ) : null;
+            if ( \Royal_MCP\MCP\Support\Secret_Scrubber::change_count() !== $before || \Royal_MCP\MCP\Support\Secret_Scrubber::contains_marker( $seen )
+                || \Royal_MCP\MCP\Support\Secret_Scrubber::holds_invalid_utf8( $seen ) ) {
+                throw self::read_is_masked_refusal( sprintf( 'ACF field %s on post %d', esc_html( $acf_field ), (int) $acf_pid ), 'Change it in the WordPress admin instead.' );
+            }
+            return;
+        }
+        if ( 'wp_bulk_update_widgets' === $name && isset( $args['updates'] ) && is_array( $args['updates'] ) ) {
+            foreach ( array_slice( array_values( $args['updates'] ), 0, 100 ) as $update ) {
+                if ( ! is_array( $update ) || ! is_scalar( $update['widget_id'] ?? null ) || ! is_array( $update['settings'] ?? null ) ) {
+                    continue;
+                }
+                $views = $this->widget_settings_views( sanitize_text_field( (string) $update['widget_id'] ) );
+                if ( null === $views || ! is_array( $views[0] ) ) {
+                    continue;
+                }
+                // Settings are merged key by key: each key sent replaces that key's value.
+                foreach ( array_keys( $update['settings'] ) as $setting ) {
+                    if ( ! array_key_exists( $setting, $views[0] ) ) {
+                        continue;
+                    }
+                    $seen = is_array( $views[1] ) && array_key_exists( $setting, $views[1] ) ? $views[1][ $setting ] : '[REDACTED]';
+                    if ( self::read_differs( $seen, $views[0][ $setting ] ) ) {
+                        throw self::read_is_masked_refusal( sprintf( 'setting %s of widget %s', esc_html( (string) $setting ), esc_html( (string) $update['widget_id'] ) ), 'Leave that setting out, or change it under Appearance, Widgets.' );
+                    }
+                }
+            }
+            return;
+        }
+        $this->refuse_whole_writes_over_masked_reads( $name, $args );
+    }
+
+    /**
+     * Whole-value writes over values a read shows masked, for the tools outside options, meta, theme
+     * mods, widgets and ACF (see refuse_whole_write_over_masked()). Each check reads the current value
+     * the way that tool's read does (same reply shape, same scrub mode) and refuses when the read hides
+     * part of what the write would replace. Find-and-replace tools stay allowed unless the find text
+     * touches a hidden part. Calls the handler would refuse anyway (missing post, no permission) are
+     * left to the handler.
+     *
+     * @param string $name Tool name.
+     * @param array  $args Arguments.
+     * @throws \Royal_MCP\MCP\Support\Tool_Refusal read_is_masked, expected_mismatch or invalid_args.
+     */
+    private function refuse_whole_writes_over_masked_reads( $name, array $args ) {
+        $content_routes = 'Use wp_replace_in_post or wp_replace_in_page to change text outside the hidden parts (their find text may not touch a hidden part), or change it in the WordPress editor.';
+        switch ( $name ) {
+            case 'wp_update_post':
+            case 'wp_update_page':
+                $post = $this->guarded_post( $args, 'post_id' );
+                if ( null === $post ) {
+                    return;
+                }
+                foreach ( [ 'content' => 'post_content', 'title' => 'post_title', 'excerpt' => 'post_excerpt' ] as $field => $column ) {
+                    if ( ! isset( $args[ $field ] ) || ! is_string( $args[ $field ] ) || '' === $args[ $field ] ) {
+                        continue;
+                    }
+                    $this->refuse_whole_write_over_masked( $name, sprintf( 'the %s of post %d', $field, (int) $post->ID ), (string) $post->{$column}, function () use ( $post, $field ) {
+                        return $this->post_field_as_read( $post, $field );
+                    }, $args, 'content' === $field ? $content_routes : 'Change it in the WordPress editor instead.' );
+                }
+                return;
+
+            case 'wp_replace_in_post':
+            case 'wp_replace_in_page':
+                $post = $this->guarded_post( $args, 'post_id' );
+                if ( null === $post || ! isset( $args['find'] ) || ! is_string( $args['find'] ) ) {
+                    return;
+                }
+                $this->refuse_find_over_masked( (string) $post->post_content, $this->post_field_as_read( $post, 'content' ), [ $args['find'] ], sprintf( 'post %d', (int) $post->ID ) );
+                return;
+
+            case 'wp_replace_text_in_blocks':
+                $post = $this->guarded_post( $args, 'post_id' );
+                if ( null === $post || ! isset( $args['find'] ) || ! is_string( $args['find'] ) || '' === $args['find'] ) {
+                    return;
+                }
+                // The block tool also matches the HTML-encoded forms of the find text.
+                $forms = [ $args['find'] ];
+                foreach ( [ [ '&' => '&amp;', '<' => '&lt;', '>' => '&gt;' ], [ '&' => '&amp;', '<' => '&lt;', '>' => '&gt;', '"' => '&quot;', "'" => '&#039;' ], [ '&' => '&amp;', '<' => '&lt;', '>' => '&gt;', '"' => '&quot;', "'" => '&#39;' ] ] as $map ) {
+                    $forms[] = strtr( $args['find'], $map );
+                }
+                $this->refuse_find_over_masked( (string) $post->post_content, $this->post_field_as_read( $post, 'content' ), array_values( array_unique( $forms ) ), sprintf( 'post %d', (int) $post->ID ) );
+                return;
+
+            case 'wp_update_block_attributes':
+            case 'wp_replace_block':
+                $post = $this->guarded_post( $args, 'post_id' );
+                if ( null === $post || ! function_exists( 'parse_blocks' ) ) {
+                    return;
+                }
+                $raw_content = (string) $post->post_content;
+                $seen        = $this->post_field_as_read( $post, 'content' );
+                if ( ! self::read_differs( $seen, $raw_content ) ) {
+                    return;
+                }
+                $path = is_int( $args['path'] ?? null ) ? (string) $args['path'] : ( $args['path'] ?? '' );
+                if ( ! is_string( $path ) || ! preg_match( '/^\d+(\.\d+)*$/', $path ) ) {
+                    return;
+                }
+                $path      = array_map( 'intval', explode( '.', $path ) );
+                $raw_block = self::block_at_path( parse_blocks( $raw_content ), $path );
+                if ( null === $raw_block ) {
+                    return;
+                }
+                $seen_block = is_string( $seen ) ? self::block_at_path( parse_blocks( $seen ), $path ) : null;
+                $what       = sprintf( 'the block at %s in post %d', implode( '.', $path ), (int) $post->ID );
+                if ( 'wp_replace_block' === $name ) {
+                    $this->refuse_whole_write_over_masked( $name, $what, serialize_block( $raw_block ), static function () use ( $seen_block ) {
+                        return null === $seen_block ? \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER : serialize_block( $seen_block );
+                    }, $args, 'Change its text with wp_replace_text_in_blocks, or change it in the block editor.' );
+                    return;
+                }
+                foreach ( array_keys( is_array( $args['attributes'] ?? null ) ? $args['attributes'] : [] ) as $attr ) {
+                    if ( ! array_key_exists( (string) $attr, (array) $raw_block['attrs'] ) ) {
+                        continue;
+                    }
+                    $this->refuse_whole_write_over_masked( $name, sprintf( 'attribute %s of %s', esc_html( (string) $attr ), $what ), $raw_block['attrs'][ $attr ], static function () use ( $seen_block, $attr ) {
+                        return is_array( $seen_block ) && array_key_exists( (string) $attr, (array) $seen_block['attrs'] ) ? $seen_block['attrs'][ $attr ] : \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER;
+                    }, $args, 'Leave that attribute out, or change it in the block editor.' );
+                }
+                return;
+
+            case 'snippets_update_code':
+            case 'wpcode_update_snippet':
+                if ( ! isset( $args['code'] ) || ! is_string( $args['code'] ) ) {
+                    return;
+                }
+                $sid  = \Royal_MCP\MCP\Support\Post_Access::id_value( $args['snippet_id'] ?? null );
+                $read = 'snippets_update_code' === $name ? 'snippets_get' : 'wpcode_get_snippet';
+                $raw  = null;
+                if ( null === $sid || $sid <= 0 ) {
+                    return;
+                }
+                if ( 'snippets_get' === $read && function_exists( '\Code_Snippets\get_snippet' ) ) {
+                    $snip = \Code_Snippets\get_snippet( $sid, false );
+                    $raw  = $snip && ! empty( $snip->id ) ? (string) $snip->code : null;
+                } elseif ( 'wpcode_get_snippet' === $read && class_exists( '\WPCode_Snippet' ) ) {
+                    $snip_post = get_post( $sid );
+                    $raw       = $snip_post && 'wpcode' === $snip_post->post_type ? (string) ( new \WPCode_Snippet( $snip_post ) )->get_code() : null;
+                }
+                if ( null === $raw ) {
+                    return;
+                }
+                $this->refuse_whole_write_over_masked( $name, sprintf( 'the code of snippet %d', $sid ), $raw, function () use ( $read, $sid ) {
+                    $reply = $this->scrub_tool_result_checked( $read, $this->execute_tool_now( $read, [ 'id' => $sid ] ) );
+                    // Code the read leaves out (too large, or not checkable) was never seen.
+                    if ( ! is_array( $reply ) || ! empty( $reply['code_withheld'] ) || ! array_key_exists( 'code', $reply ) ) {
+                        return \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER;
+                    }
+                    return $reply['code'];
+                }, $args, 'No tool can change only part of a snippet\'s code: change it in the snippet plugin\'s own screen.' );
+                return;
+
+            case 'wc_update_order':
+                if ( ! function_exists( 'wc_get_order' ) ) {
+                    return;
+                }
+                $oid   = \Royal_MCP\MCP\Support\Post_Access::id_value( $args['order_id'] ?? null );
+                $order = null !== $oid && $oid > 0 ? wc_get_order( $oid ) : null;
+                if ( ! $order || ! current_user_can( 'edit_shop_orders' ) && ! current_user_can( 'manage_woocommerce' ) ) {
+                    return;
+                }
+                $metas = isset( $args['meta_data'] ) && is_array( $args['meta_data'] ) ? array_slice( $args['meta_data'], 0, 100 ) : [];
+                foreach ( $metas as $meta ) {
+                    if ( ! is_array( $meta ) || ! is_string( $meta['key'] ?? null ) || '' === $meta['key'] || ! $order->meta_exists( $meta['key'] ) ) {
+                        continue;
+                    }
+                    $mkey = $meta['key'];
+                    // No read returns order meta: the value is judged the way a read of it as a key / value row would show it.
+                    $this->refuse_whole_write_over_masked( $name, sprintf( 'order meta %s on order %d', esc_html( $mkey ), (int) $oid ), $order->get_meta( $mkey, true, 'edit' ), function ( $raw ) use ( $mkey, $oid ) {
+                        $reply = $this->scrub_tool_result_checked( 'wc_get_order', [ 'id' => (int) $oid, 'meta_data' => [ [ 'key' => $mkey, 'value' => $raw ] ] ] );
+                        return is_array( $reply ) && isset( $reply['meta_data'][0] ) && is_array( $reply['meta_data'][0] ) && array_key_exists( 'value', $reply['meta_data'][0] ) ? $reply['meta_data'][0]['value'] : \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER;
+                    }, $meta, 'Change it in WooCommerce instead.' );
+                }
+                if ( isset( $args['customer_note'] ) && is_string( $args['customer_note'] ) ) {
+                    $this->refuse_whole_write_over_masked( $name, sprintf( 'the customer note of order %d', (int) $oid ), (string) $order->get_customer_note( 'edit' ), function ( $raw ) use ( $oid ) {
+                        $reply = $this->scrub_tool_result_checked( 'wc_get_order', [ 'id' => (int) $oid, 'customer_note' => $raw ] );
+                        return is_array( $reply ) && array_key_exists( 'customer_note', $reply ) ? $reply['customer_note'] : \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER;
+                    }, $args, 'Change it in WooCommerce instead.' );
+                }
+                // Of the address fields, the order read returns the billing city and country (the rest is never read).
+                foreach ( [ 'city', 'country' ] as $k ) {
+                    if ( empty( $args['billing'] ) || ! is_array( $args['billing'] ) || ! isset( $args['billing'][ $k ] ) || ! is_scalar( $args['billing'][ $k ] ) ) {
+                        continue;
+                    }
+                    $getter = 'get_billing_' . $k;
+                    $this->refuse_whole_write_over_masked( $name, sprintf( 'the billing %s of order %d', $k, (int) $oid ), (string) $order->$getter( 'edit' ), function ( $raw ) use ( $oid, $k ) {
+                        return $this->reply_field_as_read( 'wc_get_order', [ 'id' => (int) $oid, 'billing_' . $k => $raw ], [ 'billing_' . $k ] );
+                    }, $args, 'Leave that field out, or change it in WooCommerce.' );
+                }
+                return;
+
+            case 'elementor_update_widget':
+            case 'elementor_update_widget_setting':
+            case 'elementor_bulk_replace_widget_setting':
+            case 'elementor_manage_elements':
+            case 'elementor_build_composition':
+            case 'elementor_apply_template_advanced':
+            case 'elementor_replace_text':
+                $this->refuse_masked_elementor_write( $name, $args );
+                return;
+
+            case 'divi_library_update':
+            case 'divi5_scaffold_block':
+            case 'divi_import_template':
+                $target_key = [ 'divi_library_update' => 'template_id', 'divi5_scaffold_block' => 'write_to_post_id', 'divi_import_template' => 'target_post_id' ][ $name ];
+                if ( 'divi_library_update' === $name && ! ( isset( $args['content'] ) && is_string( $args['content'] ) ) ) {
+                    return;
+                }
+                if ( 'divi_import_template' === $name && 'replace' !== ( isset( $args['mode'] ) ? sanitize_key( (string) $args['mode'] ) : 'merge' ) ) {
+                    return;
+                }
+                $post = $this->guarded_post( $args, $target_key );
+                if ( null === $post ) {
+                    return;
+                }
+                $this->refuse_whole_write_over_masked( $name, sprintf( 'the content of post %d', (int) $post->ID ), (string) $post->post_content, function () use ( $post ) {
+                    return $this->post_field_as_read( $post, 'content' );
+                }, $args, 'Use divi_replace_text to change text outside the hidden parts, or change it in the Divi builder.' );
+                return;
+
+            case 'divi_replace_text':
+                $post = $this->guarded_post( $args, 'post_id' );
+                if ( null === $post || ! isset( $args['replacements'] ) || ! is_array( $args['replacements'] ) ) {
+                    return;
+                }
+                $finds = [];
+                foreach ( array_slice( $args['replacements'], 0, 100 ) as $r ) {
+                    if ( is_array( $r ) && isset( $r['find'] ) && is_string( $r['find'] ) ) {
+                        $finds[] = $r['find'];
+                    }
+                }
+                $this->refuse_find_over_masked( (string) $post->post_content, $this->post_field_as_read( $post, 'content' ), $finds, sprintf( 'post %d', (int) $post->ID ) );
+                return;
+
+            case 'wp_bulk_replace_widget_content':
+                $this->refuse_masked_widget_find( $args );
+                return;
+
+            case 'tablepress_update_cells':
+            case 'snippets_update_metadata':
+            case 'redirection_update_redirect':
+            case 'mailpoet_save_subscriber':
+            case 'mailpoet_save_draft':
+            case 'complianz_update_banner_text':
+            case 'complianz_update_cookie_description':
+            case 'relevanssi_update_synonyms':
+            case 'raif_set_bot_policy':
+            case 'raif_set_bot_policies':
+            case 'acf_update_field_definition':
+            case 'acf_update_field_group':
+            case 'acf_import_field_group_json':
+            case 'royal_mcp_update_ai_permissions':
+                $this->refuse_masked_plugin_write( $name, $args );
+                return;
+
+            case 'yoast_update_meta':
+                $this->refuse_masked_seo_write( $name, $args, 'yoast' );
+                return;
+
+            case 'wp_update_term':
+                $this->refuse_masked_term_write( $name, $args );
+                return;
+
+            case 'wp_update_media':
+                $this->refuse_masked_media_write( $name, $args );
+                return;
+
+            case 'wp_update_menu_item':
+                $this->refuse_masked_menu_item_write( $name, $args );
+                return;
+
+            case 'wp_bulk_update_menu_items':
+                foreach ( array_slice( is_array( $args['items'] ?? null ) ? array_values( $args['items'] ) : [], 0, 100 ) as $item ) {
+                    if ( is_array( $item ) ) {
+                        $this->refuse_masked_menu_item_write( $name, $item );
+                    }
+                }
+                return;
+
+            case 'wp_update_synced_pattern':
+                $this->refuse_masked_pattern_write( $name, $args );
+                return;
+
+            case 'wp_update_block_template':
+                $this->refuse_masked_template_write( $name, $args );
+                return;
+
+            case 'wp_update_global_styles':
+                $this->refuse_masked_global_styles_write( $name, $args );
+                return;
+
+            case 'wp_update_seo_meta':
+                $this->refuse_masked_seo_write( $name, $args );
+                return;
+
+
+            case 'wc_update_product':
+            case 'wc_bulk_update_products':
+            case 'wc_update_variation':
+            case 'wc_batch_update_variations':
+            case 'wc_update_coupon':
+            case 'wc_bulk_update_coupons':
+                $this->refuse_masked_shop_write( $name, $args );
+                return;
+
+
+        }
+        if ( 0 === strpos( (string) $name, 'ext_' ) ) {
+            $this->refuse_masked_ability_write( (string) $name, $args );
+        }
+    }
+
+    /**
+     * The post a write names under $key (or post_id / id), when the caller may read and edit it; null
+     * otherwise (the handler gives its own answer then).
+     *
+     * @return \WP_Post|null
+     */
+    private function guarded_post( array $args, $key ) {
+        if ( 'post_id' === $key ) {
+            try {
+                $id = self::resolve_post_id_arg( $args );
+            } catch ( \Throwable $e ) {
+                return null;
+            }
+        } else {
+            $id = \Royal_MCP\MCP\Support\Post_Access::id_value( $args[ $key ] ?? null );
+        }
+        $post = null !== $id && $id > 0 ? get_post( $id ) : null;
+        if ( ! $post || ! current_user_can( 'edit_post', $post->ID ) ) {
+            return null;
+        }
+        return $post;
+    }
+
+    /**
+     * A post field as the read tools show it to this caller: wp_get_post's reply (and wp_get_page's
+     * for a page; custom CSS through wp_get_custom_css), scrubbed as those replies are. When the reads
+     * disagree, the first one that differs from the stored field is returned. A read that fails returns
+     * the marker (the field could not be read in full).
+     *
+     * @param \WP_Post $post  Post.
+     * @param string   $field content, title or excerpt.
+     * @return mixed
+     */
+    private function post_field_as_read( $post, $field ) {
+        $column = [ 'content' => 'post_content', 'title' => 'post_title', 'excerpt' => 'post_excerpt' ][ $field ] ?? 'post_content';
+        $raw    = (string) $post->{$column};
+        if ( 'custom_css' === $post->post_type ) {
+            $reads = [ [ 'wp_get_custom_css', [ 'theme_slug' => (string) $post->post_name ], 'css' ] ];
+        } else {
+            $reads = [ [ 'wp_get_post', [ 'id' => (int) $post->ID ], $field ] ];
+            if ( 'page' === $post->post_type ) {
+                $reads[] = [ 'wp_get_page', [ 'id' => (int) $post->ID ], $field ];
+            }
+        }
+        $seen_any = false;
+        foreach ( $reads as $read ) {
+            try {
+                $reply = $this->scrub_tool_result_checked( $read[0], $this->execute_tool_now( $read[0], $read[1] ) );
+            } catch ( \Throwable $e ) {
+                return \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER;
+            }
+            if ( ! is_array( $reply ) || ! array_key_exists( $read[2], $reply ) ) {
+                continue;
+            }
+            $seen_any = true;
+            if ( self::read_differs( $reply[ $read[2] ], $raw ) ) {
+                return $reply[ $read[2] ];
+            }
+        }
+        if ( ! $seen_any ) {
+            // No read returns this field: judged as wp_get_post would show it.
+            $reply = $this->scrub_tool_result_checked( 'wp_get_post', [ 'id' => (int) $post->ID, $field => $raw ] );
+            return is_array( $reply ) && array_key_exists( $field, $reply ) ? $reply[ $field ] : \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER;
+        }
+        return $raw;
+    }
+
+    /**
+     * Refuse a find-and-replace whose find text touches a part of the stored text that a read hides
+     * (see find_touches_masked()).
+     *
+     * @param string   $raw   Stored text.
+     * @param mixed    $seen  The text as a read shows it.
+     * @param string[] $finds Find texts (also their encoded forms when the tool matches those).
+     * @param string   $what  What is edited ("post 5").
+     */
+    private function refuse_find_over_masked( $raw, $seen, array $finds, $what ) {
+        if ( ! self::read_differs( $seen, $raw ) ) {
+            return;
+        }
+        foreach ( $finds as $find ) {
+            if ( is_string( $find ) && '' !== $find && ( ! is_string( $seen ) || self::find_touches_masked( $raw, $seen, $find ) ) ) {
+                throw self::find_masked_refusal( $what );
+            }
+        }
+    }
+
+    /** Refusal for a find-and-replace whose find text touches a part a read hides. */
+    private static function find_masked_refusal( $what ) {
+        return new \Royal_MCP\MCP\Support\Tool_Refusal( 'read_is_masked', sprintf( 'The text to find touches a part of %s that is hidden from AI clients, so replacing it could change data the client never saw. Nothing was changed. Choose find text outside the hidden part, or change it in the WordPress admin.', $what ) );
+    }
+
+    /**
+     * The id of the first Elementor element whose settings, as elementor_get_widget_settings shows them,
+     * hide a part that one of the find texts touches (compared as JSON, so the JSON-escaped form of
+     * each find text counts too); null when none does.
+     *
+     * @param int      $post_id  Post the elements belong to.
+     * @param array    $elements Elements (see elementor_elements()).
+     * @param string[] $finds    Find texts.
+     * @param bool     $case_ins Whether the tool matches without regard to case.
+     * @return string|null
+     */
+    private function elementor_masked_element( $post_id, array $elements, array $finds, $case_ins ) {
+        $forms = [];
+        foreach ( $finds as $find ) {
+            if ( ! is_string( $find ) || '' === $find ) {
+                continue;
+            }
+            $forms[] = $find;
+            $forms[] = trim( (string) wp_json_encode( $find, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ), '"' );
+            if ( false !== strpos( $find, '/' ) ) {
+                $forms[] = trim( (string) wp_json_encode( str_replace( '/', '\\/', $find ), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ), '"' );
+            }
+        }
+        $forms = array_values( array_unique( $case_ins ? array_map( [ __CLASS__, 'fold_case' ], $forms ) : $forms ) );
+        if ( [] === $forms ) {
+            return null;
+        }
+        foreach ( $elements as $el ) {
+            $raw  = isset( $el['settings'] ) && is_array( $el['settings'] ) ? $el['settings'] : [];
+            $seen = $this->elementor_settings_as_read( $post_id, $el );
+            if ( ! self::read_differs( $seen, $raw ) ) {
+                continue;
+            }
+            $raw_json  = (string) wp_json_encode( $raw, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+            $seen_json = (string) wp_json_encode( $seen, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+            if ( $case_ins ) {
+                $raw_json  = self::fold_case( $raw_json );
+                $seen_json = self::fold_case( $seen_json );
+            }
+            // Settings that differ in a way the JSON does not show (text that is not valid UTF-8) cannot be compared.
+            if ( $raw_json === $seen_json ) {
+                return (string) ( $el['id'] ?? '' );
+            }
+            foreach ( $forms as $form ) {
+                if ( self::find_touches_masked( $raw_json, $seen_json, $form ) ) {
+                    return (string) ( $el['id'] ?? '' );
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Lower case for case-insensitive matching (multi-byte aware when available). */
+    private static function fold_case( $text ) {
+        return function_exists( 'mb_strtolower' ) ? mb_strtolower( (string) $text, 'UTF-8' ) : strtolower( (string) $text );
+    }
+
+    /**
+     * A field of a read tool's reply as that read shows it: $reply is the reply that read builds (the
+     * stored values in its own shape, the fields beside it included, since a value is judged with the
+     * names around it), scrubbed as that tool's replies are. The marker when the scrubbed reply has no
+     * such field.
+     *
+     * @param string $read_tool Read tool name.
+     * @param array  $reply     The reply the read builds.
+     * @param array  $path      Keys to the field.
+     * @return mixed
+     */
+    private function reply_field_as_read( $read_tool, array $reply, array $path ) {
+        $seen = $this->scrub_tool_result_checked( $read_tool, $reply );
+        if ( is_array( $seen ) && isset( $seen['structuredContent'] ) && is_array( $seen['structuredContent'] ) ) {
+            $seen = $seen['structuredContent'];
+        }
+        $value = self::path_value( is_array( $seen ) ? $seen : [], $path, $found );
+        return $found ? $value : \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER;
+    }
+
+    /** The block at a path of block positions (named blocks only, as the block tools count them), or null. */
+    private static function block_at_path( array $tree, array $path ) {
+        $list  = $tree;
+        $block = null;
+        foreach ( $path as $n ) {
+            $named = [];
+            foreach ( $list as $i => $b ) {
+                if ( is_array( $b ) && ! empty( $b['blockName'] ) ) {
+                    $named[] = $i;
+                }
+            }
+            if ( ! isset( $named[ $n ] ) ) {
+                return null;
+            }
+            $block = $list[ $named[ $n ] ];
+            $list  = isset( $block['innerBlocks'] ) ? (array) $block['innerBlocks'] : [];
+        }
+        return $block;
+    }
+
+    /**
+     * Elementor writes that replace widget settings, a section or the whole document: refused when a
+     * read of an affected element's settings (elementor_get_widget_settings) hides part of what would
+     * be replaced. elementor_replace_text: refused when its find text touches a hidden part.
+     */
+    private function refuse_masked_elementor_write( $name, array $args ) {
+        $pid_key = 'elementor_apply_template_advanced' === $name ? 'target_post_id' : 'post_id';
+        $ids     = [];
+        if ( 'elementor_bulk_replace_widget_setting' === $name && isset( $args['post_ids'] ) && is_array( $args['post_ids'] ) ) {
+            foreach ( array_slice( $args['post_ids'], 0, 100 ) as $one ) {
+                $ids[] = \Royal_MCP\MCP\Support\Post_Access::id_value( $one );
+            }
+        } else {
+            $ids[] = \Royal_MCP\MCP\Support\Post_Access::id_value( $args[ $pid_key ] ?? null );
+        }
+        foreach ( $ids as $pid ) {
+            if ( null === $pid || $pid <= 0 || ! get_post( $pid ) || ! current_user_can( 'edit_post', $pid ) ) {
+                continue;
+            }
+            $data = get_post_meta( $pid, '_elementor_data', true );
+            $tree = is_string( $data ) ? json_decode( $data, true ) : $data;
+            if ( ! is_array( $tree ) ) {
+                continue;
+            }
+            $elements = [];
+            self::elementor_elements( $tree, $elements );
+            $check = function ( array $el, $keys, $what ) use ( $name, $args, $pid ) {
+                $raw  = isset( $el['settings'] ) && is_array( $el['settings'] ) ? $el['settings'] : [];
+                $seen = $this->elementor_settings_as_read( $pid, $el );
+                foreach ( null === $keys ? [ null ] : $keys as $key ) {
+                    $path = null === $key ? [] : explode( '.', (string) $key );
+                    $r    = self::path_value( $raw, $path, $found );
+                    if ( ! $found ) {
+                        continue;
+                    }
+                    $s = self::path_value( is_array( $seen ) ? $seen : [], $path, $seen_found );
+                    $this->refuse_whole_write_over_masked( $name, sprintf( '%s%s on post %d', null === $key ? 'the settings of ' : 'setting ' . esc_html( (string) $key ) . ' of ', $what, (int) $pid ), $r, static function () use ( $s, $seen_found ) {
+                        return $seen_found ? $s : \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER;
+                    }, $args, 'Leave that setting out, or change it in the Elementor editor.' );
+                }
+            };
+            $by_id = [];
+            foreach ( $elements as $el ) {
+                if ( isset( $el['id'] ) && is_scalar( $el['id'] ) ) {
+                    $by_id[ (string) $el['id'] ] = $el;
+                }
+            }
+            $eid = isset( $args['element_id'] ) && is_scalar( $args['element_id'] ) ? sanitize_text_field( (string) $args['element_id'] ) : '';
+            switch ( $name ) {
+                case 'elementor_update_widget':
+                    if ( isset( $by_id[ $eid ] ) && isset( $args['settings'] ) && is_array( $args['settings'] ) ) {
+                        $check( $by_id[ $eid ], array_map( 'strval', array_keys( $args['settings'] ) ), 'element ' . esc_html( $eid ) );
+                    }
+                    break;
+                case 'elementor_update_widget_setting':
+                    if ( isset( $by_id[ $eid ] ) && isset( $args['setting'] ) && is_string( $args['setting'] ) && '' !== $args['setting'] ) {
+                        $check( $by_id[ $eid ], [ $args['setting'] ], 'element ' . esc_html( $eid ) );
+                    }
+                    break;
+                case 'elementor_bulk_replace_widget_setting':
+                    $type = isset( $args['widget_type'] ) ? sanitize_text_field( (string) $args['widget_type'] ) : '';
+                    $skey = isset( $args['setting_key'] ) ? sanitize_text_field( (string) $args['setting_key'] ) : '';
+                    if ( '' === $type || '' === $skey ) {
+                        break;
+                    }
+                    foreach ( $elements as $el ) {
+                        if ( (string) ( $el['widgetType'] ?? '' ) === $type ) {
+                            $check( $el, [ $skey ], 'element ' . esc_html( (string) ( $el['id'] ?? '' ) ) );
+                        }
+                    }
+                    break;
+                case 'elementor_manage_elements':
+                    foreach ( array_slice( is_array( $args['operations'] ?? null ) ? $args['operations'] : [], 0, 100 ) as $op ) {
+                        $op_eid = is_array( $op ) && isset( $op['element_id'] ) && is_scalar( $op['element_id'] ) ? sanitize_text_field( (string) $op['element_id'] ) : '';
+                        if ( is_array( $op ) && 'update' === ( $op['op'] ?? '' ) && isset( $by_id[ $op_eid ] ) && is_array( $op['settings'] ?? null ) ) {
+                            $check( $by_id[ $op_eid ], array_map( 'strval', array_keys( $op['settings'] ) ), 'element ' . esc_html( $op_eid ) );
+                        }
+                    }
+                    break;
+                case 'elementor_build_composition':
+                case 'elementor_apply_template_advanced':
+                    $mode = isset( $args['mode'] ) ? sanitize_key( (string) $args['mode'] ) : '';
+                    if ( 'replace_document' === $mode || ( 'elementor_apply_template_advanced' === $name && 'replace' === $mode ) ) {
+                        foreach ( $elements as $el ) {
+                            $check( $el, null, 'element ' . esc_html( (string) ( $el['id'] ?? '' ) ) );
+                        }
+                    } elseif ( 'replace_section' === $mode ) {
+                        $target = isset( $args['target_element_id'] ) && is_scalar( $args['target_element_id'] ) ? sanitize_text_field( (string) $args['target_element_id'] ) : '';
+                        if ( isset( $by_id[ $target ] ) ) {
+                            $inner = [];
+                            self::elementor_elements( [ $by_id[ $target ] ], $inner );
+                            foreach ( $inner as $el ) {
+                                $check( $el, null, 'element ' . esc_html( (string) ( $el['id'] ?? '' ) ) );
+                            }
+                        }
+                    }
+                    break;
+                case 'elementor_replace_text':
+                    $find = isset( $args['find'] ) && is_string( $args['find'] ) ? $args['find'] : '';
+                    if ( '' === $find ) {
+                        break;
+                    }
+                    $hit = $this->elementor_masked_element( $pid, $elements, [ $find ], ! empty( $args['case_insensitive'] ) );
+                    if ( null !== $hit ) {
+                        throw self::find_masked_refusal( sprintf( 'element %s on post %d', esc_html( $hit ), (int) $pid ) );
+                    }
+                    break;
+            }
+        }
+    }
+
+    /** Every element of an Elementor tree, depth first. */
+    private static function elementor_elements( array $tree, array &$out, $depth = 0 ) {
+        if ( $depth > 64 ) {
+            return;
+        }
+        foreach ( $tree as $el ) {
+            if ( ! is_array( $el ) ) {
+                continue;
+            }
+            $out[] = $el;
+            if ( isset( $el['elements'] ) && is_array( $el['elements'] ) ) {
+                self::elementor_elements( $el['elements'], $out, $depth + 1 );
+            }
+        }
+    }
+
+    /** An element's settings as elementor_get_widget_settings shows them (form integration keys left out, reply scrubbed). */
+    private function elementor_settings_as_read( $post_id, array $el ) {
+        $settings = isset( $el['settings'] ) && is_array( $el['settings'] ) ? $el['settings'] : [];
+        if ( class_exists( '\Royal_MCP\Integrations\Elementor' ) && method_exists( '\Royal_MCP\Integrations\Elementor', 'without_form_secrets' ) ) {
+            $strip = new \ReflectionMethod( '\Royal_MCP\Integrations\Elementor', 'without_form_secrets' );
+            $strip->setAccessible( true );
+            $settings = $strip->invoke( null, $settings );
+        }
+        $el_type = (string) ( $el['elType'] ?? 'unknown' );
+        $reply   = $this->scrub_tool_result_checked( 'elementor_get_widget_settings', [
+            'post_id'      => (int) $post_id,
+            'element_id'   => (string) ( $el['id'] ?? '' ),
+            'found'        => true,
+            'element_type' => $el_type,
+            'widget_type'  => 'widget' === $el_type ? (string) ( $el['widgetType'] ?? '' ) : null,
+            'settings'     => $settings,
+        ] );
+        return is_array( $reply ) && array_key_exists( 'settings', $reply ) ? $reply['settings'] : \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER;
+    }
+
+    /** The value at a key path ([] = the whole value); $found says whether it is there. */
+    private static function path_value( $value, array $path, &$found ) {
+        $found = false;
+        foreach ( $path as $key ) {
+            if ( ! is_array( $value ) || ! array_key_exists( $key, $value ) ) {
+                return null;
+            }
+            $value = $value[ $key ];
+        }
+        $found = true;
+        return $value;
+    }
+
+    /**
+     * A bridged ability write (ext_*) whose matching read ability (the same name with get in place of
+     * update / set / save / edit / replace / put) returns the current value masked: refused, since the
+     * write could only have been built from that read.
+     */
+    private function refuse_masked_ability_write( $name, array $args ) {
+        if ( ! class_exists( '\Royal_MCP\Abilities\Plugin_Abilities' ) || $this->tool_is_read_only( $name ) ) {
+            return;
+        }
+        $map = \Royal_MCP\Abilities\Plugin_Abilities::bridged();
+        if ( ! isset( $map[ $name ] ) ) {
+            return;
+        }
+        $read = preg_replace( '/_(?:update|set|save|edit|replace|put)(?=_|$)/', '_get', $name, 1 );
+        if ( ! is_string( $read ) || $read === $name || ! isset( $map[ $read ] ) ) {
+            return;
+        }
+        $notes = \Royal_MCP\Abilities\Plugin_Abilities::annotations( $map[ $read ] );
+        if ( empty( $notes['readOnlyHint'] ) ) {
+            return;
+        }
+        // The read is given the arguments its own input schema names (the ids of what is written).
+        $schema = method_exists( $map[ $read ], 'get_input_schema' ) ? (array) $map[ $read ]->get_input_schema() : [];
+        $props  = isset( $schema['properties'] ) && is_array( $schema['properties'] ) ? array_keys( $schema['properties'] ) : [];
+        $input  = array_intersect_key( $args, array_flip( array_map( 'strval', $props ) ) );
+        $before = \Royal_MCP\MCP\Support\Secret_Scrubber::change_count();
+        try {
+            $out = \Royal_MCP\Abilities\Plugin_Abilities::run( null, $read, $input );
+            if ( is_wp_error( $out ) ) {
+                return;
+            }
+            $out = $this->scrub_tool_result_checked( $read, $out );
+        } catch ( \Throwable $e ) {
+            return;
+        }
+        if ( \Royal_MCP\MCP\Support\Secret_Scrubber::change_count() !== $before || \Royal_MCP\MCP\Support\Secret_Scrubber::contains_marker( $out )
+            || ( is_array( $out ) && ( ! empty( $out['partial'] ) || ! empty( $out['structuredContent']['partial'] ) ) ) ) {
+            throw self::read_is_masked_refusal( sprintf( 'what %s changes (its read %s hides part of it)', esc_html( $name ), esc_html( $read ) ), 'Change it in that plugin\'s own screen instead.' );
+        }
+    }
+
+    /**
+     * wp_bulk_replace_widget_content: refused when the find text touches a part of any instance of the
+     * widget type that wp_get_widget shows hidden (settings compared as JSON, so the JSON-escaped form
+     * of the find text counts too).
+     */
+    private function refuse_masked_widget_find( array $args ) {
+        $type = isset( $args['widget_type'] ) && is_scalar( $args['widget_type'] ) ? sanitize_key( (string) $args['widget_type'] ) : '';
+        $find = isset( $args['find'] ) && is_string( $args['find'] ) ? $args['find'] : '';
+        if ( '' === $type || '' === $find || ! current_user_can( 'edit_theme_options' ) ) {
+            return;
+        }
+        $stored = get_option( 'widget_' . $type );
+        if ( ! is_array( $stored ) ) {
+            return;
+        }
+        $ci    = ! empty( $args['case_insensitive'] );
+        $forms = array_values( array_unique( [ $find, trim( (string) wp_json_encode( $find, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ), '"' ) ] ) );
+        $forms = $ci ? array_map( [ __CLASS__, 'fold_case' ], $forms ) : $forms;
+        $n     = 0;
+        foreach ( $stored as $num => $instance ) {
+            if ( ! is_int( $num ) || ! is_array( $instance ) || ++$n > 500 ) {
+                continue;
+            }
+            $wid   = $type . '-' . $num;
+            $views = $this->widget_settings_views( $wid );
+            $raw   = $instance;
+            $seen  = null;
+            if ( is_array( $views ) && is_array( $views[0] ) ) {
+                $raw  = $views[0];
+                $seen = $views[1];
+            } else {
+                // A widget the widgets read does not list is judged as wp_get_widget would show it.
+                $seen = $this->reply_field_as_read( 'wp_get_widget', [ 'id' => $wid, 'id_base' => $type, 'instance' => [ 'raw' => $instance ] ], [ 'instance', 'raw' ] );
+            }
+            if ( ! self::read_differs( $seen, $raw ) ) {
+                continue;
+            }
+            $raw_json  = (string) wp_json_encode( $raw, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+            $seen_json = (string) wp_json_encode( $seen, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+            if ( $ci ) {
+                $raw_json  = self::fold_case( $raw_json );
+                $seen_json = self::fold_case( $seen_json );
+            }
+            $touches = $raw_json === $seen_json;
+            foreach ( $forms as $form ) {
+                $touches = $touches || self::find_touches_masked( $raw_json, $seen_json, $form );
+            }
+            if ( $touches ) {
+                throw self::find_masked_refusal( sprintf( 'widget %s', esc_html( $wid ) ) );
+            }
+        }
+    }
+
+    /**
+     * A read tool's reply as built and as AI clients get it (scrubbed as that tool's replies are), the
+     * structured part of each: [ raw, seen ]. Null when the read cannot be run for this caller or answers
+     * with an error (the write gives its own answer then: nothing to read means nothing was read hidden).
+     * $reply is the reply to judge instead of running the read.
+     *
+     * @return array{0:mixed,1:mixed}|null
+     */
+    private function read_reply_pair( $read_tool, array $read_args, $reply = null ) {
+        if ( null === $reply ) {
+            try {
+                $reply = $this->execute_tool_now( $read_tool, $read_args );
+            } catch ( \Throwable $e ) {
+                return null;
+            }
+        }
+        if ( ( function_exists( 'is_wp_error' ) && is_wp_error( $reply ) ) || ( is_array( $reply ) && ! empty( $reply['isError'] ) ) ) {
+            return null;
+        }
+        $seen   = $this->scrub_tool_result_checked( $read_tool, $reply );
+        $unwrap = static function ( $r ) {
+            return is_array( $r ) && isset( $r['structuredContent'] ) && is_array( $r['structuredContent'] ) ? $r['structuredContent'] : $r;
+        };
+        return [ $unwrap( $reply ), $unwrap( $seen ) ];
+    }
+
+    /** The key path of the first node (depth first, at most 12 levels) for which $match returns true, or null. */
+    private static function find_node_path( $data, callable $match, array $path = [], $depth = 0 ) {
+        if ( $match( $data, $path ) ) {
+            return $path;
+        }
+        if ( ! is_array( $data ) || $depth >= 12 ) {
+            return null;
+        }
+        foreach ( $data as $k => $v ) {
+            $found = self::find_node_path( $v, $match, array_merge( $path, [ $k ] ), $depth + 1 );
+            if ( null !== $found ) {
+                return $found;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Refuse a write of the value at $path of a read reply when the scrubbed reply shows it differently
+     * from the reply as built (see refuse_whole_write_over_masked()). Nothing to compare when the read has
+     * no such value.
+     */
+    private function refuse_pair_path( $tool, $what, array $pair, $path, array $args, $routes ) {
+        if ( null === $path ) {
+            return;
+        }
+        $raw = self::path_value( $pair[0], $path, $found );
+        if ( ! $found ) {
+            return;
+        }
+        $seen = self::path_value( is_array( $pair[1] ) ? $pair[1] : [], $path, $seen_found );
+        $this->refuse_whole_write_over_masked( $tool, $what, $raw, static function () use ( $seen, $seen_found ) {
+            return $seen_found ? $seen : \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER;
+        }, $args, $routes );
+    }
+
+    /**
+     * Writes of other plugins' data that replace a whole stored value an AI client reads through that
+     * plugin's own read tool. Each value the write replaces is compared, in the read's reply as built and
+     * as scrubbed, at the same place. $reply is the read reply to judge instead of running the read.
+     */
+    private function refuse_masked_plugin_write( $name, array $args, $reply = null ) {
+        $routes = 'Leave that field out, or change it in the plugin\'s own screen.';
+        switch ( $name ) {
+            case 'tablepress_update_cells':
+                if ( ! isset( $args['table_id'] ) || ! is_array( $args['cells'] ?? null ) ) {
+                    return;
+                }
+                $pair = $this->read_reply_pair( 'tablepress_get_table', [ 'table_id' => $args['table_id'], 'max_rows' => 5000 ], $reply );
+                if ( null === $pair ) {
+                    return;
+                }
+                foreach ( array_slice( array_values( $args['cells'] ), 0, 500 ) as $cell ) {
+                    $r = is_array( $cell ) ? \Royal_MCP\MCP\Support\Post_Access::id_value( $cell['row'] ?? null ) : null;
+                    $c = is_array( $cell ) ? \Royal_MCP\MCP\Support\Post_Access::id_value( $cell['column'] ?? null ) : null;
+                    if ( null === $r || null === $c || $r < 1 || $c < 1 ) {
+                        continue;
+                    }
+                    // A row the read left out (past its row limit) was never seen.
+                    if ( ! isset( $pair[1]['data'][ $r - 1 ] ) && isset( $pair[0]['data'] ) && ! empty( $pair[0]['truncated'] ) ) {
+                        throw self::read_is_masked_refusal( sprintf( 'cell %d,%d of table %s', $r, $c, esc_html( (string) $args['table_id'] ) ), 'Change that row in TablePress instead.' );
+                    }
+                    $this->refuse_pair_path( $name, sprintf( 'cell %d,%d of table %s', $r, $c, esc_html( (string) $args['table_id'] ) ), $pair, [ 'data', $r - 1, $c - 1 ], $args, 'Leave that cell out, or change it in TablePress.' );
+                }
+                return;
+
+            case 'snippets_update_metadata':
+                $pair = $this->read_reply_pair( 'snippets_get', [ 'id' => $args['id'] ?? null ], $reply );
+                if ( null === $pair ) {
+                    return;
+                }
+                foreach ( [ 'name', 'description', 'tags' ] as $field ) {
+                    if ( array_key_exists( $field, $args ) ) {
+                        $this->refuse_pair_path( $name, sprintf( 'the %s of snippet %s', $field, esc_html( (string) ( is_scalar( $args['id'] ?? null ) ? $args['id'] : '' ) ) ), $pair, [ $field ], $args, $routes );
+                    }
+                }
+                return;
+
+            case 'redirection_update_redirect':
+                if ( ! isset( $args['target_url'] ) ) {
+                    return;
+                }
+                $rid = \Royal_MCP\MCP\Support\Post_Access::id_value( $args['id'] ?? null );
+                if ( null === $reply ) {
+                    global $wpdb;
+                    if ( null === $rid || $rid <= 0 || ! is_object( $wpdb ) || ! current_user_can( 'manage_options' ) ) {
+                        return;
+                    }
+                    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- the redirect list read reads the same row.
+                    $row = $wpdb->get_row( $wpdb->prepare( "SELECT id, url, action_data FROM {$wpdb->prefix}redirection_items WHERE id = %d", $rid ), ARRAY_A );
+                    if ( ! is_array( $row ) ) {
+                        return;
+                    }
+                    $reply = [ [ 'id' => (int) $row['id'], 'source_url' => (string) $row['url'], 'target_url' => (string) $row['action_data'] ] ];
+                }
+                $this->refuse_pair_path( $name, sprintf( 'the target of redirect %d', (int) $rid ), $this->read_reply_pair( 'redirection_list_redirects', [], $reply ), [ 0, 'target_url' ], $args, 'Change it in Redirection instead.' );
+                return;
+
+            case 'mailpoet_save_subscriber':
+                if ( ! is_array( $args['custom_fields'] ?? null ) || ( ! isset( $args['subscriber_id'] ) && ! isset( $args['email'] ) ) ) {
+                    return;
+                }
+                $pair = $this->read_reply_pair( 'mailpoet_get_subscriber', array_intersect_key( $args, [ 'subscriber_id' => 1, 'email' => 1 ] ), $reply );
+                if ( null === $pair ) {
+                    return;
+                }
+                foreach ( array_keys( $args['custom_fields'] ) as $cf ) {
+                    $cf_id = (int) preg_replace( '/^cf_/', '', (string) $cf );
+                    $path  = self::find_node_path( $pair[0], static function ( $node, $p ) use ( $cf_id ) {
+                        return is_array( $node ) && in_array( 'custom_fields', $p, true ) && isset( $node['id'] ) && (int) $node['id'] === $cf_id && array_key_exists( 'value', $node );
+                    } );
+                    $this->refuse_pair_path( $name, sprintf( 'custom field %s of the subscriber', esc_html( (string) $cf ) ), $pair, null === $path ? null : array_merge( $path, [ 'value' ] ), $args, 'Leave that custom field out, or change it in MailPoet.' );
+                }
+                return;
+
+            case 'mailpoet_save_draft':
+                $nid = array_intersect_key( $args, [ 'newsletter_id' => 1, 'id' => 1 ] );
+                if ( [] === $nid || ( ! array_key_exists( 'subject', $args ) && ! array_key_exists( 'preview_text', $args ) ) ) {
+                    return;
+                }
+                $pair = $this->read_reply_pair( 'mailpoet_get_newsletter', $nid, $reply );
+                if ( null === $pair ) {
+                    return;
+                }
+                foreach ( [ 'subject', 'preview_text' ] as $field ) {
+                    if ( array_key_exists( $field, $args ) ) {
+                        $this->refuse_pair_path( $name, sprintf( 'the %s of the newsletter', str_replace( '_', ' ', $field ) ), $pair, self::find_node_path( $pair[0], static function ( $node, $p ) use ( $field ) { return [] !== $p && end( $p ) === $field; } ), $args, 'Leave it out, or change it in MailPoet.' );
+                    }
+                }
+                return;
+
+            case 'complianz_update_banner_text':
+                $pair = $this->read_reply_pair( 'complianz_get_banner', array_intersect_key( $args, [ 'banner_id' => 1 ] ), $reply );
+                if ( null === $pair ) {
+                    return;
+                }
+                foreach ( array_keys( $args ) as $field ) {
+                    if ( in_array( $field, [ 'banner_id', 'dry_run', 'expected_sha256' ], true ) ) {
+                        continue;
+                    }
+                    $this->refuse_pair_path( $name, sprintf( 'banner text %s', esc_html( (string) $field ) ), $pair, self::find_node_path( $pair[0], static function ( $node, $p ) use ( $field ) { return [] !== $p && end( $p ) === $field; } ), $args, 'Leave that text out, or change it in Complianz.' );
+                }
+                return;
+
+            case 'complianz_update_cookie_description':
+                $cid = \Royal_MCP\MCP\Support\Post_Access::id_value( $args['cookie_id'] ?? null );
+                if ( null === $cid || $cid <= 0 ) {
+                    return;
+                }
+                if ( null === $reply ) {
+                    global $wpdb;
+                    if ( ! is_object( $wpdb ) || ! current_user_can( 'manage_options' ) ) {
+                        return;
+                    }
+                    // The list read pages through every cookie; the row is judged in that read's own row shape.
+                    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- the cookie list read reads the same row.
+                    $row = $wpdb->get_row( $wpdb->prepare( "SELECT ID, name, purpose, retention, cookieFunction, collectedPersonalData FROM {$wpdb->prefix}cmplz_cookies WHERE ID = %d", $cid ), ARRAY_A );
+                    if ( ! is_array( $row ) ) {
+                        return;
+                    }
+                    $reply = [ 'cookies' => [ [ 'id' => (int) $row['ID'], 'name' => (string) $row['name'], 'purpose' => (string) $row['purpose'], 'retention' => (string) $row['retention'], 'cookie_function' => (string) $row['cookieFunction'], 'collected_personal_data' => (string) $row['collectedPersonalData'] ] ] ];
+                }
+                $pair = $this->read_reply_pair( 'complianz_list_cookies', [], $reply );
+                foreach ( [ 'purpose', 'retention', 'cookie_function', 'collected_personal_data' ] as $arg ) {
+                    if ( null !== $pair && array_key_exists( $arg, $args ) ) {
+                        $this->refuse_pair_path( $name, sprintf( 'the %s of cookie %d', str_replace( '_', ' ', $arg ), $cid ), $pair, [ 'cookies', 0, $arg ], $args, 'Leave that field out, or change it in Complianz.' );
+                    }
+                }
+                return;
+
+            case 'relevanssi_update_synonyms':
+                if ( 'replace' !== ( $args['mode'] ?? 'append' ) ) {
+                    return;
+                }
+                if ( null === $reply ) {
+                    $cls = '\Royal_MCP\Integrations\Relevanssi';
+                    if ( ! class_exists( $cls ) || ! method_exists( $cls, 'current_synonyms' ) || ! method_exists( $cls, 'parse_synonyms' ) ) {
+                        return;
+                    }
+                    try {
+                        $cur = new \ReflectionMethod( $cls, 'current_synonyms' );
+                        $cur->setAccessible( true );
+                        $parse = new \ReflectionMethod( $cls, 'parse_synonyms' );
+                        $parse->setAccessible( true );
+                        $reply = [ 'after' => array_values( (array) $parse->invoke( null, $cur->invoke( null ) ) ) ];
+                    } catch ( \Throwable $e ) {
+                        throw self::read_is_masked_refusal( 'the synonym list', 'It could not be read to check for hidden parts. Change it in Relevanssi instead.' );
+                    }
+                }
+                // The list as this tool's own replies show it (the list after a change).
+                $this->refuse_pair_path( $name, 'the synonym list', $this->read_reply_pair( 'relevanssi_update_synonyms', [], $reply ), [ 'after' ], $args, 'Use mode append or remove for the pairs you can read, or change the list in Relevanssi.' );
+                return;
+
+            case 'raif_set_bot_policy':
+            case 'raif_set_bot_policies':
+                $changes = 'raif_set_bot_policy' === $name ? [ $args ] : ( is_array( $args['changes'] ?? null ) ? array_slice( array_values( $args['changes'] ), 0, 100 ) : [] );
+                foreach ( $changes as $change ) {
+                    if ( ! is_array( $change ) || ! array_key_exists( 'paywall_url', $change ) || ! is_scalar( $change['bot_id'] ?? null ) ) {
+                        continue;
+                    }
+                    $bot  = sanitize_key( (string) $change['bot_id'] );
+                    $pair = $this->read_reply_pair( 'raif_get_bot_policies', [ 'bot_id' => $bot ], $reply );
+                    if ( null === $pair ) {
+                        continue;
+                    }
+                    $row = self::find_node_path( $pair[0], static function ( $node ) use ( $bot ) {
+                        return is_array( $node ) && ( ( $node['id'] ?? null ) === $bot || ( $node['bot_id'] ?? null ) === $bot ) && array_key_exists( 'paywall_url', $node );
+                    } );
+                    $this->refuse_pair_path( $name, sprintf( 'the paywall URL of bot %s', esc_html( $bot ) ), $pair, null === $row ? null : array_merge( $row, [ 'paywall_url' ] ), $change, 'Leave paywall_url out, or change it in Royal AI Firewall.' );
+                }
+                return;
+
+            case 'acf_update_field_definition':
+            case 'acf_update_field_group':
+                $is_field = 'acf_update_field_definition' === $name;
+                $key      = is_scalar( $args[ $is_field ? 'field_key' : 'group_key' ] ?? null ) ? (string) $args[ $is_field ? 'field_key' : 'group_key' ] : '';
+                $sent     = $is_field ? ( is_array( $args['updates'] ?? null ) ? array_keys( $args['updates'] ) : [] ) : array_values( array_intersect( array_keys( $args ), [ 'title', 'description' ] ) );
+                if ( '' === $key || [] === $sent ) {
+                    return;
+                }
+                $group_key = $key;
+                if ( $is_field && null === $reply ) {
+                    // The field group the field belongs to, through any parent fields.
+                    $group_key = '';
+                    $node      = function_exists( 'acf_get_field' ) ? acf_get_field( $key ) : null;
+                    for ( $i = 0; is_array( $node ) && $i < 16; $i++ ) {
+                        $parent = $node['parent'] ?? 0;
+                        $up     = $parent && function_exists( 'acf_get_field' ) ? acf_get_field( $parent ) : null;
+                        if ( is_array( $up ) ) {
+                            $node = $up;
+                            continue;
+                        }
+                        $group     = $parent && function_exists( 'acf_get_field_group' ) ? acf_get_field_group( $parent ) : null;
+                        $group_key = is_array( $group ) ? (string) ( $group['key'] ?? '' ) : '';
+                        break;
+                    }
+                    if ( '' === $group_key ) {
+                        return;
+                    }
+                }
+                $pair = $this->read_reply_pair( 'acf_get_field_group_config', [ 'group_key' => $group_key, 'include_fields' => true, 'include_sub_fields' => true ], $reply );
+                if ( null === $pair ) {
+                    return;
+                }
+                $at = self::find_node_path( $pair[0], static function ( $node ) use ( $key ) {
+                    return is_array( $node ) && ( $node['key'] ?? null ) === $key;
+                } );
+                if ( null === $at ) {
+                    return;
+                }
+                foreach ( $sent as $field ) {
+                    $this->refuse_pair_path( $name, sprintf( '%s of ACF %s %s', esc_html( (string) $field ), $is_field ? 'field' : 'field group', esc_html( $key ) ), $pair, array_merge( $at, [ (string) $field ] ), $args, 'Leave that setting out, or change it under ACF, Field Groups.' );
+                }
+                return;
+
+            case 'acf_import_field_group_json':
+                if ( 'update_if_exists' !== ( $args['mode'] ?? '' ) ) {
+                    return;
+                }
+                $json   = $args['json'] ?? null;
+                $groups = is_string( $json ) ? json_decode( $json, true ) : $json;
+                $groups = is_array( $groups ) && isset( $groups['key'] ) ? [ $groups ] : ( is_array( $groups ) ? $groups : [] );
+                foreach ( array_slice( $groups, 0, 50 ) as $group ) {
+                    $gkey = is_array( $group ) && is_string( $group['key'] ?? null ) ? $group['key'] : '';
+                    if ( '' === $gkey || ( null === $reply && ( ! function_exists( 'acf_get_field_group' ) || ! acf_get_field_group( $gkey ) ) ) ) {
+                        continue;
+                    }
+                    // The import replaces the whole group: any part its export shows hidden refuses it.
+                    $pair = $this->read_reply_pair( 'acf_export_field_group_json', [ 'group_keys' => [ $gkey ], 'include_fields' => true ], $reply );
+                    if ( null !== $pair ) {
+                        $this->refuse_pair_path( $name, sprintf( 'ACF field group %s', esc_html( $gkey ) ), $pair, [], $args, 'Use mode create with a new key, change single settings with acf_update_field_definition, or change it under ACF, Field Groups.' );
+                    }
+                }
+                return;
+
+            case 'royal_mcp_update_ai_permissions':
+                $sent = array_values( array_intersect( array_keys( $args ), [ 'allowed_options', 'writable_meta_keys', 'owned_fields' ] ) );
+                if ( [] === $sent ) {
+                    return;
+                }
+                $pair = $this->read_reply_pair( 'royal_mcp_get_ai_permissions', [], $reply );
+                if ( null === $pair ) {
+                    return;
+                }
+                foreach ( $sent as $field ) {
+                    $this->refuse_pair_path( $name, sprintf( 'the %s list', str_replace( '_', ' ', $field ) ), $pair, self::find_node_path( $pair[0], static function ( $node, $p ) use ( $field ) { return [] !== $p && end( $p ) === $field; } ), $args, 'Change that list in Royal MCP settings instead.' );
+                }
+                return;
+        }
+    }
+
+    /** wp_update_term: each of name, slug and description sent, judged as wp_get_term shows the term. */
+    private function refuse_masked_term_write( $name, array $args ) {
+        $tax = isset( $args['taxonomy'] ) && is_string( $args['taxonomy'] ) ? sanitize_text_field( $args['taxonomy'] ) : '';
+        $tid = \Royal_MCP\MCP\Support\Post_Access::id_value( $args['id'] ?? null );
+        if ( '' === $tax || null === $tid || $tid <= 0 || ! taxonomy_exists( $tax ) ) {
+            return;
+        }
+        $term = get_term( $tid, $tax );
+        if ( ! $term instanceof \WP_Term || ! current_user_can( 'edit_term', $tid ) ) {
+            return;
+        }
+        $row = [ 'id' => (int) $term->term_id, 'name' => (string) $term->name, 'slug' => (string) $term->slug, 'description' => (string) $term->description, 'count' => (int) $term->count, 'parent' => (int) $term->parent ];
+        foreach ( [ 'name', 'slug', 'description' ] as $field ) {
+            if ( ! isset( $args[ $field ] ) || '' === $args[ $field ] ) {
+                continue;
+            }
+            $this->refuse_whole_write_over_masked( $name, sprintf( 'the %s of term %d', $field, $tid ), $row[ $field ], function ( $raw ) use ( $row, $tax, $field ) {
+                $row[ $field ] = $raw;
+                return $this->reply_field_as_read( 'wp_get_term', [ 'taxonomy' => $tax, 'term' => $row ], [ 'term', $field ] );
+            }, $args, 'Leave that field out, or change it in the WordPress admin.' );
+        }
+    }
+
+    /** wp_update_media: each of title, caption, description and alt text sent, judged as wp_get_media_item shows them (alt text also as the meta reads show it). */
+    private function refuse_masked_media_write( $name, array $args ) {
+        try {
+            $mid = self::resolve_post_id_arg( $args );
+        } catch ( \Throwable $e ) {
+            return;
+        }
+        $media = $mid > 0 ? get_post( $mid ) : null;
+        if ( ! $media || 'attachment' !== $media->post_type || ! current_user_can( 'edit_post', $mid ) ) {
+            return;
+        }
+        $row = [
+            'id'          => (int) $mid,
+            'title'       => (string) $media->post_title,
+            'mime_type'   => (string) $media->post_mime_type,
+            'alt'         => (string) get_post_meta( $mid, '_wp_attachment_image_alt', true ),
+            'caption'     => (string) $media->post_excerpt,
+            'description' => (string) $media->post_content,
+        ];
+        foreach ( [ 'title' => 'title', 'caption' => 'caption', 'description' => 'description', 'alt_text' => 'alt' ] as $arg => $field ) {
+            if ( ! isset( $args[ $arg ] ) || '' === $args[ $arg ] ) {
+                continue;
+            }
+            $this->refuse_whole_write_over_masked( $name, sprintf( 'the %s of media item %d', $arg, $mid ), $row[ $field ], function ( $raw ) use ( $row, $field, $mid ) {
+                $row[ $field ] = $raw;
+                $seen          = $this->reply_field_as_read( 'wp_get_media_item', $row, [ $field ] );
+                if ( 'alt' === $field && ! self::read_differs( $seen, $raw ) && $this->meta_read_is_masked( 'post', $mid, '_wp_attachment_image_alt' ) ) {
+                    return \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER;
+                }
+                return $seen;
+            }, $args, 'Leave that field out, or change it in the Media Library.' );
+        }
+    }
+
+    /** One menu item change (wp_update_menu_item, or an item of wp_bulk_update_menu_items): title, url and target as wp_get_menu_item shows them. */
+    private function refuse_masked_menu_item_write( $name, array $item ) {
+        $iid = \Royal_MCP\MCP\Support\Post_Access::id_value( $item['menu_item_id'] ?? null );
+        if ( null === $iid || $iid <= 0 || ! current_user_can( 'edit_theme_options' ) || ! function_exists( 'wp_setup_nav_menu_item' ) ) {
+            return;
+        }
+        $post = get_post( $iid );
+        if ( ! $post || 'nav_menu_item' !== $post->post_type ) {
+            return;
+        }
+        $mi  = wp_setup_nav_menu_item( $post );
+        $row = [
+            'id'          => (int) $iid,
+            'title'       => (string) $mi->title,
+            'url'         => (string) $mi->url,
+            'type'        => (string) $mi->type,
+            'object'      => (string) $mi->object,
+            'target'      => (string) $mi->target,
+            'attr_title'  => (string) $mi->attr_title,
+            'description' => (string) $mi->description,
+            'xfn'         => (string) $mi->xfn,
+        ];
+        foreach ( [ 'title', 'url', 'target' ] as $field ) {
+            if ( ! isset( $item[ $field ] ) ) {
+                continue;
+            }
+            $this->refuse_whole_write_over_masked( $name, sprintf( 'the %s of menu item %d', $field, $iid ), $row[ $field ], function ( $raw ) use ( $row, $field ) {
+                $row[ $field ] = $raw;
+                return $this->reply_field_as_read( 'wp_get_menu_item', $row, [ $field ] );
+            }, $item, 'Leave that field out, or change it under Appearance, Menus.' );
+        }
+    }
+
+    /** wp_update_synced_pattern: title and markup, as wp_get_synced_pattern and wp_get_post show the pattern. */
+    private function refuse_masked_pattern_write( $name, array $args ) {
+        $pid  = \Royal_MCP\MCP\Support\Post_Access::id_value( $args['post_id'] ?? ( $args['id'] ?? null ) );
+        $post = null !== $pid && $pid > 0 ? get_post( $pid ) : null;
+        if ( ! $post || 'wp_block' !== $post->post_type || ! current_user_can( 'edit_post', $post->ID ) ) {
+            return;
+        }
+        $fields = [];
+        if ( isset( $args['title'] ) && '' !== (string) ( is_scalar( $args['title'] ) ? $args['title'] : '' ) ) {
+            $fields['title'] = (string) $post->post_title;
+        }
+        if ( isset( $args['markup'] ) ) {
+            $fields['content'] = (string) $post->post_content;
+        }
+        foreach ( $fields as $field => $current ) {
+            $this->refuse_whole_write_over_masked( $name, sprintf( 'the %s of pattern %d', 'content' === $field ? 'markup' : 'title', (int) $post->ID ), $current, function ( $raw ) use ( $post, $field ) {
+                $row = [ 'id' => (int) $post->ID, 'title' => (string) $post->post_title, 'status' => (string) $post->post_status, 'content' => (string) $post->post_content ];
+                $row[ $field ] = $raw;
+                $seen = $this->reply_field_as_read( 'wp_get_synced_pattern', $row, [ $field ] );
+                if ( self::read_differs( $seen, $raw ) ) {
+                    return $seen;
+                }
+                return $this->reply_field_as_read( 'wp_get_post', [ 'id' => (int) $post->ID, 'title' => $row['title'], 'content' => $row['content'] ], [ $field ] );
+            }, $args, 'Change its text with wp_replace_text_in_blocks, or change it in the block editor.' );
+        }
+    }
+
+    /** wp_update_block_template: the template's markup, as wp_get_block_template shows it. */
+    private function refuse_masked_template_write( $name, array $args ) {
+        if ( ! isset( $args['markup'] ) || ! function_exists( 'get_block_template' ) ) {
+            return;
+        }
+        $id   = isset( $args['id'] ) && is_scalar( $args['id'] ) ? sanitize_text_field( (string) $args['id'] ) : '';
+        $type = isset( $args['type'] ) && 'wp_template_part' === $args['type'] ? 'wp_template_part' : 'wp_template';
+        $tpl  = '' !== $id ? get_block_template( $id, $type ) : null;
+        $pto  = get_post_type_object( $type );
+        if ( ! $tpl || ! $pto || ! current_user_can( 'edit_theme_options' ) || ! current_user_can( $pto->cap->edit_posts ) ) {
+            return;
+        }
+        $this->refuse_whole_write_over_masked( $name, sprintf( 'template %s', esc_html( (string) $tpl->id ) ), (string) $tpl->content, function ( $raw ) use ( $tpl ) {
+            return $this->reply_field_as_read( 'wp_get_block_template', [ 'id' => (string) $tpl->id, 'type' => (string) $tpl->type, 'slug' => (string) $tpl->slug, 'source' => (string) $tpl->source, 'content' => $raw ], [ 'content' ] );
+        }, $args, 'Change it in the Site Editor instead.' );
+    }
+
+    /**
+     * wp_update_global_styles: with replace, each part sent (styles, settings) replaces that part of the
+     * user's global styles record; otherwise each value sent replaces the value at the same path (objects
+     * merge key by key, lists and plain values are replaced). Judged as wp_get_global_styles shows the record.
+     */
+    private function refuse_masked_global_styles_write( $name, array $args ) {
+        if ( ! class_exists( '\WP_Theme_JSON_Resolver' ) || ! current_user_can( 'edit_theme_options' ) ) {
+            return;
+        }
+        $gid  = (int) \WP_Theme_JSON_Resolver::get_user_global_styles_post_id();
+        $post = $gid > 0 ? get_post( $gid ) : null;
+        if ( ! $post ) {
+            return;
+        }
+        $record  = json_decode( (string) $post->post_content, true );
+        $record  = is_array( $record ) ? $record : [];
+        $replace = ! empty( $args['replace'] );
+        foreach ( [ 'styles', 'settings' ] as $part ) {
+            if ( ! isset( $args[ $part ] ) || ( ! is_array( $args[ $part ] ) && ! is_object( $args[ $part ] ) ) || ! isset( $record[ $part ] ) ) {
+                continue;
+            }
+            $asked = json_decode( (string) wp_json_encode( $args[ $part ] ), true );
+            $paths = [];
+            if ( $replace ) {
+                $paths[] = [];
+            } elseif ( is_array( $asked ) ) {
+                self::merge_leaf_paths( $asked, [], $paths );
+            }
+            $stored = $record[ $part ];
+            foreach ( $paths as $path ) {
+                $raw = self::path_value( $stored, $path, $found );
+                if ( ! $found ) {
+                    continue;
+                }
+                $this->refuse_whole_write_over_masked( $name, sprintf( 'global styles %s', esc_html( implode( '.', array_merge( [ $part ], array_map( 'strval', $path ) ) ) ) ), $raw, function () use ( $part, $stored, $path ) {
+                    $seen = $this->reply_field_as_read( 'wp_get_global_styles', [ $part => $stored ], [ $part ] );
+                    $value = self::path_value( is_array( $seen ) ? $seen : [], $path, $seen_found );
+                    return $seen_found ? $value : \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER;
+                }, $args, 'Leave that value out (send only the values to change, without replace), or change it in the Site Editor.' );
+            }
+        }
+    }
+
+    /** Paths of the values a JSON-shaped merge replaces: objects are walked key by key, a list or plain value is replaced whole, an empty object changes nothing. */
+    private static function merge_leaf_paths( array $value, array $prefix, array &$out, $depth = 0 ) {
+        foreach ( $value as $k => $v ) {
+            if ( count( $out ) >= 500 ) {
+                return;
+            }
+            $path = array_merge( $prefix, [ $k ] );
+            if ( is_array( $v ) && [] === $v ) {
+                continue;
+            }
+            if ( is_array( $v ) && array_keys( $v ) !== range( 0, count( $v ) - 1 ) && $depth < 32 ) {
+                self::merge_leaf_paths( $v, $path, $out, $depth + 1 );
+                continue;
+            }
+            $out[] = $path;
+        }
+    }
+
+    /** One SEO field as the reads show it: the meta reads of its key (when it is a meta row) and wp_get_seo_meta. */
+    private function seo_field_as_read( $post_id, $plugin, $field, $meta_key, $raw ) {
+        if ( '' !== (string) $meta_key && $this->meta_read_is_masked( 'post', (int) $post_id, (string) $meta_key ) ) {
+            return \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER;
+        }
+        return $this->reply_field_as_read( 'wp_get_seo_meta', [ 'plugin' => (string) $plugin, 'post_id' => (int) $post_id, $field => $raw ], [ $field ] );
+    }
+
+    /** wp_update_seo_meta (and yoast_update_meta, $plugin 'yoast'): each text field sent (title, description, keyword, social fields, slug). */
+    private function refuse_masked_seo_write( $name, array $args, $plugin = null ) {
+        try {
+            $pid = self::resolve_post_id_arg( $args );
+        } catch ( \Throwable $e ) {
+            return;
+        }
+        $post = $pid > 0 ? get_post( $pid ) : null;
+        if ( ! $post || ! current_user_can( 'edit_post', $pid ) ) {
+            return;
+        }
+        $plugin = null === $plugin ? $this->detect_seo_plugin() : (string) $plugin;
+        $map    = \Royal_MCP\MCP\Support\Seo_Plugin::field_maps()[ $plugin ] ?? [];
+        foreach ( [ 'title', 'description', 'focus_keyword', 'og_title', 'og_description', 'twitter_title', 'twitter_description', 'twitter_image' ] as $field ) {
+            if ( ! array_key_exists( $field, $args ) || ! isset( $map[ $field ] ) ) {
+                continue;
+            }
+            $meta_key = (string) $map[ $field ];
+            $this->refuse_whole_write_over_masked( $name, sprintf( 'SEO %s of post %d', $field, $pid ), (string) get_post_meta( $pid, $meta_key, true ), function ( $raw ) use ( $pid, $plugin, $field, $meta_key ) {
+                return $this->seo_field_as_read( $pid, $plugin, $field, $meta_key, $raw );
+            }, $args, 'Leave that field out, or change it in the SEO plugin\'s box in the post editor.' );
+            // AIOSEO's reads show its own table: the value there is checked as well.
+            $aio_value = 'aioseo' === $plugin ? \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_value( $pid, $field ) : null;
+            if ( is_string( $aio_value ) ) {
+                $this->refuse_whole_write_over_masked( $name, sprintf( 'SEO %s of post %d', $field, $pid ), $aio_value, function ( $raw ) use ( $pid, $plugin, $field ) {
+                    return $this->seo_field_as_read( $pid, $plugin, $field, '', $raw );
+                }, $args, 'Leave that field out, or change it in the SEO plugin\'s box in the post editor.' );
+            }
+        }
+        if ( array_key_exists( 'slug', $args ) ) {
+            $this->refuse_whole_write_over_masked( $name, sprintf( 'the slug of post %d', $pid ), (string) $post->post_name, function ( $raw ) use ( $pid, $plugin ) {
+                return $this->seo_field_as_read( $pid, $plugin, 'slug', '', $raw );
+            }, $args, 'Leave the slug out, or change it in the post editor.' );
+        }
+    }
+
+    /** WooCommerce product, variation and coupon text fields (name, description, short description, SKU, coupon code), as the shop reads show them. */
+    private function refuse_masked_shop_write( $name, array $args ) {
+        if ( ! function_exists( 'wc_get_product' ) ) {
+            return;
+        }
+        $routes = 'Leave that field out, or change it in WooCommerce.';
+        // [ write arguments, product or coupon id, kind ] for each item the call changes.
+        $items = [];
+        switch ( $name ) {
+            case 'wc_update_product':
+                $items[] = [ $args, \Royal_MCP\MCP\Support\Post_Access::id_value( $args['id'] ?? null ), 'product' ];
+                break;
+            case 'wc_bulk_update_products':
+                foreach ( array_slice( is_array( $args['updates'] ?? null ) ? array_values( $args['updates'] ) : [], 0, 100 ) as $u ) {
+                    if ( is_array( $u ) ) {
+                        $items[] = [ $u, \Royal_MCP\MCP\Support\Post_Access::id_value( $u['product_id'] ?? null ), 'product' ];
+                    }
+                }
+                break;
+            case 'wc_update_variation':
+                $items[] = [ $args, \Royal_MCP\MCP\Support\Post_Access::id_value( $args['variation_id'] ?? null ), 'variation' ];
+                break;
+            case 'wc_batch_update_variations':
+                foreach ( array_slice( is_array( $args['update'] ?? null ) ? array_values( $args['update'] ) : [], 0, 100 ) as $u ) {
+                    if ( is_array( $u ) ) {
+                        $items[] = [ $u, \Royal_MCP\MCP\Support\Post_Access::id_value( $u['variation_id'] ?? null ), 'variation' ];
+                    }
+                }
+                break;
+            case 'wc_update_coupon':
+                $items[] = [ $args, \Royal_MCP\MCP\Support\Post_Access::id_value( $args['id'] ?? null ), 'coupon' ];
+                break;
+            case 'wc_bulk_update_coupons':
+                foreach ( array_slice( is_array( $args['updates'] ?? null ) ? array_values( $args['updates'] ) : [], 0, 100 ) as $u ) {
+                    if ( ! is_array( $u ) ) {
+                        continue;
+                    }
+                    $cid = \Royal_MCP\MCP\Support\Post_Access::id_value( $u['coupon_id'] ?? null );
+                    if ( ( null === $cid || $cid <= 0 ) && isset( $u['coupon_code'] ) && is_scalar( $u['coupon_code'] ) && function_exists( 'wc_get_coupon_id_by_code' ) ) {
+                        $code = function_exists( 'wc_format_coupon_code' ) ? wc_format_coupon_code( (string) $u['coupon_code'] ) : strtolower( trim( (string) $u['coupon_code'] ) );
+                        $cid  = '' !== $code ? (int) wc_get_coupon_id_by_code( $code ) : 0;
+                    }
+                    $items[] = [ $u, $cid, 'coupon' ];
+                }
+                break;
+        }
+        foreach ( $items as $item ) {
+            list( $w, $id, $kind ) = $item;
+            if ( null === $id || $id <= 0 || ! current_user_can( 'edit_post', $id ) ) {
+                continue;
+            }
+            if ( 'coupon' === $kind ) {
+                if ( 'shop_coupon' !== get_post_type( $id ) || ! class_exists( '\WC_Coupon' ) ) {
+                    continue;
+                }
+                $coupon = new \WC_Coupon( $id );
+                $row    = [ 'id' => (int) $id, 'code' => (string) $coupon->get_code( 'edit' ), 'description' => (string) $coupon->get_description( 'edit' ), 'discount_type' => (string) $coupon->get_discount_type( 'edit' ), 'amount' => (string) $coupon->get_amount( 'edit' ) ];
+                $fields = 'wc_update_coupon' === $name ? [ 'code', 'description' ] : [ 'description' ];
+                $read   = 'wc_get_coupon';
+            } else {
+                $product = wc_get_product( $id );
+                if ( ! $product || ( 'variation' === $kind ) !== $product->is_type( 'variation' ) ) {
+                    continue;
+                }
+                $row = [
+                    'id'                => (int) $id,
+                    'name'              => (string) $product->get_name( 'edit' ),
+                    'type'              => (string) $product->get_type(),
+                    'status'            => (string) $product->get_status( 'edit' ),
+                    'description'       => (string) $product->get_description( 'edit' ),
+                    'short_description' => (string) $product->get_short_description( 'edit' ),
+                    'sku'               => (string) $product->get_sku( 'edit' ),
+                ];
+                $fields = 'variation' === $kind ? [ 'sku', 'description' ] : [ 'name', 'description', 'short_description', 'sku' ];
+                $read   = 'variation' === $kind ? 'wc_get_variation' : 'wc_get_product';
+            }
+            foreach ( $fields as $field ) {
+                if ( ! array_key_exists( $field, $w ) ) {
+                    continue;
+                }
+                $this->refuse_whole_write_over_masked( $name, sprintf( 'the %s of %s %d', str_replace( '_', ' ', $field ), $kind, (int) $id ), $row[ $field ], function ( $raw ) use ( $row, $field, $read ) {
+                    $row[ $field ] = $raw;
+                    return $this->reply_field_as_read( $read, $row, [ $field ] );
+                }, $w, $routes );
+            }
+        }
+    }
+
+    /**
+     * All of a post's meta (meta key => list of stored values) with credentials hidden, each value
+     * judged under its own meta key the way the single-key read judges it.
+     */
+    private static function scrub_all_post_meta(array $all) {
+        return \Royal_MCP\MCP\Support\Secret_Scrubber::scrub($all, '', ['name_list_items' => true]);
+    }
+
+    /** Whether a wp_get_post_meta reply is the all-keys map (meta key => list of stored values). */
+    private static function is_all_post_meta_reply($result) {
+        if (!is_array($result) || [] === $result || \Royal_MCP\MCP\Support\Envelope::is_envelope($result)) {
+            return false;
+        }
+        foreach ($result as $k => $rows) {
+            if ('_meta' === $k && !array_key_exists(0, (array) $rows)) {
+                continue;
+            }
+            if (!is_string($k) && !is_int($k)) {
+                return false;
+            }
+            // A key the read already masked as a whole.
+            if (\Royal_MCP\MCP\Support\Secret_Scrubber::MARKER === $rows) {
+                continue;
+            }
+            if (!is_array($rows) || ([] !== $rows && array_keys($rows) !== range(0, count($rows) - 1))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Option that holds the names a site administrator chose to have wp_get_option return as stored. */
+    const UNMASKED_OPTIONS_OPTION = 'royal_mcp_unmasked_options';
+
+    /**
+     * Whether wp_get_option returns this option unmasked (credential fields inside still hidden): an administrator listed
+     * it under "Return as stored", it is on the read allowlist, and it may be returned that
+     * way at all (see option_can_be_returned_as_stored()).
+     *
+     * @param string $name Option name.
+     * @return bool
+     */
+    public function option_returned_as_stored($name) {
+        if (!is_string($name) || '' === $name) return false;
+        $listed = get_option(self::UNMASKED_OPTIONS_OPTION, []);
+        if (!is_array($listed) || !in_array($name, $listed, true)) return false;
+        return $this->option_can_be_returned_as_stored($name)
+            && in_array($name, $this->get_readable_options_allowlist(), true);
+    }
+
+    /**
+     * Whether an option may ever be returned as stored, whatever is listed: never an option
+     * on the permanent denylist (WordPress keys and salts, site address, Royal MCP's own
+     * settings), one whose name looks like a credential, or the login half of a stored pair.
+     *
+     * @param string $name Option name.
+     * @return bool
+     */
+    public function option_can_be_returned_as_stored($name) {
+        if (!is_string($name) || '' === $name) return false;
+        if ($this->is_denylisted_option($name)) return false;
+        if (\Royal_MCP\MCP\Support\Secret_Scrubber::is_secret_name($name)) return false;
+        if (self::is_credential_store_option($name)) return false;
+        return !$this->option_is_credential_partner($name);
+    }
+
+    /**
+     * Options known to hold credentials under ordinary names (mail delivery, backup storage,
+     * payment gateways, account connections, recovery keys). They are read with the usual
+     * masking, never as stored.
+     *
+     * @param string $name Option name.
+     * @return bool
+     */
+    private static function is_credential_store_option($name) {
+        $lc = strtolower((string) $name);
+        if (in_array($lc, ['wp_mail_smtp', 'swpsmtp_options', 'easy_wp_smtp', 'postman_options', 'fs_accounts', 'recovery_keys', 'jetpack_private_options', 'woocommerce_stripe_settings', 'woocommerce_paypal_settings'], true)) {
+            return true;
+        }
+        if (preg_match('/^(?:post_smtp|woocommerce_ppcp|woocommerce-ppcp)/', $lc)) {
+            return true;
+        }
+        // UpdraftPlus remote storage settings: one option per destination.
+        if (preg_match('/^updraft_(?:s3|s3generic|dreamobjects|dropbox|googledrive|googlecloud|onedrive|azure|backblaze|ftp|sftp|webdav|openstack|cloudfiles|email|pcloud|remotesites)\b/', $lc)) {
+            return true;
+        }
+        // The settings of any payment gateway WooCommerce has registered.
+        if (preg_match('/^woocommerce_(.+)_settings$/', $lc, $gw) && function_exists('WC')) {
+            try {
+                $wc       = WC();
+                $gateways = is_object($wc) && method_exists($wc, 'payment_gateways') ? $wc->payment_gateways() : null;
+                $ids      = is_object($gateways) && method_exists($gateways, 'payment_gateways') ? array_map('strtolower', array_map('strval', array_keys((array) $gateways->payment_gateways()))) : [];
+                if (in_array($gw[1], $ids, true)) {
+                    return true;
+                }
+            } catch (\Throwable $e) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Record that the tool running now returns this option's value as stored at $path of its
+     * reply, so scrub_tool_result() leaves that value as it is. Only the option tools call this,
+     * after hiding the credential fields inside the value.
+     *
+     * @param string $tool   Tool name.
+     * @param string $option Option name.
+     * @param array  $path   Keys from the top of the reply to the value.
+     * @param mixed  $value  The value as placed in the reply.
+     */
+    private function grant_as_stored($tool, $option, array $path, $value) {
+        $this->as_stored_grants[] = ['tool' => (string) $tool, 'option' => (string) $option, 'path' => $path, 'value' => $value];
+    }
+
+    /** The value at a key path of an array; $found says whether the path exists. */
+    private static function value_at_path(array $data, array $path, &$found) {
+        $found = false;
+        $node  = $data;
+        foreach ($path as $key) {
+            if (!is_array($node) || !array_key_exists($key, $node)) {
+                return null;
+            }
+            $node = $node[$key];
+        }
+        $found = true;
+        return $node;
+    }
+
+    /** $data with the value at an existing key path replaced. */
+    private static function with_value_at_path(array $data, array $path, $value) {
+        if ([] === $path) {
+            return $data;
+        }
+        $key = array_shift($path);
+        if (!array_key_exists($key, $data)) {
+            return $data;
+        }
+        $data[$key] = [] === $path ? $value : (is_array($data[$key]) ? self::with_value_at_path($data[$key], $path, $value) : $data[$key]);
+        return $data;
+    }
+
+    /**
+     * Whether a write's arguments hold the cut-off JSON text a bridged ability read returns in
+     * "partial" when its result is too large: JSON that does not parse, as long as that cut.
+     *
+     * @param mixed $args  Arguments.
+     * @param int   $depth Nesting walked so far.
+     * @return bool
+     */
+    private static function holds_cut_json($args, $depth = 0) {
+        $const = '\\Royal_MCP\\Abilities\\Plugin_Abilities::MAX_RESULT_BYTES';
+        if (!defined($const) || $depth > 32) {
+            return false;
+        }
+        if (is_string($args)) {
+            $len = strlen($args);
+            $cut = (int) constant($const);
+            $t   = ltrim($args);
+            return $len <= $cut && $len >= $cut - 4 && '' !== $t && ('{' === $t[0] || '[' === $t[0])
+                && null === json_decode($args) && JSON_ERROR_NONE !== json_last_error();
+        }
+        if (is_object($args)) {
+            $args = (array) $args;
+        }
+        if (is_array($args)) {
+            foreach ($args as $v) {
+                if (self::holds_cut_json($v, $depth + 1)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** An option's value as a read returns it: as stored (credential fields inside still hidden) when listed, masked otherwise. */
+    private function option_value_as_read($name, $value) {
+        if ($this->option_returned_as_stored($name)) {
+            return \Royal_MCP\MCP\Support\Secret_Scrubber::scrub($value, (string) $name, ['mode' => 'as_stored']);
+        }
+        return $this->redact_sensitive_keys($value, $name);
+    }
+
+    /**
+     * Whether an AI client reads a value differently from how it is stored: the value as a read tool
+     * returns it ($seen) is not the stored value ($raw), or the stored value holds text that is not
+     * valid UTF-8 (replies carry such text converted or cut). Objects compare by their contents.
+     *
+     * @param mixed $seen The value as a read returns it.
+     * @param mixed $raw  The stored value.
+     * @return bool
+     */
+    private static function read_differs($seen, $raw) {
+        if (\Royal_MCP\MCP\Support\Secret_Scrubber::holds_invalid_utf8($raw)) {
+            return true;
+        }
+        if ($seen === $raw) {
+            return false;
+        }
+        if (is_object($seen) || is_object($raw) || is_array($seen) || is_array($raw)) {
+            try {
+                return serialize($seen) !== serialize($raw); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_serialize -- equality check only, nothing is stored.
+            } catch (\Throwable $e) {
+                return true;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The views of an option's value that the read tools give AI clients, each beside the stored value it
+     * stands for: [ view, stored value ]. wp_get_option's view of the value, and wp_get_plugin_settings'
+     * view of the database row (read the way that tool reads it, maybe_unserialize() of the row, not through
+     * get_option()), each with the reply-level check those tools' replies get. An option listed under
+     * "Return as stored" is read as stored (credential fields inside still hidden); $strict_too adds the
+     * masked views a client may still hold from before it was listed.
+     *
+     * @param string $name       Option name.
+     * @param mixed  $value      The value (stored, or as an operation left it).
+     * @param bool   $strict_too Whether the masked views count for an option returned as stored.
+     * @param bool   $from_store Whether $value is the stored value (the row is then read for the settings view).
+     * @return array<int,array{0:mixed,1:mixed}>
+     */
+    private function option_read_view_pairs($name, $value, $strict_too = false, $from_store = true) {
+        $as_stored = $this->option_returned_as_stored($name);
+        // The database row the settings read shows; the memo key covers it, so a changed row is read again.
+        $row = $from_store && (!$as_stored || $strict_too) ? $this->option_row_value($name) : $value;
+        try {
+            $id = (string) $name . "\0" . ($as_stored ? 1 : 0) . ($strict_too ? 1 : 0) . "\0" . sha1(serialize($value)) . "\0" . ($row === $value ? '=' : sha1(serialize($row))); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_serialize -- memo key only.
+        } catch (\Throwable $e) {
+            $id = null;
+        }
+        if (null !== $id && isset($this->option_view_memo[$id])) {
+            return $this->option_view_memo[$id];
+        }
+        $pairs = [];
+        if ($as_stored) {
+            $pairs[] = [$this->option_value_as_read($name, $value), $value];
+        }
+        if (!$as_stored || $strict_too) {
+            if ($this->option_is_credential_partner($name)
+                && !($value === '' || $value === null || $value === [] || $value === '0' || $value === false)) {
+                $pairs[] = ['[REDACTED]', $value];
+            } else {
+                $seen    = $this->redact_sensitive_keys($value, $name);
+                $get     = $this->scrub_tool_result_checked('wp_get_option', ['name' => (string) $name, 'value' => $seen]);
+                $pairs[] = [is_array($get) && array_key_exists('value', $get) ? $get['value'] : '[REDACTED]', $value];
+                if (false !== $row) {
+                    $row_seen = $row === $value ? $seen : $this->redact_sensitive_keys($row, $name);
+                    $settings = $this->scrub_tool_result_checked('wp_get_plugin_settings', ['slug' => '', 'options' => [(string) $name => $row_seen]]);
+                    $pairs[]  = [is_array($settings) && is_array($settings['options'] ?? null) && array_key_exists((string) $name, $settings['options']) ? $settings['options'][(string) $name] : '[REDACTED]', $row];
+                }
+            }
+        }
+        if (null !== $id) {
+            if (count($this->option_view_memo) >= 16) {
+                $this->option_view_memo = [];
+            }
+            $this->option_view_memo[$id] = $pairs;
+        }
+        return $pairs;
+    }
+
+    /**
+     * The views of an option's value whose keys line up with $value (see option_read_view_pairs()), for
+     * changes made by path. A settings view of a database row that differs from $value (a filtered
+     * option) does not line up and is left out; whole writes still compare it with the row.
+     *
+     * @return array<int,mixed>
+     */
+    private function option_read_views($name, $value, $strict_too = false, $from_store = false) {
+        $views = [];
+        foreach ($this->option_read_view_pairs($name, $value, $strict_too, $from_store) as $pair) {
+            if ($pair[1] === $value) {
+                $views[] = $pair[0];
+            }
+        }
+        return $views;
+    }
+
+    /** An option's database row as wp_get_plugin_settings reads it (maybe_unserialize()), or false when there is none. */
+    private function option_row_value($name) {
+        global $wpdb;
+        if (!is_object($wpdb) || !method_exists($wpdb, 'get_var')) {
+            return get_option($name);
+        }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- the settings read reads the row the same way.
+        $raw = $wpdb->get_var($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name = %s LIMIT 1", (string) $name));
+        return null === $raw ? false : maybe_unserialize($raw);
+    }
+
+    /** Whether any read of a stored option shows it differently from how it is stored (see read_differs()). */
+    private function option_read_is_masked($name, $value, $strict_too = false) {
+        if (false === $value) {
+            return false;
+        }
+        foreach ($this->option_read_view_pairs($name, $value, $strict_too, true) as $pair) {
+            if (self::read_differs($pair[0], $pair[1])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether any read of a post's or term's meta key shows it differently from how it is stored: the
+     * single-key read and the read of all the object's meta (where neighbouring keys count too).
+     *
+     * @param string $type     'post' or 'term'.
+     * @param int    $id       Object id.
+     * @param string $meta_key Meta key.
+     * @return bool
+     */
+    private function meta_read_is_masked($type, $id, $meta_key) {
+        if (!metadata_exists($type, $id, $meta_key)) {
+            return false;
+        }
+        $single = get_metadata($type, $id, $meta_key, true);
+        $all    = (array) get_metadata($type, $id);
+        // The all-meta read judges a key by its own value and by the names of the keys beside it (a login
+        // name next to a password), never by their values: the other keys keep their names, not their
+        // values, so a large neighbour (page-builder data) is not read again for a small write.
+        $raw_rows = $all[$meta_key] ?? null;
+        $all      = array_fill_keys(array_keys($all), []);
+        if (null !== $raw_rows) {
+            $all[$meta_key] = $raw_rows;
+        }
+        if ('post' === $type) {
+            $one  = $this->scrub_tool_result_checked('wp_get_post_meta', ['key' => $meta_key, 'value' => $this->redact_sensitive_keys($single, $meta_key)]);
+            $many = $this->scrub_tool_result_checked('wp_get_post_meta', self::scrub_all_post_meta($all));
+        } else {
+            $one  = $this->scrub_tool_result_checked('wp_get_term_meta', ['term_id' => $id, 'key' => $meta_key, 'value' => $this->redact_sensitive_keys($single, $meta_key)]);
+            $many = $this->scrub_tool_result_checked('wp_get_term_meta', ['term_id' => $id, 'meta' => $this->redact_sensitive_keys($all)]);
+            $many = is_array($many) && is_array($many['meta'] ?? null) ? $many['meta'] : [];
+        }
+        $one_seen  = is_array($one) && array_key_exists('value', $one) ? $one['value'] : '[REDACTED]';
+        $many_seen = is_array($many) && array_key_exists($meta_key, $many) ? $many[$meta_key] : '[REDACTED]';
+        return self::read_differs($one_seen, $single) || self::read_differs($many_seen, $raw_rows);
+    }
+
+    /** Whether any read of a theme mod (wp_get_theme_mod, wp_get_theme_mods) shows it differently from how it is stored. */
+    private function theme_mod_read_is_masked($mod_name, array $all_mods) {
+        if (!array_key_exists($mod_name, $all_mods)) {
+            return false;
+        }
+        $raw  = $all_mods[$mod_name];
+        $one  = $this->scrub_tool_result_checked('wp_get_theme_mod', ['mod_name' => $mod_name, 'exists' => true, 'value' => $this->redact_sensitive_keys($raw, $mod_name), 'writable' => true]);
+        $many = $this->scrub_tool_result_checked('wp_get_theme_mods', $this->redact_sensitive_keys($all_mods));
+        return self::read_differs(is_array($one) && array_key_exists('value', $one) ? $one['value'] : '[REDACTED]', $raw)
+            || self::read_differs(is_array($many) && array_key_exists($mod_name, $many) ? $many[$mod_name] : '[REDACTED]', $raw);
+    }
+
+    /**
+     * A widget's settings as stored and as wp_get_widget shows them: [ raw settings, read view ],
+     * or null when the widget cannot be read.
+     *
+     * @param string $widget_id Widget id.
+     * @return array{0:mixed,1:mixed}|null
+     */
+    private function widget_settings_views($widget_id) {
+        if ('' === (string) $widget_id || strlen((string) $widget_id) > 200 || !preg_match('/^[A-Za-z0-9_-]+$/', (string) $widget_id)) {
+            return null;
+        }
+        $request = new \WP_REST_Request('GET', '/wp/v2/widgets/' . $widget_id);
+        $request->set_param('context', 'edit');
+        $response = self::rest_read_widgets($request);
+        if ($response->is_error()) {
+            return null;
+        }
+        $data = $response->get_data();
+        if (!is_array($data)) {
+            return null;
+        }
+        $raw  = self::widget_for_client($data);
+        $seen = $this->scrub_tool_result_checked('wp_get_widget', $raw);
+        return [$raw['instance']['raw'] ?? null, is_array($seen) ? ($seen['instance']['raw'] ?? '[REDACTED]') : '[REDACTED]'];
+    }
+
+    /**
+     * sha256 of a stored value as expected_sha256 takes it: of the text itself, or of serialize() for
+     * anything else. Replies carry it only where the read showed the value exactly as stored.
+     *
+     * @param mixed $value Stored value.
+     * @return string Hex digest, or '' when the value cannot be serialized.
+     */
+    public static function value_sha256($value) {
+        try {
+            return hash('sha256', is_string($value) ? $value : serialize($value)); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_serialize -- digest input only.
+        } catch (\Throwable $e) {
+            return '';
+        }
+    }
+
+    /**
+     * Whether the call carries an expected_sha256 that names the current value. False when it carries none.
+     *
+     * @param array  $args    The call's arguments.
+     * @param mixed  $current The current stored value.
+     * @param string $what    What is written, for the message.
+     * @return bool
+     * @throws \Royal_MCP\MCP\Support\Tool_Refusal invalid_args when malformed; expected_mismatch when it names another value.
+     */
+    public static function expected_sha_matches(array $args, $current, $what) {
+        if (!array_key_exists('expected_sha256', $args) || null === $args['expected_sha256'] || '' === $args['expected_sha256']) {
+            return false;
+        }
+        if (!is_string($args['expected_sha256']) || !preg_match('/^[a-f0-9]{64}$/i', $args['expected_sha256'])) {
+            throw new \Royal_MCP\MCP\Support\Tool_Refusal('invalid_args', 'expected_sha256 must be the 64-character sha256 (hex) a read returned for this value.');
+        }
+        $sha = self::value_sha256($current);
+        if ('' === $sha || !hash_equals($sha, strtolower($args['expected_sha256']))) {
+            throw new \Royal_MCP\MCP\Support\Tool_Refusal('expected_mismatch', sprintf('expected_sha256 does not name the current value of %s (it changed since it was read, or the read did not show it as stored). Nothing was changed. Read it again before writing.', $what));
+        }
+        return true;
+    }
+
+    /**
+     * Refuse a write that replaces a whole stored field when the read tool for that field shows its
+     * current value differently from how it is stored (hidden in whole or in part, or not valid UTF-8):
+     * the new value could only have been built from that read, so it would overwrite data the client
+     * never saw. Allowed when the call carries expected_sha256 naming the current value (a client has it
+     * only from a read that showed the value exactly as stored). A read that fails counts as masked.
+     *
+     * @param string   $tool      Write tool name.
+     * @param string   $what      What is written ("content of post 5").
+     * @param mixed    $raw       The field's current stored value.
+     * @param callable $read_view Returns the field's value as the read tool shows it (same mode, reply-level check included).
+     * @param array    $args      The call's arguments (expected_sha256).
+     * @param string   $routes    What to do instead.
+     * @throws \Royal_MCP\MCP\Support\Tool_Refusal read_is_masked, expected_mismatch or invalid_args.
+     */
+    public function refuse_whole_write_over_masked($tool, $what, $raw, callable $read_view, array $args, $routes = '') {
+        if (null === $raw || '' === $raw || false === $raw || [] === $raw) {
+            return;
+        }
+        if (self::expected_sha_matches($args, $raw, $what)) {
+            return;
+        }
+        try {
+            $seen = $read_view($raw);
+        } catch (\Throwable $e) {
+            $seen = \Royal_MCP\MCP\Support\Secret_Scrubber::MARKER;
+        }
+        if (self::read_differs($seen, $raw)) {
+            throw self::read_is_masked_refusal($what, '' !== (string) $routes ? $routes : sprintf('%s cannot replace it as a whole. Change only the parts you can read in full, or change it in the WordPress admin.', esc_html((string) $tool)));
+        }
+    }
+
+    /**
+     * Whether a find-and-replace on text would touch a part a read hides: the find text occurs in the
+     * stored text a different number of times than in the visible parts of the read (an occurrence
+     * inside, or across the edge of, a hidden part shows only in the stored text).
+     *
+     * @param string $raw  Stored text.
+     * @param string $seen The text as a read shows it.
+     * @param string $find Find text.
+     * @return bool
+     */
+    public static function find_touches_masked($raw, $seen, $find) {
+        if (!is_string($raw) || !is_string($find) || '' === $find || $seen === $raw) {
+            return false;
+        }
+        if (!is_string($seen) || \Royal_MCP\MCP\Support\Secret_Scrubber::holds_invalid_utf8($raw)) {
+            return true;
+        }
+        $visible = preg_replace(\Royal_MCP\MCP\Support\Secret_Scrubber::PLACEHOLDERS, "\x00", $seen);
+        if (!is_string($visible) || false !== strpos($find, "\x00")) {
+            return true;
+        }
+        return substr_count($raw, $find) !== substr_count($visible, $find);
+    }
+
+    /**
+     * Refusal for a whole-value write whose current value AI clients read in part hidden.
+     *
+     * @param string $what   What is written ("option blogname", "meta key x on post 5").
+     * @param string $routes What to do instead.
+     * @return \Royal_MCP\MCP\Support\Tool_Refusal
+     */
+    private static function read_is_masked_refusal($what, $routes) {
+        return new \Royal_MCP\MCP\Support\Tool_Refusal('read_is_masked', sprintf('The current value of %s is partly hidden from AI clients, so writing a whole new value could overwrite the hidden data. Nothing was changed. %s', $what, $routes));
+    }
+
+    /**
+     * Refusal text for an option write that still holds the redaction marker.
+     *
+     * @param string $name     Option name.
+     * @param bool   $with_ops Whether the write was sent as operations.
+     * @return string
+     */
+    private static function option_marker_refusal_message($name, $with_ops = false) {
+        $label = '' !== (string) $name ? 'option ' . esc_html((string) $name) : 'the option';
+        if ($with_ops) {
+            return sprintf('An operation for %s holds "[REDACTED]", the text Royal MCP shows in place of hidden values. Writing it would store that text instead of the real value, so nothing was changed. Send the real value for that part, or leave that part out.', $label);
+        }
+        return sprintf('The value for %s still holds "[REDACTED]", the text Royal MCP shows in place of hidden values, so writing it back would replace those parts with that text. Nothing was changed. Send operations to change only the parts you mean to change, or have a site administrator turn on "Return as stored" for this option under Royal MCP settings (next to Allowlisted plugin options), read it again and write the whole value.', $label);
+    }
+
+    /**
+     * Whether an option holds a licence record or the plugin's site-link state: the licensing
+     * SDK's wpgenius_license_* rows and Royal MCP Pro's unlink markers.
+     */
+    private static function is_licence_option($name) {
+        $name_lc = strtolower(trim((string) $name));
+        return 0 === strpos($name_lc, 'wpgenius_license')
+            || 0 === strpos($name_lc, 'royal_mcp_pro_unlink');
     }
 }

@@ -96,7 +96,7 @@ class Coexistence_Check {
 
 		// When this host does not answer at all, the other host name tells us nothing
 		// and only adds another timeout to the admin page that runs the check.
-		$alt = 'unknown' === $challenge['answered_by'] ? '' : self::alternate_host_url( $endpoint );
+		$alt = 'unknown' === $challenge['answered_by'] ? '' : self::alternate_host_to_check( $endpoint );
 		if ( '' !== $alt ) {
 			$steps[] = self::probe_alternate_host( $alt );
 		}
@@ -259,6 +259,42 @@ class Coexistence_Check {
 		}
 		$alt = 0 === strpos( $host, 'www.' ) ? substr( $host, 4 ) : 'www.' . $host;
 		return (string) preg_replace( '#^(https?://)' . preg_quote( $host, '#' ) . '#i', '${1}' . $alt, (string) $url, 1 );
+	}
+
+	/**
+	 * The other host name worth checking: only when the site runs on a registrable
+	 * domain (example.com or www.example.com). A subdomain such as shop.example.com
+	 * has no www twin that AI clients would use, so it is not checked.
+	 *
+	 * @param string $url A URL on this site.
+	 * @return string
+	 */
+	public static function alternate_host_to_check( $url ) {
+		$alt = self::alternate_host_url( $url );
+		if ( '' === $alt ) {
+			return '';
+		}
+		$host = strtolower( (string) wp_parse_url( (string) $url, PHP_URL_HOST ) );
+		$bare = 0 === strpos( $host, 'www.' ) ? substr( $host, 4 ) : $host;
+		return self::is_registrable_domain( $bare ) ? $alt : '';
+	}
+
+	/**
+	 * Whether a host is a registrable domain rather than a subdomain: two labels
+	 * (example.com) or a name under a common two-part country suffix (example.co.uk).
+	 *
+	 * @param string $host Host name without a leading www.
+	 * @return bool
+	 */
+	public static function is_registrable_domain( $host ) {
+		$labels = explode( '.', strtolower( trim( (string) $host, '.' ) ) );
+		$count  = count( $labels );
+		if ( 2 === $count ) {
+			return '' !== $labels[0] && '' !== $labels[1];
+		}
+		return 3 === $count
+			&& 2 === strlen( $labels[2] )
+			&& in_array( $labels[1], [ 'co', 'com', 'net', 'org', 'gov', 'edu', 'ac', 'or', 'ne', 'go', 'gob', 'nic' ], true );
 	}
 
 	/**

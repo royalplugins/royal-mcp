@@ -81,6 +81,8 @@ function royal_mcp_uninstall_site() {
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_vrp_%' OR option_name LIKE '_transient_timeout_royal_mcp_vrp_%'");
     $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_page_%' OR option_name LIKE '_transient_timeout_royal_mcp_page_%'");
+    // Stand-in undo lock rows (databases without named locks).
+    $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal\\_mcp\\_undolock\\_%'");
 
     // Preview_Link short-lived preview tokens (rmcp_preview_ prefix).
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
@@ -156,6 +158,7 @@ function royal_mcp_uninstall_site() {
     // -----------------------------------------------------------------------
     if ( $delete_data ) {
         delete_option('royal_mcp_settings');
+        delete_option('royal_mcp_unmasked_options');
         // Kept with the Activity Log: a reinstall must not fall back to a shorter period and prune entries the owner kept.
         delete_option('royal_mcp_log_retention_days');
         delete_option( 'royal_mcp_site_context' );

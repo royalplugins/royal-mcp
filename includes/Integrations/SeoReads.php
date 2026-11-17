@@ -18,6 +18,12 @@ if ( ! defined( 'ABSPATH' ) ) {
  * argument can be used to learn what was removed.
  */
 class SeoReads {
+	/** Parts that may follow a credential word or a person word and stay readable. */
+	const SAFE_AFTER_WORDS = [ 'edit', 'feed', 'page', 'posts', 'profile', 'account', 'me', 'friend', 'friends', 'order', 'orders', 'team', 'link', 'links', 'member', 'members', 'list' ];
+
+	/** Words that may follow a code or key word in a path and stay readable. */
+	const CREDENTIAL_PAGE_WORDS = [ 'password', 'passwords', 'confirm', 'confirmed', 'complete', 'completed', 'success', 'expired', 'invalid', 'required', 'request', 'requested', 'continue', 'settings', 'accounts', 'register', 'resend', 'sent', 'done', 'error', 'failed', 'new', 'lost', 'forgot', 'change', 'update', 'email', 'phone', 'login', 'logout', 'signin', 'signup', 'start', 'verify', 'thanks', 'thank-you', 'help', 'page', 'form' ];
+
 
 	/** The tools this class answers, by name. */
 	const TOOLS = [
@@ -182,7 +188,10 @@ class SeoReads {
 		$parts = explode( '/', $path );
 		foreach ( $parts as $i => $part ) {
 			$before = $i > 0 ? $parts[ $i - 1 ] : '';
-			if ( self::part_is_private( $part ) || self::private_after( $before, $part ) || self::also_private( $before, $part ) ) {
+			if ( self::is_record_id( $before, $part ) ) {
+				continue;
+			}
+			if ( self::part_is_private( $part ) || self::private_after( $before, $part ) || self::also_private( $before, $part ) || self::credential_word( $before, $part ) || self::spelled_out( $before, $part ) ) {
 				$parts[ $i ] = self::HIDDEN;
 			}
 		}
@@ -302,9 +311,10 @@ class SeoReads {
 		if ( 1 === preg_match( '/^(?:rp|reset|reset-password|resetpass|password-reset|set-password|invite|invitation|join|share|tokens?|keys?|apikey|api-key|verify|verification|confirm|confirmation|activate|activation|unsubscribe|unsub|magic|magic-link|otp|code|secret|auth|session|sid|sig|signature|hash|password|pass|pwd|login|ssn|dob|birthday|users?|customers?|accounts?|members?|profiles?)$/i', $parent ) ) {
 			return ! self::reads_as_words( $part );
 		}
-		// Under a one-letter part (short links, tokens), plain words and short numbers stay.
+		// Under a one-letter part (short links, tokens), plain words, short numbers and short
+		// lower-case names stay.
 		if ( 1 === preg_match( '/^[a-z]$/i', $parent ) ) {
-			return ! self::reads_as_words( $part ) && 1 !== preg_match( '/^\d{1,6}$/', $part );
+			return ! self::reads_as_words( $part ) && 1 !== preg_match( '/^\d{1,6}$/', $part ) && 1 !== preg_match( '/^[a-z]{1,5}$/', $part );
 		}
 		return false;
 	}
@@ -713,5 +723,75 @@ class SeoReads {
 				],
 			],
 		];
+	}
+
+	/**
+	 * A single word of eight or more letters under a word that leads to a code or a key: a code
+	 * can be all letters and still read like a word, so only common page words stay readable.
+	 *
+	 * @param string $parent Part before it.
+	 * @param string $part   Part.
+	 */
+	private static function credential_word( $parent, $part ) {
+		if ( 1 !== preg_match( '/^(?:rp|reset|reset-password|resetpass|password-reset|set-password|invite|invitation|join|share|tokens?|keys?|apikey|api-key|verify|verification|confirm|confirmation|activate|activation|unsubscribe|unsub|magic|magic-link|otp|code|secret|auth|session|sid|sig|signature|hash)$/i', $parent ) ) {
+			return false;
+		}
+		return 1 === preg_match( '/^[A-Za-z]{8,}$/', $part ) && ! in_array( strtolower( $part ), self::CREDENTIAL_PAGE_WORDS, true );
+	}
+
+	/**
+	 * A record number: up to eight digits under a word such as product, order, post or page,
+	 * or a label joined to its number (sku-1234567, order-1234). These are ids, not phone numbers.
+	 *
+	 * @param string $parent Part before it.
+	 * @param string $part   Part.
+	 */
+	private static function is_record_id( $parent, $part ) {
+		if ( 1 === preg_match( '/^\d{1,8}$/', $part ) ) {
+			return 1 === preg_match( '/^(?:products?|orders?|posts?|p|pages?|items?|sku|skus|id|ref|invoices?|tickets?)$/i', $parent );
+		}
+		return 1 === preg_match( '/^(?:sku|order|item|product|ref|invoice|ticket|id|post|page)-\d{1,8}$/i', $part );
+	}
+
+	/**
+	 * Codes, people and addresses written out in ways the other checks do not catch: a short
+	 * code under a word that leads to one, the part after a word that names a person, an address spelled with words (name-gmail-com, nameATexampleDOTcom), a host
+	 * ending in a country-style label, a dotted name such as jane.doe, and a short IPv4 form.
+	 *
+	 * @param string $parent Part before it.
+	 * @param string $part   Part.
+	 */
+	private static function spelled_out( $parent, $part ) {
+		if ( '' === $part ) {
+			return false;
+		}
+		$plain = strtolower( $part );
+		$safe  = in_array( $plain, self::CREDENTIAL_PAGE_WORDS, true ) || in_array( $plain, self::SAFE_AFTER_WORDS, true );
+		// Under a code word, a single word is a code unless it is a common page word; phrases of
+		// words joined by hyphens stay readable.
+		$phrase = false !== strpos( $part, '-' ) && self::reads_as_words( $part );
+		if ( ! $safe && ! $phrase && 1 === preg_match( '/^(?:verify|verification|otp|reset|code|codes|secret|share|token|tokens|session|sid|go|key|keys|auth|magic|invite|confirm|activate)$/i', $parent ) ) {
+			return true;
+		}
+		if ( ! $safe && 1 === preg_match( '/^(?:users?|e-?mails?|profiles?|authors?)$/i', $parent ) ) {
+			return true;
+		}
+		$is_file = 1 === preg_match( '/\.([A-Za-z0-9]{2,12})$/', $part, $ending ) && in_array( strtolower( $ending[1] ), self::FILE_ENDINGS, true );
+		if ( 1 === preg_match( '/(?:^|[.\-_])(?:gmail|googlemail|yahoo|ymail|hotmail|outlook|live|msn|icloud|aol|proton|protonmail|gmx|yandex|zoho|mail)[.\-_](?:com|net|org|co|me|de|fr|uk|ca|au|ch|io|nl|it|es)(?:[.\-_][a-z]{2})?$/i', $part )
+			|| 1 === preg_match( '/[.\-_]dot[.\-_](?:com|net|org|io|co|uk|de|fr|es|it|nl|edu|gov|info|biz|me|app|dev)$/i', $part )
+			|| 1 === preg_match( '/[a-z0-9]AT[A-Za-z0-9].*DOT(?:com|net|org|io|co|uk|de|fr|edu|gov|info|biz|me|app|dev)$/', $part ) ) {
+			return true;
+		}
+		if ( ! $is_file && 1 === preg_match( '/\.(?:co\.|com\.|org\.|net\.|ac\.|gov\.)?[A-Za-z]{2}$/', $part ) ) {
+			return true;
+		}
+		if ( ! $is_file && 1 === preg_match( '/^[A-Za-z]+(?:\.[A-Za-z]+){1,2}$/', $part ) ) {
+			return true;
+		}
+		// Under a version or release word, dotted numbers are a version.
+		if ( 1 === preg_match( '/^(?:v|ver|version|versions|release|releases|download|downloads|changelog|tags?)$/i', $parent ) ) {
+			return false;
+		}
+		return 1 === preg_match( '/^\d{1,3}(?:\.\d{1,3}){1,3}$/', $part );
 	}
 }

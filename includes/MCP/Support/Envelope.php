@@ -48,6 +48,41 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class Envelope {
 
+    /** What a write reply says when its undo record could not be saved. */
+    const UNDO_UNAVAILABLE_NOTE = 'No undo token could be stored for this change.';
+
+    /**
+     * Whether an undo value means the write happened but its undo record was not saved.
+     * Undo_Store::store() returns [] in that case; null means the tool offers no undo
+     * for this call at all.
+     *
+     * @param mixed $undo Value from Undo_Store::store(), or null.
+     */
+    public static function undo_not_stored( $undo ) : bool {
+        return is_array( $undo ) && empty( $undo['token'] );
+    }
+
+    /** structuredContent fields for a write whose undo record could not be saved. */
+    public static function undo_unavailable_fields() : array {
+        return [
+            'undo_available'   => false,
+            'undo_unavailable' => true,
+            'undo_note'        => self::UNDO_UNAVAILABLE_NOTE,
+        ];
+    }
+
+    /**
+     * A summary with its "undo available" wording taken out and the no-undo note added.
+     * Write tools word their summary for the usual case; this keeps the reply truthful
+     * when the undo record was refused.
+     */
+    public static function without_undo_claim( string $summary ) : string {
+        $summary = (string) preg_replace( '/,\s*undo available(?:\s*\([^()]*\))?/i', '', $summary );
+        $summary = (string) preg_replace( '/\s*\bUndo available\.?/', '', $summary );
+        $summary = rtrim( $summary, ". \t\r\n" );
+        return ( '' === $summary ? '' : $summary . '. ' ) . self::UNDO_UNAVAILABLE_NOTE;
+    }
+
     /**
      * Build a success envelope.
      *
@@ -59,7 +94,9 @@ final class Envelope {
      *                             for downstream tool chaining.
      * @param array|null $undo     Optional undo envelope from Undo_Store::store().
      *                             Passed through at top level. Omitted from result
-     *                             when null or empty.
+     *                             when null or empty. An empty array (the store
+     *                             refused the record) makes the reply say that no
+     *                             undo token could be stored.
      * @return array MCP-canonical tool-response envelope.
      */
     public static function success( string $summary, array $struct = [], ?array $undo = null ) : array {
@@ -86,6 +123,10 @@ final class Envelope {
             $summary = rtrim( $summary, ". \t\r\n" )
                 . '. Undo token: ' . (string) $undo['token']
                 . ' (' . \Royal_MCP\MCP\Undo_Store::window_label() . ', pass to mcp_undo_last_operation to reverse).';
+        }
+        if ( ! $has_undo && self::undo_not_stored( $undo ) ) {
+            $struct  = array_merge( $struct, self::undo_unavailable_fields() );
+            $summary = self::without_undo_claim( $summary );
         }
         $out = [
             'resultType'        => 'complete',

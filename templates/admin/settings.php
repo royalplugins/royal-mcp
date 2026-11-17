@@ -501,6 +501,50 @@ $royal_mcp_view = isset( $royal_mcp_view ) && in_array( $royal_mcp_view, [ 'conn
                                 <?php endif; ?>
                             </td>
                         </tr>
+                        <?php if ( current_user_can( 'manage_options' ) ) : ?>
+                        <tr id="rmcp-row-unmasked-options">
+                            <th scope="row">
+                                <label for="unmasked_options"><?php esc_html_e('Return as stored', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <?php
+                                $royal_mcp_unmasked = get_option( \Royal_MCP\MCP\Server::UNMASKED_OPTIONS_OPTION, [] );
+                                $royal_mcp_unmasked = is_array( $royal_mcp_unmasked ) ? array_values( array_filter( $royal_mcp_unmasked, 'is_string' ) ) : [];
+                                ?>
+                                <textarea name="royal_mcp_settings[unmasked_options]"
+                                          id="unmasked_options"
+                                          rows="3"
+                                          class="large-text code"
+                                          placeholder="my_plugin_settings"><?php echo esc_textarea( implode( "\n", $royal_mcp_unmasked ) ); ?></textarea>
+                                <p class="description">
+                                    <?php esc_html_e('One option name per line. AI clients read these options as stored. Credential fields and recognised key formats inside these options stay hidden. Only options that AI clients can read (the list above) count. Protected options, options known to hold credentials (mail delivery, backup storage and payment gateway settings) and names that look like credentials are always masked as usual. Each read is recorded in the Audit Log.', 'royal-mcp'); ?>
+                                </p>
+                                <?php
+                                if ( $royal_mcp_unmasked ) {
+                                    $royal_mcp_server        = new \Royal_MCP\MCP\Server();
+                                    $royal_mcp_unmasked_skip = array_values( array_filter( $royal_mcp_unmasked, static function ( $n ) use ( $royal_mcp_server ) {
+                                        return ! $royal_mcp_server->option_returned_as_stored( $n );
+                                    } ) );
+                                    if ( $royal_mcp_unmasked_skip ) :
+                                        ?>
+                                        <p class="description" id="rmcp-unmasked-options-skipped" style="color:#b32d2e;">
+                                            <?php
+                                            echo esc_html(
+                                                sprintf(
+                                                    /* translators: %s: comma-separated option names */
+                                                    __( 'Still masked in reads: %s. These options are not readable by AI clients, are protected, are known to hold credentials, or have names that look like credentials.', 'royal-mcp' ),
+                                                    implode( ', ', $royal_mcp_unmasked_skip )
+                                                )
+                                            );
+                                            ?>
+                                        </p>
+                                        <?php
+                                    endif;
+                                }
+                                ?>
+                            </td>
+                        </tr>
+                        <?php endif; ?>
                         <tr id="rmcp-row-writable-meta">
                             <th scope="row">
                                 <label for="writable_meta_keys"><?php esc_html_e('Writable protected meta keys', 'royal-mcp'); ?></label>

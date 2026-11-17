@@ -1212,22 +1212,22 @@ class Server {
             $this->json_error( 'invalid_request', 'Missing required parameters: refresh_token, client_id.', 400 );
         }
 
-        // The token must belong to the client named here, and a confidential client
-        // must authenticate, before the token is used: otherwise nothing changes.
-        // A wrong client id and an unknown token get the same invalid_grant.
+        // A confidential client authenticates first, before the refresh token is looked at.
+        $client = Token_Store::get_client( $client_id );
+        if ( $client && 'client_secret_post' === ( $client['token_endpoint_auth_method'] ?? 'none' ) ) {
+            $client_secret = isset( $_POST['client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['client_secret'] ) ) : '';
+            if ( empty( $client_secret ) || ! hash_equals( (string) $client['client_secret_hash'], hash( 'sha256', $client_secret ) ) ) {
+                $this->json_error( 'invalid_client', 'Client authentication failed.', 401 );
+            }
+        }
+        // The token must belong to the client named here before it is used: otherwise
+        // nothing changes. A wrong client id and an unknown token get the same invalid_grant.
         $peek = Token_Store::peek_refresh_token( $refresh_token );
         if ( ! $peek || ! hash_equals( (string) $peek['client_id'], $client_id ) ) {
             $this->json_error( 'invalid_grant', 'Refresh token is invalid, expired, or revoked.', 400 );
         }
-        $client = Token_Store::get_client( $client_id );
         if ( ! $client || Token_Store::is_pending_approval( $client ) ) {
             $this->json_error( 'invalid_grant', 'Refresh token is invalid, expired, or revoked.', 400 );
-        }
-        if ( 'client_secret_post' === ( $client['token_endpoint_auth_method'] ?? 'none' ) ) {
-            $client_secret = isset( $_POST['client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['client_secret'] ) ) : '';
-            if ( empty( $client_secret ) || ! hash_equals( $client['client_secret_hash'], hash( 'sha256', $client_secret ) ) ) {
-                $this->json_error( 'invalid_client', 'Client authentication failed.', 401 );
-            }
         }
 
         // A resource this server does not serve is refused before the token is used.

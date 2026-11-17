@@ -436,6 +436,26 @@ class Settings_Page {
         }
         $sanitized['writable_options_admin'] = array_values(array_unique($keys));
 
+        // Options returned as stored by wp_get_option: kept in their own option, changed only
+        // by this form and only by an administrator. A name counts only while it is also on the
+        // read allowlist and is not protected; that is checked on every read.
+        if ( $from_form && isset( $input['unmasked_options'] ) && is_string( $input['unmasked_options'] ) && current_user_can( 'manage_options' ) ) {
+            $unmasked = [];
+            foreach ( preg_split( '/\r?\n/', (string) $input['unmasked_options'] ) as $line ) {
+                $clean = sanitize_key( trim( $line ) );
+                if ( '' !== $clean ) {
+                    $unmasked[] = $clean;
+                }
+            }
+            $unmasked       = array_values( array_unique( $unmasked ) );
+            $unmasked_prior = get_option( \Royal_MCP\MCP\Server::UNMASKED_OPTIONS_OPTION, [] );
+            $unmasked_prior = is_array( $unmasked_prior ) ? array_values( $unmasked_prior ) : [];
+            if ( $unmasked !== $unmasked_prior ) {
+                update_option( \Royal_MCP\MCP\Server::UNMASKED_OPTIONS_OPTION, $unmasked, false );
+                self::log_setting_change( 'settings:unmasked_options', $unmasked_prior, $unmasked, 'settings' );
+            }
+        }
+
         // Protected meta keys: exact names only, stored as typed. Blocked entries stay
         // on the list so the screen can name them, and never open at write time.
         $meta_list_key = \Royal_MCP\MCP\Support\Protected_Meta::SETTING;
