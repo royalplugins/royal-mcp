@@ -2642,7 +2642,7 @@ class Server {
             ['name' => 'wp_delete_post_meta', 'description' => 'Delete post meta data (every value of the key). The reply carries an undo token that puts the deleted values back.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['post_id', 'key']]],
 
             // Site & Search
-            ['name' => 'wp_get_site_info', 'description' => 'Get user-facing site metadata (name, description, URL, language, timezone, WP version). For operator-facing environment (PHP/MySQL versions, plugin count, memory limits, disk free), use wp_get_site_status.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'wp_get_site_info', 'description' => 'Get the site name, tagline, address, language, timezone and WordPress version, plus site_context: what the site owner wrote for AI clients about the site, its tone and what to leave alone. Call this first and follow that context. For server details (PHP and MySQL versions, plugins, memory, disk) use wp_get_site_status.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'wp_audit_agent_readiness', 'description' => 'Read-only: what an AI agent finds when it visits this site, graded on the 0-5 levels the public agent-readiness scanners use (robots.txt and rules for AI bots, content signals, sitemap, markdown for agents, MCP server card, agent skills, WebMCP, API catalog, sign-in discovery). Each check says pass / fail / not checked and what would fix it. Reads the site\'s own public addresses; nothing changes. Requires manage_options. The result also shows on the Royal MCP dashboard.', 'inputSchema' => ['type' => 'object', 'properties' => (object) []]],
             ['name' => 'wp_security_triage', 'description' => 'Read-only check of a site you suspect was compromised. Reports facts, never secrets: must-use plugins and drop-ins, plugin folders and loose PHP files WordPress does not list, every plugin with its modified dates, users with capabilities beyond their role (no emails or logins) and the administrator count, whether named options exist (count only), and leftovers in wp-content/upgrade. Pass since (a date) to flag anything installed, changed or registered after it, plugin_names for known indicator plugin slugs and option_patterns for database indicators. The summary never calls the site clean. File walks stop at 5,000 files or 3 seconds and mark results partial. Requires manage_options (network admin on multisite).', 'inputSchema' => ['type' => 'object', 'properties' => ['since' => ['type' => 'string', 'description' => 'Optional date (2026-10-17 or 2026-10-17T00:00:00Z): flag plugins, must-use plugins, drop-ins and upgrade leftovers changed after it, and count administrators registered after it.'], 'option_patterns' => ['type' => 'array', 'maxItems' => 20, 'items' => ['type' => 'string'], 'description' => 'Up to 20 option names or patterns with one * at the start or end (e.g. *_sync_token), at least 6 characters besides the *. Each returns present and count only.'], 'plugin_names' => ['type' => 'array', 'maxItems' => 50, 'items' => ['type' => 'string'], 'description' => 'Up to 50 plugin slugs or folder names from a published advisory; each is looked for among registered, unregistered, must-use and drop-in files.'], 'checks' => ['type' => 'array', 'items' => ['type' => 'string', 'enum' => ['mu_plugins', 'unregistered_plugin_folders', 'plugins', 'users', 'option_patterns', 'upgrade_folder']], 'description' => 'Optional subset of checks to run. Default: all.']]]],
             ['name' => 'wp_get_mcp_coexistence', 'description' => 'Report what else on this site speaks MCP and who answers the addresses MCP clients and AI crawlers read: other MCP servers and hubs (Elementor MCP and its switch, the WordPress MCP Adapter and which plugin bundles it, Angie, and any active plugin that is an MCP server), the plugin answering /.well-known/oauth-authorization-server, /.well-known/oauth-protected-resource, /.well-known/mcp/server-card.json, /llms.txt and robots.txt (with the AI bots it blocks), whether Royal MCP tools can be reached through another server, and the sign-in path an AI app follows to reach Royal MCP (who answers each step, with a fix when another plugin does). Read-only; loads each address from the site, so it takes a few seconds. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -4762,15 +4762,26 @@ class Server {
                 ];
             }
 
+            $content = [[
+                'type' => 'text',
+                'text' => is_string($result) ? $result : wp_json_encode($result, JSON_PRETTY_PRINT),
+            ]];
+            // Clients that read only the text get the page facts too, in a second block, so the
+            // first block stays the plain list.
+            if ( is_array( $this->list_paging ) && isset( $this->list_paging['has_more'] ) ) {
+                $content[] = [
+                    'type' => 'text',
+                    'text' => $this->list_paging['has_more']
+                        ? sprintf( 'Page %d (%d per page). More results: call again with page: %d.', (int) $this->list_paging['page'], (int) $this->list_paging['per_page'], (int) $this->list_paging['next_page'] )
+                        : sprintf( 'Page %d (%d per page). This is the last page.', (int) $this->list_paging['page'], (int) $this->list_paging['per_page'] ),
+                ];
+            }
             return [
                 'jsonrpc' => '2.0',
                 'id' => $id,
                 'result' => self::ensure_structured_content( [
                     'resultType' => 'complete',
-                    'content' => [[
-                        'type' => 'text',
-                        'text' => is_string($result) ? $result : wp_json_encode($result, JSON_PRETTY_PRINT),
-                    ]],
+                    'content' => $content,
                     'structuredContent' => $this->with_list_paging( self::seed_structured_content( $result ) ),
                 ] ),
             ];
@@ -8746,6 +8757,13 @@ class Server {
                     'timezone' => wp_timezone_string(),
                     'wp_version' => get_bloginfo('version'),
                 ];
+                // The site owner's context (Royal MCP > Context), here too because some clients
+                // do not pass the connection's instructions on to the model.
+                $site_ctx = \Royal_MCP\MCP\Support\Site_Context::for_client();
+                if ( '' !== $site_ctx ) {
+                    $site_info['site_context']      = $site_ctx;
+                    $site_info['site_context_note'] = 'Written by the site owner for AI clients working on this site. Follow it.';
+                }
                 if ( current_user_can( 'update_core' ) ) {
                     $core_updates = get_site_transient( 'update_core' );
                     $core_offer   = null;

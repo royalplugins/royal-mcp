@@ -299,6 +299,7 @@ class Changes_Page {
             'active'  => __( 'Can be undone', 'royal-mcp' ),
             'undone'  => __( 'Undone', 'royal-mcp' ),
             'expired' => __( 'Expired', 'royal-mcp' ),
+            'gone'    => __( 'Deleted since, nothing to undo', 'royal-mcp' ),
         ];
         return $labels[ $status ] ?? (string) $status;
     }

@@ -331,8 +331,9 @@ class SiteVault {
 	private static function format_backup( $backup ) {
 		return [
 			'id'           => (int) $backup->id,
-			// The random suffix is what keeps the archive's address from being guessed.
-			'name'         => preg_replace( '/-[a-f0-9]{32}$/', '', (string) $backup->backup_name ),
+			// The random suffix is what keeps the archive's address from being guessed; a compact
+			// date (YYYYMMDD-HHMMSS) is shown as YYYY-MM-DD-HHMMSS so the name reads as a date.
+			'name'         => preg_replace( '/(\d{4})(\d{2})(\d{2})-(\d{6})/', '$1-$2-$3-$4', (string) preg_replace( '/-[a-f0-9]{8,64}$/', '', (string) $backup->backup_name ) ),
 			'type'         => $backup->backup_type,
 			'status'       => $backup->status,
 			'size'         => (int) $backup->backup_size,

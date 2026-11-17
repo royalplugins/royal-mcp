@@ -132,7 +132,7 @@ class Theme_Design {
 			return [
 				'theme'     => (string) get_template(),
 				'supported' => false,
-				'message'   => wp_is_block_theme() ? 'This is a block theme: read its palette and fonts with wp_get_global_styles.' : 'The active theme is not Astra, GeneratePress, Kadence or Blocksy. Its own settings may be readable with wp_get_theme_mods.',
+				'message'   => ( function_exists( 'wp_is_block_theme' ) && wp_is_block_theme() ) ? 'This is a block theme: read its palette and fonts with wp_get_global_styles.' : 'The active theme is not Astra, GeneratePress, Kadence or Blocksy. Its own settings may be readable with wp_get_theme_mods.',
 			];
 		}
 		$out = array_merge( [ 'theme' => $theme, 'theme_name' => self::THEMES[ $theme ], 'supported' => true ], self::design( $theme ) );
@@ -276,7 +276,7 @@ class Theme_Design {
 		}
 		$theme = self::theme();
 		if ( '' === $theme ) {
-			throw new \Exception( wp_is_block_theme() ? 'This is a block theme: change its palette and fonts with wp_update_global_styles.' : 'The active theme is not Astra, GeneratePress, Kadence or Blocksy.' );
+			throw new \Exception( ( function_exists( 'wp_is_block_theme' ) && wp_is_block_theme() ) ? 'This is a block theme: change its palette and fonts with wp_update_global_styles.' : 'The active theme is not Astra, GeneratePress, Kadence or Blocksy.' );
 		}
 		$block = self::write_block( $theme );
 		if ( '' !== $block ) {

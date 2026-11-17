@@ -331,8 +331,40 @@ class Change_View {
 	 * @param array $change     Snapshot from Undo_Store::all_changes().
 	 * @param bool  $with_token Include the undo token (only for the user who made the change).
 	 */
+	/**
+	 * Whether the item a create change made has since been deleted for good (nothing left to undo).
+	 * A trashed post still counts as there: its undo can still act on it.
+	 *
+	 * @param array $change Snapshot.
+	 */
+	public static function created_item_gone( array $change ) {
+		$t  = (array) ( $change['target'] ?? [] );
+		$op = (string) ( $change['op'] ?? '' );
+		switch ( $op ) {
+			case 'wp_create_post_trash':
+			case 'wp_publish_and_launch':
+				return ! empty( $t['post_id'] ) && ! get_post( (int) $t['post_id'] );
+			case 'wp_upload_media':
+			case 'wp_upload_media_from_url':
+				return ! empty( $t['attachment_id'] ) && ! get_post( (int) $t['attachment_id'] );
+			case 'wc_create_product':
+				return ! empty( $t['product_id'] ) && ! get_post( (int) $t['product_id'] );
+			case 'wc_create_coupon':
+				return ! empty( $t['coupon_id'] ) && ! get_post( (int) $t['coupon_id'] );
+			case 'wp_create_comment':
+				return ! empty( $t['comment_id'] ) && ! get_comment( (int) $t['comment_id'] );
+			case 'wp_create_term':
+				return ! empty( $t['term_id'] ) && ! get_term( (int) $t['term_id'] );
+		}
+		return false;
+	}
+
 	public static function summary( array $change, $with_token ) {
 		$status = self::status( $change );
+		$gone   = 'active' === $status && self::created_item_gone( $change );
+		if ( $gone ) {
+			$status = 'gone';
+		}
 		$out    = [
 			'change_id'     => (string) ( $change['change_id'] ?? '' ),
 			'time'          => gmdate( 'c', (int) ( $change['created_at'] ?? 0 ) ),
@@ -345,6 +377,9 @@ class Change_View {
 			'undo_possible' => 'active' === $status,
 			'expires_at'    => gmdate( 'c', (int) ( $change['expires_at'] ?? 0 ) ),
 		];
+		if ( $gone ) {
+			$out['undo_note'] = 'What this change created was deleted permanently since, so there is nothing to undo.';
+		}
 		if ( ! empty( $change['undone_at'] ) ) {
 			$out['undone_at'] = gmdate( 'c', (int) $change['undone_at'] );
 		} elseif ( ! empty( $change['partial_undo'] ) ) {

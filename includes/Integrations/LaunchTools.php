@@ -231,11 +231,26 @@ class LaunchTools {
 		return current_user_can( is_multisite() ? 'manage_network_options' : 'manage_options' );
 	}
 
+	/** What undoing a launch tool does, in plain words, for the change list and the undo reply. */
+	private static function undo_summary( $tool, $payload ) {
+		$pid  = is_array( $payload ) && ! empty( $payload['post_id'] ) ? (int) $payload['post_id'] : 0;
+		$what = $pid > 0 ? sprintf( 'post %d', $pid ) : 'the post';
+		switch ( $tool ) {
+			case 'wp_publish_and_launch':
+				return sprintf( 'Remove %s and the image the launch uploaded (search engine submissions and cache purges cannot be taken back).', $what );
+			case 'seo_optimize_for_launch':
+				return sprintf( 'Restore the earlier SEO title and description of %s and remove the redirects the launch made.', $what );
+			case 'wp_migrate_theme_assets':
+				return 'Put back the earlier content of the posts the migration changed.';
+		}
+		return 'Reverse ' . $tool . '.';
+	}
+
 	/** Stores what an undo needs and returns the token details for the reply, or null. */
 	private static function token( $tool, $payload ) {
 		$stored = \Royal_MCP\MCP\Undo_Store::store( [
 			'op'           => (string) $tool,
-			'summary'      => (string) $tool,
+			'summary'      => self::undo_summary( (string) $tool, $payload ),
 			'target'       => is_array( $payload ) && isset( $payload['post_id'] ) ? [ 'post_id' => (int) $payload['post_id'] ] : [],
 			'pre_op_state' => [ 'payload' => $payload, 'modified' => is_array( $payload ) && ! empty( $payload['post_id'] ) ? (string) get_post_field( 'post_modified_gmt', (int) $payload['post_id'], 'raw' ) : '' ],
 		] );
@@ -2260,7 +2275,7 @@ class LaunchTools {
 			];
 		}
 
-		$backup_name = sprintf( 'royal-mcp-launch-%s', gmdate( 'Ymd-His' ) );
+		$backup_name = sprintf( 'royal-mcp-launch-%s', gmdate( 'Y-m-d-His' ) );
 
 		try {
 			$instance  = call_user_func( [ $backup_class, 'instance' ] );
