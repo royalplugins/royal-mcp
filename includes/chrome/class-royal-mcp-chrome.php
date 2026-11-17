@@ -24,7 +24,7 @@ class Royal_MCP_Chrome {
     const CSS_HANDLE                   = 'royal-mcp-chrome';
     const BODY_CLASS                   = 'royal-mcp-chrome-scope';
 
-    const ROYALLY_URL_BASE             = 'https://royalplugins.com/royally/';
+    const ROYALLY_URL_BASE             = 'https://royalplugins.com/royal-mcp-pro/';
     const AFFILIATE_URL_BASE           = 'https://royalplugins.com/affiliates/';
     // Placeholder slug of the side-menu upgrade entry; its link is swapped for the Royally address.
     const UPGRADE_MENU_SLUG            = 'royal-mcp-pro-external';

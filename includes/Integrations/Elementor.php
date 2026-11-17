@@ -1101,13 +1101,13 @@ class Elementor {
 	 */
 	public static function sanitize_tree_for_user( $value, $key = '' ) {
 		if ( current_user_can( 'unfiltered_html' ) ) {
-			return $value;
+			return self::without_remote_svg_sources( $value );
 		}
 		if ( self::is_custom_attributes( $key, $value ) ) {
 			return self::without_custom_attributes( $value );
 		}
 		if ( is_array( $value ) || $value instanceof \stdClass ) {
-			$value = self::map_typed_link_addresses( $value, 'esc_url_raw' );
+			$value = self::local_svg_source_only( self::map_typed_link_addresses( $value, 'esc_url_raw' ) );
 		}
 		if ( is_array( $value ) ) {
 			foreach ( $value as $k => $v ) {
@@ -1179,6 +1179,51 @@ class Elementor {
 			return $set( $node, 'value', $set( $inner, 'destination', $set( $destination, 'value', (string) $fix( $address ) ) ) );
 		}
 		return $node;
+	}
+
+	/**
+	 * An SVG source ({"$$type": "svg-src", "value": {"url": ..., "id": ...}}) keeps its address only
+	 * when it is on this site: Elementor fetches the file on the server to inline it, so an outside
+	 * address would make the site download whatever it points to. The media library id is kept.
+	 *
+	 * @param array|\stdClass $node One node of the element tree.
+	 * @return array|\stdClass
+	 */
+	private static function local_svg_source_only( $node ) {
+		if ( 'svg-src' !== self::node_get( $node, '$$type' ) ) {
+			return $node;
+		}
+		$inner = self::node_get( $node, 'value' );
+		$part  = self::node_get( $inner, 'url' );
+		// The address is a plain string or a typed url value ({"$$type": "url", "value": ...}).
+		$url = is_string( $part ) ? $part : self::node_get( $part, 'value' );
+		if ( ! is_string( $url ) || '' === $url ) {
+			return $node;
+		}
+		$home = strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+		$host = strtolower( (string) wp_parse_url( $url, PHP_URL_HOST ) );
+		$ok   = '' !== $home && $host === $home && in_array( strtolower( (string) wp_parse_url( $url, PHP_URL_SCHEME ) ), [ 'http', 'https' ], true );
+		return $ok ? $node : self::node_set( $node, 'value', self::node_set( $inner, 'url', null ) );
+	}
+
+	/** The whole tree with every SVG source pointing outside this site emptied (see local_svg_source_only()). */
+	private static function without_remote_svg_sources( $value ) {
+		if ( is_array( $value ) ) {
+			$value = self::local_svg_source_only( $value );
+			foreach ( $value as $k => $v ) {
+				if ( is_array( $v ) || $v instanceof \stdClass ) {
+					$value[ $k ] = self::without_remote_svg_sources( $v );
+				}
+			}
+		} elseif ( $value instanceof \stdClass ) {
+			$value = self::local_svg_source_only( $value );
+			foreach ( get_object_vars( $value ) as $k => $v ) {
+				if ( is_array( $v ) || $v instanceof \stdClass ) {
+					$value->$k = self::without_remote_svg_sources( $v );
+				}
+			}
+		}
+		return $value;
 	}
 
 	/** Whether a setting key holds a link address (url, any *_url, href, destination). */

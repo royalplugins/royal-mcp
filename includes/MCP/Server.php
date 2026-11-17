@@ -10650,15 +10650,21 @@ class Server {
                     ];
                 }
                 $gc_token = !$gc_other && !self::read_only_mode() && !self::drafts_only_mode() && 'full' === $this->connection_access_level()[0];
-                // A change to an order's billing or shipping details is listed by field with the
-                // values left out: they are the customer's contact details.
-                $gc_hide_contact = 'wc_update_order' === (string) ($gc_change['op'] ?? '')
-                    && !apply_filters('royal_mcp_change_view_order_contact', false, $gc_change);
+                // Contact details in a change (an order's billing, shipping and customer note, a
+                // commenter's email or address, a subscriber's name or phone) are listed by field
+                // with the values left out, whatever tool made the change.
+                $gc_hide_contact = !apply_filters('royal_mcp_change_view_order_contact', false, $gc_change);
                 return \Royal_MCP\MCP\Support\Change_View::detail($gc_change, function ($value, $key) use ($gc_hide_contact) {
-                    if ($gc_hide_contact && (0 === strpos((string) $key, 'billing.') || 0 === strpos((string) $key, 'shipping.'))) {
-                        return null === $value || '' === $value ? $value : '[hidden: customer contact detail]';
+                    $seen = $this->redact_sensitive_keys($value, (string) $key);
+                    // The usual masking first (an email shows as [email hidden]); any other contact value is hidden as a whole.
+                    if ($gc_hide_contact && $seen === $value && \Royal_MCP\MCP\Support\Change_View::is_contact_field((string) $key)) {
+                        // Empty, or already a placeholder (an address stored as [email hidden]): shown as it is.
+                        if (null === $value || '' === $value || \Royal_MCP\MCP\Support\Secret_Scrubber::contains_marker($value)) {
+                            return $value;
+                        }
+                        return is_string($value) && is_email(trim($value)) ? '[email hidden]' : '[hidden: customer contact detail]';
                     }
-                    return $this->redact_sensitive_keys($value, (string) $key);
+                    return $seen;
                 }, $gc_token);
 
             // ==================== UNDO (Free basic mode) ====================

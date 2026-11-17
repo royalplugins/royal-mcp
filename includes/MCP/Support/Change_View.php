@@ -40,6 +40,24 @@ class Change_View {
 		'wc_delete_coupon_trash'    => 'wc_delete_coupon',
 	];
 
+	/**
+	 * Whether a changed field holds a person's contact details: billing / shipping fields,
+	 * a customer note, names, emails, phone numbers, postal address parts, a commenter's
+	 * email, IP or browser. The key may be dotted (billing.email) or plain (customer_note).
+	 *
+	 * @param string $key Field key or hint.
+	 */
+	public static function is_contact_field( $key ) {
+		$k = strtolower( (string) $key );
+		if ( '' === $k ) {
+			return false;
+		}
+		if ( 1 === preg_match( '/^(billing|shipping)[._]/', $k ) ) {
+			return true;
+		}
+		return 1 === preg_match( '/(^|[._])(customer_note|first_name|last_name|full_name|email|user_email|phone|mobile|address|address_1|address_2|postcode|zip|comment_author_email|comment_author_ip|comment_author_url|comment_agent)$/', $k );
+	}
+
 	/** Snapshot fields never shown: commenter contact and device details. */
 	const HIDDEN_FIELDS = [ 'comment_author_email', 'comment_author_IP', 'comment_agent' ];
 

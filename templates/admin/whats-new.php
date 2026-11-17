@@ -19,8 +19,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 $rmcp_wn_img_base          = ROYAL_MCP_PLUGIN_URL . 'assets/img/whats-new/';
-$rmcp_wn_royally_url       = 'https://royalplugins.com/royally/?utm_source=royal_mcp_free&utm_medium=free_plugin&utm_content=whats_new_footer&utm_campaign=royal_mcp_admin';
-$rmcp_wn_royally_slide_url = 'https://royalplugins.com/royally/?utm_source=royal_mcp_free&utm_medium=free_plugin&utm_content=whats_new_slide&utm_campaign=royal_mcp_admin';
+$rmcp_wn_royally_url       = 'https://royalplugins.com/royal-mcp-pro/?utm_source=royal_mcp_free&utm_medium=free_plugin&utm_content=whats_new_footer&utm_campaign=royal_mcp_admin';
+$rmcp_wn_royally_slide_url = 'https://royalplugins.com/royal-mcp-pro/?utm_source=royal_mcp_free&utm_medium=free_plugin&utm_content=whats_new_slide&utm_campaign=royal_mcp_admin';
 $rmcp_wn_check             = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
 $rmcp_wn_svg_allowed       = [
     'svg'      => [ 'viewbox' => true, 'fill' => true, 'stroke' => true, 'stroke-width' => true, 'stroke-linecap' => true, 'stroke-linejoin' => true, 'class' => true ],

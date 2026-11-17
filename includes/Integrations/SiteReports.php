@@ -343,14 +343,12 @@ class SiteReports {
 					continue;
 				}
 				$last   = isset( $p['last_used'] ) ? (int) $p['last_used'] : 0;
-				$ip     = isset( $p['last_ip'] ) && is_string( $p['last_ip'] ) && filter_var( $p['last_ip'], FILTER_VALIDATE_IP ) ? $p['last_ip'] : null;
-				// Only the name, an id and dates: the password itself and its hash are never read out.
+				// Only the name, an id and dates: the password itself, its hash and the address it was last used from are never read out.
 				$rows[] = [
 					'name'       => mb_substr( SafeText::field( (string) ( $p['name'] ?? '' ) ), 0, 120 ),
 					'uuid'       => 1 === preg_match( '/^[A-Za-z0-9\-]{1,64}$/', (string) ( $p['uuid'] ?? '' ) ) ? (string) $p['uuid'] : '',
 					'created_at' => ! empty( $p['created'] ) ? gmdate( 'c', (int) $p['created'] ) : null,
 					'last_used'  => $last ? gmdate( 'c', $last ) : null,
-					'last_ip'    => $ip,
 				];
 				$totals['entries']++;
 				if ( ! $last ) {
@@ -386,7 +384,7 @@ class SiteReports {
 			$tool( 'rlinks_get_top_links', 'The most-clicked Royal Links over a period, most clicks first: links {link_id, title, clicks, unique_clicks, last_click_at (site time)}, with page, per_page, total_links and total_pages. Published links only. No visitor data. A page beyond the last one is empty. Read-only. Requires Royal Links and manage_options.', [ 'period' => [ 'type' => 'string', 'enum' => array_keys( self::LINK_PERIODS ), 'description' => 'Default 30days.' ], 'page' => [ 'type' => 'integer', 'minimum' => 1 ], 'per_page' => [ 'type' => 'integer', 'minimum' => 1, 'maximum' => 100, 'description' => 'Default 20.' ] ] ),
 			$tool( 'elementor_get_kit_globals', 'Read Elementor Site Settings: the global colours and global fonts every widget can point at. Returns kit_id, colors [{id, title, color, kind: system or custom}] and fonts [{id, title, font_family, font_weight, kind}]. A kit never saved in Site Settings reports Elementor\'s defaults. Read-only. Requires Elementor and edit_posts.', [] ),
 			$tool( 'redirection_bulk_export', 'Export the Redirection plugin\'s rules as CSV text, in ID order, disabled rules included. Columns: source, destination, group, type (the HTTP code), match_type, action_type (url, error, random, pass), regex (1 when the source is a pattern) and status (enabled or disabled). It is a readable listing, not a file for Redirection\'s own import. limit is 500 by default and at most 2000; page on with offset (next_offset is given while more remain; a very large page is cut at about 400 KB). Optionally one group_id. A rule that matches on more than the address, or that has no target (an error or random rule), is exported with an empty destination. A cell longer than 2,000 characters is cut (cells_cut counts the rules affected). Cells a spreadsheet would run as a formula are made plain text. Read-only. Requires Redirection and manage_options.', [ 'group_id' => [ 'type' => 'integer', 'minimum' => 1, 'description' => 'Only this group (see redirection_list_groups).' ], 'limit' => [ 'type' => 'integer', 'minimum' => 1, 'maximum' => 2000 ], 'offset' => [ 'type' => 'integer', 'minimum' => 0 ] ] ),
-			$tool( 'wp_audit_application_passwords', 'List application passwords per user: users [{user_id, user_login, roles, is_administrator, entries [{name, uuid, created_at, last_used, last_ip}]}] with totals {entries, never_used, unused_90_days, administrators_with_entries}; one entry is one application password. The passwords themselves are never returned. last_ip is the address the password was last used from. A name that itself looks like a secret (a long random string, or text such as "password: ...") comes back masked; uuid still identifies the entry. Up to 500 users (truncated says when there are more). Read-only. Requires manage_options and list_users.', [] ),
+			$tool( 'wp_audit_application_passwords', 'List application passwords per user: users [{user_id, user_login, roles, is_administrator, entries [{name, uuid, created_at, last_used}]}] with totals {entries, never_used, unused_90_days, administrators_with_entries}; one entry is one application password. The passwords themselves are never returned. A name that itself looks like a secret (a long random string, or text such as "password: ...") comes back masked; uuid still identifies the entry. Up to 500 users (truncated says when there are more). Read-only. Requires manage_options and list_users.', [] ),
 		];
 		return array_column( $out, null, 'name' );
 	}

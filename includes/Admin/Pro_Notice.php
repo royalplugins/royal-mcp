@@ -56,7 +56,7 @@ class Pro_Notice {
                 'utm_content'  => 'admin_notice',
                 'utm_campaign' => 'royal_mcp_admin',
             ],
-            'https://royalplugins.com/royally/'
+            'https://royalplugins.com/royal-mcp-pro/'
         );
     }
 
