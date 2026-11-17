@@ -212,8 +212,20 @@ class ACF {
 				if ( \Royal_MCP\MCP\Support\Protected_Meta::acf_reference_conflict( $post_id, $meta_key ) ) {
 					throw new \Exception( 'This field name collides with a protected key that holds other data on this post, so nothing was written.' );
 				}
-				// Users who may not save unfiltered HTML get the filtering their own edits get.
-				$acf_value   = current_user_can( 'unfiltered_html' ) ? $args['value'] : self::filter_html_deep( $args['value'] );
+				// Users who may not save unfiltered HTML get the filtering their own edits get
+				// (ACF's own setting decides, as it does in the editor).
+				$acf_unfiltered = (bool) apply_filters( 'acf/allow_unfiltered_html', current_user_can( 'unfiltered_html' ) );
+				$acf_value      = $acf_unfiltered ? $args['value'] : self::filter_html_deep( $args['value'] );
+				// A URL or link field only takes addresses with a protocol WordPress allows (no javascript: or data:).
+				if ( in_array( (string) ( $acf_field['type'] ?? '' ), [ 'url', 'link' ], true ) ) {
+					$acf_addr = is_array( $acf_value ) ? ( $acf_value['url'] ?? '' ) : $acf_value;
+					if ( is_string( $acf_addr ) && '' !== trim( $acf_addr ) ) {
+						$acf_scheme = 1 === preg_match( '/^([a-z][a-z0-9+.\-]*):/i', trim( $acf_addr ), $acf_m ) ? strtolower( $acf_m[1] ) : '';
+						if ( '' !== $acf_scheme && ! in_array( $acf_scheme, wp_allowed_protocols(), true ) ) {
+							throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_url', sprintf( 'The %s field only takes web addresses; "%s:" links are not allowed. Nothing was changed.', esc_html( (string) ( $acf_field['type'] ?? 'url' ) ), esc_html( $acf_scheme ) ) );
+						}
+					}
+				}
 				$meta_before = self::post_meta_fingerprint( $post_id );
 				// ACF names the rows it writes from field names and paths, and related fields write to
 				// other posts, users, terms and attachments, so each write is checked as it goes.
@@ -356,13 +368,6 @@ class ACF {
 	}
 
 	/**
-	 * Flatten ACF return values that aren't JSON-encodable as-is. ACF returns
-	 * WP_Post / WP_User / WP_Term objects for post_object / user / taxonomy
-	 * fields when "Return Format" is set to "Object" — we collapse those to a
-	 * small array the LLM can reason about, while passing scalars and plain
-	 * arrays through untouched.
-	 */
-	/**
 	 * Field value with the credential redaction post meta reads get; a
 	 * password-type field is always withheld.
 	 */
@@ -424,6 +429,13 @@ class ACF {
 		return $value;
 	}
 
+	/**
+	 * Flatten ACF return values that aren't JSON-encodable as-is. ACF returns
+	 * WP_Post / WP_User / WP_Term objects for post_object / user / taxonomy
+	 * fields when "Return Format" is set to "Object"; those collapse to a
+	 * small array the LLM can reason about. Scalars pass through and arrays
+	 * are flattened item by item.
+	 */
 	private static function flatten_value( $value ) {
 		if ( is_null( $value ) || is_scalar( $value ) ) {
 			return $value;

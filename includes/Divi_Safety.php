@@ -63,55 +63,55 @@ class Divi_Safety {
         $post = get_post( $post_id );
         if ( ! $post ) return $empty;
 
-        // 1) Postmeta path — authoritative when present. Try modern key
-        // first, then legacy `_et_pb_builder_version` — Divi 4.0-4.4 posts
-        // + posts written by our own assert_divi_meta_flags land in the
-        // legacy key without the modern one. Falling back keeps the
-        // read/write pair consistent across Divi version boundaries.
+        // The version comes from a stamp on the page: Divi's own first, then the
+        // older one, which tools that only touched the page write as well.
+        $stamp = null;
         foreach ( [ self::META_KEY, self::META_KEY_LEGACY ] as $key ) {
             $raw = get_post_meta( $post_id, $key, true );
             if ( ! is_string( $raw ) || $raw === '' ) continue;
             $version = self::parse_version_from_meta( $raw );
             if ( $version === null ) continue;
-            $format = self::classify_version( $version );
+            $stamp = [ 'version' => $version, 'raw' => $raw, 'key' => $key ];
+            break;
+        }
+        $with_stamp = static function ( $format, $source ) use ( $stamp, $theme_version ) {
             return [
                 'format'         => $format,
-                'version'        => $version,
-                'source'         => 'postmeta',
-                'gap_from_theme' => self::compute_gap( $version, $theme_version ),
-                'meta_raw'       => $raw,
-                'meta_key_used'  => $key,
+                'version'        => $stamp ? $stamp['version'] : null,
+                'source'         => $source,
+                'gap_from_theme' => $stamp ? self::compute_gap( $stamp['version'], $theme_version ) : null,
+                'meta_raw'       => $stamp ? $stamp['raw'] : null,
+                'meta_key_used'  => $stamp ? $stamp['key'] : null,
                 'theme_version'  => $theme_version,
             ];
-        }
+        };
 
-        // 2) Content-shape fallback.
+        // The format is what the page holds. A stamp can be out of date (a page
+        // converted without being saved again) or written by another tool, and
+        // the tools that change a page must walk the markup that is really there.
         $content = (string) $post->post_content;
-        $has_d5 = function_exists( 'has_block' ) && has_block( 'divi/section', $post );
-        if ( ! $has_d5 ) {
-            $has_d5 = strpos( $content, '<!-- wp:divi/' ) !== false;
-        }
-        $has_d4 = strpos( $content, '[et_pb_section' ) !== false
+        // Block comments may use any whitespace after "<!--", as the block parser allows.
+        $has_d5  = preg_match( '/<!--\s+wp:divi\//', $content ) === 1;
+        $has_d4  = strpos( $content, '[et_pb_section' ) !== false
             || strpos( $content, '[et_pb_row' ) !== false
-            || preg_match( '/\[et_pb_[a-z0-9_]+[\s\]]/', $content ) === 1;
+            || preg_match( '/\[et_pb_[a-z0-9_]+[\s\]\/]/', $content ) === 1;
+        if ( $has_d5 && $has_d4 ) return $with_stamp( 'mixed', 'content_scan' );
+        if ( $has_d5 )            return $with_stamp( 'divi_5_blocks', 'content_scan' );
+        if ( $has_d4 )            return $with_stamp( 'divi_4_shortcodes', 'content_scan' );
 
-        $format = 'not_divi';
-        if ( $has_d5 && $has_d4 )        $format = 'mixed';
-        elseif ( $has_d5 )               $format = 'divi_5_blocks';
-        elseif ( $has_d4 )               $format = 'divi_4_shortcodes';
-        elseif ( get_post_meta( $post_id, '_et_pb_use_builder', true ) === 'on' && $content === '' ) {
-            // Empty content on a builder-tagged post — treat as D4 shell.
-            $format = 'divi_4_shortcodes';
+        // Content of its own with no Divi markup in it is not a Divi page, whatever a stamp says.
+        if ( '' !== trim( $content ) ) {
+            return $empty;
         }
-        return [
-            'format'         => $format,
-            'version'        => null,
-            'source'         => $format === 'not_divi' ? null : 'content_scan',
-            'gap_from_theme' => null,
-            'meta_raw'       => null,
-            'meta_key_used'  => null,
-            'theme_version'  => $theme_version,
-        ];
+
+        // An empty page: the stamp says which Divi it was made for; without one, the builder flag.
+        if ( $stamp ) {
+            return $with_stamp( self::classify_version( $stamp['version'] ), 'postmeta' );
+        }
+        if ( get_post_meta( $post_id, '_et_pb_use_builder', true ) === 'on' ) {
+            return $with_stamp( 'divi_4_shortcodes', 'content_scan' );
+        }
+        return $with_stamp( 'not_divi', null );
     }
 
     /**

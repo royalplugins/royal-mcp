@@ -15,9 +15,22 @@ class Settings_Page {
     const REGENERATE_ACTION = 'royal_mcp_regenerate_api_key';
     const DISABLE_KEY_ACTION = 'royal_mcp_disable_api_key';
     const CLEAR_LOG_ACTION   = 'royal_mcp_clear_activity_log';
+    const EXPORT_LOG_ACTION  = 'royal_mcp_export_activity_log';
+    /** admin-post action (and nonce action) that saves how long Activity Log entries are kept. */
+    const LOG_RETENTION_ACTION = 'royal_mcp_set_log_retention';
+    /** Most entries one export holds, newest first. */
+    const LOG_EXPORT_MAX     = 50000;
+    /** Longest exported cell (bytes), under a spreadsheet's own cell limit. */
+    const LOG_EXPORT_CELL_MAX = 30000;
+    /** Column names of the Activity Log export. */
+    const LOG_EXPORT_COLUMNS = [ 'id', 'timestamp', 'source', 'action', 'status', 'tool', 'user_id', 'auth', 'client_id', 'access_level', 'route', 'arg_keys', 'error', 'change_id' ];
 
-    /** Days an Activity Log entry is kept. */
+    /** Days an Activity Log entry is kept unless the owner picks another period. */
     const LOG_RETENTION_DAYS = 90;
+    /** Option holding the owner's choice of retention period (days; 0 keeps entries until cleared). */
+    const LOG_RETENTION_OPTION = 'royal_mcp_log_retention_days';
+    /** Periods the Activity Log screen offers. */
+    const LOG_RETENTION_CHOICES = [ 30, 90, 180, 365, 0 ];
 
     /**
      * Record an API key event (created or rotated) in the activity log, with where it came from.
@@ -77,7 +90,6 @@ class Settings_Page {
     public function __construct() {
         add_action('admin_menu', [$this, 'add_menu_page']);
         add_action('admin_init', [$this, 'register_settings']);
-        add_action('admin_init', [$this, 'maybe_dismiss_review_banner']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_scripts']);
         add_filter('admin_footer_text', [$this, 'admin_footer_text']);
 
@@ -87,72 +99,8 @@ class Settings_Page {
         add_action('admin_post_' . self::REGENERATE_ACTION, [$this, 'handle_regenerate_api_key']);
         add_action('admin_post_' . self::DISABLE_KEY_ACTION, [$this, 'handle_disable_api_key']);
         add_action('admin_post_' . self::CLEAR_LOG_ACTION, [$this, 'handle_clear_activity_log']);
-    }
-
-    /** Render the wp.org review-request banner (Free tier only, version-stamped dismissal). */
-    public static function render_review_banner() {
-        if ( class_exists( '\\Royal_MCP_Pro\\Tool_Registry', false ) ) {
-            return;
-        }
-        $user_id = get_current_user_id();
-        if (!$user_id || !current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- read-only banner render gated by per-user meta (no state mutation)
-            return;
-        }
-        $dismissed_at = get_user_meta($user_id, 'royal_mcp_review_dismissed_version', true);
-        if ($dismissed_at && version_compare($dismissed_at, ROYAL_MCP_VERSION, '>=')) {
-            return;
-        }
-
-        $dismiss_url = wp_nonce_url(
-            add_query_arg('royal_mcp_dismiss_review', '1'),
-            'royal_mcp_dismiss_review'
-        );
-        ?>
-        <div class="royal-mcp-review-banner">
-            <a href="<?php echo esc_url($dismiss_url); ?>" class="royal-mcp-review-dismiss" aria-label="<?php esc_attr_e('Dismiss this notice', 'royal-mcp'); ?>">
-                <span class="dashicons dashicons-no-alt" aria-hidden="true"></span>
-            </a>
-            <div class="royal-mcp-review-body">
-                <span class="royal-mcp-review-stars" aria-hidden="true">
-                    <span class="dashicons dashicons-star-filled"></span>
-                    <span class="dashicons dashicons-star-filled"></span>
-                    <span class="dashicons dashicons-star-filled"></span>
-                    <span class="dashicons dashicons-star-filled"></span>
-                    <span class="dashicons dashicons-star-filled"></span>
-                </span>
-                <div class="royal-mcp-review-text">
-                    <strong><?php esc_html_e('Enjoying Royal MCP?', 'royal-mcp'); ?></strong>
-                    <span><?php esc_html_e('Leaving a quick review on WordPress.org helps other admins find it. Takes about a minute.', 'royal-mcp'); ?></span>
-                </div>
-            </div>
-            <a href="https://wordpress.org/support/plugin/royal-mcp/reviews/#new-post" target="_blank" rel="noopener noreferrer" class="royal-mcp-review-cta">
-                <?php esc_html_e('Leave a Review', 'royal-mcp'); ?>
-                <span class="dashicons dashicons-external" aria-hidden="true"></span>
-            </a>
-        </div>
-        <?php
-    }
-
-    /**
-     * Persist a per-user dismissal of the review banner. Version-stamped —
-     * the banner reappears on each plugin version update.
-     */
-    public function maybe_dismiss_review_banner() {
-        if (!isset($_GET['royal_mcp_dismiss_review'])) {
-            return;
-        }
-        if (!current_user_can('manage_options')) { // audit:multisite-manage-options-safe -- writes per-user meta only (no per-site or network-scope state)
-            return;
-        }
-        if (!isset($_GET['_wpnonce']) ||
-            !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'royal_mcp_dismiss_review')) {
-            return;
-        }
-
-        update_user_meta(get_current_user_id(), 'royal_mcp_review_dismissed_version', ROYAL_MCP_VERSION);
-
-        wp_safe_redirect(remove_query_arg(['royal_mcp_dismiss_review', '_wpnonce']));
-        exit;
+        add_action('admin_post_' . self::EXPORT_LOG_ACTION, [$this, 'handle_export_activity_log']);
+        add_action('admin_post_' . self::LOG_RETENTION_ACTION, [$this, 'handle_set_log_retention']);
     }
 
     /**
@@ -166,21 +114,39 @@ class Settings_Page {
 
     public function add_menu_page() {
         add_menu_page(
-            __('Royal MCP Settings', 'royal-mcp'),
+            __('Royal MCP', 'royal-mcp'),
             __('Royal MCP', 'royal-mcp'),
             self::admin_capability(),
             'royal-mcp',
-            [$this, 'render_settings_page'],
+            [ Dashboard_Page::class, 'render' ],
             'dashicons-networking',
             80
         );
 
         add_submenu_page(
             'royal-mcp',
-            __('Settings', 'royal-mcp'),
-            __('Settings', 'royal-mcp'),
+            __('Royal MCP', 'royal-mcp'),
+            __('Dashboard', 'royal-mcp'),
             self::admin_capability(),
             'royal-mcp',
+            [ Dashboard_Page::class, 'render' ]
+        );
+
+        add_submenu_page(
+            'royal-mcp',
+            __('Connections', 'royal-mcp'),
+            __('Connections', 'royal-mcp'),
+            self::admin_capability(),
+            Menu_Layout::CONNECTIONS,
+            [$this, 'render_settings_page']
+        );
+
+        add_submenu_page(
+            'royal-mcp',
+            __('Safety', 'royal-mcp'),
+            __('Safety', 'royal-mcp'),
+            self::admin_capability(),
+            Menu_Layout::SAFETY,
             [$this, 'render_settings_page']
         );
 
@@ -470,6 +436,26 @@ class Settings_Page {
         }
         $sanitized['writable_options_admin'] = array_values(array_unique($keys));
 
+        // Options returned as stored by wp_get_option: kept in their own option, changed only
+        // by this form and only by an administrator. A name counts only while it is also on the
+        // read allowlist and is not protected; that is checked on every read.
+        if ( $from_form && isset( $input['unmasked_options'] ) && is_string( $input['unmasked_options'] ) && current_user_can( 'manage_options' ) ) {
+            $unmasked = [];
+            foreach ( preg_split( '/\r?\n/', (string) $input['unmasked_options'] ) as $line ) {
+                $clean = sanitize_key( trim( $line ) );
+                if ( '' !== $clean ) {
+                    $unmasked[] = $clean;
+                }
+            }
+            $unmasked       = array_values( array_unique( $unmasked ) );
+            $unmasked_prior = get_option( \Royal_MCP\MCP\Server::UNMASKED_OPTIONS_OPTION, [] );
+            $unmasked_prior = is_array( $unmasked_prior ) ? array_values( $unmasked_prior ) : [];
+            if ( $unmasked !== $unmasked_prior ) {
+                update_option( \Royal_MCP\MCP\Server::UNMASKED_OPTIONS_OPTION, $unmasked, false );
+                self::log_setting_change( 'settings:unmasked_options', $unmasked_prior, $unmasked, 'settings' );
+            }
+        }
+
         // Protected meta keys: exact names only, stored as typed. Blocked entries stay
         // on the list so the screen can name them, and never open at write time.
         $meta_list_key = \Royal_MCP\MCP\Support\Protected_Meta::SETTING;
@@ -591,7 +577,7 @@ class Settings_Page {
             [ '%s', '%s', '%s', '%s', '%s' ]
         );
 
-        wp_safe_redirect( add_query_arg( [ 'page' => 'royal-mcp', 'settings-updated' => 'true' ], admin_url( 'admin.php' ) ) );
+        wp_safe_redirect( add_query_arg( [ 'page' => Menu_Layout::CONNECTIONS, 'settings-updated' => 'true' ], admin_url( 'admin.php' ) ) );
         exit;
     }
 
@@ -628,7 +614,7 @@ class Settings_Page {
             [ '%s', '%s', '%s', '%s', '%s' ]
         );
 
-        wp_safe_redirect( add_query_arg( [ 'page' => 'royal-mcp', 'settings-updated' => 'true' ], admin_url( 'admin.php' ) ) );
+        wp_safe_redirect( add_query_arg( [ 'page' => Menu_Layout::CONNECTIONS, 'settings-updated' => 'true' ], admin_url( 'admin.php' ) ) );
         exit;
     }
 
@@ -684,6 +670,9 @@ class Settings_Page {
             'api_key_user_id' => 0,
         ]);
 
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- reads which screen is open, changes nothing
+        $royal_mcp_view = isset( $_GET['page'] ) && Menu_Layout::SAFETY === sanitize_key( wp_unslash( $_GET['page'] ) ) ? 'safety' : 'connections';
+
         include ROYAL_MCP_PLUGIN_DIR . 'templates/admin/settings.php';
     }
 
@@ -695,10 +684,70 @@ class Settings_Page {
     public static function log_retention_days() {
         /**
          * Filter how many days Activity Log entries are kept. Return 0 to keep them all.
+         * Receives the period chosen on the Activity Log screen (90 days until one is chosen).
          *
          * @param int $days Days.
          */
-        return max( 0, (int) apply_filters( 'royal_mcp_log_retention_days', self::LOG_RETENTION_DAYS ) );
+        return max( 0, (int) apply_filters( 'royal_mcp_log_retention_days', self::log_retention_choice() ) );
+    }
+
+    /** The period chosen on the Activity Log screen, before any filter. */
+    public static function log_retention_choice() {
+        $stored = get_option( self::LOG_RETENTION_OPTION, null );
+        if ( null !== $stored && is_numeric( $stored ) && in_array( (int) $stored, self::LOG_RETENTION_CHOICES, true ) ) {
+            return (int) $stored;
+        }
+        return self::LOG_RETENTION_DAYS;
+    }
+
+    /**
+     * Whether the current user may not change the retention period: on a network, keeping
+     * entries until they are cleared is a network administrator's choice, and only a network
+     * administrator can shorten it again.
+     */
+    public static function log_retention_locked() {
+        return is_multisite() && 0 === self::log_retention_choice() && ! current_user_can( 'manage_network_options' );
+    }
+
+    /** The Activity Log screen's retention form: save the chosen period and record who changed it. */
+    public function handle_set_log_retention() {
+        if ( ! current_user_can( self::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from admin_capability(); per-site retention of the per-site log table
+            wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
+        }
+        check_admin_referer( self::LOG_RETENTION_ACTION );
+        // Exactly one of the listed numbers, as the form sends it; nothing is cleaned up into a choice.
+        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- compared against a fixed list of digit strings below
+        $raw  = isset( $_POST['royal_mcp_log_retention'] ) && is_string( $_POST['royal_mcp_log_retention'] ) ? wp_unslash( $_POST['royal_mcp_log_retention'] ) : '';
+        $days = in_array( $raw, array_map( 'strval', self::LOG_RETENTION_CHOICES ), true ) ? (int) $raw : -1;
+        $done = 'invalid';
+        // On a network, keeping a site's log for ever is a network administrator's call.
+        if ( 0 === $days && is_multisite() && ! current_user_can( 'manage_network_options' ) ) {
+            $done = 'network';
+            $days = -1;
+        } elseif ( $days >= 0 && $days !== self::log_retention_choice() && self::log_retention_locked() ) {
+            $done = 'network_kept';
+            $days = -1;
+        }
+        if ( in_array( $days, self::LOG_RETENTION_CHOICES, true ) ) {
+            $before           = self::log_retention_choice();
+            $before_effective = self::log_retention_days();
+            update_option( self::LOG_RETENTION_OPTION, $days, false );
+            if ( $days !== self::log_retention_choice() ) {
+                $done = 'failed';
+            } else {
+                $done = 'saved';
+                if ( $before !== $days && self::log_table_exists() ) {
+                    self::log_setting_change(
+                        'settings:activity_log_retention_changed',
+                        [ 'days' => $before, 'in_force' => $before_effective ],
+                        [ 'days' => $days, 'in_force' => self::log_retention_days() ],
+                        'settings'
+                    );
+                }
+            }
+        }
+        wp_safe_redirect( add_query_arg( [ 'page' => 'royal-mcp-logs', 'royal_mcp_retention' => $done ], admin_url( 'admin.php' ) ) );
+        exit;
     }
 
     /** Whether this site has the Activity Log table. */
@@ -732,6 +781,112 @@ class Settings_Page {
             }
         }
         return $deleted;
+    }
+
+    /** A value as a CSV cell: one line, and never read as a formula by a spreadsheet. */
+    private static function csv_cell( $value ) {
+        $value = is_scalar( $value ) ? (string) $value : '';
+        // One line of printable text: control and line-separator characters become a space.
+        $value = (string) preg_replace( '/[\x00-\x1F\x7F]+|\xE2\x80[\xA8\xA9]/', ' ', $value );
+        $value = trim( $value );
+        if ( strlen( $value ) > self::LOG_EXPORT_CELL_MAX ) {
+            $value = substr( $value, 0, self::LOG_EXPORT_CELL_MAX ) . '...';
+        }
+        // Formula characters are looked for behind spaces and invisible characters too, in their full-width forms as well.
+        $lead = (string) preg_replace( '/^(?:\s|\xC2\xA0|\xE2\x80[\x8B-\x8F]|\xEF\xBB\xBF)+/', '', $value );
+        return preg_match( '/^(?:[=+\-@]|\xEF\xBC\x9D|\xEF\xBC\x8B|\xEF\xBC\x8D|\xEF\xBC\xA0)/', $lead ) ? "'" . $value : $value;
+    }
+
+    /**
+     * Write the Activity Log as CSV to an open stream, newest first. An entry holds the tool
+     * name, the names of its arguments and any error text, never argument values.
+     *
+     * @param resource $stream   Open, writable stream.
+     * @param int      $max_rows Most entries to write.
+     * @return int Entries written.
+     */
+    public static function write_activity_log_csv( $stream, $max_rows = self::LOG_EXPORT_MAX ) {
+        global $wpdb;
+        // A byte-order mark so a spreadsheet reads the file as UTF-8. No escape character: a quote inside a
+        // cell is always doubled, which is the only form spreadsheets read, so a cell cannot end early.
+        fwrite( $stream, "\xEF\xBB\xBF" ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- the response body or a memory stream, not a file
+        fputcsv( $stream, self::LOG_EXPORT_COLUMNS, ',', '"', '' );
+        $max_rows = max( 0, (int) $max_rows );
+        if ( ! self::log_table_exists() ) {
+            return 0;
+        }
+        $table   = esc_sql( $wpdb->prefix . 'royal_mcp_logs' );
+        $written = 0;
+        $before  = PHP_INT_MAX;
+        while ( $written < $max_rows ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above; read in batches by id
+            $rows = $wpdb->get_results( $wpdb->prepare( "SELECT id, timestamp, mcp_server, action, request_data, response_data, status FROM `{$table}` WHERE id < %d ORDER BY id DESC LIMIT %d", $before, min( 1000, $max_rows - $written ) ), ARRAY_A );
+            if ( ! $rows ) {
+                break;
+            }
+            foreach ( $rows as $row ) {
+                $req    = json_decode( (string) $row['request_data'], true );
+                $res    = json_decode( (string) $row['response_data'], true );
+                $req    = is_array( $req ) ? $req : [];
+                $res    = is_array( $res ) ? $res : [];
+                $action = (string) $row['action'];
+                $tool   = isset( $req['tool'] ) && is_scalar( $req['tool'] ) ? (string) $req['tool'] : ( 0 === strpos( $action, 'tools/call:' ) ? substr( $action, 11 ) : '' );
+                $keys   = isset( $req['arg_keys'] ) && is_array( $req['arg_keys'] ) ? implode( ' ', array_filter( $req['arg_keys'], 'is_scalar' ) ) : '';
+                fputcsv( $stream, array_map( [ __CLASS__, 'csv_cell' ], [
+                    (int) $row['id'],
+                    $row['timestamp'],
+                    $row['mcp_server'],
+                    $action,
+                    $row['status'],
+                    $tool,
+                    $req['user_id'] ?? ( $req['by'] ?? '' ),
+                    $req['auth'] ?? '',
+                    $req['client_id'] ?? '',
+                    $req['access_level'] ?? '',
+                    $req['route'] ?? '',
+                    $keys,
+                    $res['error'] ?? '',
+                    $res['change_id'] ?? '',
+                ] ), ',', '"', '' );
+                $written++;
+                $before = (int) $row['id'];
+            }
+        }
+        return $written;
+    }
+
+    /** The Export button on the Activity Log page: record who exported, then send the CSV. */
+    public function handle_export_activity_log() {
+        if ( ! current_user_can( self::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from admin_capability(); reads the per-site wp_royal_mcp_logs table only
+            wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
+        }
+        check_admin_referer( self::EXPORT_LOG_ACTION );
+
+        global $wpdb;
+        if ( self::log_table_exists() ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- insert into our own log table
+            $wpdb->insert(
+                $wpdb->prefix . 'royal_mcp_logs',
+                [
+                    'mcp_server'    => 'MCP Server',
+                    'action'        => 'settings:activity_log_exported',
+                    'request_data'  => wp_json_encode( [ 'source' => 'settings', 'by' => (int) get_current_user_id() ] ),
+                    'response_data' => wp_json_encode( [ 'status' => 'success' ] ),
+                    'status'        => 'success',
+                ],
+                [ '%s', '%s', '%s', '%s', '%s' ]
+            );
+        }
+        nocache_headers();
+        header( 'Content-Type: text/csv; charset=utf-8' );
+        header( 'X-Content-Type-Options: nosniff' );
+        header( 'Content-Disposition: attachment; filename="royal-mcp-activity-log-' . gmdate( 'Y-m-d' ) . '.csv"' );
+        $out = fopen( 'php://output', 'w' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- the response body, not a file
+        if ( $out ) {
+            self::write_activity_log_csv( $out );
+            fclose( $out ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- the response body, not a file
+        }
+        exit;
     }
 
     /** The Clear button on the Activity Log page: delete every entry, then record who did it. */

@@ -108,6 +108,14 @@ class Categories {
 				'label'       => __( 'Royal MCP: W3 Total Cache', 'royal-mcp' ),
 				'description' => __( 'W3 Total Cache configuration, purging and statistics.', 'royal-mcp' ),
 			),
+			'seo-reads' => array(
+				'label'       => __( 'Royal MCP: SEO reads', 'royal-mcp' ),
+				'description' => __( 'Rank Math scores and missing-URL logs, and Search Console performance from SEObolt.', 'royal-mcp' ),
+			),
+			'backup-status' => array(
+				'label'       => __( 'Royal MCP: Backup status', 'royal-mcp' ),
+				'description' => __( 'Backup status from All-in-One WP Migration, WPvivid, Jetpack VaultPress Backup and BackWPup.', 'royal-mcp' ),
+			),
 			'duplicator' => array(
 				'label'       => __( 'Royal MCP: Duplicator', 'royal-mcp' ),
 				'description' => __( 'Duplicator migration packages and installers.', 'royal-mcp' ),
@@ -144,9 +152,41 @@ class Categories {
 				'label'       => __( 'Royal MCP: Fluent Forms', 'royal-mcp' ),
 				'description' => __( 'Fluent Forms forms, fields and entries, read only; personal fields masked.', 'royal-mcp' ),
 			),
+			'royal-affiliate' => array(
+				'label'       => __( 'Royal MCP: Royal Affiliate', 'royal-mcp' ),
+				'description' => __( 'Royal Affiliate affiliates, referrals, campaigns, creatives, payouts, landing pages, fraud incidents and the activity log; personal details left out.', 'royal-mcp' ),
+			),
+			'formforge'     => array(
+				'label'       => __( 'Royal MCP: FormForge', 'royal-mcp' ),
+				'description' => __( 'FormForge forms, entry counts, single entries with personal fields masked, analytics, and new forms from a copy or a template.', 'royal-mcp' ),
+			),
 			'mailpoet'      => array(
 				'label'       => __( 'Royal MCP: MailPoet', 'royal-mcp' ),
 				'description' => __( 'MailPoet lists and subscribers, newsletter drafts, test sends, guarded scheduling and sent-email statistics.', 'royal-mcp' ),
+			),
+			'image-optimisation' => array(
+				'label'       => __( 'Royal MCP: Image Optimisation', 'royal-mcp' ),
+				'description' => __( 'Image optimisation status from Smush, EWWW Image Optimizer, Imagify or ShortPixel: image counts, space saved, auto-optimise and bulk-run state.', 'royal-mcp' ),
+			),
+			'jetpack'       => array(
+				'label'       => __( 'Royal MCP: Jetpack', 'royal-mcp' ),
+				'description' => __( 'Jetpack site stats from WordPress.com, the module list, and switching modules on or off.', 'royal-mcp' ),
+			),
+			'really-simple-security' => array(
+				'label'       => __( 'Royal MCP: Really Simple Security', 'royal-mcp' ),
+				'description' => __( 'Really Simple Security SSL, hardening and certificate status, and stored vulnerability results.', 'royal-mcp' ),
+			),
+			'wp-optimize'   => array(
+				'label'       => __( 'Royal MCP: WP-Optimize', 'royal-mcp' ),
+				'description' => __( 'WP-Optimize page cache status and page cache purging.', 'royal-mcp' ),
+			),
+			'wpmailsmtp'    => array(
+				'label'       => __( 'Royal MCP: WP Mail SMTP', 'royal-mcp' ),
+				'description' => __( 'WP Mail SMTP sending status and last error, a rate-limited test email, and email log availability.', 'royal-mcp' ),
+			),
+			'akismet'       => array(
+				'label'       => __( 'Royal MCP: Akismet', 'royal-mcp' ),
+				'description' => __( 'Akismet status and settings, the Check for Spam recheck of pending comments, and spam statistics.', 'royal-mcp' ),
 			),
 		);
 	}

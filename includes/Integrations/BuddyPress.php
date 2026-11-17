@@ -165,7 +165,7 @@ class BuddyPress {
 			'user_login'          => $user->user_login,
 			'display_name'        => $profile_display,
 			'user_email'          => $user->user_email,
-			'user_registered'     => $user->user_registered,
+			'user_registered'     => \Royal_MCP\MCP\Server::iso_utc_date( $user->user_registered ),
 			'user_registered_iso' => self::to_iso( $user->user_registered ),
 			'last_activity'       => $last_activity,
 			'last_activity_iso'   => self::to_iso( $last_activity ),

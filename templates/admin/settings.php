@@ -18,7 +18,7 @@ $royal_mcp_is_localhost = strpos($royal_mcp_url, 'localhost') !== false || strpo
 // sits in a short-lived per-user transient. Read it and clear it in the same
 // request so the same admin doesn't see it again on the next page load.
 $royal_mcp_reveal_key_uid = (int) get_current_user_id();
-$royal_mcp_reveal_key     = $royal_mcp_reveal_key_uid > 0
+$royal_mcp_reveal_key     = ( $royal_mcp_reveal_key_uid > 0 && 'safety' !== ( $royal_mcp_view ?? '' ) )
     ? get_transient( 'royal_mcp_reveal_api_key_' . $royal_mcp_reveal_key_uid )
     : false;
 if ( is_string( $royal_mcp_reveal_key ) && '' !== $royal_mcp_reveal_key ) {
@@ -33,10 +33,13 @@ $royal_mcp_api_key_field  = '' !== $royal_mcp_reveal_key
 $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_key_field;
 ?>
 
-<div class="wrap royal-mcp-settings">
+<?php
+// The same form is used on two screens. Every field is always part of the form, so a save
+// from either screen keeps all settings; each screen only shows its own parts.
+$royal_mcp_view = isset( $royal_mcp_view ) && in_array( $royal_mcp_view, [ 'connections', 'safety' ], true ) ? $royal_mcp_view : 'connections';
+?>
+<div class="wrap royal-mcp-settings rmcp-view-<?php echo esc_attr( $royal_mcp_view ); ?>">
     <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
-
-    <?php \Royal_MCP\Admin\Settings_Page::render_review_banner(); ?>
 
     <?php settings_errors(); ?>
 
@@ -50,9 +53,10 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                  ========================================================== -->
             <div class="postbox">
                 <div class="postbox-header">
-                    <h2><?php esc_html_e('General Settings', 'royal-mcp'); ?></h2>
+                    <h2><?php echo esc_html( 'safety' === $royal_mcp_view ? __( 'Safety settings', 'royal-mcp' ) : __( 'Connection settings', 'royal-mcp' ) ); ?></h2>
                 </div>
                 <div class="inside">
+                    <div class="rmcp-group rmcp-group-connection">
                     <h3 class="rmcp-settings-group-title is-first"><?php esc_html_e('Connection', 'royal-mcp'); ?></h3>
                     <table class="form-table">
                         <tr>
@@ -241,6 +245,8 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                         </table>
                     </div>
 
+                    </div>
+                    <div class="rmcp-group rmcp-group-limits">
                     <h3 class="rmcp-settings-group-title"><?php esc_html_e('What AI clients may do', 'royal-mcp'); ?></h3>
                     <p class="rmcp-settings-group-intro"><?php esc_html_e('Applies to every connection. Each OAuth client can also get its own level on the Connected Clients screen.', 'royal-mcp'); ?></p>
                     <table class="form-table">
@@ -328,6 +334,8 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                         </tr>
                     </table>
 
+                    </div>
+                    <div class="rmcp-group rmcp-group-apikey">
                     <h3 class="rmcp-settings-group-title"><?php esc_html_e('API key', 'royal-mcp'); ?></h3>
                     <table class="form-table">
                         <tr>
@@ -433,6 +441,8 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                         </tr>
                     </table>
 
+                    </div>
+                    <div class="rmcp-group rmcp-group-writes">
                     <h3 class="rmcp-settings-group-title"><?php esc_html_e('Extra write permissions', 'royal-mcp'); ?></h3>
                     <p class="rmcp-settings-group-intro"><?php esc_html_e('Off by default. Turn on only what your AI clients need.', 'royal-mcp'); ?></p>
                     <table class="form-table">
@@ -491,6 +501,50 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                 <?php endif; ?>
                             </td>
                         </tr>
+                        <?php if ( current_user_can( 'manage_options' ) ) : ?>
+                        <tr id="rmcp-row-unmasked-options">
+                            <th scope="row">
+                                <label for="unmasked_options"><?php esc_html_e('Return as stored', 'royal-mcp'); ?></label>
+                            </th>
+                            <td>
+                                <?php
+                                $royal_mcp_unmasked = get_option( \Royal_MCP\MCP\Server::UNMASKED_OPTIONS_OPTION, [] );
+                                $royal_mcp_unmasked = is_array( $royal_mcp_unmasked ) ? array_values( array_filter( $royal_mcp_unmasked, 'is_string' ) ) : [];
+                                ?>
+                                <textarea name="royal_mcp_settings[unmasked_options]"
+                                          id="unmasked_options"
+                                          rows="3"
+                                          class="large-text code"
+                                          placeholder="my_plugin_settings"><?php echo esc_textarea( implode( "\n", $royal_mcp_unmasked ) ); ?></textarea>
+                                <p class="description">
+                                    <?php esc_html_e('One option name per line. AI clients read these options as stored. Credential fields and recognised key formats inside these options stay hidden. Only options that AI clients can read (the list above) count. Protected options, options known to hold credentials (mail delivery, backup storage and payment gateway settings) and names that look like credentials are always masked as usual. Each read is recorded in the Audit Log.', 'royal-mcp'); ?>
+                                </p>
+                                <?php
+                                if ( $royal_mcp_unmasked ) {
+                                    $royal_mcp_server        = new \Royal_MCP\MCP\Server();
+                                    $royal_mcp_unmasked_skip = array_values( array_filter( $royal_mcp_unmasked, static function ( $n ) use ( $royal_mcp_server ) {
+                                        return ! $royal_mcp_server->option_returned_as_stored( $n );
+                                    } ) );
+                                    if ( $royal_mcp_unmasked_skip ) :
+                                        ?>
+                                        <p class="description" id="rmcp-unmasked-options-skipped" style="color:#b32d2e;">
+                                            <?php
+                                            echo esc_html(
+                                                sprintf(
+                                                    /* translators: %s: comma-separated option names */
+                                                    __( 'Still masked in reads: %s. These options are not readable by AI clients, are protected, are known to hold credentials, or have names that look like credentials.', 'royal-mcp' ),
+                                                    implode( ', ', $royal_mcp_unmasked_skip )
+                                                )
+                                            );
+                                            ?>
+                                        </p>
+                                        <?php
+                                    endif;
+                                }
+                                ?>
+                            </td>
+                        </tr>
+                        <?php endif; ?>
                         <tr id="rmcp-row-writable-meta">
                             <th scope="row">
                                 <label for="writable_meta_keys"><?php esc_html_e('Writable protected meta keys', 'royal-mcp'); ?></label>
@@ -552,6 +606,8 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                         </tr>
                     </table>
 
+                    </div>
+                    <div class="rmcp-group rmcp-group-advanced">
                     <h3 class="rmcp-settings-group-title"><?php esc_html_e('Advanced', 'royal-mcp'); ?></h3>
                     <table class="form-table">
                         <tr>
@@ -681,6 +737,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                             </td>
                         </tr>
                     </table>
+                    </div>
                 </div>
             </div>
 
@@ -770,7 +827,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                     <details class="royal-mcp-connect-key-commands">
                         <summary style="cursor:pointer;font-weight:600;margin:0 0 12px;"><?php esc_html_e( 'Show API key commands', 'royal-mcp' ); ?></summary>
                         <p class="description" style="margin:0 0 12px;">
-                            <?php esc_html_e( 'For agents that run where no browser can open, such as a server or CI. Replace your-api-key-here with the WordPress API Key from General Settings above; this page never shows the key in these commands.', 'royal-mcp' ); ?>
+                            <?php esc_html_e( 'For agents that run where no browser can open, such as a server or CI. Replace your-api-key-here with the WordPress API Key from the Connection settings above; this page never shows the key in these commands.', 'royal-mcp' ); ?>
                         </p>
                         <?php
                         foreach ( $royal_mcp_connect_key as $royal_mcp_cmd_id => $royal_mcp_cmd_item ) {
@@ -789,13 +846,13 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
             <!-- ==========================================================
                  MCP Client Setup Guides
                  ========================================================== -->
-            <div class="postbox">
+            <div class="postbox rmcp-box-connections">
                 <div class="postbox-header">
                     <h2><?php esc_html_e('MCP Client Setup Guides', 'royal-mcp'); ?></h2>
                 </div>
                 <div class="inside">
                     <p class="description setup-guides-intro">
-                        <?php esc_html_e('Step-by-step instructions for connecting each MCP host to this site. All clients use the same MCP Server URL from General Settings above.', 'royal-mcp'); ?>
+                        <?php esc_html_e('Step-by-step instructions for connecting each MCP host to this site. All clients use the same MCP Server URL from the Connection settings above.', 'royal-mcp'); ?>
                     </p>
 
                     <div class="setup-guides-list">
@@ -816,7 +873,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                     <li><?php echo wp_kses(__('Click <strong>Connectors</strong> in the sidebar', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php echo wp_kses(__('Click <strong>Add custom connector</strong>', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php esc_html_e('Enter a name (e.g., "My WordPress Site")', 'royal-mcp'); ?></li>
-                                    <li><?php echo wp_kses(__('Paste the <strong>MCP Server URL</strong> from General Settings above', 'royal-mcp'), ['strong' => []]); ?></li>
+                                    <li><?php echo wp_kses(__('Paste the <strong>MCP Server URL</strong> from the Connection settings above', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php echo wp_kses(__('Click <strong>Add</strong>. Claude will run the OAuth handshake automatically', 'royal-mcp'), ['strong' => []]); ?></li>
                                 </ol>
                                 <a href="https://royalplugins.com/support/royal-mcp/connecting-to-claude/" target="_blank" rel="noopener noreferrer" class="setup-guide-full-link">
@@ -841,7 +898,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                     <li><?php echo wp_kses(__('Open <a href="https://chatgpt.com" target="_blank" rel="noopener noreferrer">chatgpt.com</a> → <strong>Settings</strong> → <strong>Plugins</strong>', 'royal-mcp'), ['a' => ['href' => [], 'target' => [], 'rel' => []], 'strong' => []]); ?></li>
                                     <li><?php echo wp_kses(__('Click <strong>+ Add</strong> and choose <strong>Plugin</strong> (or "MCP Server")', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php esc_html_e('Enter a name (e.g., "My WordPress Site")', 'royal-mcp'); ?></li>
-                                    <li><?php echo wp_kses(__('Paste the <strong>MCP Server URL</strong> from General Settings above', 'royal-mcp'), ['strong' => []]); ?></li>
+                                    <li><?php echo wp_kses(__('Paste the <strong>MCP Server URL</strong> from the Connection settings above', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php esc_html_e('Authorize when prompted. ChatGPT will run the OAuth handshake against your WordPress site', 'royal-mcp'); ?></li>
                                     <li><?php esc_html_e('The plugin becomes available across new ChatGPT conversations', 'royal-mcp'); ?></li>
                                 </ol>
@@ -912,7 +969,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
                                     <li><?php echo wp_kses(__('Open Cursor → <strong>Settings</strong> → <strong>MCP</strong>', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php echo wp_kses(__('Click <strong>+ Add new MCP server</strong>', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php esc_html_e('Enter a name (e.g., "Royal MCP — My Site")', 'royal-mcp'); ?></li>
-                                    <li><?php echo wp_kses(__('Paste the <strong>MCP Server URL</strong> from General Settings above', 'royal-mcp'), ['strong' => []]); ?></li>
+                                    <li><?php echo wp_kses(__('Paste the <strong>MCP Server URL</strong> from the Connection settings above', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php echo wp_kses(__('Add an HTTP header: <code>Authorization</code> with the value <code>Bearer</code> followed by a space and your <strong>WordPress API Key</strong>', 'royal-mcp'), ['strong' => [], 'code' => []]); ?></li>
                                     <li><?php esc_html_e('Save. Cursor connects automatically and Royal MCP tools become available', 'royal-mcp'); ?></li>
                                 </ol>
@@ -926,7 +983,7 @@ $royal_mcp_api_key_masked = $royal_mcp_has_stored_key && '' === $royal_mcp_api_k
             <!-- ==========================================================
                  Available API Endpoints (reference)
                  ========================================================== -->
-            <div class="postbox">
+            <div class="postbox rmcp-box-connections">
                 <div class="postbox-header">
                     <h2><?php esc_html_e('Available API Endpoints', 'royal-mcp'); ?></h2>
                 </div>

@@ -23,7 +23,7 @@ class Composers {
 		return [
 			[
 				'name'        => 'wp_publish_and_promote',
-				'description' => 'Publish a WordPress post in one call: optional featured image sideload, post creation, optional category (created if missing), optional tags (created if missing), optional SEO meta write (Yoast / Rank Math / SEObolt auto-detected). Best-effort composition — the post is the anchor step; if any downstream step (featured image, taxonomy, SEO) fails, the post is still created and the failure surfaces as a warning. Status defaults to "draft"; pass status="publish" to publish the post live. Supports scheduling via publish_date (future date auto-converts status to "future"). Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.',
+				'description' => 'Publish a WordPress post in one call: optional featured image sideload, post creation, optional category (created if missing), optional tags (created if missing), optional SEO meta write (Yoast / Rank Math / SEOPress / AIOSEO / SEObolt auto-detected). Best-effort composition — the post is the anchor step; if any downstream step (featured image, taxonomy, SEO) fails, the post is still created and the failure surfaces as a warning. Status defaults to "draft"; pass status="publish" to publish the post live. Supports scheduling via publish_date (future date auto-converts status to "future"). Note: payloads with backslash escape sequences (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) may not survive the MCP → REST → write pipeline as literal backslashes — decode client-side before sending or verify rendered output.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -34,7 +34,7 @@ class Composers {
 						'featured_image_url' => [ 'type' => 'string',  'description' => 'Optional. Publicly-fetchable image URL to sideload as the featured image.' ],
 						'category'           => [ 'type' => 'string',  'description' => 'Optional. Category name. Created if it does not exist.' ],
 						'tags'               => [ 'type' => 'array',   'items' => [ 'type' => 'string' ], 'description' => 'Optional. Array of tag names. Created if they do not exist.' ],
-						'seo_title'          => [ 'type' => 'string',  'description' => 'Optional. Written to the auto-detected SEO plugin (Yoast/Rank Math/SEObolt).' ],
+						'seo_title'          => [ 'type' => 'string',  'description' => 'Optional. Written to the auto-detected SEO plugin (Yoast, Rank Math, SEOPress, AIOSEO or SEObolt).' ],
 						'seo_description'    => [ 'type' => 'string',  'description' => 'Optional. Written to the auto-detected SEO plugin.' ],
 						'seo_focus_keyword'  => [ 'type' => 'string',  'description' => 'Optional. Written to the auto-detected SEO plugin.' ],
 					],
@@ -292,9 +292,7 @@ class Composers {
 	 * Dispatch SEO meta write to the detected plugin's postmeta keys.
 	 * Only writes non-empty fields.
 	 *
-	 * AIOSEO uses a custom table in newer versions (not postmeta), so
-	 * this composer skips it with a message; callers who need AIOSEO
-	 * should call wp_update_seo_meta directly after the post is created.
+	 * AIOSEO also gets the fields in its own table (what it serves).
 	 *
 	 * @return array{ok: bool, plugin: string, message?: string, fields_written?: array<int, string>}
 	 */
@@ -336,11 +334,12 @@ class Composers {
 				];
 				break;
 			case 'aioseo':
-				return [
-					'ok'      => false,
-					'plugin'  => 'aioseo',
-					'message' => 'AIOSEO uses a custom table for meta storage. Use wp_update_seo_meta directly after the post is created.',
-				];
+				$aio_refusal = \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_refusal();
+				if ( '' !== $aio_refusal ) {
+					return [ 'ok' => false, 'plugin' => 'aioseo', 'message' => $aio_refusal ];
+				}
+				$map = \Royal_MCP\MCP\Support\Seo_Plugin::field_maps()['aioseo'];
+				break;
 		}
 
 		if ( '' !== $title ) {
@@ -354,6 +353,13 @@ class Composers {
 		if ( '' !== $focus_kw ) {
 			update_post_meta( $post_id, $map['focus_keyword'], wp_slash( $focus_kw ) );
 			$fields[] = 'focus_keyword';
+		}
+		// AIOSEO serves from its own table: copy the fields there through its save routine.
+		if ( 'aioseo' === $plugin && $fields ) {
+			$aio = \Royal_MCP\MCP\Support\Seo_Plugin::aioseo_write( $post_id, array_filter( [ 'title' => $title, 'description' => $desc, 'focus_keyword' => $focus_kw ], 'strlen' ) );
+			if ( true !== $aio ) {
+				return [ 'ok' => false, 'plugin' => 'aioseo', 'message' => (string) $aio, 'fields_written' => [] ];
+			}
 		}
 
 		return [ 'ok' => true, 'plugin' => $plugin, 'fields_written' => $fields ];

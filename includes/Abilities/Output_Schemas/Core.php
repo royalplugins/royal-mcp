@@ -331,6 +331,21 @@ class Core {
 					'window_hours' => array( 'type' => 'integer' ),
 				),
 			),
+			'mcp_get_skill' => array(
+				'type'       => 'object',
+				'properties' => array(
+					'skill'  => array( 'type' => 'string' ),
+					'name'   => array( 'type' => 'string' ),
+					'covers' => array( 'type' => 'string' ),
+					'version'  => array( 'type' => 'string' ),
+					'text'     => array( 'type' => 'string', 'description' => 'The core of the skill or the workflow asked for.' ),
+					'section'  => array( 'type' => 'string', 'description' => 'The workflow returned, or empty for the core of the skill.' ),
+					'sections' => array( 'type' => 'array', 'description' => 'The workflows of the skill.', 'items' => array( 'type' => 'object', 'properties' => array( 'section' => array( 'type' => 'string' ), 'title' => array( 'type' => 'string' ), 'summary' => array( 'type' => 'string' ) ) ) ),
+					'skills' => array( 'type' => 'array', 'description' => 'The loaded skills, when no id was given.', 'items' => array( 'type' => 'object', 'properties' => array( 'skill' => array( 'type' => 'string' ), 'name' => array( 'type' => 'string' ), 'covers' => array( 'type' => 'string' ) ) ) ),
+					'count'  => array( 'type' => 'integer' ),
+					'note'   => array( 'type' => 'string' ),
+				),
+			),
 			'mcp_get_change' => array(
 				'type'       => 'object',
 				'properties' => self::change_summary_properties() + array(
@@ -736,11 +751,6 @@ class Core {
 	// PARTIAL SCHEMAS — reused across multiple tools
 	// =============================================================
 
-	/**
-	 * Post/page summary shape returned by list endpoints (wp_get_posts, wp_get_pages).
-	 * Loose additionalProperties=true because list handlers may include extras like
-	 * featured_media_url that are host/plugin dependent.
-	 */
 	/** Fields of one change row, shared by the list and the detail view. */
 	private static function change_summary_properties(): array {
 		return array(
@@ -804,6 +814,11 @@ class Core {
 		);
 	}
 
+	/**
+	 * Post/page summary shape returned by list endpoints (wp_get_posts, wp_get_pages).
+	 * Loose additionalProperties=true because list handlers may include extras like
+	 * featured_media_url that are host/plugin dependent.
+	 */
 	private static function post_summary_schema(): array {
 		return array(
 			'type'                 => 'object',

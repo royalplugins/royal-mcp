@@ -41,7 +41,14 @@ class Coexistence_Check {
 			}
 		}
 		$report = self::run_discovery_chain();
-		set_transient( self::CHAIN_TRANSIENT, $report, self::CHAIN_TTL );
+		// A run that could not reach a step (timeout, loopback blocked) is retried soon.
+		$unknown = false;
+		foreach ( (array) ( $report['steps'] ?? [] ) as $step ) {
+			if ( 'unknown' === ( is_array( $step ) ? ( $step['answered_by'] ?? '' ) : '' ) ) {
+				$unknown = true;
+			}
+		}
+		set_transient( self::CHAIN_TRANSIENT, $report, $unknown ? HOUR_IN_SECONDS : self::CHAIN_TTL );
 		return $report;
 	}
 
@@ -89,7 +96,7 @@ class Coexistence_Check {
 
 		// When this host does not answer at all, the other host name tells us nothing
 		// and only adds another timeout to the admin page that runs the check.
-		$alt = 'unknown' === $challenge['answered_by'] ? '' : self::alternate_host_url( $endpoint );
+		$alt = 'unknown' === $challenge['answered_by'] ? '' : self::alternate_host_to_check( $endpoint );
 		if ( '' !== $alt ) {
 			$steps[] = self::probe_alternate_host( $alt );
 		}
@@ -166,8 +173,21 @@ class Coexistence_Check {
 		$same  = static function ( $a, $b ) {
 			return is_string( $a ) && is_string( $b ) && rtrim( $a, '/' ) === rtrim( $b, '/' );
 		};
-		return ( $same( $doc['issuer'] ?? null, $issuer )
-			&& $same( $doc['authorization_endpoint'] ?? null, $ours['authorization_endpoint'] ?? '' )
+		// The authorize address depends on the rewrite rules, so a cached copy may name the
+		// other of the two forms Royal MCP advertises; either is Royal MCP's.
+		$authorize = [ (string) ( $ours['authorization_endpoint'] ?? '' ) ];
+		$ns        = OAuth_Server::namespace_issuer();
+		if ( '' !== $ns ) {
+			$authorize[] = $ns . '/oauth/authorize';
+			if ( class_exists( '\Royal_MCP_Plugin' ) ) {
+				$authorize[] = OAuth_Server::canonical_resource_url( '/' ) . '/' . \Royal_MCP_Plugin::namespace_authorize_slug();
+			}
+		}
+		$auth_ok = false;
+		foreach ( $authorize as $candidate ) {
+			$auth_ok = $auth_ok || $same( $doc['authorization_endpoint'] ?? null, $candidate );
+		}
+		return ( $same( $doc['issuer'] ?? null, $issuer ) && $auth_ok
 			&& $same( $doc['token_endpoint'] ?? null, $ours['token_endpoint'] ?? '' ) ) ? 'royal_mcp' : 'other';
 	}
 
@@ -241,7 +261,42 @@ class Coexistence_Check {
 		return (string) preg_replace( '#^(https?://)' . preg_quote( $host, '#' ) . '#i', '${1}' . $alt, (string) $url, 1 );
 	}
 
-	/** Addresses MCP clients and AI crawlers read at the site root. */
+	/**
+	 * The other host name worth checking: only when the site runs on a registrable
+	 * domain (example.com or www.example.com). A subdomain such as shop.example.com
+	 * has no www twin that AI clients would use, so it is not checked.
+	 *
+	 * @param string $url A URL on this site.
+	 * @return string
+	 */
+	public static function alternate_host_to_check( $url ) {
+		$alt = self::alternate_host_url( $url );
+		if ( '' === $alt ) {
+			return '';
+		}
+		$host = strtolower( (string) wp_parse_url( (string) $url, PHP_URL_HOST ) );
+		$bare = 0 === strpos( $host, 'www.' ) ? substr( $host, 4 ) : $host;
+		return self::is_registrable_domain( $bare ) ? $alt : '';
+	}
+
+	/**
+	 * Whether a host is a registrable domain rather than a subdomain: two labels
+	 * (example.com) or a name under a common two-part country suffix (example.co.uk).
+	 *
+	 * @param string $host Host name without a leading www.
+	 * @return bool
+	 */
+	public static function is_registrable_domain( $host ) {
+		$labels = explode( '.', strtolower( trim( (string) $host, '.' ) ) );
+		$count  = count( $labels );
+		if ( 2 === $count ) {
+			return '' !== $labels[0] && '' !== $labels[1];
+		}
+		return 3 === $count
+			&& 2 === strlen( $labels[2] )
+			&& in_array( $labels[1], [ 'co', 'com', 'net', 'org', 'gov', 'edu', 'ac', 'or', 'ne', 'go', 'gob', 'nic' ], true );
+	}
+
 	/**
 	 * Other MCP servers Royal MCP knows by name: how to tell they are there, the MCP
 	 * endpoint they serve, which discovery addresses they answer, and how to fix a clash.
@@ -261,6 +316,7 @@ class Coexistence_Check {
 		'ai-puffer'        => [ 'name' => 'AI Puffer', 'folders' => [ 'gpt3-ai-content-generator' ], 'constant' => '', 'namespace' => '', 'endpoint' => '', 'root_oauth' => false, 'takes' => '', 'fix' => 'Turn off the MCP feature in AI Puffer if this site does not need it.' ],
 	];
 
+	/** Addresses MCP clients and AI crawlers read at the site root. */
 	const SHARED_PATHS = [
 		'/.well-known/oauth-authorization-server',
 		'/.well-known/oauth-protected-resource',
@@ -452,8 +508,12 @@ class Coexistence_Check {
 		 *
 		 * @param string $owner Detected owner ('' for none).
 		 */
-		$cache[ $key ] = (string) apply_filters( 'royal_mcp_root_oauth_documents_owner', $owner );
-		return $cache[ $key ];
+		$owner = (string) apply_filters( 'royal_mcp_root_oauth_documents_owner', $owner );
+		// Before rest_api_init, servers known only by their REST namespace cannot be seen yet.
+		if ( '' !== $owner || did_action( 'rest_api_init' ) ) {
+			$cache[ $key ] = $owner;
+		}
+		return $owner;
 	}
 
 	/** Whether the bundled WP Media MCP sign-in library is loaded and switched on, read as it reads its own switch. */
@@ -713,7 +773,14 @@ class Coexistence_Check {
 	 * by name prefix: the plugin and Royal MCP's matching tools.
 	 */
 	const OVERLAPPING_ABILITIES = [
-		'mailpoet/' => [ 'plugin' => 'MailPoet', 'royal_mcp_tools' => 'mailpoet_*' ],
+		'mailpoet/'    => [ 'plugin' => 'MailPoet', 'royal_mcp_tools' => 'mailpoet_*' ],
+		'imagify/'     => [ 'plugin' => 'Imagify', 'royal_mcp_tools' => 'image_optimisation_get_status' ],
+		'shortpixel/'  => [ 'plugin' => 'ShortPixel', 'royal_mcp_tools' => 'image_optimisation_get_status' ],
+		'jetpack/'     => [ 'plugin' => 'Jetpack', 'royal_mcp_tools' => 'jetpack_list_modules, jetpack_set_module' ],
+		'jetpack-stats/' => [ 'plugin' => 'Jetpack', 'royal_mcp_tools' => 'jetpack_get_stats' ],
+		'wp-mail-smtp/' => [ 'plugin' => 'WP Mail SMTP', 'royal_mcp_tools' => 'wpmailsmtp_*' ],
+		'akismet/'     => [ 'plugin' => 'Akismet', 'royal_mcp_tools' => 'akismet_*' ],
+		'woocommerce/' => [ 'plugin' => 'WooCommerce', 'royal_mcp_tools' => 'wc_*' ],
 	];
 
 	/**
@@ -746,7 +813,7 @@ class Coexistence_Check {
 						'plugin'          => $info['plugin'],
 						'abilities'       => [],
 						'royal_mcp_tools' => $info['royal_mcp_tools'],
-						'note'            => sprintf( '%s registers these abilities itself. A client connected through the WordPress MCP Adapter can list them next to Royal MCP\'s %s tools; they are separate tools, Royal MCP neither registers nor calls them, and each call runs only the tool the client picked.', $info['plugin'], $info['royal_mcp_tools'] ),
+						'note'            => sprintf( '%s registers these abilities itself. A client connected through the WordPress MCP Adapter can list them next to Royal MCP\'s %s tools; they are separate tools, and each call runs only the tool the client picked. Royal MCP offers them as its own ext_ tools only when they are turned on in Plugin Abilities.', $info['plugin'], $info['royal_mcp_tools'] ),
 					];
 				}
 				$out[ $prefix ]['abilities'][] = (string) $name;
@@ -934,7 +1001,6 @@ class Coexistence_Check {
 		];
 	}
 
-	/** Plugin name for the plugin folder a class file sits in. */
 	/**
 	 * Name of the plugin whose bundled MCP sign-in library is loaded (Rank
 	 * Math and others ship one), or '' when none is.
@@ -955,6 +1021,7 @@ class Coexistence_Check {
 		);
 	}
 
+	/** Plugin name for the plugin folder a class file sits in. */
 	private static function plugin_name_for_class( $class ) {
 		try {
 			$file = ( new \ReflectionClass( $class ) )->getFileName();

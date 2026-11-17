@@ -3,7 +3,7 @@
  * Plugin Name: Royal MCP – Secure AI Connector for Claude, ChatGPT & any LLM via MCP
  * Plugin URI: https://royalplugins.com/support/royal-mcp/
  * Description: Integrate Model Context Protocol (MCP) servers with WordPress to enable LLM interactions with your site
- * Version: 1.5.17
+ * Version: 2.0.0
  * Author: Royal Plugins
  * Author URI: https://www.royalplugins.com
  * License: GPL v2 or later
@@ -24,7 +24,14 @@ if (!defined('ABSPATH')) {
 // vendored copy of this file has already run), bail cleanly and register
 // an activation-time refusal so the user sees a clear error instead of a
 // silently-inert plugin when they try to activate Free alongside Pro.
-if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
+// When Pro is active this copy may load before Pro's (plugins load in name order): step aside, and
+// Pro runs on its own copy, which Pro marks with ROYAL_MCP_LOADED_BY_PRO before loading it (two
+// copies at once would register every tool twice).
+$royal_mcp_pro_active = ! defined( 'ROYAL_MCP_LOADED_BY_PRO' ) && file_exists( WP_PLUGIN_DIR . '/royal-mcp-pro/royal-mcp-pro.php' ) && (
+	in_array( 'royal-mcp-pro/royal-mcp-pro.php', (array) get_option( 'active_plugins', array() ), true )
+	|| ( is_multisite() && isset( ( (array) get_site_option( 'active_sitewide_plugins', array() ) )['royal-mcp-pro/royal-mcp-pro.php'] ) )
+);
+if ( class_exists( 'Royal_MCP_Plugin', false ) || $royal_mcp_pro_active ) {
     register_activation_hook( __FILE__, function () {
         if ( ! function_exists( 'is_plugin_active' ) ) {
             include_once ABSPATH . 'wp-admin/includes/plugin.php';
@@ -41,7 +48,7 @@ if ( class_exists( 'Royal_MCP_Plugin', false ) ) {
 }
 
 // Define plugin constants.
-defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '1.5.17' );
+defined( 'ROYAL_MCP_VERSION' )          || define( 'ROYAL_MCP_VERSION', '2.0.0' );
 defined( 'ROYAL_MCP_PLUGIN_DIR' )       || define( 'ROYAL_MCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_URL' )       || define( 'ROYAL_MCP_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 defined( 'ROYAL_MCP_PLUGIN_FILE' )      || define( 'ROYAL_MCP_PLUGIN_FILE', __FILE__ );
@@ -182,6 +189,15 @@ class Royal_MCP_Plugin {
         // Preview_Link redirect handler for rmcp_preview token URLs.
         \Royal_MCP\MCP\Support\Preview_Link::register();
 
+        // The 503 page for visitors while maintenance mode is on.
+        \Royal_MCP\Integrations\MaintenanceMode::register();
+
+        // The public IndexNow key address the launch tools point search engines to.
+        \Royal_MCP\Integrations\LaunchTools::register();
+
+        // Other plugins' WordPress abilities the owner turned on, offered as tools.
+        \Royal_MCP\Abilities\Plugin_Abilities::register();
+
         // Weekly per-protocol / per-client / per-method request rollups.
         // Passive observer on rest_pre_dispatch; wp_options storage keyed by
         // ISO year-week, no custom table. Data feeds the Protocol Insights
@@ -294,7 +310,7 @@ class Royal_MCP_Plugin {
      */
     public function add_action_links($links) {
         $plugin_links = [
-            '<a href="' . admin_url('admin.php?page=royal-mcp') . '">' . __('Settings', 'royal-mcp') . '</a>',
+            '<a href="' . admin_url('admin.php?page=royal-mcp-connections') . '">' . __('Settings', 'royal-mcp') . '</a>',
             '<a href="https://royalplugins.com/support/royal-mcp/" target="_blank">' . __('Docs', 'royal-mcp') . '</a>',
         ];
         return array_merge($plugin_links, $links);
@@ -426,6 +442,10 @@ class Royal_MCP_Plugin {
             return;
         }
 
+        // The Activity Log table too: on a multisite network only the site the plugin was
+        // network-activated from ran the activation, so every other site gets its tables here.
+        $this->create_tables();
+
         $token_store_ok = false;
         if (class_exists('\Royal_MCP\OAuth\Token_Store')) {
             \Royal_MCP\OAuth\Token_Store::create_tables();
@@ -524,6 +544,7 @@ class Royal_MCP_Plugin {
     private function required_tables_exist() {
         global $wpdb;
         $required = [
+            $wpdb->prefix . 'royal_mcp_logs',
             $wpdb->prefix . 'royal_mcp_oauth_clients',
             $wpdb->prefix . 'royal_mcp_sessions',
         ];
@@ -1097,6 +1118,11 @@ class Royal_MCP_Plugin {
         // weekly Site Health check runs from cron and calls them directly.
         new Royal_MCP\Admin\Site_Health_Tests();
 
+        // The sign-in path report depends on the rewrite rules: forget it when they change.
+        foreach ( [ 'update_option_rewrite_rules', 'add_option_rewrite_rules', 'delete_option_rewrite_rules' ] as $rmcp_hook ) {
+            add_action( $rmcp_hook, [ \Royal_MCP\Integrations\Coexistence_Check::class, 'clear' ] );
+        }
+
         if ( defined( 'WP_CLI' ) && WP_CLI ) {
             \WP_CLI::add_command( 'royal-mcp', 'Royal_MCP\CLI\Commands' );
         }
@@ -1111,6 +1137,14 @@ class Royal_MCP_Plugin {
             new Royal_MCP\Admin\Authorization_Header_Notice();
             new Royal_MCP\Admin\Legacy_Key_Header_Notice();
             new Royal_MCP\Admin\Help_Page();
+            \Royal_MCP\Admin\Dashboard_Page::register();
+            \Royal_MCP\Admin\Other_Notices::register();
+            \Royal_MCP\Admin\Connection_Doctor::register();
+            \Royal_MCP\MCP\Support\Agent_Readiness::register();
+            \Royal_MCP\Admin\Skills_Page::register();
+            \Royal_MCP\Admin\Menu_Layout::register();
+            \Royal_MCP\Admin\Context_Page::register();
+            \Royal_MCP\Admin\Plugin_Abilities_Page::register();
         }
     }
 

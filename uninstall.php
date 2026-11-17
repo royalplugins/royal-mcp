@@ -18,6 +18,9 @@ if (!defined('WP_UNINSTALL_PLUGIN')) {
     exit;
 }
 
+// WordPress's own widget option is only updated (a menu id), never owned by this plugin.
+// uninstall-audit: keep widget_nav_menu
+
 // Pro ships its own uninstall handler and shares these tables/options.
 if ( file_exists( WP_PLUGIN_DIR . '/royal-mcp-pro/royal-mcp-pro.php' ) ) {
     return;
@@ -42,8 +45,13 @@ function royal_mcp_uninstall_site() {
     // Rewrite-version marker + last-failed-upgrade timestamp. Removing the marker
     // makes a reinstall flush its rewrite rules again.
     delete_option('royal_mcp_rewrite_version');
+    delete_option('royal_mcp_connection_doctor');
+    delete_option('royal_mcp_agent_readiness');
     delete_option('royal_mcp_db_upgrade_last_failed_at');
     delete_option('royal_mcp_tables_checked_at');
+    delete_option('royal_mcp_wpmailsmtp_test_sends');
+    delete_option('royal_mcp_wpmailsmtp_test_lock');
+    delete_option('royal_mcp_akismet_recheck_lock');
 
     delete_transient('royal_mcp_cache');
     delete_transient('royal_mcp_authorize_rule_restore');
@@ -59,6 +67,9 @@ function royal_mcp_uninstall_site() {
     // Cached CIMD metadata documents keyed by sha256 of the client_id URL.
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_cimd_meta_%' OR option_name LIKE '_transient_timeout_royal_mcp_cimd_meta_%'");
+    delete_transient( 'royal_mcp_jp_backups' );
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+    $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_site_ips_%' OR option_name LIKE '_transient_timeout_royal_mcp_site_ips_%'");
 
     // Per-IP rate-limit transients (both the MCP endpoint and /register).
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
@@ -69,6 +80,9 @@ function royal_mcp_uninstall_site() {
     // wp_verify_rendered_page per-(site, URL) fetch bucket.
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_vrp_%' OR option_name LIKE '_transient_timeout_royal_mcp_vrp_%'");
+    $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_page_%' OR option_name LIKE '_transient_timeout_royal_mcp_page_%'");
+    // Stand-in undo lock rows (databases without named locks).
+    $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal\\_mcp\\_undolock\\_%'");
 
     // Preview_Link short-lived preview tokens (rmcp_preview_ prefix).
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
@@ -108,9 +122,19 @@ function royal_mcp_uninstall_site() {
     // token and authorization-code rows the daily cleanup removes.
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal_mcp_undo_%'");
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- uninstall, no user input
+    $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal\_mcp\_undopart\_%'");
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'royal\_mcp\_rt\_retry\_%'");
     delete_option( 'royal_mcp_rejected_cimd_clients' );
+    delete_option( 'royal_mcp_maintenance' );
+    delete_option( 'royal_mcp_indexnow_key' );
+    delete_option( 'royal_mcp_bridged_namespaces' );
+    delete_option( 'royal_mcp_bridged_abilities' );
+    delete_option( 'royal_mcp_bridged_writes' );
+    delete_option( 'royal_mcp_bridged_known' );
+    delete_option( 'royal_mcp_skills' );
+    delete_transient( 'royal_mcp_acf_field_types_v1' );
     delete_option( 'royal_mcp_mailpoet_send_guard' );
     delete_option( 'royal_mcp_mailpoet_test_sends' );
     delete_option( 'royal_mcp_mailpoet_confirmations' );
@@ -134,6 +158,10 @@ function royal_mcp_uninstall_site() {
     // -----------------------------------------------------------------------
     if ( $delete_data ) {
         delete_option('royal_mcp_settings');
+        delete_option('royal_mcp_unmasked_options');
+        // Kept with the Activity Log: a reinstall must not fall back to a shorter period and prune entries the owner kept.
+        delete_option('royal_mcp_log_retention_days');
+        delete_option( 'royal_mcp_site_context' );
         delete_option('royal_mcp_abilities_registration_enabled');
         delete_option('royal_mcp_client_access');
         delete_option('royal_mcp_app_password_seen');
@@ -144,6 +172,8 @@ function royal_mcp_uninstall_site() {
         delete_option('royal_mcp_oauth_namespace_clients');
         delete_transient('royal_mcp_issuer_kind_column_failed');
         delete_transient('royal_mcp_rotation_column_failed');
+        delete_transient('royal_mcp_resource_column_failed');
+        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '\\_transient\\_royal\\_mcp\\_doctor\\_probe%' OR option_name LIKE '\\_transient\\_timeout\\_royal\\_mcp\\_doctor\\_probe%'");
 
         // Cleared with the tables so a reinstall recreates them.
         delete_option('royal_mcp_db_version');
@@ -156,7 +186,7 @@ function royal_mcp_uninstall_site() {
 
         // Upload fingerprints on media attachments (source URL, hashes, options).
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $wpdb->query("DELETE FROM {$wpdb->postmeta} WHERE meta_key IN ('_royal_mcp_source_url', '_royal_mcp_source_sha256', '_royal_mcp_upload_opts', '_royal_mcp_file_sha256', '_royal_mcp_file_sha256_sig')");
+        $wpdb->query("DELETE FROM {$wpdb->postmeta} WHERE meta_key IN ('_royal_mcp_source_url', '_royal_mcp_source_sha256', '_royal_mcp_upload_opts', '_royal_mcp_file_sha256', '_royal_mcp_file_sha256_sig', '_royal_mcp_reused_at')");
 
         // Weekly protocol-version counter rows, one option row per ISO week.
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching

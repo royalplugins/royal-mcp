@@ -62,12 +62,14 @@ class RoyalAIFirewall {
 			],
 			[
 				'name'        => 'raif_set_bot_policy',
-				'description' => 'Set a per-bot policy override (allow, block, log-only) or clear the override so the bot reverts to the site default policy.',
+				'description' => 'Set a per-bot policy override (allow, block, log-only, rate-limit or paywall-redirect) or clear the override so the bot reverts to the site default policy. rate-limit needs rate_limit_per_min (or keeps the bot\'s current one); paywall-redirect sends the bot to paywall_url (or answers 402 when there is none). Pass null for rate_limit_per_min or paywall_url to clear it. Blocking, limiting or paywalling a search engine is refused (raif_search_engine_guard) unless that override is enabled in Royal AI Firewall. rate-limit and paywall-redirect need Royal AI Firewall 1.0.12 or later.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
-						'bot_id' => [ 'type' => 'string', 'description' => 'Bot id (matches FingerprintDB).' ],
-						'policy' => [ 'type' => 'string', 'description' => 'New policy. Use "default" to remove the override.', 'enum' => [ 'allow', 'block', 'log-only', 'default' ] ],
+						'bot_id'             => [ 'type' => 'string', 'description' => 'Bot id (matches FingerprintDB).' ],
+						'policy'             => [ 'type' => 'string', 'description' => 'New policy. Use "default" to remove the override.', 'enum' => [ 'allow', 'block', 'log-only', 'rate-limit', 'paywall-redirect', 'default' ] ],
+						'rate_limit_per_min' => [ 'type' => [ 'integer', 'null' ], 'minimum' => 1, 'maximum' => 65535, 'description' => 'Requests per minute before the bot gets 429 + Retry-After. Required for rate-limit unless the bot already has one. On an allow or log-only bot a stored limit is enforced too. Pass null to clear the stored limit.' ],
+						'paywall_url'        => [ 'type' => [ 'string', 'null' ], 'description' => 'Full http(s) address the bot is redirected to (302) under paywall-redirect. Pass null to clear the stored address.' ],
 					],
 					'required'   => [ 'bot_id', 'policy' ],
 				],
@@ -96,7 +98,7 @@ class RoyalAIFirewall {
 			],
 			[
 				'name'        => 'raif_set_bot_policies',
-				'description' => 'Set the policy for several bots in one call: changes [{bot_id, policy (allow, block, log-only or default), rate_limit_per_min?, paywall_url?}]. A bot keeps its rate limit and paywall URL unless you pass them. dry_run (default true) changes nothing. Applied bot by bot: results [{bot_id, before {action, source, rate_limit_per_min, paywall_url}, after, status (changed, unchanged, would_change, refused), reason?}]; blocking a search engine is refused (raif_search_engine_guard) unless that override is enabled in Royal AI Firewall. One undo token restores every changed bot; a bot changed again since is left as it is and listed as pending, and the token stays valid until undo with force: true restores it.',
+				'description' => 'Set policies for several bots: changes [{bot_id, policy (allow, block, log-only, rate-limit, paywall-redirect or default), rate_limit_per_min?, paywall_url?}]. Rate limit and paywall URL are kept unless passed; null clears one. rate-limit needs rate_limit_per_min (1-65535 per minute, or its current limit); over it the bot gets 429 + Retry-After. A limit stored on an allow or log-only bot is enforced too. paywall-redirect sends a 302 to paywall_url, or answers 402 without one. rate-limit and paywall-redirect need a current Royal AI Firewall (else firewall_update_needed). dry_run defaults to true. Each result has before, after and status (changed, unchanged, would_change, refused). Blocking a search engine is refused (raif_search_engine_guard) unless that override is on in the firewall. One undo token restores every changed bot; a bot changed again since, or not restorable, stays as is and is listed as pending; the token stays valid for it.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'required'   => [ 'changes' ],
@@ -108,9 +110,9 @@ class RoyalAIFirewall {
 								'required'   => [ 'bot_id', 'policy' ],
 								'properties' => [
 									'bot_id'             => [ 'type' => 'string' ],
-									'policy'             => [ 'type' => 'string', 'enum' => [ 'allow', 'block', 'log-only', 'default' ] ],
-									'rate_limit_per_min' => [ 'type' => 'integer' ],
-									'paywall_url'        => [ 'type' => 'string' ],
+									'policy'             => [ 'type' => 'string', 'enum' => [ 'allow', 'block', 'log-only', 'rate-limit', 'paywall-redirect', 'default' ] ],
+									'rate_limit_per_min' => [ 'type' => [ 'integer', 'null' ], 'minimum' => 1, 'maximum' => 65535, 'description' => 'Pass null to clear the stored limit.' ],
+									'paywall_url'        => [ 'type' => [ 'string', 'null' ], 'description' => 'Pass null to clear the stored address.' ],
 								],
 							],
 						],
@@ -422,9 +424,11 @@ class RoyalAIFirewall {
 		if ( '' === $bot_id ) {
 			throw new \Exception( 'bot_id is required.' );
 		}
-		if ( ! in_array( $policy, [ 'allow', 'block', 'log-only', 'default' ], true ) ) {
-			throw new \Exception( 'policy must be one of: allow, block, log-only, default.' );
+		if ( ! in_array( $policy, self::POLICIES, true ) ) {
+			throw new \Exception( 'policy must be one of: ' . implode( ', ', self::POLICIES ) . '.' );
 		}
+		self::check_extras( $args, 'arguments' );
+		self::check_supported( $policy );
 
 		$bot_def = \Royal_AI_Firewall\FingerprintDB::get_bot_by_id( $bot_id );
 		if ( null === $bot_def ) {
@@ -453,8 +457,23 @@ class RoyalAIFirewall {
 			];
 		}
 
-		// The bot keeps its rate limit and paywall URL.
-		$result = \Royal_AI_Firewall\PolicyWriter::apply( $bot_id, $policy, self::kept_extras( self::policy_row( $bot_id ) ) );
+		// The bot keeps its rate limit and paywall URL unless new ones are passed; null clears one.
+		$extras = self::kept_extras( self::policy_row( $bot_id ) );
+		if ( array_key_exists( 'rate_limit_per_min', $args ) ) {
+			$extras['rate_limit_per_min'] = null === $args['rate_limit_per_min'] ? null : (int) $args['rate_limit_per_min'];
+		}
+		if ( array_key_exists( 'paywall_url', $args ) ) {
+			$extras['paywall_url'] = null === $args['paywall_url'] ? '' : esc_url_raw( (string) $args['paywall_url'], [ 'http', 'https' ] );
+		}
+		// Search engines may not be blocked, limited or paywalled unless the firewall's override is on.
+		$limits_it = (int) ( $extras['rate_limit_per_min'] ?? 0 ) > 0;
+		if ( ! empty( $bot_def['always_allow'] ) && ( in_array( $policy, [ 'block', 'rate-limit', 'paywall-redirect' ], true ) || $limits_it ) && '1' !== (string) get_option( 'raif_allow_search_engine_block', '0' ) ) {
+			throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'raif_search_engine_guard', sprintf( '%s is a major search engine. Enable the search-engine override in Royal AI Firewall settings before blocking, limiting or paywalling it.', esc_html( (string) ( $bot_def['name'] ?? $bot_id ) ) ) );
+		}
+		if ( 'rate-limit' === $policy && (int) ( $extras['rate_limit_per_min'] ?? 0 ) < 1 ) {
+			throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'rate_limit_required', 'rate-limit needs rate_limit_per_min (1 to 65535); this bot has no limit to keep.' );
+		}
+		$result = \Royal_AI_Firewall\PolicyWriter::apply( $bot_id, $policy, $extras );
 		if ( is_wp_error( $result ) ) {
 			throw new \Exception( esc_html( $result->get_error_message() ) );
 		}
@@ -612,6 +631,32 @@ class RoyalAIFirewall {
 		];
 	}
 
+	/** Policies the tools accept; "default" removes the override. */
+	const POLICIES = [ 'allow', 'block', 'log-only', 'rate-limit', 'paywall-redirect', 'default' ];
+
+	/** rate_limit_per_min and paywall_url as Royal AI Firewall accepts them; null clears a stored one. */
+	private static function check_extras( array $c, $where ) {
+		if ( array_key_exists( 'rate_limit_per_min', $c ) && null !== $c['rate_limit_per_min'] && ! ( is_int( $c['rate_limit_per_min'] ) && $c['rate_limit_per_min'] >= 1 && $c['rate_limit_per_min'] <= 65535 ) ) {
+			throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', sprintf( '%s.rate_limit_per_min must be a whole number from 1 to 65535, or null to clear it.', $where ) );
+		}
+		if ( array_key_exists( 'paywall_url', $c ) && null !== $c['paywall_url'] ) {
+			$raw = is_string( $c['paywall_url'] ) ? trim( $c['paywall_url'] ) : '';
+			if ( ! preg_match( '#^https?://[^/\s]#i', $raw ) || ! preg_match( '#^https?://#i', esc_url_raw( $raw, [ 'http', 'https' ] ) ) ) {
+				throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', sprintf( '%s.paywall_url must be a full http(s) address.', $where ) );
+			}
+		}
+	}
+
+	/** Refuse an action the installed Royal AI Firewall does not know yet. */
+	private static function check_supported( $policy ) {
+		if ( 'default' === $policy || ! defined( '\Royal_AI_Firewall\PolicyWriter::ALLOWED_ACTIONS' ) ) {
+			return;
+		}
+		if ( ! in_array( $policy, (array) \Royal_AI_Firewall\PolicyWriter::ALLOWED_ACTIONS, true ) ) {
+			throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'firewall_update_needed', sprintf( 'The installed Royal AI Firewall does not support "%s" yet. Update Royal AI Firewall to 1.0.12 or later.', $policy ) );
+		}
+	}
+
 	private static function set_bot_policies( $args ) {
 		$changes = $args['changes'] ?? null;
 		if ( ! is_array( $changes ) || [] === $changes || count( $changes ) > 100 || array_keys( $changes ) !== range( 0, count( $changes ) - 1 ) ) {
@@ -619,18 +664,14 @@ class RoyalAIFirewall {
 		}
 		$seen = [];
 		foreach ( $changes as $i => $c ) {
-			if ( ! is_array( $c ) || ! isset( $c['bot_id'], $c['policy'] ) || ! is_string( $c['bot_id'] ) || ! in_array( $c['policy'], [ 'allow', 'block', 'log-only', 'default' ], true ) ) {
-				throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', sprintf( 'changes[%d] needs bot_id and policy (allow, block, log-only or default).', $i ) );
+			if ( ! is_array( $c ) || ! isset( $c['bot_id'], $c['policy'] ) || ! is_string( $c['bot_id'] ) || ! in_array( $c['policy'], self::POLICIES, true ) ) {
+				throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', sprintf( 'changes[%d] needs bot_id and policy (%s).', $i, implode( ', ', self::POLICIES ) ) );
 			}
+			self::check_supported( $c['policy'] );
 			if ( array_diff( array_keys( $c ), [ 'bot_id', 'policy', 'rate_limit_per_min', 'paywall_url' ] ) ) {
 				throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', sprintf( 'changes[%d] has unknown fields.', $i ) );
 			}
-			if ( isset( $c['rate_limit_per_min'] ) && ! ( is_int( $c['rate_limit_per_min'] ) && $c['rate_limit_per_min'] >= 1 && $c['rate_limit_per_min'] <= 10000 ) ) {
-				throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', sprintf( 'changes[%d].rate_limit_per_min must be a whole number from 1 to 10000.', $i ) );
-			}
-			if ( isset( $c['paywall_url'] ) && ( ! is_string( $c['paywall_url'] ) || '' === esc_url_raw( $c['paywall_url'] ) ) ) {
-				throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_args', sprintf( 'changes[%d].paywall_url must be a URL.', $i ) );
-			}
+			self::check_extras( $c, sprintf( 'changes[%d]', $i ) );
 			// Compared after cleaning, the way each bot id is applied below.
 			$seen_id = sanitize_key( $c['bot_id'] );
 			if ( isset( $seen[ $seen_id ] ) ) {
@@ -675,8 +716,8 @@ class RoyalAIFirewall {
 				$after = [
 					'action'             => $policy,
 					'source'             => 'per-bot',
-					'rate_limit_per_min' => array_key_exists( 'rate_limit_per_min', $c ) ? (int) $c['rate_limit_per_min'] : $kept['rate_limit_per_min'],
-					'paywall_url'        => array_key_exists( 'paywall_url', $c ) ? esc_url_raw( (string) $c['paywall_url'] ) : ( '' !== $kept['paywall_url'] ? $kept['paywall_url'] : null ),
+					'rate_limit_per_min' => array_key_exists( 'rate_limit_per_min', $c ) ? ( null === $c['rate_limit_per_min'] ? null : (int) $c['rate_limit_per_min'] ) : $kept['rate_limit_per_min'],
+					'paywall_url'        => array_key_exists( 'paywall_url', $c ) ? ( null === $c['paywall_url'] ? null : esc_url_raw( (string) $c['paywall_url'], [ 'http', 'https' ] ) ) : ( '' !== $kept['paywall_url'] ? $kept['paywall_url'] : null ),
 				];
 			}
 			$item = [ 'bot_id' => $bot_id, 'name' => (string) ( $bot['name'] ?? $bot_id ), 'before' => $before, 'after' => $after ];
@@ -684,8 +725,13 @@ class RoyalAIFirewall {
 				$results[] = $item + [ 'status' => 'unchanged' ];
 				continue;
 			}
-			if ( 'block' === $policy && ! empty( $bot['always_allow'] ) && ! $guard_off ) {
+			$limits_it = 'default' !== $policy && (int) ( $after['rate_limit_per_min'] ?? 0 ) > 0;
+			if ( ( in_array( $policy, [ 'block', 'rate-limit', 'paywall-redirect' ], true ) || $limits_it ) && ! empty( $bot['always_allow'] ) && ! $guard_off ) {
 				$results[] = $item + [ 'status' => 'refused', 'reason' => 'raif_search_engine_guard' ];
+				continue;
+			}
+			if ( 'rate-limit' === $policy && (int) ( $after['rate_limit_per_min'] ?? 0 ) < 1 ) {
+				$results[] = $item + [ 'status' => 'refused', 'reason' => 'rate_limit_required' ];
 				continue;
 			}
 			if ( $preview ) {
@@ -728,9 +774,11 @@ class RoyalAIFirewall {
 
 	/**
 	 * Put bots back as they were before a policy change; a bot changed again
-	 * since is left as it is.
+	 * since, or one the firewall refuses to restore, is left as it is and
+	 * listed as skipped.
 	 *
-	 * @return array [ restored bot ids, skipped [ {bot_id, reason} ] ]
+	 * @return array [ restored bot ids, skipped [ {bot_id, reason, error_code?} ] ]
+	 * @throws \Royal_MCP\MCP\Support\Tool_Refusal When nothing was restored because the firewall refused.
 	 */
 	public static function undo_policies( array $items, $force = false ) {
 		global $wpdb;
@@ -755,17 +803,39 @@ class RoyalAIFirewall {
 			$prior = $it['prior_row'] ?? null;
 			if ( null === $prior ) {
 				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- the same delete Royal AI Firewall's own screen does
-				$wpdb->delete( $wpdb->prefix . ROYAL_AI_FIREWALL_TABLE_POLICY, [ 'bot_id' => $bot_id ], [ '%s' ] );
+				$deleted = $wpdb->delete( $wpdb->prefix . ROYAL_AI_FIREWALL_TABLE_POLICY, [ 'bot_id' => $bot_id ], [ '%s' ] );
+				if ( false === $deleted ) {
+					$skipped[] = [ 'bot_id' => $bot_id, 'reason' => 'restore_failed', 'error_code' => 'raif_policy_delete_failed' ];
+					continue;
+				}
 				do_action( 'raif_policy_override_cleared', $bot_id );
 			} else {
-				\Royal_AI_Firewall\PolicyWriter::apply( $bot_id, (string) $prior['action'], [
+				$done = \Royal_AI_Firewall\PolicyWriter::apply( $bot_id, (string) $prior['action'], [
 					'rate_limit_per_min' => null !== $prior['rate_limit_per_min'] ? (int) $prior['rate_limit_per_min'] : null,
 					'paywall_url'        => (string) ( $prior['paywall_url'] ?? '' ),
 					'policy_source'      => (string) ( $prior['policy_source'] ?? '' ),
 					'auto_reason'        => (string) ( $prior['auto_reason'] ?? '' ),
 				] );
+				if ( is_wp_error( $done ) ) {
+					$skipped[] = [ 'bot_id' => $bot_id, 'reason' => 'restore_failed', 'error_code' => (string) $done->get_error_code() ];
+					continue;
+				}
 			}
 			$restored[] = $bot_id;
+		}
+		// Nothing restored and the firewall refused at least one bot: refuse the undo
+		// so the token stays valid and can be used again once the firewall allows it.
+		$failed = array_values( array_filter( $skipped, static function ( $s ) { return 'restore_failed' === $s['reason']; } ) );
+		if ( ! $restored && $failed ) {
+			throw new \Royal_MCP\MCP\Support\Tool_Refusal(
+				'restore_refused',
+				sprintf(
+					'Cannot undo: Royal AI Firewall refused to restore %1$s (%2$s). Nothing was changed and the undo token stays valid: undo again once the firewall allows it (for a search engine, enable the search-engine override in Royal AI Firewall settings).',
+					esc_html( implode( ', ', array_column( $failed, 'bot_id' ) ) ),
+					esc_html( implode( ', ', array_unique( array_column( $failed, 'error_code' ) ) ) )
+				),
+				[ 'skipped' => $skipped, 'pending_bot_ids' => array_column( $skipped, 'bot_id' ) ]
+			);
 		}
 		return [ $restored, $skipped ];
 	}

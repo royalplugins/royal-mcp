@@ -126,6 +126,7 @@ class Token_Store {
             created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             revoked tinyint(1) DEFAULT 0 NOT NULL,
             rotated_at datetime DEFAULT NULL,
+            resource varchar(255) DEFAULT '' NOT NULL,
             PRIMARY KEY  (id),
             UNIQUE KEY token_hash (token_hash),
             KEY client_id (client_id),
@@ -172,6 +173,7 @@ class Token_Store {
             code_challenge varchar(255) NOT NULL,
             code_challenge_method varchar(10) NOT NULL DEFAULT 'S256',
             scope varchar(255) DEFAULT '',
+            resource varchar(255) DEFAULT '' NOT NULL,
             used tinyint(1) DEFAULT 0 NOT NULL,
             expires_at datetime NOT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -234,8 +236,8 @@ class Token_Store {
                 'code_challenge_method' => isset( $data['code_challenge_method'] ) ? (string) $data['code_challenge_method'] : 'S256',
                 'scope'                 => isset( $data['scope'] ) ? (string) $data['scope'] : '',
                 'expires_at'            => gmdate( 'Y-m-d H:i:s', time() + self::AUTH_CODE_TTL ),
-            ],
-            [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' ]
+            ] + ( self::has_resource_columns() ? [ 'resource' => isset( $data['resource'] ) ? substr( (string) $data['resource'], 0, 255 ) : '' ] : [] ),
+            self::has_resource_columns() ? [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ] : [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' ]
         );
     }
 
@@ -274,7 +276,7 @@ class Token_Store {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
         $row = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT user_id, client_id, redirect_uri, code_challenge, code_challenge_method, scope FROM `{$table}` WHERE code_hash = %s LIMIT 1",
+                "SELECT user_id, client_id, redirect_uri, code_challenge, code_challenge_method, scope" . ( self::has_resource_columns() ? ', resource' : '' ) . " FROM `{$table}` WHERE code_hash = %s LIMIT 1",
                 $hash
             ),
             ARRAY_A
@@ -295,13 +297,13 @@ class Token_Store {
      * @param string $scope     Space-separated scopes.
      * @return array [ 'access_token' => …, 'refresh_token' => …, 'expires_in' => … ]
      */
-    public static function create_token_pair( $client_id, $user_id, $scope = '' ) {
+    public static function create_token_pair( $client_id, $user_id, $scope = '', $resource = '' ) {
         $access_token  = bin2hex( random_bytes( 32 ) );
         $refresh_token = bin2hex( random_bytes( 32 ) );
         $access_ttl    = self::get_access_token_ttl( (int) $user_id, (string) $client_id );
 
-        self::store_token( $access_token, 'access', $client_id, $user_id, $scope, $access_ttl );
-        self::store_token( $refresh_token, 'refresh', $client_id, $user_id, $scope, self::REFRESH_TOKEN_TTL );
+        self::store_token( $access_token, 'access', $client_id, $user_id, $scope, $access_ttl, $resource );
+        self::store_token( $refresh_token, 'refresh', $client_id, $user_id, $scope, self::REFRESH_TOKEN_TTL, $resource );
 
         // Mark the client as "has completed an authorization at least once" so
         // gc_stale_clients() never removes a client whose tokens merely expired
@@ -329,21 +331,53 @@ class Token_Store {
     /**
      * Store a single token (hashed) in the database.
      */
-    private static function store_token( $raw_token, $type, $client_id, $user_id, $scope, $ttl ) {
+    private static function store_token( $raw_token, $type, $client_id, $user_id, $scope, $ttl, $resource = '' ) {
         global $wpdb;
+        $row = [
+            'token_hash' => hash( 'sha256', $raw_token ),
+            'token_type' => $type,
+            'client_id'  => $client_id,
+            'user_id'    => $user_id,
+            'scope'      => $scope,
+            'expires_at' => gmdate( 'Y-m-d H:i:s', time() + $ttl ),
+        ];
+        $formats = [ '%s', '%s', '%s', '%d', '%s', '%s' ];
+        if ( self::has_resource_columns() ) {
+            $row['resource'] = substr( (string) $resource, 0, 255 );
+            $formats[]       = '%s';
+        }
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $wpdb->insert(
-            self::tokens_table(),
-            [
-                'token_hash' => hash( 'sha256', $raw_token ),
-                'token_type' => $type,
-                'client_id'  => $client_id,
-                'user_id'    => $user_id,
-                'scope'      => $scope,
-                'expires_at' => gmdate( 'Y-m-d H:i:s', time() + $ttl ),
-            ],
-            [ '%s', '%s', '%s', '%d', '%s', '%s' ]
-        );
+        $wpdb->insert( self::tokens_table(), $row, $formats );
+    }
+
+    /**
+     * Whether the tokens and codes tables have the resource column (RFC 8707). A table
+     * made by an older version gets it on the next table update; until then tokens are
+     * simply not bound, so sign-in never breaks over it.
+     */
+    public static function has_resource_columns() {
+        static $has = null;
+        if ( null !== $has ) {
+            return $has;
+        }
+        global $wpdb;
+        $probe = static function () use ( $wpdb ) {
+            $ok = true;
+            foreach ( [ self::tokens_table(), self::auth_codes_table() ] as $table ) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+                $ok = $ok && (bool) $wpdb->get_var( $wpdb->prepare( "SHOW COLUMNS FROM `{$table}` LIKE %s", 'resource' ) );
+            }
+            return $ok;
+        };
+        $has = $probe();
+        if ( ! $has && ! get_transient( 'royal_mcp_resource_column_failed' ) ) {
+            self::create_tables();
+            $has = $probe();
+            if ( ! $has ) {
+                set_transient( 'royal_mcp_resource_column_failed', 1, HOUR_IN_SECONDS );
+            }
+        }
+        return $has;
     }
 
     /**
@@ -1307,11 +1341,10 @@ class Token_Store {
     /**
      * Fetch and transient-cache a CIMD metadata document.
      *
-     * SSRF hardening: wp_safe_remote_get blocks private / loopback / link-local
-     * hosts by default via wp_http_validate_url, and reject_unsafe_urls is on.
-     * On top of that this method enforces an https scheme prefix explicitly,
-     * caps response size at 64KB, timeouts at 5s, and allows at most 3
-     * redirects.
+     * Only https addresses whose host resolves (A and AAAA) to public addresses
+     * are fetched, and the connection is pinned to the checked address; redirects
+     * (at most 3) get the same checks. Response size is capped at 64KB and the
+     * timeout at 5s. Without the curl transport nothing is fetched.
      *
      * @param string $url The metadata document URL.
      * @return array|null Parsed metadata document on success, null on any failure.
@@ -1344,19 +1377,34 @@ class Token_Store {
         }
         set_transient( $rkey, $count + 1, 10 * MINUTE_IN_SECONDS ); // audit:transient-ttl-only -- per-address fetch counter
 
-        $response = wp_safe_remote_get(
-            $url,
-            [
-                'timeout'             => 5,
-                'redirection'         => 3,
-                'limit_response_size' => 64 * 1024 + 1,
-                'user-agent'  => 'RoyalMCP/' . ROYAL_MCP_VERSION . ' (+https://royalplugins.com/support/royal-mcp/)',
-                'headers'     => [ 'Accept' => 'application/json' ],
-            ]
-        );
-
-        if ( is_wp_error( $response ) ) {
+        // The connection is pinned to the address that was checked, which needs the curl transport.
+        if ( ! function_exists( 'curl_init' ) || ! defined( 'CURLOPT_RESOLVE' ) ) {
             return null;
+        }
+        // Through a proxy the proxy picks the address, so the pin cannot hold.
+        if ( self::cimd_goes_through_proxy( (string) $url ) ) {
+            return null;
+        }
+
+        // Redirects are followed here, so every hop gets the same checks and its own pin.
+        $current  = (string) $url;
+        $response = null;
+        for ( $hop = 0; $hop <= 3; $hop++ ) {
+            $pin = self::cimd_check_url( $current );
+            if ( null === $pin || self::cimd_goes_through_proxy( $current ) ) {
+                return null;
+            }
+            $response = self::cimd_pinned_get( $current, $pin[0], $pin[1] );
+            if ( null === $response ) {
+                return null;
+            }
+            $status   = (int) wp_remote_retrieve_response_code( $response );
+            $location = (string) wp_remote_retrieve_header( $response, 'location' );
+            if ( $status >= 300 && $status < 400 && '' !== $location && $hop < 3 ) {
+                $current = \WP_Http::make_absolute_url( $location, $current );
+                continue;
+            }
+            break;
         }
 
         $status = (int) wp_remote_retrieve_response_code( $response );
@@ -1377,6 +1425,171 @@ class Token_Store {
         set_transient( $cache_key, $data, $ttl ); // audit:transient-ttl-only -- client metadata document, fetched again after the cache time
 
         return $data;
+    }
+
+    /**
+     * Check one metadata-document address before it is requested: https, and every IPv4 and
+     * IPv6 address its host resolves to is public.
+     *
+     * @param string $url Address about to be requested.
+     * @return array|null [ host, first checked address ] or null when it may not be fetched.
+     */
+    private static function cimd_check_url( $url ) {
+        $parts = wp_parse_url( (string) $url );
+        if ( ! is_array( $parts ) || empty( $parts['host'] ) || 'https' !== strtolower( (string) ( $parts['scheme'] ?? '' ) ) || isset( $parts['user'] ) || isset( $parts['pass'] ) ) {
+            return null;
+        }
+        if ( false === wp_http_validate_url( (string) $url ) ) {
+            return null;
+        }
+        $host = trim( strtolower( (string) $parts['host'] ), '[]' );
+        $ips  = self::cimd_resolve( $host );
+        if ( empty( $ips ) ) {
+            return null;
+        }
+        foreach ( $ips as $ip ) {
+            if ( ! self::is_public_ip( $ip ) ) {
+                return null;
+            }
+        }
+        return [ $host, (string) $ips[0] ];
+    }
+
+    /**
+     * The IPv4 and IPv6 addresses a host resolves to (the address itself for an IP literal).
+     * Filterable through royal_mcp_cimd_resolved_ips; whatever is returned is still checked.
+     *
+     * @param string $host Host name or IP literal.
+     * @return string[]
+     */
+    public static function cimd_resolve( $host ) {
+        $host = trim( strtolower( (string) $host ), '[]' );
+        if ( filter_var( $host, FILTER_VALIDATE_IP ) ) {
+            $ips = [ $host ];
+        } else {
+            $ips = (array) @gethostbynamel( $host ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- a failed lookup is handled as no address
+            if ( function_exists( 'dns_get_record' ) && defined( 'DNS_AAAA' ) ) {
+                foreach ( (array) @dns_get_record( $host, DNS_AAAA ) as $aaaa ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- a failed lookup is handled as no address
+                    if ( is_array( $aaaa ) && ! empty( $aaaa['ipv6'] ) ) {
+                        $ips[] = (string) $aaaa['ipv6'];
+                    }
+                }
+            }
+        }
+        $ips = apply_filters( 'royal_mcp_cimd_resolved_ips', $ips, $host );
+        return array_values( array_filter( array_map( 'strval', is_array( $ips ) ? $ips : [] ) ) );
+    }
+
+    /** Whether WordPress would send a request for this address through a configured proxy. */
+    private static function cimd_goes_through_proxy( $url ) {
+        if ( ! defined( 'WP_PROXY_HOST' ) || '' === (string) WP_PROXY_HOST ) {
+            return false;
+        }
+        if ( ! class_exists( '\WP_HTTP_Proxy' ) ) {
+            return true;
+        }
+        $proxy = new \WP_HTTP_Proxy();
+        return $proxy->is_enabled() && $proxy->send_through_proxy( $url );
+    }
+
+    /**
+     * GET one metadata-document address over curl, connected to the checked address.
+     * Null when the request failed, did not go through the pinned connection, or curl reports
+     * that it connected to another address.
+     */
+    private static function cimd_pinned_get( $url, $host, $ip ) {
+        $pinned  = false;
+        $primary = null;
+        $after   = static function ( $headers = null, $info = null ) use ( &$primary ) {
+            if ( is_array( $info ) && isset( $info['primary_ip'] ) && is_string( $info['primary_ip'] ) && '' !== $info['primary_ip'] ) {
+                $primary = $info['primary_ip'];
+            }
+        };
+        $pin    = static function ( $handle, $r, $request_url ) use ( $host, $ip, &$pinned ) {
+            if ( trim( strtolower( (string) wp_parse_url( $request_url, PHP_URL_HOST ) ), '[]' ) !== $host ) {
+                return;
+            }
+            $port = (int) ( wp_parse_url( $request_url, PHP_URL_PORT ) ?: 443 );
+            $addr = false !== strpos( $ip, ':' ) ? '[' . $ip . ']' : $ip;
+            curl_setopt( $handle, CURLOPT_RESOLVE, [ $host . ':' . $port . ':' . $addr ] ); // phpcs:ignore WordPress.WP.AlternativeFunctions.curl_curl_setopt -- pins the connection WordPress opens to the checked address
+            $pinned = true;
+        };
+        add_action( 'http_api_curl', $pin, 10, 3 );
+        add_action( 'requests-curl.after_request', $after, 10, 2 );
+        add_filter( 'use_streams_transport', '__return_false', PHP_INT_MAX );
+        try {
+            $response = wp_safe_remote_get(
+                $url,
+                [
+                    'timeout'             => 5,
+                    'redirection'         => 0,
+                    'limit_response_size' => 64 * 1024 + 1,
+                    'user-agent'  => 'RoyalMCP/' . ROYAL_MCP_VERSION . ' (+https://royalplugins.com/support/royal-mcp/)',
+                    'headers'     => [ 'Accept' => 'application/json' ],
+                ]
+            );
+        } finally {
+            remove_action( 'http_api_curl', $pin, 10 );
+            remove_action( 'requests-curl.after_request', $after, 10 );
+            remove_filter( 'use_streams_transport', '__return_false', PHP_INT_MAX );
+        }
+        if ( is_wp_error( $response ) || ! $pinned ) {
+            return null;
+        }
+        // Where curl reports the address it connected to, it must be the checked one.
+        if ( null !== $primary && @inet_pton( trim( $primary, '[]' ) ) !== @inet_pton( trim( (string) $ip, '[]' ) ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- an unparsable address compares as false
+            return null;
+        }
+        return $response;
+    }
+
+    /**
+     * Whether an IPv4 or IPv6 address is public: not private, loopback, link-local, unique-local,
+     * shared (carrier-grade NAT), benchmarking, multicast or reserved. An IPv6 address that carries
+     * an IPv4 one (mapped, translated, compatible, NAT64, 6to4) is judged by the IPv4 address
+     * inside it; Teredo and local-use NAT64 addresses are refused because the address they reach
+     * cannot be checked.
+     *
+     * @param string $ip Address.
+     * @return bool
+     */
+    public static function is_public_ip( $ip ) {
+        $ip = trim( (string) $ip, '[]' );
+        if ( ! filter_var( $ip, FILTER_VALIDATE_IP ) ) {
+            return false;
+        }
+        if ( filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 ) ) {
+            $n = ip2long( $ip );
+            if ( false === $n || 0x64400000 === ( $n & 0xFFC00000 ) || 0xC6120000 === ( $n & 0xFFFE0000 ) || 0xC0000000 === ( $n & 0xFFFFFF00 ) || 0xE0000000 === ( $n & 0xF0000000 ) ) {
+                return false; // 100.64.0.0/10, 198.18.0.0/15, 192.0.0.0/24, 224.0.0.0/4
+            }
+            return (bool) filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE );
+        }
+        $packed = @inet_pton( $ip ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- an invalid address is handled below
+        if ( false === $packed || 16 !== strlen( $packed ) ) {
+            return false;
+        }
+        if ( str_repeat( "\0", 16 ) === $packed || str_repeat( "\0", 15 ) . "\1" === $packed ) {
+            return false; // :: and ::1
+        }
+        $head = substr( $packed, 0, 12 );
+        if ( str_repeat( "\0", 10 ) . "\xff\xff" === $head || str_repeat( "\0", 8 ) . "\xff\xff\0\0" === $head || str_repeat( "\0", 12 ) === $head || "\x00\x64\xff\x9b" . str_repeat( "\0", 8 ) === $head ) {
+            $v4 = inet_ntop( substr( $packed, 12 ) );
+            return false !== $v4 && self::is_public_ip( $v4 );
+        }
+        if ( "\x20\x02" === substr( $packed, 0, 2 ) ) {
+            $v4 = inet_ntop( substr( $packed, 2, 4 ) );
+            return false !== $v4 && self::is_public_ip( $v4 );
+        }
+        if ( "\x20\x01\x00\x00" === substr( $packed, 0, 4 ) || "\x00\x64\xff\x9b\x00\x01" === substr( $packed, 0, 6 ) ) {
+            return false;
+        }
+        $first = ord( $packed[0] );
+        // fc00::/7 unique-local, fe80::/10 link-local, fec0::/10 site-local, ff00::/8 multicast.
+        if ( 0xfc === ( $first & 0xfe ) || 0xff === $first || ( 0xfe === $first && 0x80 === ( ord( $packed[1] ) & 0xc0 ) ) || ( 0xfe === $first && 0xc0 === ( ord( $packed[1] ) & 0xc0 ) ) ) {
+            return false;
+        }
+        return (bool) filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE );
     }
 
     /**
@@ -1465,6 +1678,11 @@ class Token_Store {
                 array_merge( [ 'client_id' => $client_id, 'client_secret_hash' => null ], $fields, [ 'status' => $status ] ),
                 [ '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
             );
+            // Another request registered the same client a moment earlier: that row serves.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix
+            if ( false === $replaced && null !== $wpdb->get_var( $wpdb->prepare( "SELECT status FROM `{$table}` WHERE client_id = %s LIMIT 1", $client_id ) ) ) {
+                $replaced = 0;
+            }
         }
 
         if ( false === $replaced ) {

@@ -24,7 +24,7 @@ class GuardPress {
 		// activating a plugin post-MCP-connection requires the client to
 		// reconnect before the tools become discoverable.
 
-		return [
+		return array_merge( [
 			[
 				'name'        => 'gp_get_security_status',
 				'description' => 'Get current security score, grade, and factor breakdown',
@@ -76,10 +76,14 @@ class GuardPress {
 					],
 				],
 			],
-		];
+		], GuardPressControls::get_tools() );
 	}
 
 	public static function execute_tool( $name, $args ) {
+		// These check the permission themselves; the summary answers for a site without GuardPress.
+		if ( GuardPressControls::handles( $name ) ) {
+			return GuardPressControls::execute_tool( $name, $args );
+		}
 		// cap check fires BEFORE the active-check. Without this order
 		// a Subscriber-tier OAuth Bearer would get "GuardPress is not active"
 		// and learn whether the integration is present. All GuardPress tools

@@ -68,6 +68,9 @@ class Changes_Page {
 
     private function render_list() {
         $format  = trim( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ) );
+        if ( '' === $format ) {
+            $format = 'Y-m-d H:i';
+        }
         $changes = array_values( array_filter( Undo_Store::all_changes(), [ Change_View::class, 'can_view' ] ) );
         ?>
         <h1><?php esc_html_e( 'Recent Changes', 'royal-mcp' ); ?></h1>
@@ -82,31 +85,91 @@ class Changes_Page {
             ?></strong></p>
             <?php return; ?>
         <?php endif; ?>
-        <table class="wp-list-table widefat fixed striped">
-            <thead>
-                <tr>
-                    <th scope="col" style="width:15%"><?php esc_html_e( 'Time', 'royal-mcp' ); ?></th>
-                    <th scope="col" style="width:17%"><?php esc_html_e( 'Tool', 'royal-mcp' ); ?></th>
-                    <th scope="col"><?php esc_html_e( 'Changed', 'royal-mcp' ); ?></th>
-                    <th scope="col" style="width:18%"><?php esc_html_e( 'Made by', 'royal-mcp' ); ?></th>
-                    <th scope="col" style="width:9%"><?php esc_html_e( 'Status', 'royal-mcp' ); ?></th>
-                    <th scope="col" style="width:9%"><span class="screen-reader-text"><?php esc_html_e( 'View', 'royal-mcp' ); ?></span></th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach ( $changes as $change ) : ?>
-                    <?php $row = Change_View::summary( $change, false ); ?>
-                    <tr>
-                        <td><?php echo esc_html( wp_date( $format, (int) $change['created_at'] ) ); ?></td>
-                        <td><code><?php echo esc_html( $row['tool'] ); ?></code></td>
-                        <td><?php echo esc_html( $row['target_label'] ); ?></td>
-                        <td><?php echo esc_html( $this->made_by( $change, $row ) ); ?></td>
-                        <td><?php echo esc_html( $this->status_label( $row['status'] ) ); ?></td>
-                        <td><a class="button button-small" href="<?php echo esc_url( self::change_url( $row['change_id'] ) ); ?>"><?php esc_html_e( 'View change', 'royal-mcp' ); ?></a></td>
-                    </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
+        <p class="description"><?php esc_html_e( 'Changes are shown in groups: one connection working without a pause of more than 30 minutes is one group. Each change in a group is viewed and undone on its own.', 'royal-mcp' ); ?></p>
+        <?php
+        // The list holds the newest changes only; when it is full, say so, and do not present the oldest group as complete.
+        $capped     = count( $changes ) >= Undo_Store::CHANGES_LIMIT;
+        $all_groups = Change_View::groups( $changes );
+        $last_group = $all_groups ? $all_groups[ count( $all_groups ) - 1 ] : null;
+        if ( $capped ) {
+            /* translators: %s: number of changes */
+            echo '<p><strong>' . esc_html( sprintf( __( 'Showing the newest %s changes. Older changes are still kept and can be undone, but are not listed here.', 'royal-mcp' ), number_format_i18n( count( $changes ) ) ) ) . '</strong></p>';
+        }
+        ?>
+        <?php foreach ( $all_groups as $group ) : ?>
+            <?php
+            $who   = get_userdata( (int) $group['user_id'] );
+            $login = $who ? $who->user_login : __( 'unknown user', 'royal-mcp' );
+            $from  = wp_date( $format, (int) $group['from'] );
+            $to    = wp_date( $format, (int) $group['to'] );
+            $parts = [];
+            $n     = (int) ( $group['statuses']['active'] ?? 0 );
+            if ( $n > 0 ) {
+                /* translators: %s: number of changes */
+                $parts[] = sprintf( _n( '%s can be undone', '%s can be undone', $n, 'royal-mcp' ), number_format_i18n( $n ) );
+            }
+            $n = (int) ( $group['statuses']['undone'] ?? 0 );
+            if ( $n > 0 ) {
+                /* translators: %s: number of changes */
+                $parts[] = sprintf( _n( '%s undone', '%s undone', $n, 'royal-mcp' ), number_format_i18n( $n ) );
+            }
+            $n = (int) ( $group['statuses']['expired'] ?? 0 );
+            if ( $n > 0 ) {
+                /* translators: %s: number of changes */
+                $parts[] = sprintf( _n( '%s expired', '%s expired', $n, 'royal-mcp' ), number_format_i18n( $n ) );
+            }
+            $cut = $capped && $group === $last_group;
+            ?>
+            <div class="royal-mcp-change-group" style="margin:18px 0 0;">
+                <h2 style="font-size:14px;margin:0 0 6px;">
+                    <?php
+                    /* translators: 1: connection, for example Claude or API key; 2: WordPress user login */
+                    echo esc_html( sprintf( __( '%1$s as %2$s', 'royal-mcp' ), $group['connection']['label'], $login ) );
+                    ?>
+                    <span style="font-weight:400;color:#50575e;">
+                        &middot;
+                        <?php
+                        /* translators: %s: number of changes */
+                        echo esc_html( sprintf( _n( '%s change', '%s changes', $group['count'], 'royal-mcp' ), number_format_i18n( $group['count'] ) ) );
+                        ?>
+                        &middot;
+                        <?php
+                        /* translators: 1: time of the first change in the group, 2: time of the last */
+                        echo esc_html( (int) $group['from'] === (int) $group['to'] ? $from : sprintf( __( '%1$s to %2$s', 'royal-mcp' ), $from, $to ) );
+                        ?>
+                        <?php if ( $cut ) : ?>
+                            &middot; <?php esc_html_e( 'older changes of this group are not listed', 'royal-mcp' ); ?>
+                        <?php endif; ?>
+                        <?php if ( $parts ) : ?>
+                            &middot; <?php echo esc_html( implode( ', ', $parts ) ); ?>
+                        <?php endif; ?>
+                    </span>
+                </h2>
+                <table class="wp-list-table widefat fixed striped">
+                    <thead>
+                        <tr>
+                            <th scope="col" style="width:17%"><?php esc_html_e( 'Time', 'royal-mcp' ); ?></th>
+                            <th scope="col" style="width:20%"><?php esc_html_e( 'Tool', 'royal-mcp' ); ?></th>
+                            <th scope="col"><?php esc_html_e( 'Changed', 'royal-mcp' ); ?></th>
+                            <th scope="col" style="width:12%"><?php esc_html_e( 'Status', 'royal-mcp' ); ?></th>
+                            <th scope="col" style="width:10%"><span class="screen-reader-text"><?php esc_html_e( 'View', 'royal-mcp' ); ?></span></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ( $group['changes'] as $change ) : ?>
+                            <?php $row = Change_View::summary( $change, false ); ?>
+                            <tr>
+                                <td><?php echo esc_html( wp_date( $format, (int) $change['created_at'] ) ); ?></td>
+                                <td><code><?php echo esc_html( $row['tool'] ); ?></code></td>
+                                <td><?php echo esc_html( $row['target_label'] ); ?></td>
+                                <td><?php echo esc_html( $this->status_label( $row['status'] ) ); ?></td>
+                                <td><a class="button button-small" href="<?php echo esc_url( self::change_url( $row['change_id'] ) ); ?>"><?php esc_html_e( 'View change', 'royal-mcp' ); ?></a></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endforeach; ?>
         <?php
     }
 
@@ -236,6 +299,7 @@ class Changes_Page {
             'active'  => __( 'Can be undone', 'royal-mcp' ),
             'undone'  => __( 'Undone', 'royal-mcp' ),
             'expired' => __( 'Expired', 'royal-mcp' ),
+            'gone'    => __( 'Deleted since, nothing to undo', 'royal-mcp' ),
         ];
         return $labels[ $status ] ?? (string) $status;
     }

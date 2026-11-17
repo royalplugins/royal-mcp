@@ -183,7 +183,7 @@ class Elementor_Coexistence {
 
 		$redirect = wp_get_referer();
 		if ( ! $redirect ) {
-			$redirect = admin_url( 'admin.php?page=royal-mcp' );
+			$redirect = admin_url( 'admin.php?page=royal-mcp-connections' );
 		}
 		wp_safe_redirect( $redirect );
 		exit;

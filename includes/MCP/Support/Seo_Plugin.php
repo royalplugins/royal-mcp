@@ -138,6 +138,208 @@ class Seo_Plugin {
 		];
 	}
 
+	/** Robots columns of AIOSEO's table that a noindex write may set. */
+	const AIOSEO_ROBOTS = [ 'noindex', 'nofollow', 'noarchive', 'nosnippet', 'noodp', 'notranslate', 'noimageindex' ];
+
+	/** Columns of AIOSEO's row that the tools change and undo puts back. */
+	const AIOSEO_COLUMNS = [ 'title', 'description', 'focus_keyword', 'keyphrases', 'robots_default', 'robots_noindex', 'robots_nofollow', 'robots_noarchive', 'robots_nosnippet', 'robots_noodp', 'robots_notranslate', 'robots_noimageindex' ];
+
+	/** Whether AIOSEO's own post model (its wp_aioseo_posts table) can be used. */
+	public static function aioseo_model_available() {
+		return function_exists( 'aioseo' ) && class_exists( '\AIOSEO\Plugin\Common\Models\Post' ) && method_exists( '\AIOSEO\Plugin\Common\Models\Post', 'savePost' );
+	}
+
+	/**
+	 * Whether this AIOSEO can be written safely: version 5.0 or later saves only the fields
+	 * sent and keeps the focus keyword in its own column.
+	 */
+	public static function aioseo_supported() {
+		return self::aioseo_model_available() && defined( 'AIOSEO_VERSION' ) && version_compare( (string) AIOSEO_VERSION, '5.0.0', '>=' );
+	}
+
+	/** Why AIOSEO cannot be written here, or ''. */
+	public static function aioseo_refusal() {
+		if ( ! self::aioseo_model_available() ) {
+			return 'All in One SEO is not fully loaded, so its SEO fields cannot be written.';
+		}
+		if ( ! self::aioseo_supported() ) {
+			return 'All in One SEO ' . ( defined( 'AIOSEO_VERSION' ) ? (string) AIOSEO_VERSION : '' ) . ' is too old to be written safely: update it to 5.0 or later.';
+		}
+		if ( isset( aioseo()->access ) && is_object( aioseo()->access ) && method_exists( aioseo()->access, 'hasCapability' ) && ! aioseo()->access->hasCapability( 'aioseo_page_general_settings' ) ) {
+			return 'All in One SEO does not let this user change a page\'s SEO settings.';
+		}
+		return '';
+	}
+
+	/**
+	 * AIOSEO's stored row for a post, as stored (for an exact undo).
+	 *
+	 * @return array{exists: bool, columns: array<string, mixed>}
+	 */
+	public static function aioseo_row_state( $post_id ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'aioseo_posts';
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- AIOSEO's own table, read for an exact snapshot
+		$row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$table}` WHERE post_id = %d", (int) $post_id ), ARRAY_A );
+		if ( ! is_array( $row ) ) {
+			return [ 'exists' => false, 'columns' => [] ];
+		}
+		return [ 'exists' => true, 'columns' => array_intersect_key( $row, array_flip( self::AIOSEO_COLUMNS ) ) ];
+	}
+
+	/**
+	 * Robots flags AIOSEO gives a post that follows the site default (its post type settings).
+	 *
+	 * @return array<string, bool> noindex, nofollow, ... => on
+	 */
+	private static function aioseo_default_robots( $post_id ) {
+		$out = array_fill_keys( self::AIOSEO_ROBOTS, false );
+		$robots = isset( aioseo()->meta->robots ) ? aioseo()->meta->robots : null;
+		$type   = (string) get_post_type( (int) $post_id );
+		if ( ! is_object( $robots ) || ! method_exists( $robots, 'globalValues' ) || '' === $type ) {
+			return $out;
+		}
+		try {
+			$prop = new \ReflectionProperty( $robots, 'attributes' );
+			$prop->setAccessible( true );
+			$kept = $prop->getValue( $robots );
+			$prop->setValue( $robots, [] );
+			$robots->globalValues( [ 'postTypes', $type ], true );
+			$attrs = (array) $prop->getValue( $robots );
+			$prop->setValue( $robots, $kept );
+		} catch ( \Throwable $e ) {
+			return $out;
+		}
+		foreach ( self::AIOSEO_ROBOTS as $flag ) {
+			$out[ $flag ] = ! empty( $attrs[ $flag ] );
+		}
+		return $out;
+	}
+
+	/** Whether AIOSEO serves the post as noindex (per-post settings, or the site default). */
+	public static function aioseo_noindex( $post_id ) {
+		$state = self::aioseo_row_state( $post_id );
+		if ( $state['exists'] && empty( $state['columns']['robots_default'] ) ) {
+			return ! empty( $state['columns']['robots_noindex'] ) || '' !== (string) get_post_field( 'post_password', (int) $post_id );
+		}
+		return self::aioseo_default_robots( $post_id )['noindex'];
+	}
+
+	/**
+	 * A field as AIOSEO itself serves it, or null when AIOSEO's model is not available.
+	 *
+	 * @return string|bool|null
+	 */
+	public static function aioseo_value( $post_id, $field ) {
+		if ( ! self::aioseo_model_available() ) {
+			return null;
+		}
+		if ( 'noindex' === $field ) {
+			return self::aioseo_noindex( $post_id );
+		}
+		if ( ! in_array( $field, [ 'title', 'description', 'focus_keyword' ], true ) ) {
+			return null;
+		}
+		$p = \AIOSEO\Plugin\Common\Models\Post::getPost( (int) $post_id );
+		return (string) ( $p->$field ?? '' );
+	}
+
+	/** The post type's default title / description format in AIOSEO (what an empty field means). */
+	public static function aioseo_default_format( $post_id, $field ) {
+		$type = (string) get_post_type( (int) $post_id );
+		if ( 'title' === $field && isset( aioseo()->meta->title ) && method_exists( aioseo()->meta->title, 'getPostTypeTitle' ) ) {
+			return trim( (string) aioseo()->meta->title->getPostTypeTitle( $type ) );
+		}
+		if ( 'description' === $field && isset( aioseo()->meta->description ) && method_exists( aioseo()->meta->description, 'getPostTypeDescription' ) ) {
+			return trim( (string) aioseo()->meta->description->getPostTypeDescription( $type ) );
+		}
+		return '';
+	}
+
+	/**
+	 * Write fields to AIOSEO's own table through its save routine (only these fields change).
+	 * A noindex change takes the post off the site default only when it has to, keeping every
+	 * other robots setting the post had.
+	 *
+	 * @param array $values title | description | focus_keyword => string; noindex => bool.
+	 * @return true|string True, or the reason nothing was written.
+	 */
+	public static function aioseo_write( $post_id, array $values ) {
+		$refusal = self::aioseo_refusal();
+		if ( '' !== $refusal ) {
+			return $refusal;
+		}
+		$post_id = (int) $post_id;
+		$model   = '\AIOSEO\Plugin\Common\Models\Post';
+		$current = $model::getPost( $post_id );
+		$data    = [];
+		foreach ( [ 'title', 'description' ] as $field ) {
+			if ( array_key_exists( $field, $values ) ) {
+				$data[ $field ] = (string) $values[ $field ];
+			}
+		}
+		if ( array_key_exists( 'focus_keyword', $values ) ) {
+			$focus                 = (string) $values['focus_keyword'];
+			$data['focus_keyword'] = $focus;
+			// AIOSEO's older features still read the focus keyword from its keyphrases column.
+			if ( method_exists( $model, 'getKeyphrasesFromKeywordColumns' ) ) {
+				$data['keyphrases'] = $model::getKeyphrasesFromKeywordColumns( $focus, $current->additional_keywords ?? null, $current->keyphrases ?? null, $current->truseo ?? null );
+			}
+		}
+		if ( array_key_exists( 'noindex', $values ) ) {
+			$want  = (bool) $values['noindex'];
+			$state = self::aioseo_row_state( $post_id );
+			$own   = $state['exists'] && empty( $state['columns']['robots_default'] );
+			if ( $own ) {
+				$data['noindex'] = $want;
+			} elseif ( self::aioseo_default_robots( $post_id )['noindex'] !== $want ) {
+				// Leave the site default only to change noindex; carry every other default flag over.
+				$data['default'] = false;
+				foreach ( self::aioseo_default_robots( $post_id ) as $flag => $on ) {
+					$data[ $flag ] = 'noindex' === $flag ? $want : $on;
+				}
+			}
+		}
+		if ( ! $data ) {
+			return true;
+		}
+		$res = $model::savePost( $post_id, $data );
+		self::aioseo_bust( $post_id );
+		return is_string( $res ) && '' !== $res ? 'All in One SEO did not save: ' . $res : true;
+	}
+
+	/** Put AIOSEO's row back exactly as aioseo_row_state() saw it (or remove a row that did not exist). */
+	public static function aioseo_restore( $post_id, array $state ) {
+		global $wpdb;
+		$post_id = (int) $post_id;
+		$table   = $wpdb->prefix . 'aioseo_posts';
+		if ( empty( $state['exists'] ) ) {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- AIOSEO's own table; the row did not exist before the write
+			$wpdb->delete( $table, [ 'post_id' => $post_id ], [ '%d' ] );
+		} else {
+			$cols = array_intersect_key( (array) ( $state['columns'] ?? [] ), array_flip( self::AIOSEO_COLUMNS ) );
+			if ( $cols ) {
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- AIOSEO's own table; exact earlier values
+				$wpdb->update( $table, $cols, [ 'post_id' => $post_id ] );
+			}
+		}
+		self::aioseo_bust( $post_id );
+	}
+
+	private static function aioseo_bust( $post_id ) {
+		if ( ! function_exists( 'aioseo' ) ) {
+			return;
+		}
+		// AIOSEO keeps the rows it read during this request; a direct table write must clear that too.
+		if ( isset( aioseo()->core->db ) && is_object( aioseo()->core->db ) && method_exists( aioseo()->core->db, 'bustCache' ) ) {
+			aioseo()->core->db->bustCache( 'aioseo_posts' );
+		}
+		if ( isset( aioseo()->meta->metaData ) && method_exists( aioseo()->meta->metaData, 'bustPostCache' ) ) {
+			aioseo()->meta->metaData->bustPostCache( (int) $post_id );
+		}
+		wp_cache_delete( (int) $post_id, 'post_meta' );
+	}
+
 	/**
 	 * The SEO plugin a post meta key belongs to, and the wp_update_seo_meta
 	 * field that writes it (null when no field covers that key).
@@ -225,6 +427,12 @@ class Seo_Plugin {
 		$post_id = (int) $post_id;
 		foreach ( self::NOINDEX_KEYS as $plugin => $key ) {
 			if ( ! self::is_active( $plugin ) ) {
+				continue;
+			}
+			if ( 'aioseo' === $plugin && self::aioseo_model_available() ) {
+				if ( self::aioseo_noindex( $post_id ) ) {
+					return true;
+				}
 				continue;
 			}
 			$value = get_post_meta( $post_id, $key, true );

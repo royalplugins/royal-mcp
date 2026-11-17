@@ -216,7 +216,7 @@ class RoyalLinks {
 			'destination_url' => $destination,
 			'redirect_type'   => get_post_meta( $post->ID, '_royal_links_redirect_type', true ),
 			'total_clicks'    => $total_hits,
-			'date_created'    => $post->post_date,
+			'date_created'    => \Royal_MCP\MCP\Server::iso_local_date( $post->post_date ),
 		];
 	}
 }

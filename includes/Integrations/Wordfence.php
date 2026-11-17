@@ -465,8 +465,7 @@ class Wordfence {
 		return (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE type IN ( {$types} ) AND IP = {$hex}" );
 	}
 
-	/** The stored permanent manual block for an address, or null. */
-	/** A block for the address that never expires, whatever kind it is. */
+	/** The stored block for the address that never expires, whatever kind it is, or null. */
 	private static function permanent_block( $ip ) {
 		global $wpdb;
 		$table = \wfBlock::blocksTable();

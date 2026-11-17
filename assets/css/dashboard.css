@@ -1,0 +1,390 @@
+.royal-mcp-dash {
+	max-width: 1180px;
+}
+
+.royal-mcp-dash-head {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin: 14px 0 18px;
+}
+
+.royal-mcp-dash-head h1 {
+	margin: 0;
+	padding: 0;
+	font-size: 24px;
+	font-weight: 600;
+	color: #2c2c2c;
+}
+
+.royal-mcp-dash-pill {
+	display: inline-block;
+	padding: 3px 10px;
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1.5;
+}
+
+.royal-mcp-dash-pill.is-on {
+	background: #e7f5ec;
+	color: #116329;
+}
+
+.royal-mcp-dash-pill.is-off {
+	background: #fce8e8;
+	color: #8a1f1f;
+}
+
+.royal-mcp-dash-card {
+	background: #fff;
+	border: 1px solid #dcdcde;
+	border-radius: 8px;
+	padding: 20px 22px;
+	margin: 0 0 16px;
+}
+
+.royal-mcp-dash-card h2 {
+	margin: 0 0 6px;
+	padding: 0;
+	font-size: 15px;
+	font-weight: 600;
+	color: #2c2c2c;
+}
+
+.royal-mcp-dash-sub {
+	margin: 0 0 12px;
+	color: #50575e;
+}
+
+.royal-mcp-dash-connect {
+	border-inline-start: 4px solid #c9a227;
+}
+
+.royal-mcp-dash-url {
+	display: flex;
+	gap: 8px;
+	margin: 0 0 12px;
+}
+
+.royal-mcp-dash-url input {
+	flex: 1;
+	min-width: 0;
+	height: 36px;
+	padding: 0 10px;
+	font-family: Consolas, Monaco, monospace;
+	font-size: 13px;
+	background: #faf8f5;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	color: #2c2c2c;
+}
+
+.royal-mcp-dash-url .button {
+	height: 36px;
+	padding: 0 14px;
+}
+
+.royal-mcp-dash-steps {
+	margin: 0 0 10px;
+	margin-inline-start: 18px;
+	color: #3c434a;
+}
+
+.royal-mcp-dash-steps li {
+	margin: 0 0 4px;
+}
+
+.royal-mcp-dash-strip {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 16px;
+	margin: 0 0 16px;
+}
+
+.royal-mcp-dash-tile {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	background: #fff;
+	border: 1px solid #dcdcde;
+	border-radius: 8px;
+	padding: 16px 18px;
+}
+
+.royal-mcp-dash-tile-title {
+	font-size: 12px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: #646970;
+}
+
+.royal-mcp-dash-tile strong {
+	font-size: 22px;
+	font-weight: 600;
+	line-height: 1.25;
+	color: #2c2c2c;
+}
+
+.royal-mcp-dash-tile-note {
+	flex: 1;
+	font-size: 12px;
+	color: #50575e;
+}
+
+.royal-mcp-dash-tile a {
+	font-size: 13px;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+
+.royal-mcp-dash-tile a:hover,
+.royal-mcp-dash-tile a:focus {
+	text-decoration-thickness: 2px;
+}
+
+.royal-mcp-dash-cols {
+	display: grid;
+	grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+	gap: 16px;
+	align-items: start;
+}
+
+.royal-mcp-dash-ok {
+	margin: 0;
+	color: #116329;
+}
+
+.royal-mcp-dash-attention,
+.royal-mcp-dash-activity,
+.royal-mcp-dash-starters,
+.royal-mcp-dash-links {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.royal-mcp-dash-attention li {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 10px 0;
+	border-top: 1px solid #f0f0f1;
+}
+
+.royal-mcp-dash-attention li:first-child,
+.royal-mcp-dash-activity li:first-child {
+	border-top: 0;
+}
+
+.royal-mcp-dash-attention .button {
+	flex-shrink: 0;
+}
+
+.royal-mcp-dash-activity {
+	margin: 0 0 12px;
+}
+
+.royal-mcp-dash-activity li {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 9px 0;
+	border-top: 1px solid #f0f0f1;
+}
+
+.royal-mcp-dash-activity span {
+	font-size: 12px;
+	color: #50575e;
+}
+
+.royal-mcp-dash-starters li {
+	margin: 0 0 8px;
+}
+
+.royal-mcp-dash-starter {
+	display: block;
+	width: 100%;
+	padding: 10px 12px;
+	text-align: start;
+	font-size: 13px;
+	line-height: 1.45;
+	color: #2c2c2c;
+	background: #faf8f5;
+	border: 1px solid #e6e1d6;
+	border-radius: 6px;
+	cursor: pointer;
+}
+
+.royal-mcp-dash-starter:hover {
+	border-color: #c9a227;
+}
+
+.royal-mcp-dash-starter:focus-visible {
+	border-color: #c9a227;
+	outline: 2px solid #2271b1;
+	outline-offset: 1px;
+}
+
+.royal-mcp-dash-upgrade {
+	background: #2c2c2c;
+	border-color: #2c2c2c;
+}
+
+.royal-mcp-dash-upgrade h2,
+.royal-mcp-dash-upgrade p {
+	color: #faf8f5;
+}
+
+.royal-mcp-dash-upgrade .button-primary,
+.royal-mcp-dash-upgrade .button-primary:hover,
+.royal-mcp-dash-upgrade .button-primary:focus,
+.royal-mcp-dash-upgrade .button-primary:active {
+	background: #c9a227;
+	border-color: #a88b1f;
+	color: #2c2c2c;
+	text-shadow: none;
+	box-shadow: none;
+}
+
+.royal-mcp-dash-upgrade .button-primary:hover {
+	background: #d6b23a;
+}
+
+.royal-mcp-dash-upgrade .button-primary:focus-visible {
+	outline: 2px solid #faf8f5;
+	outline-offset: 2px;
+}
+
+/* Review card: warm gold, so it stands out. */
+.royal-mcp-dash-review {
+	background: #fffaf0;
+	border: 1px solid #f0d990;
+	border-left: 4px solid #d4a017;
+	color: #3d3522;
+}
+
+.royal-mcp-dash-review h2,
+.royal-mcp-dash-review p {
+	color: #3d3522;
+}
+
+.royal-mcp-dash-review .button-primary,
+.royal-mcp-dash-review .button-primary:focus,
+.royal-mcp-dash-review .button-primary:active {
+	background: #d4a017;
+	border-color: #b8890f;
+	color: #2c2c2c;
+	font-weight: 600;
+	text-shadow: none;
+	box-shadow: none;
+}
+
+.royal-mcp-dash-review .button-primary:hover {
+	background: #e0b12b;
+	border-color: #b8890f;
+	color: #2c2c2c;
+}
+
+.royal-mcp-dash-review .button-primary:focus-visible {
+	outline: 2px solid #3d3522;
+	outline-offset: 2px;
+}
+
+.royal-mcp-dash-review a:not(.button) {
+	color: #6b5413;
+}
+
+.royal-mcp-dash-links li {
+	margin: 0 0 8px;
+}
+
+.royal-mcp-dash-pill.is-idle {
+	background: #f0f0f1;
+	color: #50575e;
+}
+
+.royal-mcp-dash-family {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 14px;
+}
+
+.royal-mcp-dash-plugin {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 14px 16px;
+	background: #faf8f5;
+	border: 1px solid #e6e1d6;
+	border-radius: 6px;
+}
+
+.royal-mcp-dash-plugin.is-active {
+	background: #fff;
+	border-color: #c9a227;
+}
+
+.royal-mcp-dash-plugin-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.royal-mcp-dash-plugin p {
+	margin: 0;
+	font-size: 12px;
+	color: #50575e;
+}
+
+.royal-mcp-dash-plugin p:first-of-type {
+	flex: 1;
+}
+
+.royal-mcp-dash-plugin-actions {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+@media (max-width: 960px) {
+	.royal-mcp-dash-family {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.royal-mcp-dash-strip {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.royal-mcp-dash-cols {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+@media (max-width: 600px) {
+	.royal-mcp-dash-family {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.royal-mcp-dash-strip {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.royal-mcp-dash-url {
+		flex-direction: column;
+	}
+}
+
+/* Connection Doctor */
+.royal-mcp-doctor-steps { list-style: none; margin: 8px 0 12px; padding: 0; }
+.royal-mcp-doctor-steps li { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; border-top: 1px solid #f0f0f1; }
+.royal-mcp-doctor-steps li:first-child { border-top: 0; }
+.royal-mcp-doctor-mark { flex: 0 0 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #fff; background: #8c8f94; }
+.royal-mcp-doctor-steps li.is-ok .royal-mcp-doctor-mark { background: #00a32a; }
+.royal-mcp-doctor-steps li.is-problem .royal-mcp-doctor-mark { background: #d63638; }
+.royal-mcp-doctor-steps li.is-warn .royal-mcp-doctor-mark { background: #dba617; }
+.royal-mcp-doctor-detail { display: block; color: #50575e; font-size: 13px; margin-top: 2px; }
+.royal-mcp-doctor-first { color: #d63638; }

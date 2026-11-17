@@ -15,9 +15,6 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class WooCommerce {
 
-	/**
-	 * Check if WooCommerce is available.
-	 */
 	/** Tools whose reply is a key => count map; ignored_args would read as data there. */
 	const MAP_REPLIES = [ 'wc_get_coupon_count' ];
 
@@ -30,6 +27,9 @@ class WooCommerce {
 	/** Order statuses the order tools do not change away from. */
 	const ORDER_STATUS_LOCKED = [ 'refunded', 'checkout-draft', 'trash', 'auto-draft' ];
 
+	/**
+	 * Check if WooCommerce is available.
+	 */
 	public static function is_available() {
 		return class_exists( 'WooCommerce' );
 	}
@@ -79,7 +79,7 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_create_product',
-				'description' => 'Create a WooCommerce product',
+				'description' => 'Create a WooCommerce product (simple, variable, grouped or external; default simple) with name and optional prices, descriptions, SKU, stock_quantity, category IDs. A draft unless status is publish (needs publish_products). Requires edit_products. Returns ID, URL and an undo token that deletes it.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -99,7 +99,7 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_update_product',
-				'description' => 'Update a WooCommerce product',
+				'description' => 'Update one WooCommerce product by id: name, prices, description, short_description, sku, status or stock_quantity; pass at least one. Saved fields are read back and checked. Requires edit_product on it, and publish_products to publish. Returns an undo token that restores the earlier values.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -403,7 +403,7 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_delete_variation',
-				'description' => 'Delete a product variation',
+				'description' => 'Delete one variation of a variable product; product_id must be its parent. force defaults to true (deleted for good); force false moves it to the trash. Requires delete_product on the variation. Returns an undo token: undo restores a trashed variation, or recreates a deleted one with a new ID.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -614,19 +614,51 @@ class WooCommerce {
 	}
 
 	/**
+	 * Save a coupon with its description exactly as given: WordPress unslashes what it
+	 * saves, so backslashes in the description would otherwise be lost.
+	 */
+	public static function save_coupon_exact( $coupon ) {
+		$id      = (int) $coupon->get_id();
+		$excerpt = (string) $coupon->get_description( 'edit' );
+		$done    = false;
+		$keep    = static function ( $data, $postarr ) use ( $id, $excerpt, &$done ) {
+			if ( ! $done && isset( $data['post_type'] ) && 'shop_coupon' === $data['post_type'] && $id === (int) ( $postarr['ID'] ?? 0 ) ) {
+				$done                 = 0 === $id; // a new coupon: only its own insert, not another made during the save
+				$data['post_excerpt'] = wp_slash( $excerpt );
+			}
+			return $data;
+		};
+		add_filter( 'wp_insert_post_data', $keep, PHP_INT_MAX, 2 );
+		try {
+			return $coupon->save();
+		} finally {
+			remove_filter( 'wp_insert_post_data', $keep, PHP_INT_MAX );
+		}
+	}
+
+	/**
 	 * Save a product so backslashes in its description and short description survive.
 	 * WooCommerce passes these fields to WordPress unslashed, so WordPress's unslash on save drops
-	 * every backslash (block attributes, JSON). The text set on the product (already filtered for
-	 * users without unfiltered_html) is put back just before the write, with the processing
-	 * WordPress gives post content: invalid entities converted, tags balanced when the site asks
-	 * for it, emoji encoded where the posts table cannot store them. On a new product the first
-	 * product written in the call is the one.
+	 * every backslash (block attributes, JSON). The text set on the product is put back just
+	 * before the write, with the processing WordPress gives post content: HTML filtered for users
+	 * without unfiltered_html, invalid entities converted, tags balanced when the site asks for
+	 * it, emoji encoded where the posts table cannot store them. Only the post write WooCommerce's
+	 * own data store makes for this save is changed: the override is armed as the last step before
+	 * the data store runs (outermost save of this product only), fires on the first product post
+	 * write after that, and is dropped when the save ends. A save in which WooCommerce writes no
+	 * post fields (a price or stock change) arms nothing, so other writes in the call keep their text.
 	 */
 	public static function save_product_exact( $product ) {
-		$id      = (int) $product->get_id();
 		$content = (string) $product->get_description( 'edit' );
 		$excerpt = (string) $product->get_short_description( 'edit' );
+		if ( ! current_user_can( 'unfiltered_html' ) ) {
+			// wp_filter_post_kses takes and returns slashed text, as WordPress's save filters do.
+			$content = (string) wp_unslash( wp_filter_post_kses( wp_slash( $content ) ) );
+			$excerpt = (string) wp_unslash( wp_filter_post_kses( wp_slash( $excerpt ) ) );
+		}
 		$done    = false;
+		$armed   = false;
+		$depth   = 0;
 		$prepare = static function ( $text, $field ) {
 			global $wpdb;
 			$text = convert_invalid_entities( $text );
@@ -638,19 +670,51 @@ class WooCommerce {
 			}
 			return $text;
 		};
-		$keep = static function ( $data, $postarr ) use ( $id, $content, $excerpt, $prepare, &$done ) {
-			if ( ! $done && isset( $data['post_type'] ) && 'product' === $data['post_type'] && $id === (int) ( $postarr['ID'] ?? 0 ) ) {
-				$done                 = 0 === $id;
+		// Saves of this same product nested inside its own save hooks are left alone.
+		$enter = static function ( $obj ) use ( $product, &$depth ) {
+			if ( $obj === $product ) {
+				++$depth;
+			}
+		};
+		$leave = static function ( $obj ) use ( $product, &$depth, &$armed ) {
+			if ( $obj === $product ) {
+				--$depth;
+				$armed = false;
+			}
+		};
+		$arm = static function ( $obj ) use ( $product, &$depth, &$armed, &$done ) {
+			if ( $obj !== $product || $done || 1 !== $depth ) {
+				return;
+			}
+			if ( (int) $obj->get_id() > 0 ) {
+				// The fields that make WooCommerce's data store write the post row.
+				$post_fields = [ 'description', 'short_description', 'name', 'parent_id', 'reviews_allowed', 'status', 'menu_order', 'date_created', 'date_modified', 'slug', 'post_password' ];
+				if ( doing_action( 'save_post' ) || ! array_intersect( $post_fields, array_keys( (array) $obj->get_changes() ) ) ) {
+					return;
+				}
+			}
+			$armed = true;
+		};
+		$keep = static function ( $data, $postarr ) use ( $product, $content, $excerpt, $prepare, &$done, &$armed ) {
+			if ( $armed && ! $done && isset( $data['post_type'] ) && 'product' === $data['post_type'] && (int) $product->get_id() === (int) ( $postarr['ID'] ?? 0 ) ) {
+				$done                 = true;
+				$armed                = false;
 				$data['post_content'] = wp_slash( $prepare( $content, 'post_content' ) );
 				$data['post_excerpt'] = wp_slash( $prepare( $excerpt, 'post_excerpt' ) );
 			}
 			return $data;
 		};
+		add_action( 'woocommerce_before_product_object_save', $enter, PHP_INT_MIN );
+		add_action( 'woocommerce_before_product_object_save', $arm, PHP_INT_MAX );
+		add_action( 'woocommerce_after_product_object_save', $leave, PHP_INT_MAX );
 		add_filter( 'wp_insert_post_data', $keep, PHP_INT_MAX, 2 );
 		try {
 			return $product->save();
 		} finally {
 			remove_filter( 'wp_insert_post_data', $keep, PHP_INT_MAX );
+			remove_action( 'woocommerce_after_product_object_save', $leave, PHP_INT_MAX );
+			remove_action( 'woocommerce_before_product_object_save', $arm, PHP_INT_MAX );
+			remove_action( 'woocommerce_before_product_object_save', $enter, PHP_INT_MIN );
 		}
 	}
 
@@ -1280,14 +1344,20 @@ class WooCommerce {
 				if ( ! in_array( $initial_status, $allowed_initial, true ) ) {
 					$initial_status = 'pending';
 				}
-				$new_order->set_status( $initial_status );
-				$new_order->save();
+				// The starting status sends none of WooCommerce's own emails; send_emails below sends the New Order email.
+				self::without_order_emails(
+					static function () use ( $new_order, $initial_status ) {
+						$new_order->set_status( $initial_status );
+						$new_order->save();
+					}
+				);
 				$co_email_sent = false;
-				if ( ! empty( $args['send_emails'] ) ) {
+				if ( isset( $args['send_emails'] ) && true === self::bool_arg( $args['send_emails'] ) ) {
 					$mailer = \WC()->mailer();
 					if ( $mailer && isset( $mailer->emails['WC_Email_New_Order'] ) ) {
 						$mailer->emails['WC_Email_New_Order']->trigger( $new_order->get_id() );
-						$co_email_sent = true;
+						// Nothing goes out when the shop has that email switched off.
+						$co_email_sent = (bool) $mailer->emails['WC_Email_New_Order']->is_enabled();
 					}
 				}
 				// Undo removes the specific order via WC_Order::delete(true) —
@@ -1312,7 +1382,6 @@ class WooCommerce {
 					),
 					[
 						'order_id'   => (int) $new_order->get_id(),
-						'order_key'  => $new_order->get_order_key(),
 						'total'      => $new_order->get_total(),
 						'status'     => $new_order->get_status(),
 						'email_sent' => $co_email_sent,
@@ -1415,6 +1484,40 @@ class WooCommerce {
 					$uo_before['status']    = $uo_order->get_status( 'edit' );
 				}
 
+				// Protected meta keys and every line item are checked before anything is set on
+				// the order (with orders stored as posts, an address is saved as soon as it is set).
+				if ( ! empty( $args['meta_data'] ) && is_array( $args['meta_data'] ) ) {
+					\Royal_MCP\MCP\Support\Protected_Meta::assert_order_meta_args( $args['meta_data'] );
+				}
+				if ( ! empty( $args['line_items'] ) && is_array( $args['line_items'] ) ) {
+					foreach ( $args['line_items'] as $item ) {
+						if ( ! is_array( $item ) ) {
+							return Envelope::error( 'invalid_args', 'Each line_items entry must be an object. Nothing was changed.', [ 'field' => 'line_items' ] );
+						}
+						if ( isset( $item['quantity'] ) ) {
+							$item_quantity = self::clean_stock( $item['quantity'] );
+							if ( null === $item_quantity || $item_quantity > 1000000 ) {
+								return Envelope::error( 'invalid_args', 'A line item quantity must be a whole number from 0 to 1000000. Nothing was changed.', [ 'field' => 'line_items' ] );
+							}
+						}
+						if ( isset( $item['id'] ) && (int) $item['id'] > 0 ) {
+							continue;
+						}
+						$check_product_id   = isset( $item['product_id'] ) ? (int) $item['product_id'] : 0;
+						$check_variation_id = isset( $item['variation_id'] ) ? (int) $item['variation_id'] : 0;
+						if ( $check_product_id <= 0 ) {
+							return Envelope::error( 'invalid_args', 'A line_items entry without id must include product_id. Nothing was changed.', [ 'field' => 'line_items' ] );
+						}
+						$check_product = wc_get_product( $check_variation_id > 0 ? $check_variation_id : $check_product_id );
+						if ( ! $check_product ) {
+							return Envelope::error( 'invalid_args', 'Product not found: ' . ( $check_variation_id > 0 ? $check_variation_id : $check_product_id ) . '. Nothing was changed.', [ 'field' => 'line_items' ] );
+						}
+						if ( $check_variation_id > 0 && (int) $check_product->get_parent_id() !== $check_product_id ) {
+							return Envelope::error( 'invalid_args', 'variation_id ' . $check_variation_id . ' does not belong to product_id ' . $check_product_id . '. Nothing was changed.', [ 'field' => 'line_items' ] );
+						}
+					}
+				}
+
 				// Execute — preserve existing behavior including the one-way
 				// meta_data / line_items paths.
 				if ( ! empty( $args['billing'] ) && is_array( $args['billing'] ) ) {
@@ -1443,15 +1546,24 @@ class WooCommerce {
 						$item_id      = isset( $item['id'] ) ? (int) $item['id'] : 0;
 						$product_id   = isset( $item['product_id'] ) ? (int) $item['product_id'] : 0;
 						$variation_id = isset( $item['variation_id'] ) ? (int) $item['variation_id'] : 0;
-						$quantity     = isset( $item['quantity'] ) ? (int) $item['quantity'] : 1;
-						if ( $item_id > 0 && $quantity === 0 ) {
+						$has_quantity = isset( $item['quantity'] );
+						$quantity     = $has_quantity ? (int) $item['quantity'] : 1;
+						if ( $item_id > 0 && $has_quantity && $quantity === 0 ) {
 							$uo_order->remove_item( $item_id );
 							continue;
 						}
 						if ( $item_id > 0 ) {
+							// Without a quantity the line keeps the one it has.
 							$existing = $uo_order->get_item( $item_id );
-							if ( $existing ) {
-								$existing->set_quantity( max( 1, $quantity ) );
+							if ( $existing && $has_quantity ) {
+								// The line's amounts follow the quantity, at the price the line already has.
+								$old_quantity = (int) $existing->get_quantity();
+								$new_quantity = max( 1, $quantity );
+								if ( $old_quantity > 0 && $new_quantity !== $old_quantity ) {
+									$existing->set_subtotal( (float) $existing->get_subtotal() / $old_quantity * $new_quantity );
+									$existing->set_total( (float) $existing->get_total() / $old_quantity * $new_quantity );
+								}
+								$existing->set_quantity( $new_quantity );
 								$existing->save();
 							}
 							continue;
@@ -1731,6 +1843,11 @@ class WooCommerce {
 				// via parse_variation_attributes on write) — comparison is
 				// json-canonicalized so key-order variance doesn't false-trigger
 				// silent_modify.
+				$uv_stock_error = self::stock_fields_error( $args );
+				if ( '' !== $uv_stock_error ) {
+					return Envelope::error( 'invalid_args', $uv_stock_error, [ 'variation_id' => $uv_var_id ] );
+				}
+				$args         = self::with_stock_managed( $args );
 				$uv_requested = [];
 				if ( isset( $args['regular_price'] ) )  $uv_requested['regular_price']  = sanitize_text_field( (string) $args['regular_price'] );
 				if ( isset( $args['sale_price'] ) )     $uv_requested['sale_price']     = sanitize_text_field( (string) $args['sale_price'] );
@@ -1739,6 +1856,8 @@ class WooCommerce {
 				if ( isset( $args['manage_stock'] ) )   $uv_requested['manage_stock']   = (bool) $args['manage_stock'];
 				if ( isset( $args['stock_quantity'] ) ) $uv_requested['stock_quantity'] = (int) $args['stock_quantity'];
 				if ( isset( $args['stock_status'] ) )   $uv_requested['stock_status']   = sanitize_text_field( (string) $args['stock_status'] );
+				// A stock change can flip the stock status; undo puts it back too.
+				$uv_keep_stock_status = ( isset( $uv_requested['stock_quantity'] ) || isset( $uv_requested['manage_stock'] ) ) && ! isset( $uv_requested['stock_status'] );
 				if ( isset( $args['weight'] ) )         $uv_requested['weight']         = sanitize_text_field( (string) $args['weight'] );
 				if ( isset( $args['description'] ) )    $uv_requested['description']    = \Royal_MCP\MCP\Support\SafeText::rich_html( $args['description'] );
 				if ( isset( $args['image_id'] ) )       $uv_requested['image_id']       = (int) $args['image_id'];
@@ -1758,8 +1877,9 @@ class WooCommerce {
 						case 'sale_price':         return (string) $v->get_sale_price( 'edit' );
 						case 'sku':                return (string) $v->get_sku( 'edit' );
 						case 'status':             return (string) $v->get_status( 'edit' );
-						case 'manage_stock':       return (bool)   $v->get_manage_stock();
-						case 'stock_quantity':     return (int)    $v->get_stock_quantity();
+						// As stored on the variation itself, not what it inherits from its parent.
+						case 'manage_stock':       return (bool)   $v->get_manage_stock( 'edit' );
+						case 'stock_quantity':     return null === $v->get_stock_quantity( 'edit' ) ? null : (int) $v->get_stock_quantity( 'edit' );
 						case 'stock_status':       return (string) $v->get_stock_status( 'edit' );
 						case 'weight':             return (string) $v->get_weight( 'edit' );
 						case 'description':        return (string) $v->get_description( 'edit' );
@@ -1776,6 +1896,7 @@ class WooCommerce {
 				foreach ( array_keys( $uv_requested ) as $f ) {
 					$uv_before[ $f ] = $uv_read( $f );
 				}
+				$uv_stock_status_before = $uv_keep_stock_status ? $uv_read( 'stock_status' ) : null;
 				// Attributes handled separately — one snapshot + one restore.
 				// json_encode compare avoids key-order false silent_modifies.
 				$uv_attrs_before_json = null;
@@ -1813,6 +1934,9 @@ class WooCommerce {
 					'applied_values' => $uv_actual,
 					'parent_id'      => (int) $uv_var->get_parent_id(),
 				];
+				if ( null !== $uv_stock_status_before ) {
+					$uv_undo_pre['prior_values']['stock_status'] = $uv_stock_status_before;
+				}
 				if ( $uv_attrs_before_json !== null ) {
 					$uv_undo_pre['attributes_before_json'] = $uv_attrs_before_json;
 					$uv_attrs_after = wc_get_product( $uv_var_id );
@@ -1954,6 +2078,9 @@ class WooCommerce {
 						}
 						$bv_cur = 'update' === $bv_op ? wc_get_product( intval( $bv_data['variation_id'] ?? 0 ) ) : null;
 						$bv_err = self::price_fields_error( $bv_data, $bv_cur ? $bv_cur->get_regular_price( 'edit' ) : '', $bv_cur ? $bv_cur->get_sale_price( 'edit' ) : '' );
+						if ( '' === $bv_err ) {
+							$bv_err = self::stock_fields_error( is_array( $bv_data ) ? $bv_data : [] );
+						}
 						if ( '' !== $bv_err ) {
 							return Envelope::error( 'invalid_args', sprintf( '%s[%d]: %s Nothing was changed.', $bv_op, $bv_i, $bv_err ), [ 'product_id' => $bv_pid ] );
 						}
@@ -1980,6 +2107,9 @@ class WooCommerce {
 
 				// UPDATE ops — snapshot BEFORE state per updated field
 				foreach ( $args['update'] ?? [] as $data ) {
+					if ( is_array( $data ) ) {
+						$data = self::with_stock_managed( $data );
+					}
 					$var_id    = intval( $data['variation_id'] ?? 0 );
 					$variation = wc_get_product( $var_id );
 					if ( ! $variation || ! $variation->is_type( 'variation' ) ) {
@@ -2001,7 +2131,7 @@ class WooCommerce {
 							case 'sku':            $prior[ $f ] = (string) $variation->get_sku( 'edit' ); break;
 							case 'status':         $prior[ $f ] = (string) $variation->get_status( 'edit' ); break;
 							case 'manage_stock':   $prior[ $f ] = (bool)   $variation->get_manage_stock( 'edit' ); break;
-							case 'stock_quantity': $prior[ $f ] = (int)    $variation->get_stock_quantity( 'edit' ); break;
+							case 'stock_quantity': $prior[ $f ] = null === $variation->get_stock_quantity( 'edit' ) ? null : (int) $variation->get_stock_quantity( 'edit' ); break;
 							case 'stock_status':   $prior[ $f ] = (string) $variation->get_stock_status( 'edit' ); break;
 							case 'weight':         $prior[ $f ] = (string) $variation->get_weight( 'edit' ); break;
 							case 'length':         $prior[ $f ] = (string) $variation->get_length( 'edit' ); break;
@@ -2010,6 +2140,10 @@ class WooCommerce {
 							case 'description':    $prior[ $f ] = (string) $variation->get_description( 'edit' ); break;
 							case 'image_id':       $prior[ $f ] = (int)    $variation->get_image_id( 'edit' ); break;
 						}
+					}
+					// A stock change can flip the stock status; undo puts it back too.
+					if ( ( array_key_exists( 'stock_quantity', $data ) || array_key_exists( 'manage_stock', $data ) ) && ! array_key_exists( 'stock_status', $prior ) ) {
+						$prior['stock_status'] = (string) $variation->get_stock_status( 'edit' );
 					}
 					if ( isset( $data['attributes'] ) ) {
 						$prior['attributes_json'] = (string) wp_json_encode( $variation->get_attributes( 'edit' ) );
@@ -2390,11 +2524,12 @@ class WooCommerce {
 				if ( empty( $cc_code ) ) {
 					throw new \Exception( 'Coupon code is required' );
 				}
-				// Note: wc_get_coupon_id_by_code + save is not atomic; a duplicate code
-				// inserted concurrently between these two calls would result in two coupons
-				// sharing a code. WooCommerce resolves this by using the most-recent one.
-				// No mutex is available at the WP/PHP level; this is an accepted limitation.
-				$cc_existing = wc_get_coupon_id_by_code( $cc_code );
+				if ( isset( $args['discount_type'] ) && ! in_array( $args['discount_type'], [ 'percent', 'fixed_cart', 'fixed_product' ], true ) ) {
+					return Envelope::error( 'invalid_args', 'discount_type must be percent, fixed_cart or fixed_product.', [ 'field' => 'discount_type' ] );
+				}
+				// The check and the save are not one step: two calls at the same moment can
+				// both pass and create two coupons with one code.
+				$cc_existing = self::coupon_code_holder( $cc_code );
 				if ( $cc_existing ) {
 					return Envelope::error( 'conflict', sprintf( 'A coupon with code "%s" already exists (id %d).', $cc_code, $cc_existing ), [ 'code' => $cc_code, 'existing_id' => (int) $cc_existing ] );
 				}
@@ -2402,7 +2537,7 @@ class WooCommerce {
 				$cc_coupon->set_code( $cc_code );
 				$cc_coupon->set_discount_type( 'fixed_cart' ); // explicit default; WC default matches but we make it clear
 				self::apply_coupon_fields( $cc_coupon, $args );
-				$cc_new_id = $cc_coupon->save();
+				$cc_new_id = self::save_coupon_exact( $cc_coupon );
 				if ( ! $cc_new_id ) {
 					throw new \Exception( 'Failed to create coupon' );
 				}
@@ -2442,9 +2577,13 @@ class WooCommerce {
 				// uniqueness pre-check as the legacy handler). Arrays go
 				// through as-is; verifier uses strict equality (see json-diff
 				// caveat comment below for product_ids ordering).
+				// The coupon's own type may be sent back unchanged, also one another plugin added.
+				if ( isset( $args['discount_type'] ) && ! in_array( $args['discount_type'], [ 'percent', 'fixed_cart', 'fixed_product' ], true ) && $args['discount_type'] !== $uc_coupon->get_discount_type( 'edit' ) ) {
+					return Envelope::error( 'invalid_args', 'discount_type must be percent, fixed_cart or fixed_product. Nothing was changed.', [ 'field' => 'discount_type' ] );
+				}
 				$uc_requested = [];
 				if ( isset( $args['code'] ) )                 $uc_requested['code']                    = strtolower( sanitize_text_field( (string) $args['code'] ) );
-				if ( isset( $args['discount_type'] ) )        $uc_requested['discount_type']           = in_array( $args['discount_type'], [ 'percent', 'fixed_cart', 'fixed_product' ], true ) ? $args['discount_type'] : null;
+				if ( isset( $args['discount_type'] ) && in_array( $args['discount_type'], [ 'percent', 'fixed_cart', 'fixed_product' ], true ) ) $uc_requested['discount_type'] = $args['discount_type'];
 				if ( isset( $args['amount'] ) )               $uc_requested['amount']                  = sanitize_text_field( (string) $args['amount'] );
 				if ( isset( $args['description'] ) )          $uc_requested['description']             = wp_kses_post( (string) $args['description'] );
 				if ( isset( $args['usage_limit'] ) )          $uc_requested['usage_limit']             = (int) $args['usage_limit'];
@@ -2487,7 +2626,7 @@ class WooCommerce {
 
 				// Uniqueness pre-check for code (matches legacy handler).
 				if ( isset( $uc_requested['code'] ) ) {
-					$existing = wc_get_coupon_id_by_code( $uc_requested['code'] );
+					$existing = self::coupon_code_holder( $uc_requested['code'], (int) $uc_coupon->get_id() );
 					if ( $existing && $existing !== $uc_coupon->get_id() ) {
 						return Envelope::error( 'conflict', sprintf( 'A coupon with code "%s" already exists (id %d).', $uc_requested['code'], $existing ), [ 'code' => $uc_requested['code'], 'existing_id' => (int) $existing ] );
 					}
@@ -2530,7 +2669,7 @@ class WooCommerce {
 					$uc_coupon->set_code( $uc_requested['code'] );
 				}
 				self::apply_coupon_fields( $uc_coupon, $args );
-				$uc_coupon->save();
+				self::save_coupon_exact( $uc_coupon );
 				wp_cache_delete( $uc_id, 'posts' );
 
 				// Re-read AFTER
@@ -2906,10 +3045,6 @@ class WooCommerce {
 	}
 
 	/**
-	 * Sanitize an incoming address payload (billing or shipping) to the WC-expected shape.
-	 * Only the address keys WC recognises are kept — arbitrary caller input is dropped.
-	 */
-	/**
 	 * Serialize a WC product's attributes ([slug => WC_Product_Attribute])
 	 * into a plain-array snapshot so the storage round-trip through the
 	 * undo envelope preserves position/visible/variation/options exactly.
@@ -2942,11 +3077,6 @@ class WooCommerce {
 	}
 
 	/**
-	 * A hash of what a product, variation, coupon or order looks like now, or of a product's
-	 * attribute set. A tool stores it with its undo token so the undo can tell whether the item
-	 * was edited since. '' when the item cannot be read.
-	 */
-	/**
 	 * Order meta WooCommerce itself writes during routine processing (emails sent,
 	 * stock and sales recorded, coupon holds, cart hashes, editor locks). Left out of
 	 * the order undo fingerprint so those saves do not count as a later edit.
@@ -2971,6 +3101,11 @@ class WooCommerce {
 		return array_map( 'intval', (array) $ids );
 	}
 
+	/**
+	 * A hash of what a product, variation, coupon or order looks like now, or of a product's
+	 * attribute set. A tool stores it with its undo token so the undo can tell whether the item
+	 * was edited since. '' when the item cannot be read.
+	 */
 	public static function undo_fingerprint( $kind, $id ) {
 		$id = (int) $id;
 		if ( $id <= 0 ) {
@@ -3063,9 +3198,13 @@ class WooCommerce {
 	 * ID of a coupon that uses this code in any status but trash (WooCommerce's own lookup only
 	 * sees published coupons). 0 when the code is free.
 	 */
-	public static function coupon_code_holder( $code ) {
+	public static function coupon_code_holder( $code, $except_id = 0 ) {
 		global $wpdb;
-		return (int) $wpdb->get_var( $wpdb->prepare( "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'shop_coupon' AND post_title = %s AND post_status IN ( 'publish', 'draft', 'pending', 'private', 'future' ) ORDER BY ID DESC LIMIT 1", (string) $code ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- a live read for the undo check
+		// WordPress stores a title with its ampersands encoded, so both spellings are looked for.
+		$titles = array_values( array_unique( [ (string) $code, wp_kses_normalize_entities( (string) $code ) ] ) );
+		$marks  = implode( ', ', array_fill( 0, count( $titles ), '%s' ) );
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare -- the placeholder list is built from the number of titles
+		return (int) $wpdb->get_var( $wpdb->prepare( "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'shop_coupon' AND post_title IN ( {$marks} ) AND post_status IN ( 'publish', 'draft', 'pending', 'private', 'future' ) AND ID <> %d ORDER BY ID DESC LIMIT 1", array_merge( $titles, [ (int) $except_id ] ) ) );
 	}
 
 	/**
@@ -3122,6 +3261,10 @@ class WooCommerce {
 		return $out;
 	}
 
+	/**
+	 * Sanitize an incoming address payload (billing or shipping) to the WC-expected shape.
+	 * Only the address keys WC recognises are kept — arbitrary caller input is dropped.
+	 */
 	private static function sanitize_address_fields( array $address ): array {
 		$allowed = [ 'first_name', 'last_name', 'company', 'address_1', 'address_2', 'city', 'state', 'postcode', 'country', 'email', 'phone' ];
 		$out = [];
@@ -3199,10 +3342,6 @@ class WooCommerce {
 	}
 
 	/**
-	 * Return the order's current billing or shipping address as an associative array —
-	 * used by wc_update_order to merge partial address updates with existing values.
-	 */
-	/**
 	 * Why an order's status must not be changed by these tools, or null.
 	 * Subscriptions share the order classes but are not orders.
 	 *
@@ -3219,6 +3358,10 @@ class WooCommerce {
 		return null;
 	}
 
+	/**
+	 * Return the order's current billing or shipping address as an associative array —
+	 * used by wc_update_order to merge partial address updates with existing values.
+	 */
 	private static function current_address( \WC_Order $order, string $type ): array {
 		$getter_prefix = 'get_' . $type . '_';
 		return [
@@ -3472,7 +3615,51 @@ class WooCommerce {
 		return '';
 	}
 
+	/**
+	 * A stock quantity without manage_stock means "manage stock": WooCommerce drops the
+	 * quantity of a variation that does not manage its own stock.
+	 */
+	private static function with_stock_managed( array $fields ) {
+		if ( isset( $fields['manage_stock'] ) && null !== self::bool_arg( $fields['manage_stock'] ) ) {
+			$fields['manage_stock'] = self::bool_arg( $fields['manage_stock'] );
+		}
+		if ( isset( $fields['stock_quantity'] ) && null !== self::clean_stock( $fields['stock_quantity'] ) && ! isset( $fields['manage_stock'] ) ) {
+			$fields['manage_stock'] = true;
+		}
+		return $fields;
+	}
+
+	/** True or false for a yes/no argument in any common spelling; null for anything else. */
+	private static function bool_arg( $value ) {
+		if ( is_bool( $value ) ) {
+			return $value;
+		}
+		if ( is_int( $value ) && ( 0 === $value || 1 === $value ) ) {
+			return 1 === $value;
+		}
+		if ( is_string( $value ) && '' !== trim( $value ) ) {
+			return filter_var( trim( $value ), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE );
+		}
+		return null;
+	}
+
+	/** Why a variation's stock fields cannot be applied, or '' when they can. */
+	private static function stock_fields_error( array $fields ) {
+		if ( ! isset( $fields['manage_stock'] ) ) {
+			return '';
+		}
+		$manage = self::bool_arg( $fields['manage_stock'] );
+		if ( null === $manage ) {
+			return 'manage_stock must be true or false. A variation that should follow its parent product gets manage_stock false.';
+		}
+		if ( false === $manage && isset( $fields['stock_quantity'] ) ) {
+			return 'stock_quantity cannot be set with manage_stock false: a variation keeps a quantity only while it manages its own stock.';
+		}
+		return '';
+	}
+
 	private static function apply_variation_fields( \WC_Product_Variation $variation, array $args ) {
+		$args = self::with_stock_managed( $args );
 		if ( isset( $args['attributes'] ) ) {
 			$variation->set_attributes( self::parse_variation_attributes( $args['attributes'] ) );
 		}

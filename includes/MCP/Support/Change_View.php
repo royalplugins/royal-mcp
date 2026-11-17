@@ -40,6 +40,24 @@ class Change_View {
 		'wc_delete_coupon_trash'    => 'wc_delete_coupon',
 	];
 
+	/**
+	 * Whether a changed field holds a person's contact details: billing / shipping fields,
+	 * a customer note, names, emails, phone numbers, postal address parts, a commenter's
+	 * email, IP or browser. The key may be dotted (billing.email) or plain (customer_note).
+	 *
+	 * @param string $key Field key or hint.
+	 */
+	public static function is_contact_field( $key ) {
+		$k = strtolower( (string) $key );
+		if ( '' === $k ) {
+			return false;
+		}
+		if ( 1 === preg_match( '/^(billing|shipping)[._]/', $k ) ) {
+			return true;
+		}
+		return 1 === preg_match( '/(^|[._])(customer_note|first_name|last_name|full_name|email|user_email|phone|mobile|address|address_1|address_2|postcode|zip|comment_author_email|comment_author_ip|comment_author_url|comment_agent)$/', $k );
+	}
+
 	/** Snapshot fields never shown: commenter contact and device details. */
 	const HIDDEN_FIELDS = [ 'comment_author_email', 'comment_author_IP', 'comment_agent' ];
 
@@ -127,11 +145,21 @@ class Change_View {
 			case 'elementor_add_widget':
 			case 'elementor_rebuild_post_content':
 				return [ [ 'edit_post', $id( 'post_id' ) ] ];
+			case 'elementor_rebuild_post_content_bulk':
+				return [ [ 'edit_posts' ] ];
 			case 'divi_replace_image':
 			case 'divi_import_template':
 				return [ [ 'edit_post', $id( 'post_id' ) ?: $id( 'target_post_id' ) ] ];
 			case 'wp_update_media':
 				return [ [ 'edit_post', $id( 'media_id' ) ] ];
+			case 'wp_set_featured_image':
+			case 'wp_add_post_terms':
+				return [ [ 'edit_post', $id( 'post_id' ) ] ];
+			case 'wp_create_term':
+				return [ [ 'edit_term', $id( 'term_id' ) ] ];
+			case 'wp_upload_media':
+			case 'wp_upload_media_from_url':
+				return [ [ 'edit_post', $id( 'attachment_id' ) ] ];
 			case 'wp_delete_post_force':
 				// The post is gone; changes are only ever listed to the user who
 				// made them, who needs delete rights for that post type.
@@ -156,6 +184,10 @@ class Change_View {
 				return [ [ 'manage_options' ] ];
 			case 'wp_update_menu_item':
 			case 'wp_delete_menu_item':
+			case 'wp_delete_menu':
+			case 'wp_update_global_styles':
+			case 'wp_update_block_template':
+			case 'wp_update_theme_design':
 			case 'wp_reorder_menu_items':
 			case 'wp_update_theme_mod':
 			case 'wp_update_widget':
@@ -247,6 +279,62 @@ class Change_View {
 		return [ 'type' => 'none', 'label' => __( 'No MCP connection (WP-CLI or another plugin)', 'royal-mcp' ) ];
 	}
 
+	/** Longest pause, in seconds, between two changes of one connection that still belong to the same group. */
+	const GROUP_GAP = 1800;
+
+	/**
+	 * Changes put into groups: one group is one connection's run of changes by one user, with
+	 * no pause longer than GROUP_GAP between them. Nothing is stored; the groups are worked out
+	 * from each change's own time, user and connection.
+	 *
+	 * @param array $changes Changes from Undo_Store::all_changes(), newest first.
+	 * @param int   $gap     Longest pause inside a group, in seconds.
+	 * @return array<int, array{user_id:int, connection:array, from:int, to:int, count:int, statuses:array<string,int>, changes:array}>
+	 */
+	public static function groups( array $changes, $gap = self::GROUP_GAP ) {
+		$gap     = max( 0, (int) $gap );
+		$changes = array_values( array_filter( $changes, 'is_array' ) );
+		// Newest first, whatever order the list came in: the grouping below relies on it.
+		usort( $changes, static function ( $a, $b ) {
+			return (int) ( $b['created_at'] ?? 0 ) <=> (int) ( $a['created_at'] ?? 0 );
+		} );
+		$groups = [];
+		$open   = []; // connection key => index of the group that is still collecting
+		foreach ( $changes as $change ) {
+			$via  = isset( $change['via'] ) && is_array( $change['via'] ) ? $change['via'] : [];
+			if ( isset( $via['client_id'] ) && ! is_scalar( $via['client_id'] ) ) {
+				$via['client_id'] = '';
+			}
+			$time = (int) ( $change['created_at'] ?? 0 );
+			// The key follows the connection as it is named in the heading, so one heading is one group.
+			$conn = self::connection( $via );
+			$key  = (int) ( $change['user_id'] ?? 0 ) . '|' . (string) $conn['type'] . '|' . (string) ( $conn['client_id'] ?? '' );
+			// The list runs from new to old, so a change joins its connection's group when it is close to that group's oldest one.
+			if ( isset( $open[ $key ] ) && $groups[ $open[ $key ] ]['from'] - $time <= $gap ) {
+				$i = $open[ $key ];
+			} else {
+				$i            = count( $groups );
+				$open[ $key ] = $i;
+				$groups[ $i ] = [
+					'user_id'    => (int) ( $change['user_id'] ?? 0 ),
+					'connection' => $conn,
+					'from'       => $time,
+					'to'         => $time,
+					'count'      => 0,
+					'statuses'   => [],
+					'changes'    => [],
+				];
+			}
+			$status                            = self::status( $change );
+			$groups[ $i ]['from']              = min( $groups[ $i ]['from'], $time );
+			$groups[ $i ]['to']                = max( $groups[ $i ]['to'], $time );
+			$groups[ $i ]['count']++;
+			$groups[ $i ]['statuses'][ $status ] = ( $groups[ $i ]['statuses'][ $status ] ?? 0 ) + 1;
+			$groups[ $i ]['changes'][]         = $change;
+		}
+		return $groups;
+	}
+
 	/** Expired, undone, or still active. */
 	public static function status( array $change ) {
 		if ( (int) ( $change['expires_at'] ?? 0 ) <= time() ) {
@@ -261,8 +349,40 @@ class Change_View {
 	 * @param array $change     Snapshot from Undo_Store::all_changes().
 	 * @param bool  $with_token Include the undo token (only for the user who made the change).
 	 */
+	/**
+	 * Whether the item a create change made has since been deleted for good (nothing left to undo).
+	 * A trashed post still counts as there: its undo can still act on it.
+	 *
+	 * @param array $change Snapshot.
+	 */
+	public static function created_item_gone( array $change ) {
+		$t  = (array) ( $change['target'] ?? [] );
+		$op = (string) ( $change['op'] ?? '' );
+		switch ( $op ) {
+			case 'wp_create_post_trash':
+			case 'wp_publish_and_launch':
+				return ! empty( $t['post_id'] ) && ! get_post( (int) $t['post_id'] );
+			case 'wp_upload_media':
+			case 'wp_upload_media_from_url':
+				return ! empty( $t['attachment_id'] ) && ! get_post( (int) $t['attachment_id'] );
+			case 'wc_create_product':
+				return ! empty( $t['product_id'] ) && ! get_post( (int) $t['product_id'] );
+			case 'wc_create_coupon':
+				return ! empty( $t['coupon_id'] ) && ! get_post( (int) $t['coupon_id'] );
+			case 'wp_create_comment':
+				return ! empty( $t['comment_id'] ) && ! get_comment( (int) $t['comment_id'] );
+			case 'wp_create_term':
+				return ! empty( $t['term_id'] ) && ! get_term( (int) $t['term_id'] );
+		}
+		return false;
+	}
+
 	public static function summary( array $change, $with_token ) {
 		$status = self::status( $change );
+		$gone   = 'active' === $status && self::created_item_gone( $change );
+		if ( $gone ) {
+			$status = 'gone';
+		}
 		$out    = [
 			'change_id'     => (string) ( $change['change_id'] ?? '' ),
 			'time'          => gmdate( 'c', (int) ( $change['created_at'] ?? 0 ) ),
@@ -275,6 +395,9 @@ class Change_View {
 			'undo_possible' => 'active' === $status,
 			'expires_at'    => gmdate( 'c', (int) ( $change['expires_at'] ?? 0 ) ),
 		];
+		if ( $gone ) {
+			$out['undo_note'] = 'What this change created was deleted permanently since, so there is nothing to undo.';
+		}
 		if ( ! empty( $change['undone_at'] ) ) {
 			$out['undone_at'] = gmdate( 'c', (int) $change['undone_at'] );
 		} elseif ( ! empty( $change['partial_undo'] ) ) {

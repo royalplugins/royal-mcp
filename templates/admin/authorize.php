@@ -121,6 +121,26 @@ $royal_mcp_redirect_host = isset( $rmcp_oauth['redirect_host'] ) ? $rmcp_oauth['
             font-size: 12px;
             word-break: break-all;
         }
+        .auth-access {
+            border: 1px solid #dcdcde;
+            border-radius: 6px;
+            padding: 10px 14px;
+            margin: 0 0 16px;
+        }
+        .auth-access legend {
+            font-weight: 600;
+            padding: 0 4px;
+        }
+        .auth-access label {
+            display: block;
+            margin: 6px 0;
+            font-size: 14px;
+        }
+        .auth-access-note {
+            font-size: 12px;
+            color: #646970;
+            margin: 6px 0 0;
+        }
         .auth-buttons {
             display: flex;
             gap: 12px;
@@ -207,6 +227,34 @@ $royal_mcp_redirect_host = isset( $rmcp_oauth['redirect_host'] ) ? $rmcp_oauth['
             <input type="hidden" name="code_challenge_method" value="<?php echo esc_attr( $rmcp_oauth['code_challenge_method'] ); ?>">
             <input type="hidden" name="state" value="<?php echo esc_attr( $rmcp_oauth['state'] ); ?>">
             <input type="hidden" name="scope" value="<?php echo esc_attr( $rmcp_oauth['scope'] ); ?>">
+            <?php if ( ! empty( $rmcp_oauth['resource'] ) ) : ?>
+            <input type="hidden" name="resource" value="<?php echo esc_attr( $rmcp_oauth['resource'] ); ?>">
+            <?php endif; ?>
+
+            <?php
+            $royal_mcp_level  = isset( $rmcp_oauth['access_level'] ) ? (string) $rmcp_oauth['access_level'] : 'full';
+            $royal_mcp_levels = [
+                'full'        => __( 'Full: read and change the site, as your account allows', 'royal-mcp' ),
+                'drafts-only' => __( 'Drafts only: read, and write drafts; nothing goes live', 'royal-mcp' ),
+                'read-only'   => __( 'Read-only: read, change nothing', 'royal-mcp' ),
+            ];
+            ?>
+            <?php if ( ! empty( $rmcp_oauth['can_set_access'] ) ) : ?>
+            <fieldset class="auth-access">
+                <legend><?php esc_html_e( 'Access for this application', 'royal-mcp' ); ?></legend>
+                <?php foreach ( $royal_mcp_levels as $royal_mcp_value => $royal_mcp_text ) : ?>
+                <label><input type="radio" name="access_level" value="<?php echo esc_attr( $royal_mcp_value ); ?>" <?php checked( $royal_mcp_level, $royal_mcp_value ); ?>> <?php echo esc_html( $royal_mcp_text ); ?></label>
+                <?php endforeach; ?>
+                <p class="auth-access-note"><?php esc_html_e( 'Applies to everyone who connects this application. You can change it later under Royal MCP > Connections.', 'royal-mcp' ); ?></p>
+            </fieldset>
+            <?php else : ?>
+            <p class="auth-access-note">
+                <?php
+                /* translators: %s: access level description, e.g. "Read-only: read, change nothing" */
+                echo esc_html( sprintf( __( 'Access set by the site administrator: %s', 'royal-mcp' ), $royal_mcp_levels[ $royal_mcp_level ] ?? $royal_mcp_levels['full'] ) );
+                ?>
+            </p>
+            <?php endif; ?>
 
             <div class="auth-buttons">
                 <button type="submit" name="authorize_action" value="deny" class="btn-deny">

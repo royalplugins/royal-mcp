@@ -38,6 +38,7 @@ class Block_Tools {
 		'wp_replace_text_in_blocks', 'wp_update_block_attributes',
 		'wp_list_synced_patterns', 'wp_get_synced_pattern', 'wp_create_synced_pattern', 'wp_update_synced_pattern',
 		'wp_get_global_styles', 'wp_list_block_templates', 'wp_get_block_template',
+		'wp_update_global_styles', 'wp_update_block_template',
 	];
 
 	/** wp_list_block_types returns at most this many types per call when include_attributes is on. */
@@ -81,6 +82,10 @@ class Block_Tools {
 				return self::update_pattern( $args );
 			case 'wp_get_global_styles':
 				return self::global_styles();
+			case 'wp_update_global_styles':
+				return self::update_global_styles( $args );
+			case 'wp_update_block_template':
+				return self::update_template( $args );
 			case 'wp_list_block_templates':
 				return self::list_templates( $args );
 			case 'wp_get_block_template':
@@ -262,6 +267,194 @@ class Block_Tools {
 		];
 	}
 
+	/* ------------------------------------------------------------------
+	 *  Site Editor writes (through WordPress's own REST controllers, so its
+	 *  permission checks, validation and filtering apply)
+	 * ------------------------------------------------------------------ */
+
+	/** Whether an array is a list (keys 0..n-1 in order). */
+	private static function is_list( array $a ) {
+		return [] === $a || array_keys( $a ) === range( 0, count( $a ) - 1 );
+	}
+
+	/** JSON-shaped merge: objects merge key by key, lists and scalars are replaced. */
+	private static function merge_json( $base, $over ) {
+		if ( ! is_array( $base ) || ! is_array( $over ) || ( [] !== $over && self::is_list( $over ) ) ) {
+			return $over;
+		}
+		foreach ( $over as $k => $v ) {
+			$base[ $k ] = array_key_exists( $k, $base ) ? self::merge_json( $base[ $k ], $v ) : $v;
+		}
+		return $base;
+	}
+
+	/** Paths of the requested leaf values that are not in $saved as given. */
+	private static function not_kept( $asked, $saved, $prefix = '' ) {
+		if ( ! is_array( $asked ) || ( [] !== $asked && self::is_list( $asked ) ) ) {
+			return $asked === $saved ? [] : [ ltrim( $prefix, '.' ) ];
+		}
+		$out = [];
+		foreach ( $asked as $k => $v ) {
+			$out = array_merge( $out, self::not_kept( $v, is_array( $saved ) && array_key_exists( $k, $saved ) ? $saved[ $k ] : null, $prefix . '.' . $k ) );
+		}
+		return $out;
+	}
+
+	private static function rest_write( $method, $route, array $params ) {
+		$req = new \WP_REST_Request( $method, $route );
+		foreach ( $params as $k => $v ) {
+			$req->set_param( $k, $v );
+		}
+		$res = rest_do_request( $req );
+		if ( $res->is_error() ) {
+			$err = $res->as_error();
+			throw new \Exception( esc_html( $err->get_error_message() ) );
+		}
+		return $res->get_data();
+	}
+
+	private static function update_global_styles( array $args ) {
+		self::require_block_theme();
+		if ( ! current_user_can( 'edit_theme_options' ) ) {
+			throw new \Exception( 'You do not have permission to change global styles (edit_theme_options).' );
+		}
+		$id   = class_exists( '\WP_Theme_JSON_Resolver' ) ? (int) \WP_Theme_JSON_Resolver::get_user_global_styles_post_id() : 0;
+		$post = $id > 0 ? get_post( $id ) : null;
+		if ( ! $post ) {
+			throw new \Exception( 'The site has no global styles record to change.' );
+		}
+		$asked = [];
+		foreach ( [ 'styles', 'settings' ] as $part ) {
+			if ( isset( $args[ $part ] ) ) {
+				if ( ( ! is_array( $args[ $part ] ) && ! is_object( $args[ $part ] ) ) || ( is_array( $args[ $part ] ) && [] !== $args[ $part ] && self::is_list( $args[ $part ] ) ) ) {
+					throw new \Exception( esc_html( $part ) . ' must be an object in theme.json shape, e.g. {"color":{"background":"#ffffff"}}.' );
+				}
+				$asked[ $part ] = (array) json_decode( (string) wp_json_encode( $args[ $part ] ), true );
+			}
+		}
+		if ( ! $asked ) {
+			throw new \Exception( 'Pass styles, settings or both (objects in theme.json shape, e.g. {"color":{"background":"#fff"}}).' );
+		}
+		$replace = ! empty( $args['replace'] );
+		$prior   = (string) $post->post_content;
+		$current = json_decode( $prior, true );
+		$current = is_array( $current ) ? $current : [];
+		$params  = [];
+		foreach ( $asked as $part => $value ) {
+			$params[ $part ] = $replace ? $value : self::merge_json( $current[ $part ] ?? [], $value );
+		}
+		if ( ! empty( $args['dry_run'] ) ) {
+			return [ 'state' => 'dry_run', 'would_execute' => true, 'global_styles_id' => $id, 'would_write' => $params ];
+		}
+		self::rest_write( 'POST', '/wp/v2/global-styles/' . $id, $params );
+		clean_post_cache( $id );
+		$after   = get_post( $id );
+		$written = $after ? (string) $after->post_content : '';
+		$saved   = json_decode( $written, true );
+		$dropped = [];
+		foreach ( $asked as $part => $value ) {
+			$dropped = array_merge( $dropped, self::not_kept( $value, is_array( $saved ) ? ( $saved[ $part ] ?? null ) : null, $part ) );
+		}
+		$changed = json_decode( $written, true ) !== json_decode( $prior, true );
+		$undo    = ! $changed ? [] : \Royal_MCP\MCP\Undo_Store::store( [
+			'op'           => 'wp_update_global_styles',
+			'summary'      => sprintf( 'Put the global styles (record %d) back as they were.', $id ),
+			'target'       => [ 'post_id' => $id ],
+			'pre_op_state' => [ 'prior_content' => $prior, 'written_content' => $written ],
+		] );
+		$text = ! $changed ? 'Nothing changed: the global styles already had those values, or WordPress kept none of them' : sprintf( 'Updated the global styles (%s)', implode( ', ', array_keys( $asked ) ) );
+		if ( $dropped ) {
+			$text .= sprintf( '. WordPress did not keep %d value(s): %s', count( $dropped ), implode( ', ', array_slice( $dropped, 0, 10 ) ) );
+		}
+		return Envelope::success( $text . '.', [ 'global_styles_id' => $id, 'changed' => $changed, 'not_kept' => array_values( $dropped ) ], $undo );
+	}
+
+	private static function update_template( array $args ) {
+		self::require_block_theme();
+		$id   = isset( $args['id'] ) ? sanitize_text_field( (string) $args['id'] ) : '';
+		$type = isset( $args['type'] ) && 'wp_template_part' === $args['type'] ? 'wp_template_part' : 'wp_template';
+		$tpl  = '' !== $id ? get_block_template( $id, $type ) : null;
+		if ( ! $tpl ) {
+			throw new \Exception( 'Template not found. Use wp_list_block_templates for ids such as "twentytwentyfive//single", and pass type "wp_template_part" for template parts.' );
+		}
+		$pto = get_post_type_object( $type );
+		if ( ! $pto || ! current_user_can( $pto->cap->edit_posts ) ) {
+			throw new \Exception( 'You do not have permission to change templates.' );
+		}
+		$markup = self::markup_arg( $args );
+		self::require_good_markup( $markup );
+		$prior = (string) $tpl->content;
+		if ( $markup === $prior ) {
+			throw new \Exception( 'Nothing changed; the template already has that markup.' );
+		}
+		if ( ! empty( $args['dry_run'] ) ) {
+			return [ 'state' => 'dry_run', 'would_execute' => true, 'id' => (string) $tpl->id, 'customized_before' => 'custom' === $tpl->source, 'stats' => self::stats( parse_blocks( $markup ) ) ];
+		}
+		$route = ( 'wp_template_part' === $type ? '/wp/v2/template-parts/' : '/wp/v2/templates/' ) . $tpl->id;
+		self::rest_write( 'POST', $route, [ 'content' => $markup ] );
+		$after   = get_block_template( (string) $tpl->id, $type );
+		$written = $after ? (string) $after->content : '';
+		$undo    = \Royal_MCP\MCP\Undo_Store::store( [
+			'op'           => 'wp_update_block_template',
+			'summary'      => 'custom' === $tpl->source ? sprintf( 'Put template %s back as it was.', $tpl->id ) : sprintf( 'Remove the customisation of %s (back to the theme\'s file).', $tpl->id ),
+			'target'       => [ 'id' => (string) $tpl->id, 'type' => $type ],
+			'pre_op_state' => [ 'prior_content' => $prior, 'was_customized' => 'custom' === $tpl->source, 'written_content' => $written ],
+		] );
+		$kept = $written === $markup;
+		return Envelope::success(
+			sprintf( 'Updated %s %s%s%s.', 'wp_template_part' === $type ? 'template part' : 'template', $tpl->id, 'custom' === $tpl->source ? '' : ' (the theme\'s file is kept; this saves a customised copy)', $kept ? '' : '. WordPress changed some of the markup on save; read it back with wp_get_block_template' ),
+			[ 'id' => (string) $tpl->id, 'type' => $type, 'customized_before' => 'custom' === $tpl->source, 'markup_kept_as_sent' => $kept, 'stats' => self::stats( parse_blocks( $written ) ) ],
+			$undo
+		);
+	}
+
+	/**
+	 * Undo of the two Site Editor writes. Refuses (unless force) when the record was
+	 * changed after the write.
+	 *
+	 * @return array Result for the undo tool.
+	 */
+	public static function undo_site_editor( $op, array $snapshot, $force ) {
+		if ( ! current_user_can( 'edit_theme_options' ) ) {
+			throw new \Exception( 'edit_theme_options capability required to undo this operation.' );
+		}
+		$pre = is_array( $snapshot['pre_op_state'] ?? null ) ? $snapshot['pre_op_state'] : [];
+		if ( 'wp_update_global_styles' === $op ) {
+			$id   = (int) ( $snapshot['target']['post_id'] ?? 0 );
+			$post = $id > 0 ? get_post( $id ) : null;
+			if ( ! $post || 'wp_global_styles' !== $post->post_type ) {
+				throw new \Exception( 'The global styles record no longer exists.' );
+			}
+			if ( ! $force && (string) $post->post_content !== (string) ( $pre['written_content'] ?? '' ) ) {
+				throw new Tool_Refusal( 'edited_since_write', 'The global styles were changed after this operation, so undoing it would also remove those later changes. Pass force: true to put the earlier styles back anyway.' );
+			}
+			$res = wp_update_post( [ 'ID' => $id, 'post_content' => wp_slash( (string) ( $pre['prior_content'] ?? '' ) ) ], true );
+			if ( is_wp_error( $res ) ) {
+				throw new \Exception( esc_html( $res->get_error_message() ) );
+			}
+			if ( class_exists( '\WP_Theme_JSON_Resolver' ) ) {
+				\WP_Theme_JSON_Resolver::clean_cached_data();
+			}
+			return [ 'undone' => true, 'op' => $op, 'restored' => true, 'global_styles_id' => $id ];
+		}
+		$id   = (string) ( $snapshot['target']['id'] ?? '' );
+		$type = 'wp_template_part' === ( $snapshot['target']['type'] ?? '' ) ? 'wp_template_part' : 'wp_template';
+		$tpl  = '' !== $id ? get_block_template( $id, $type ) : null;
+		if ( ! $tpl ) {
+			throw new \Exception( 'The template no longer exists.' );
+		}
+		if ( ! $force && (string) $tpl->content !== (string) ( $pre['written_content'] ?? '' ) ) {
+			throw new Tool_Refusal( 'edited_since_write', sprintf( 'Template %s was changed after this operation, so undoing it would also remove those later changes. Pass force: true to put the earlier version back anyway.', $id ) );
+		}
+		$route = ( 'wp_template_part' === $type ? '/wp/v2/template-parts/' : '/wp/v2/templates/' ) . $id;
+		if ( empty( $pre['was_customized'] ) && 'custom' === $tpl->source && ! empty( $tpl->wp_id ) ) {
+			self::rest_write( 'DELETE', $route, [ 'force' => true ] );
+			return [ 'undone' => true, 'op' => $op, 'restored' => true, 'id' => $id, 'back_to_theme_file' => true ];
+		}
+		self::rest_write( 'POST', $route, [ 'content' => (string) ( $pre['prior_content'] ?? '' ) ] );
+		return [ 'undone' => true, 'op' => $op, 'restored' => true, 'id' => $id ];
+	}
+
 	private static function list_templates( array $args ) {
 		self::require_block_theme();
 		$types = isset( $args['type'] ) && in_array( $args['type'], [ 'wp_template', 'wp_template_part' ], true ) ? [ (string) $args['type'] ] : [ 'wp_template', 'wp_template_part' ];
@@ -309,7 +502,7 @@ class Block_Tools {
 		$post   = self::editable_post( $args );
 		$check  = self::require_good_markup( self::markup_arg( $args ) );
 		$new    = self::named( $check['parsed'] );
-		$tree   = parse_blocks( (string) $post->post_content );
+		$tree   = self::parse_keeping_objects( (string) $post->post_content );
 		$at     = isset( $args['at'] ) ? (string) $args['at'] : 'end';
 		$target = isset( $args['path'] ) && '' !== (string) $args['path'] ? self::parse_path( $args['path'] ) : [];
 		$tree   = self::insert_at( $tree, $at, $target, $new );
@@ -319,7 +512,7 @@ class Block_Tools {
 	private static function replace_tool( array $args ) {
 		$post  = self::editable_post( $args );
 		$path  = self::parse_path( $args['path'] ?? '' );
-		$tree  = parse_blocks( (string) $post->post_content );
+		$tree  = self::parse_keeping_objects( (string) $post->post_content );
 		$block = self::expect_block( $tree, $path, $args );
 		$check = self::require_good_markup( self::markup_arg( $args ) );
 		$new   = self::named( $check['parsed'] );
@@ -330,7 +523,7 @@ class Block_Tools {
 	private static function move_tool( array $args ) {
 		$post   = self::editable_post( $args );
 		$path   = self::parse_path( $args['path'] ?? '' );
-		$tree   = parse_blocks( (string) $post->post_content );
+		$tree   = self::parse_keeping_objects( (string) $post->post_content );
 		$block  = self::expect_block( $tree, $path, $args );
 		$at     = isset( $args['at'] ) ? (string) $args['at'] : 'end';
 		$target = isset( $args['target_path'] ) && '' !== (string) $args['target_path'] ? self::parse_path( $args['target_path'] ) : [];
@@ -349,7 +542,7 @@ class Block_Tools {
 	private static function delete_tool( array $args ) {
 		$post  = self::editable_post( $args );
 		$path  = self::parse_path( $args['path'] ?? '' );
-		$tree  = parse_blocks( (string) $post->post_content );
+		$tree  = self::parse_keeping_objects( (string) $post->post_content );
 		$block = self::expect_block( $tree, $path, $args );
 		$tree  = self::remove_at( $tree, $path );
 		return self::write_tree( $post, $tree, 'wp_delete_block', sprintf( 'Deleted %s at %s', $block['blockName'], implode( '.', $path ) ), [ 'deleted' => (string) $block['blockName'] ] );
@@ -368,7 +561,7 @@ class Block_Tools {
 		if ( $find === $replace ) {
 			throw new \Exception( 'find and replace are identical; nothing to do.' );
 		}
-		$tree  = parse_blocks( (string) $post->post_content );
+		$tree  = self::parse_keeping_objects( (string) $post->post_content );
 		$scope = isset( $args['path'] ) && '' !== (string) $args['path'] ? self::parse_path( $args['path'] ) : [];
 		if ( $scope && null === self::block_at( $tree, $scope ) ) {
 			throw new \Exception( 'No block at path ' . implode( '.', $scope ) . '.' );
@@ -424,7 +617,7 @@ class Block_Tools {
 	private static function attributes_tool( array $args ) {
 		$post  = self::editable_post( $args );
 		$path  = self::parse_path( $args['path'] ?? '' );
-		$tree  = parse_blocks( (string) $post->post_content );
+		$tree  = self::parse_keeping_objects( (string) $post->post_content );
 		$block = self::expect_block( $tree, $path, $args );
 		if ( empty( $args['attributes'] ) || ! is_array( $args['attributes'] ) ) {
 			throw new \Exception( 'attributes must be an object of attribute names and new values (null removes one).' );
@@ -459,7 +652,7 @@ class Block_Tools {
 					throw new \Exception( esc_html( $valid->get_error_message() ) );
 				}
 			}
-			$attrs[ $key ] = $value;
+			$attrs[ $key ] = self::restore_empty_objects( $value, $block['attrs'][ $key ] ?? null );
 		}
 		$tree = self::map_blocks( $tree, $path, static function ( array $b, array $p ) use ( $path, $attrs ) {
 			if ( $p === $path ) {
@@ -530,6 +723,62 @@ class Block_Tools {
 			throw new \Exception( 'The result would not read back as the same blocks (some markup contains block comments), so nothing was written. Check the markup with wp_validate_blocks.' );
 		}
 		return self::write( $post, [ 'post_content' => $content ], $tool, $what, $extra );
+	}
+
+	/**
+	 * parse_blocks(), with every empty JSON object of the markup kept as an object
+	 * (parse_blocks() reads {} as an empty array, which would be written back as []).
+	 * Block comments open in the same order parse_blocks() walks the tree.
+	 */
+	private static function parse_keeping_objects( $markup ) {
+		$markup = (string) $markup;
+		$tree   = parse_blocks( $markup );
+		if ( false === strpos( $markup, '{}' ) && ! preg_match( '/\{\s+\}/', $markup ) ) {
+			return $tree;
+		}
+		// WordPress's own block-comment pattern, closers included, so a closer that carries
+		// attributes is consumed whole and the openers line up with parse_blocks().
+		preg_match_all( '/<!--\s+(\/)?wp:[a-z][a-z0-9_-]*(?:\/[a-z][a-z0-9_-]*)?\s+(?:(\{(?:(?:[^}]+|}+(?=})|(?!}\s+\/?-->).)*+)?}\s+))?\/?-->/s', $markup, $m, PREG_SET_ORDER );
+		$shapes = [];
+		foreach ( $m as $match ) {
+			if ( '/' !== ( $match[1] ?? '' ) ) {
+				$shapes[] = isset( $match[2] ) && '' !== $match[2] ? json_decode( $match[2], false ) : null;
+			}
+		}
+		$i    = 0;
+		$walk = static function ( array $list ) use ( &$walk, &$i, $shapes ) {
+			foreach ( $list as $k => $b ) {
+				if ( empty( $b['blockName'] ) ) {
+					continue;
+				}
+				$shape = $shapes[ $i++ ] ?? null;
+				if ( is_object( $shape ) && is_array( $b['attrs'] ) ) {
+					foreach ( $b['attrs'] as $key => $value ) {
+						$list[ $k ]['attrs'][ $key ] = self::restore_empty_objects( $value, $shape->$key ?? null );
+					}
+				}
+				if ( ! empty( $b['innerBlocks'] ) ) {
+					$list[ $k ]['innerBlocks'] = $walk( (array) $b['innerBlocks'] );
+				}
+			}
+			return $list;
+		};
+		return $walk( $tree );
+	}
+
+	/** An empty array that was an empty object in $shape (at any depth) becomes an object again. */
+	private static function restore_empty_objects( $value, $shape ) {
+		if ( [] === $value ) {
+			return ( $shape instanceof \stdClass && [] === get_object_vars( $shape ) ) ? new \stdClass() : $value;
+		}
+		if ( ! is_array( $value ) ) {
+			return $value;
+		}
+		foreach ( $value as $k => $v ) {
+			$sub = is_object( $shape ) ? ( $shape->$k ?? null ) : ( is_array( $shape ) ? ( $shape[ $k ] ?? null ) : null );
+			$value[ $k ] = self::restore_empty_objects( $v, $sub );
+		}
+		return $value;
 	}
 
 	/**
@@ -687,7 +936,7 @@ class Block_Tools {
 		if ( null !== $limit ) {
 			return [ 'ok' => false, 'blocks' => 0, 'block_names' => [], 'unknown' => [], 'editor_only' => [], 'core_html_blocks' => 0, 'freeform_chars' => 0, 'broken_delimiters' => false, 'stable' => false, 'problems' => [ $limit ], 'parsed' => [] ];
 		}
-		$parsed   = parse_blocks( $markup );
+		$parsed   = self::parse_keeping_objects( $markup );
 		$registry = \WP_Block_Type_Registry::get_instance();
 		$names    = [];
 		$unknown  = [];
@@ -844,7 +1093,7 @@ class Block_Tools {
 					$own .= $chunk;
 				}
 			}
-			$out[] = [ $b['blockName'], (array) $b['attrs'], preg_replace( '/\s+/', ' ', trim( $own ) ), self::shape( (array) $b['innerBlocks'] ) ];
+			$out[] = [ $b['blockName'], (array) json_decode( (string) wp_json_encode( (array) $b['attrs'] ), true ), preg_replace( '/\s+/', ' ', trim( $own ) ), self::shape( (array) $b['innerBlocks'] ) ];
 		}
 		return $out;
 	}

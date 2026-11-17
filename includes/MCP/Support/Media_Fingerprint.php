@@ -157,10 +157,11 @@ class Media_Fingerprint {
 	 * SHA-256 of the stored file, cached against its size and modification
 	 * time. Null when the file is missing or larger than MAX_HASH_BYTES.
 	 *
-	 * @param int $attachment_id Attachment.
+	 * @param int  $attachment_id Attachment.
+	 * @param bool $may_cache     False when the caller may only read: the hash is worked out but not stored.
 	 * @return string|null
 	 */
-	public static function file_sha256( $attachment_id ) {
+	public static function file_sha256( $attachment_id, $may_cache = true ) {
 		$file = get_attached_file( (int) $attachment_id );
 		if ( ! $file || ! is_readable( $file ) ) {
 			return null;
@@ -178,18 +179,22 @@ class Media_Fingerprint {
 		if ( ! is_string( $hash ) ) {
 			return null;
 		}
-		update_post_meta( (int) $attachment_id, self::FILE_SHA_META, $hash );
-		update_post_meta( (int) $attachment_id, self::FILE_SHA_SIG_META, $sig );
+		// In read-only mode, or for a caller that may only read, nothing is written, not even this cache.
+		if ( $may_cache && ! \Royal_MCP\MCP\Server::read_only_mode() ) {
+			update_post_meta( (int) $attachment_id, self::FILE_SHA_META, $hash );
+			update_post_meta( (int) $attachment_id, self::FILE_SHA_SIG_META, $sig );
+		}
 		return $hash;
 	}
 
 	/**
 	 * File details for wp_get_media_item and wp_find_media.
 	 *
-	 * @param int $attachment_id Attachment.
+	 * @param int  $attachment_id Attachment.
+	 * @param bool $may_cache     Whether the file hash may be stored for next time.
 	 * @return array
 	 */
-	public static function details( $attachment_id ) {
+	public static function details( $attachment_id, $may_cache = true ) {
 		$attachment_id = (int) $attachment_id;
 		$file          = get_attached_file( $attachment_id );
 		$exists        = $file && file_exists( $file );
@@ -198,7 +203,7 @@ class Media_Fingerprint {
 			'file_size' => $size,
 			'width'     => null,
 			'height'    => null,
-			'sha256'    => $exists ? self::file_sha256( $attachment_id ) : null,
+			'sha256'    => $exists ? self::file_sha256( $attachment_id, $may_cache ) : null,
 		];
 		if ( ! $exists ) {
 			$details['file_note'] = 'The file for this attachment is missing from the uploads folder.';

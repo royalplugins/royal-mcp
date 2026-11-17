@@ -35,12 +35,6 @@ class Server_Card {
         return $response;
     }
 
-    /**
-     * Build the card (or return the cached version). Cache invalidation is
-     * time-based (5 min) plus manual — options-page save handlers can call
-     * delete_transient( self::CACHE_KEY ) when a change materially affects
-     * the card contents (e.g. webmcp_enabled toggle).
-     */
     /** Royal MCP's issuer path while another plugin owns the site-root sign-in documents, else ''. */
     private static function own_sign_in_path(): string {
         if ( '' === \Royal_MCP\OAuth\Server::namespace_issuer() || ! class_exists( '\Royal_MCP\Integrations\Coexistence_Check' )
@@ -50,6 +44,12 @@ class Server_Card {
         return (string) \Royal_MCP\OAuth\Server::namespace_issuer_path();
     }
 
+    /**
+     * Build the card (or return the cached version). Cache invalidation is
+     * time-based (5 min) plus manual — options-page save handlers can call
+     * delete_transient( self::CACHE_KEY ) when a change materially affects
+     * the card contents (e.g. webmcp_enabled toggle).
+     */
     public static function build_or_cached(): array {
         $cached = get_transient( self::CACHE_KEY );
         // A cached card built before another plugin took (or left) the site-root sign-in
@@ -118,7 +118,7 @@ class Server_Card {
             'capabilities'     => [
                 'tools'       => true,
                 'resources'   => true,
-                'prompts'     => false,
+                'prompts'     => true,
                 'completions' => false,
             ],
             'name'             => 'Royal MCP',
@@ -239,6 +239,10 @@ class Server_Card {
             'sv'              => 'sitevault',
             'updraftplus'     => 'updraftplus',
             'duplicator'      => 'duplicator',
+            'ai1wm'           => 'all-in-one-wp-migration',
+            'wpvivid'         => 'wpvivid-backuprestore',
+            'jetpack'         => 'jetpack-backup',
+            'backwpup'        => 'backwpup',
             'wpforms'         => 'wpforms',
             'formforge'       => 'formforge',
             'cf7'             => 'contact-form-7',

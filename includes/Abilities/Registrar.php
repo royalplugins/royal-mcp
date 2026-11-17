@@ -60,7 +60,14 @@ class Registrar {
 			'relevanssi_'  => 'relevanssi',
 			'ninjaforms_'  => 'ninja-forms',
 			'fluentform_'  => 'fluent-forms',
+			'formforge_'   => 'formforge',
+			'rafp_'        => 'royal-affiliate',
 			'mailpoet_'    => 'mailpoet',
+			'image_optimisation_' => 'image-optimisation',
+			'rsssl_'       => 'really-simple-security',
+			'wpo_'         => 'wp-optimize',
+			'wpmailsmtp_'  => 'wpmailsmtp',
+			'akismet_'     => 'akismet',
 		);
 	}
 
@@ -181,6 +188,22 @@ class Registrar {
 	 * Falls back to 'core' for names that don't match any known prefix.
 	 */
 	public static function dispatch_category( string $tool_name ): string {
+		// These share a prefix with tools other plugins add, so they are matched by their whole name.
+		$exact = array(
+			'ai1wm_get_backup_status'        => 'backup-status',
+			'wpvivid_get_backup_status'      => 'backup-status',
+			'jetpack_get_backup_status'      => 'backup-status',
+			'jetpack_get_stats'              => 'jetpack',
+			'jetpack_list_modules'           => 'jetpack',
+			'jetpack_set_module'             => 'jetpack',
+			'backwpup_get_backup_status'     => 'backup-status',
+			'rankmath_get_post_score'        => 'seo-reads',
+			'rankmath_get_404_logs'          => 'seo-reads',
+			'seobolt_get_search_performance' => 'seo-reads',
+		);
+		if ( isset( $exact[ $tool_name ] ) ) {
+			return $exact[ $tool_name ];
+		}
 		foreach ( self::prefix_to_category() as $prefix => $short_slug ) {
 			if ( strpos( $tool_name, $prefix ) === 0 ) {
 				return $short_slug;
@@ -252,6 +275,10 @@ class Registrar {
 			$struct = is_array( $result['structuredContent'] ?? null ) ? $result['structuredContent'] : [];
 			if ( ! isset( $struct['summary'] ) && '' !== $text && empty( $struct ) ) {
 				$struct['summary'] = $text;
+			}
+			// A skill is its text; this route returns the structured part only.
+			if ( '' !== $text && isset( $struct['skill'], $struct['sections'] ) && ! isset( $struct['text'] ) ) {
+				$struct['text'] = $text;
 			}
 			return map_deep( $struct, $clean );
 		}

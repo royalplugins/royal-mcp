@@ -43,7 +43,7 @@ class Elementor {
 		return [
 			[
 				'name'        => 'elementor_clone_page',
-				'description' => 'Duplicate an existing Elementor page or post as a new draft. Copies the full _elementor_data tree and regenerates every element ID to avoid duplicates. Preserves Container model, legacy section/column, and atomic widgets as-is. Returns the new post ID. The Elementor editor on the new page opens cleanly because IDs are unique within the document.',
+				'description' => 'Duplicate an existing Elementor page or post as a new draft. Copies the full _elementor_data tree and regenerates every element ID to avoid duplicates. Also copies the page template, excerpt, parent, order and slug (the draft keeps the slug; WordPress makes it unique when the copy is published). Preserves Container model, legacy section/column, and atomic widgets as-is. Returns the new post ID. The Elementor editor on the new page opens cleanly because IDs are unique within the document.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -56,7 +56,7 @@ class Elementor {
 			],
 			[
 				'name'        => 'elementor_replace_text',
-				'description' => 'Replace text in all text-bearing widget settings of an Elementor page. Walks the _elementor_data tree and substitutes matching strings in known text fields (heading title, text-editor content, button text, image caption, image alt / title on image + image-box + image-carousel + image-gallery + basic-gallery widgets, etc.). Case-sensitive by default. Classic and Elementor 4 (atomic) widgets alike. Response includes match count, an undo token, and a read-after-write verification block. Undo is refused while the page has been edited since (the token stays valid; force: true restores anyway). Optional dry_run=true reports match count without writing. Optional expected_count guards the write — aborts unless the actual match count equals this value. Optional sync_attachment_meta=true also updates the underlying WP media library _wp_attachment_image_alt postmeta so Elementor front-end renders (which read attachment metadata by default) reflect the new alt immediately without the user reopening the editor (sitewide blast radius — opt-in only). Note: _elementor_data stores text with HTML entities (& → &amp;, — → &mdash;, etc.); when 0 matches are returned and the search string contains special characters, try the HTML-entity-encoded form.',
+				'description' => 'Replace text in the text settings of every widget on one Elementor page (headings, text editor, buttons, image captions, alt and title text on image and gallery widgets, and similar), for classic and Elementor 4 (atomic) widgets. Case-sensitive unless case_insensitive is true. dry_run true reports the match count without writing; expected_count refuses the write unless the match count equals it. sync_attachment_meta true also updates the alt text stored on the media library image, which changes that image everywhere on the site (opt-in). Elementor stores text with HTML entities (&amp;, &mdash;), so when nothing matches and the search text has special characters, try the entity-encoded form. Returns the match count, an undo token and a read-after-write check. Undo is refused when the page was edited since (the token stays valid; force: true restores anyway).',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -246,27 +246,20 @@ class Elementor {
 			],
 			[
 				'name'        => 'elementor_rebuild_post_content_bulk',
-				'description' => 'Scan all posts with _elementor_data + empty post_content and rebuild them in batch. Fixes bulk SEO / search damage from prior clone operations that shipped without post_content. Pass dry_run=true to preview the count + first 20 candidate post IDs without writing. Batches up to limit posts per call (default 50, max 200). NO undo tokens emitted (bulk rebuild of empty content is generally not something users want to reverse — take a SiteVault snapshot beforehand if reversal capability matters). Cap: edit_posts to enter the tool; only posts the caller can edit are scanned and rebuilt.',
+				'description' => 'Find posts that have Elementor data but empty stored text (so search and SEO tools see nothing) and fill the text in from the Elementor layout, in batches. Pass dry_run=true to preview: it returns up to 200 candidates, the first 20 IDs, and may_be_more. A run repairs up to limit posts (default 50, max 200), lowest IDs first. A page that renders no text is listed under skipped with reason no_text_rendered and stays a candidate: pass after_id (the last_post_id of the reply) to go on past it. It only fills text that is empty; its undo token empties the stored text of the repaired pages again (pages edited since, or open in an editor, are left alone unless forced). Needs edit_posts; only posts the caller can edit are scanned and repaired.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
 						'dry_run'   => [ 'type' => 'boolean', 'description' => 'Default false. When true, report what would be repaired without writing.' ],
 						'limit'     => [ 'type' => 'integer', 'description' => 'Max posts to repair in this call. Default 50, max 200.' ],
 						'post_type' => [ 'type' => 'string', 'description' => 'Optional post_type filter (e.g. "page" or "post"). Default: all post types.' ],
+						'after_id'  => [ 'type' => 'integer', 'description' => 'Only posts with an ID above this one. Pass the last_post_id of the reply before to continue.' ],
 					],
 				],
 			],
 		];
 	}
 
-	/**
-	 * Execute an Elementor MCP tool.
-	 *
-	 * @param string $name Tool name.
-	 * @param array  $args Tool arguments.
-	 * @return mixed Result data.
-	 * @throws \Exception If tool fails.
-	 */
 	/**
 	 * What a post created by a tool looks like now (title, content, Elementor data,
 	 * modified time), so its undo can tell whether someone edited it since.
@@ -279,6 +272,14 @@ class Elementor {
 		return md5( $post->post_title . "\0" . $post->post_content . "\0" . (string) get_post_meta( $post->ID, '_elementor_data', true ) . "\0" . $post->post_modified_gmt );
 	}
 
+	/**
+	 * Execute an Elementor MCP tool.
+	 *
+	 * @param string $name Tool name.
+	 * @param array  $args Tool arguments.
+	 * @return mixed Result data.
+	 * @throws \Exception If tool fails.
+	 */
 	public static function execute_tool( $name, $args ) {
 		// Umbrella cap check runs BEFORE is_available for anti-fingerprint: unprivileged
 		// callers get "no permission" not "Elementor is not active", so plugin presence
@@ -393,10 +394,15 @@ class Elementor {
 
 		// Create the new post.
 		$new_post_data = [
-			'post_title'  => $new_title,
-			'post_status' => $new_status,
-			'post_type'   => $source->post_type,
-			'post_author' => get_current_user_id() ?: $source->post_author,
+			'post_title'   => $new_title,
+			'post_status'  => $new_status,
+			'post_type'    => $source->post_type,
+			'post_author'  => get_current_user_id() ?: $source->post_author,
+			// The page's own fields come along; WordPress makes the slug unique when it must.
+			'post_excerpt' => wp_slash( (string) $source->post_excerpt ),
+			'post_parent'  => (int) $source->post_parent,
+			'menu_order'   => (int) $source->menu_order,
+			'post_name'    => (string) $source->post_name,
 		];
 		$new_id = wp_insert_post( $new_post_data, true );
 		if ( is_wp_error( $new_id ) ) {
@@ -422,6 +428,12 @@ class Elementor {
 			if ( $value !== '' && $value !== null && $value !== false ) {
 				update_post_meta( $new_id, $key, wp_slash( $value ) );
 			}
+		}
+
+		// The WordPress page template (Elementor Canvas, Full Width and others live there).
+		$source_template = get_post_meta( $source_id, '_wp_page_template', true );
+		if ( is_string( $source_template ) && '' !== $source_template ) {
+			update_post_meta( $new_id, '_wp_page_template', wp_slash( $source_template ) );
 		}
 
 		// Set edit mode = 'builder' if it wasn't on source (rare).
@@ -476,12 +488,11 @@ class Elementor {
 	 * Captures the prior blob compressed, plus a hash of the data as written
 	 * (callers build it right after their write) so undo can tell when the
 	 * page was edited since. Returns null if the reverse-state exceeds the
-	 * 1MB gzip cap (caller then reports "undo not available" + suggests
+	 * undo size limit (caller then reports "undo not available" + suggests
 	 * SiteVault snapshot).
 	 */
 	private static function build_elementor_data_undo( $op, $post_id, $prior_blob, $summary ) {
-		$reverse_json = (string) wp_json_encode( [ 'prior_elementor_data' => $prior_blob ] );
-		if ( strlen( gzcompress( $reverse_json, 9 ) ) > 1024 * 1024 ) {
+		if ( ! \Royal_MCP\MCP\Undo_Store::fits( [ 'prior_elementor_data' => $prior_blob ] ) ) {
 			return null;
 		}
 		return \Royal_MCP\MCP\Undo_Store::store( [
@@ -493,6 +504,45 @@ class Elementor {
 				'written_sha256'       => hash( 'sha256', (string) get_post_meta( $post_id, '_elementor_data', true ) ),
 			],
 		] );
+	}
+
+	/**
+	 * True when Elementor's plain-text pass gives no text for this post, so a
+	 * rebuild would store nothing. False when it gives text; null when it
+	 * cannot be asked.
+	 */
+	private static function renders_no_text( $post_id ) {
+		if ( ! class_exists( '\\Elementor\\Plugin' ) ) {
+			return null;
+		}
+		try {
+			$plugin = \Elementor\Plugin::$instance ?? null;
+			if ( ! $plugin || empty( $plugin->db ) || ! method_exists( $plugin->db, 'get_plain_text' ) ) {
+				return null;
+			}
+			// Dynamic values are left out, as they are when Elementor stores the text.
+			$tags = $plugin->dynamic_tags ?? null;
+			$mode = null;
+			if ( $tags && method_exists( $tags, 'get_parsing_mode' ) && method_exists( $tags, 'set_parsing_mode' ) && defined( '\\Elementor\\Core\\DynamicTags\\Manager::MODE_REMOVE' ) ) {
+				$mode = $tags->get_parsing_mode();
+				$tags->set_parsing_mode( \Elementor\Core\DynamicTags\Manager::MODE_REMOVE );
+			}
+			$buffers = ob_get_level();
+			try {
+				$text = (string) $plugin->db->get_plain_text( (int) $post_id );
+			} finally {
+				// A widget that throws while rendering leaves its output buffer open.
+				while ( ob_get_level() > $buffers ) {
+					ob_end_clean();
+				}
+				if ( null !== $mode ) {
+					$tags->set_parsing_mode( $mode );
+				}
+			}
+			return '' === trim( $text );
+		} catch ( \Throwable $e ) {
+			return null;
+		}
 	}
 
 	/**
@@ -695,7 +745,7 @@ class Elementor {
 		);
 		$warnings = [];
 		if ( $undo_envelope === null ) {
-			$warnings[] = 'undo not available — prior _elementor_data on target exceeds 1MB storage cap. SiteVault snapshot recommended for reversal.';
+			$warnings[] = 'undo not available: the earlier layout of the target is over the undo size limit. A SiteVault backup is the way back.';
 		}
 
 		$struct = [
@@ -837,13 +887,11 @@ class Elementor {
 		$new_length = strlen( (string) get_post( $post_id )->post_content ); // audit:null-chain-ok -- post just rebuilt, existence confirmed above
 
 		// Undo envelope — restore prior post_content. Skip token if prior content
-		// exceeds the 1MB compressed cap.
-		$reverse_json     = (string) wp_json_encode( [ 'prior_content' => $prior_content ] );
-		$reverse_size_est = strlen( gzcompress( $reverse_json, 9 ) );
+		// is over the undo size limit.
 		$undo_envelope    = null;
 		$warnings         = [];
-		if ( $reverse_size_est > 1024 * 1024 ) {
-			$warnings[] = 'undo not available — prior post_content exceeds 1MB storage cap. SiteVault snapshot recommended for reversal.';
+		if ( ! \Royal_MCP\MCP\Undo_Store::fits( [ 'prior_content' => $prior_content ] ) ) {
+			$warnings[] = 'undo not available: the earlier post_content is over the undo size limit. A SiteVault backup is the way back.';
 		} else {
 			$undo_envelope = \Royal_MCP\MCP\Undo_Store::store( [
 				'op'      => 'elementor_rebuild_post_content',
@@ -889,6 +937,17 @@ class Elementor {
 		$dry_run   = ! empty( $args['dry_run'] );
 		$limit     = isset( $args['limit'] ) ? max( 1, min( 200, (int) $args['limit'] ) ) : 50;
 		$post_type = isset( $args['post_type'] ) ? sanitize_key( (string) $args['post_type'] ) : '';
+		$after_id  = 0;
+		if ( isset( $args['after_id'] ) ) {
+			$raw_after = $args['after_id'];
+			if ( is_int( $raw_after ) && $raw_after >= 0 ) {
+				$after_id = $raw_after;
+			} elseif ( is_string( $raw_after ) && preg_match( '/^\d{1,19}\z/', $raw_after ) ) {
+				$after_id = (int) $raw_after;
+			} else {
+				throw new \Exception( 'after_id must be a post ID (a whole number, 0 or more): pass the last_post_id of the reply before. Nothing was changed.' );
+			}
+		}
 
 		global $wpdb;
 		$sql = "SELECT pm.post_id
@@ -903,11 +962,18 @@ class Elementor {
 			$sql .= ' AND p.post_type = %s';
 			$params[] = $post_type;
 		}
+		if ( $after_id > 0 ) {
+			$sql     .= ' AND p.ID > %d';
+			$params[] = $after_id;
+		}
 		$sql .= ' ORDER BY p.ID ASC LIMIT %d';
 		$params[] = $dry_run ? 200 : $limit;
 
 		$prepared = $wpdb->prepare( $sql, $params );
 		$candidate_ids = array_map( 'intval', (array) $wpdb->get_col( $prepared ) );
+		// The query stops at its limit, so a full page means there may be more after its last ID.
+		$may_be_more  = count( $candidate_ids ) >= ( $dry_run ? 200 : $limit );
+		$last_scanned = $candidate_ids ? max( $candidate_ids ) : null;
 		// Only posts the caller could repair, in the preview and in the results.
 		$candidate_ids = array_values( array_filter( $candidate_ids, static function ( $pid ) {
 			return current_user_can( 'edit_post', $pid );
@@ -926,6 +992,8 @@ class Elementor {
 				[
 					'action'          => 'dry_run',
 					'candidate_count' => count( $candidate_ids ),
+					'may_be_more'     => $may_be_more,
+					'last_post_id'    => $last_scanned,
 					'sample_post_ids' => $sample,
 					'note'            => 'Preview only — no writes performed. Re-run without dry_run to repair.',
 				]
@@ -933,6 +1001,7 @@ class Elementor {
 		}
 
 		$repaired = [];
+		$written  = [];
 		$skipped  = [];
 		foreach ( $candidate_ids as $pid ) {
 			if ( ! current_user_can( 'edit_post', $pid ) ) {
@@ -949,6 +1018,17 @@ class Elementor {
 				$skipped[] = [ 'post_id' => $pid, 'reason' => 'post_content_now_populated' ];
 				continue;
 			}
+			// Looked at before anything is saved, so a page with nothing to store is not touched,
+			// and neither is one whose text Elementor cannot give.
+			$no_text = self::renders_no_text( $pid );
+			if ( true === $no_text ) {
+				$skipped[] = [ 'post_id' => $pid, 'reason' => 'no_text_rendered' ];
+				continue;
+			}
+			if ( null === $no_text ) {
+				$skipped[] = [ 'post_id' => $pid, 'reason' => 'render_failed' ];
+				continue;
+			}
 			$ok = self::populate_post_content_from_elementor( $pid );
 			if ( ! $ok ) {
 				$skipped[] = [ 'post_id' => $pid, 'reason' => 'render_failed' ];
@@ -956,7 +1036,21 @@ class Elementor {
 			}
 			clean_post_cache( $pid );
 			$new_length = strlen( (string) get_post( $pid )->post_content ); // audit:null-chain-ok -- populate_post_content_from_elementor returned true, row exists
+			if ( 0 === $new_length ) {
+				$skipped[] = [ 'post_id' => $pid, 'reason' => 'no_text_rendered' ];
+				continue;
+			}
 			$repaired[] = [ 'post_id' => $pid, 'new_length' => $new_length ];
+			$written[ $pid ] = md5( (string) get_post( $pid )->post_content ); // audit:null-chain-ok -- the post was just repaired
+		}
+		$bulk_undo = null;
+		if ( $repaired ) {
+			$bulk_undo = \Royal_MCP\MCP\Undo_Store::store( [
+				'op'           => 'elementor_rebuild_post_content_bulk',
+				'summary'      => sprintf( 'Empty the stored text of the %d page(s) this repair filled again: %s.', count( $repaired ), implode( ', ', array_keys( $written ) ) ),
+				'target'       => [ 'post_ids' => array_keys( $written ) ],
+				'pre_op_state' => [ 'written_md5' => $written ],
+			] );
 		}
 
 		$repaired_ids = array_column( $repaired, 'post_id' );
@@ -966,18 +1060,8 @@ class Elementor {
 		$skipped_display = ! empty( $skipped )
 			? ' Skipped ' . count( $skipped ) . ' (reasons in structured detail).'
 			: '';
-		return \Royal_MCP\MCP\Support\Envelope::success(
-			sprintf( 'Bulk rebuild: %d repaired, %d skipped (scanned %d candidate(s)).%s%s There is no undo for a bulk rebuild.',
-				count( $repaired ),
-				count( $skipped ),
-				count( $candidate_ids ),
-				$repaired_display,
-				$skipped_display
-			),
-			[
+		$bulk_struct = [
 				'action'           => 'bulk_repair',
-				'undo_available'   => false,
-				'undo_reason'      => 'bulk_rebuild_has_no_undo',
 				'scanned'          => count( $candidate_ids ),
 				'repaired_count'   => count( $repaired ),
 				'skipped_count'    => count( $skipped ),
@@ -985,7 +1069,24 @@ class Elementor {
 				'skipped'          => $skipped,
 				'post_type_filter' => $post_type !== '' ? $post_type : null,
 				'limit_applied'    => $limit,
-			]
+				'may_be_more'      => $may_be_more,
+				'last_post_id'     => $last_scanned,
+		];
+		if ( null === $bulk_undo ) {
+			$bulk_struct['undo_available'] = false;
+			$bulk_struct['undo_reason']    = 'nothing_repaired';
+		}
+		return \Royal_MCP\MCP\Support\Envelope::success(
+			sprintf( 'Bulk rebuild: %d repaired, %d skipped (scanned %d candidate(s)).%s%s%s',
+				count( $repaired ),
+				count( $skipped ),
+				count( $candidate_ids ),
+				$repaired_display,
+				$skipped_display,
+				null !== $bulk_undo ? ' Undo empties the stored text of the repaired pages again (pages edited since are left alone).' : ''
+			),
+			$bulk_struct,
+			$bulk_undo
 		);
 	}
 
@@ -1000,13 +1101,13 @@ class Elementor {
 	 */
 	public static function sanitize_tree_for_user( $value, $key = '' ) {
 		if ( current_user_can( 'unfiltered_html' ) ) {
-			return $value;
+			return self::without_remote_svg_sources( $value );
 		}
 		if ( self::is_custom_attributes( $key, $value ) ) {
 			return self::without_custom_attributes( $value );
 		}
 		if ( is_array( $value ) || $value instanceof \stdClass ) {
-			$value = self::map_typed_link_addresses( $value, 'esc_url_raw' );
+			$value = self::local_svg_source_only( self::map_typed_link_addresses( $value, 'esc_url_raw' ) );
 		}
 		if ( is_array( $value ) ) {
 			foreach ( $value as $k => $v ) {
@@ -1078,6 +1179,51 @@ class Elementor {
 			return $set( $node, 'value', $set( $inner, 'destination', $set( $destination, 'value', (string) $fix( $address ) ) ) );
 		}
 		return $node;
+	}
+
+	/**
+	 * An SVG source ({"$$type": "svg-src", "value": {"url": ..., "id": ...}}) keeps its address only
+	 * when it is on this site: Elementor fetches the file on the server to inline it, so an outside
+	 * address would make the site download whatever it points to. The media library id is kept.
+	 *
+	 * @param array|\stdClass $node One node of the element tree.
+	 * @return array|\stdClass
+	 */
+	private static function local_svg_source_only( $node ) {
+		if ( 'svg-src' !== self::node_get( $node, '$$type' ) ) {
+			return $node;
+		}
+		$inner = self::node_get( $node, 'value' );
+		$part  = self::node_get( $inner, 'url' );
+		// The address is a plain string or a typed url value ({"$$type": "url", "value": ...}).
+		$url = is_string( $part ) ? $part : self::node_get( $part, 'value' );
+		if ( ! is_string( $url ) || '' === $url ) {
+			return $node;
+		}
+		$home = strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+		$host = strtolower( (string) wp_parse_url( $url, PHP_URL_HOST ) );
+		$ok   = '' !== $home && $host === $home && in_array( strtolower( (string) wp_parse_url( $url, PHP_URL_SCHEME ) ), [ 'http', 'https' ], true );
+		return $ok ? $node : self::node_set( $node, 'value', self::node_set( $inner, 'url', null ) );
+	}
+
+	/** The whole tree with every SVG source pointing outside this site emptied (see local_svg_source_only()). */
+	private static function without_remote_svg_sources( $value ) {
+		if ( is_array( $value ) ) {
+			$value = self::local_svg_source_only( $value );
+			foreach ( $value as $k => $v ) {
+				if ( is_array( $v ) || $v instanceof \stdClass ) {
+					$value[ $k ] = self::without_remote_svg_sources( $v );
+				}
+			}
+		} elseif ( $value instanceof \stdClass ) {
+			$value = self::local_svg_source_only( $value );
+			foreach ( get_object_vars( $value ) as $k => $v ) {
+				if ( is_array( $v ) || $v instanceof \stdClass ) {
+					$value->$k = self::without_remote_svg_sources( $v );
+				}
+			}
+		}
+		return $value;
 	}
 
 	/** Whether a setting key holds a link address (url, any *_url, href, destination). */
@@ -1355,6 +1501,20 @@ class Elementor {
 			);
 		}
 
+		// Nothing matched: the page is not saved again.
+		if ( 0 === (int) $match_count ) {
+			return \Royal_MCP\MCP\Support\Envelope::success(
+				sprintf( 'No occurrence of "%s" on post %d. Nothing was written.', $find, $post_id ),
+				[
+					'post_id'      => $post_id,
+					'find'         => $find,
+					'matches'      => 0,
+					'replacements' => 0,
+					'written'      => false,
+				]
+			);
+		}
+
 		self::refuse_if_stored_markup_would_be_removed( $post_id );
 		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $updated ) ) ) );
 		Elementor_Atomic::clear_post_cache( $post_id );
@@ -1392,7 +1552,7 @@ class Elementor {
 		);
 		$warnings = [];
 		if ( $undo_envelope === null && $match_count > 0 ) {
-			$warnings[] = 'undo not available — prior _elementor_data exceeds 1MB storage cap. SiteVault snapshot recommended for reversal.';
+			$warnings[] = 'undo not available: the earlier layout is over the undo size limit. A SiteVault backup is the way back.';
 		}
 
 		// Read-after-write verification: fetch fresh post_meta so the response
@@ -1684,6 +1844,18 @@ class Elementor {
 		$counter = [ 'count' => 0 ];
 		$updated = self::walk_widgets_image( $tree, $old_url, $new_url, $old_id, $new_id, $counter );
 
+		// Nothing matched: the page is not saved again.
+		if ( 0 === (int) $counter['count'] ) {
+			return \Royal_MCP\MCP\Support\Envelope::success(
+				sprintf( 'No image matched on post %d. Nothing was written.', $post_id ),
+				[
+					'post_id'      => $post_id,
+					'replacements' => 0,
+					'written'      => false,
+				]
+			);
+		}
+
 		self::refuse_if_stored_markup_would_be_removed( $post_id );
 		update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( self::sanitize_tree_for_user( $updated ) ) ) );
 		Elementor_Atomic::clear_post_cache( $post_id );
@@ -1697,7 +1869,7 @@ class Elementor {
 		);
 		$warnings = [];
 		if ( $undo_envelope === null && $counter['count'] > 0 ) {
-			$warnings[] = 'undo not available — prior _elementor_data exceeds 1MB storage cap. SiteVault snapshot recommended for reversal.';
+			$warnings[] = 'undo not available: the earlier layout is over the undo size limit. A SiteVault backup is the way back.';
 		}
 
 		$struct = [
@@ -2130,7 +2302,7 @@ class Elementor {
 				'id'            => (int) $tpl->ID,
 				'name'          => $tpl->post_title,
 				'type'          => $type,
-				'date_modified' => $tpl->post_modified_gmt,
+				'date_modified' => \Royal_MCP\MCP\Server::iso_utc_date( $tpl->post_modified_gmt ),
 			];
 		}
 
@@ -2326,7 +2498,7 @@ class Elementor {
 		);
 		$warnings = [];
 		if ( $undo_envelope === null ) {
-			$warnings[] = 'undo not available — prior _elementor_data exceeds 1MB storage cap. SiteVault snapshot recommended for reversal.';
+			$warnings[] = 'undo not available: the earlier layout is over the undo size limit. A SiteVault backup is the way back.';
 		}
 
 		$struct = [

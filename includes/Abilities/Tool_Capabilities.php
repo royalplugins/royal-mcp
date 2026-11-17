@@ -37,6 +37,7 @@ class Tool_Capabilities {
 			'wp_get_site_status'            => 'manage_options',
 			'wp_get_mcp_coexistence'        => 'manage_options',
 			'wp_security_triage'            => 'manage_options',
+			'wp_audit_agent_readiness'      => 'manage_options',
 			'wp_revoke_preview_links'       => 'edit_posts',
 			'wp_clone_post_as_draft'        => 'edit_posts',
 			'wp_get_php_errors'             => 'manage_options',
@@ -68,6 +69,10 @@ class Tool_Capabilities {
 			'wp_create_menu_item'   => 'edit_theme_options',
 			'wp_update_menu_item'   => 'edit_theme_options',
 			'wp_delete_menu_item'   => 'edit_theme_options',
+			'wp_delete_menu'        => 'edit_theme_options',
+			'wp_update_global_styles'  => 'edit_theme_options',
+			'wp_update_theme_design'   => 'edit_theme_options',
+			'wp_update_block_template' => 'edit_theme_options',
 			'wp_reorder_menu_items' => 'edit_theme_options',
 
 			// ==================== Core: comments moderation ====================
@@ -125,6 +130,42 @@ class Tool_Capabilities {
 			'wp_publish_and_promote'  => 'publish_posts',
 			'wp_verify_rendered_page' => 'edit_posts',
 			'seo_audit_meta_tags'     => 'edit_posts',
+			'rankmath_get_post_score' => 'edit_posts',
+			'wp_audit_seo_bulk'       => 'manage_options',
+			'wp_validate_schema'      => 'edit_posts',
+			'wp_purge_and_verify_url' => 'manage_options',
+			'wp_audit_application_passwords' => 'manage_options',
+			'wp_set_maintenance_mode' => 'manage_options',
+			'rlinks_get_top_links'    => 'manage_options',
+			'wp_publish_and_launch' => 'publish_posts',
+			'seo_optimize_for_launch' => 'edit_posts',
+			'wp_prepare_for_launch' => 'manage_options',
+			'wp_monthly_maintenance_report' => 'manage_options',
+			'wp_migrate_theme_assets' => 'edit_others_posts',
+			'wp_update_plugin' => 'update_plugins',
+			'wp_update_theme' => 'update_themes',
+			'wp_install_plugin' => 'install_plugins',
+			'wp_install_theme' => 'install_themes',
+			'wp_activate_plugin' => 'activate_plugins',
+			'wp_deactivate_plugin' => 'activate_plugins',
+			'wp_delete_plugin' => 'delete_plugins',
+			'wp_switch_theme' => 'switch_themes',
+			'wp_delete_theme' => 'delete_themes',
+			'wp_set_plugin_auto_update' => 'update_plugins',
+			'wp_set_theme_auto_update' => 'update_themes',
+			'acf_create_field_group' => 'manage_options',
+			'acf_clone_field_group' => 'manage_options',
+			'acf_update_field_group' => 'manage_options',
+			'acf_delete_field_group' => 'manage_options',
+			'acf_import_field_group_json' => 'manage_options',
+			'acf_export_field_group_json' => 'manage_options',
+			'acf_add_field' => 'manage_options',
+			'acf_update_field_definition' => 'manage_options',
+			'acf_delete_field' => 'manage_options',
+			'acf_reorder_fields' => 'manage_options',
+			'acf_get_field_group_config' => 'manage_options',
+			'acf_list_supported_field_types' => 'manage_options',
+			'acf_register_post_type' => 'manage_options',
 			'yoast_get_redirects'     => 'manage_options',
 
 			// ==================== Core: connection health — any authenticated caller ====================
@@ -140,18 +181,23 @@ class Tool_Capabilities {
 			'wp_list_synced_patterns'    => 'edit_posts',
 			'wp_get_synced_pattern'      => 'edit_posts',
 			'wp_get_global_styles'       => 'edit_theme_options',
+			'wp_get_theme_design'        => 'edit_theme_options',
+			'spectra_get_global_styles'  => 'manage_options',
 			'wp_list_block_templates'    => 'edit_theme_options',
 			'wp_get_block_template'      => 'edit_theme_options',
 
 			// ==================== Core: change history — each change is checked against its own capability ====================
 			'mcp_list_recent_changes' => 'read',
 			'mcp_get_change'          => 'read',
+			'mcp_get_skill'           => 'read',
 			// Undo only finds the caller's own changes and re-checks each operation's capability.
 			'mcp_undo_last_operation' => 'read',
 
 			// ==================== ForgeCache: admin ops ====================
 			'fc_clear_cache'     => 'manage_options',
 			'fc_get_cache_stats' => 'manage_options',
+			'wpo_get_cache_status' => 'manage_options',
+			'akismet_get_status' => 'manage_options',
 			'fc_get_rum_stats'   => 'manage_options',
 		);
 	}
@@ -208,8 +254,16 @@ class Tool_Capabilities {
 		// Form entries hold personal data: administrators only.
 		if ( strpos( $tool_name, 'ninjaforms_' ) === 0 ) return 'manage_options';
 		if ( strpos( $tool_name, 'fluentform_' ) === 0 ) return 'manage_options';
+		if ( strpos( $tool_name, 'formforge_' ) === 0 ) return 'manage_options';
+		if ( strpos( $tool_name, 'rafp_' ) === 0 ) return 'manage_options';
 		// Subscriber data and sending: administrators only (each tool also needs MailPoet's own permission).
 		if ( strpos( $tool_name, 'mailpoet_' ) === 0 ) return 'manage_options';
+		if ( strpos( $tool_name, 'image_optimisation_' ) === 0 ) return 'manage_options';
+		if ( strpos( $tool_name, 'jetpack_' ) === 0 && 'jetpack_get_backup_status' !== $tool_name ) return 'manage_options';
+		if ( strpos( $tool_name, 'rsssl_' ) === 0 ) return 'manage_options';
+		if ( strpos( $tool_name, 'wpo_' ) === 0 ) return 'edit_posts';
+		if ( strpos( $tool_name, 'wpmailsmtp_' ) === 0 ) return 'manage_options';
+		if ( strpos( $tool_name, 'akismet_' ) === 0 ) return 'moderate_comments';
 		if ( strpos( $tool_name, 'snippets_' ) === 0 ) {
 			if ( function_exists( '\Code_Snippets\code_snippets' ) ) {
 				return \Code_Snippets\code_snippets()->get_cap();
