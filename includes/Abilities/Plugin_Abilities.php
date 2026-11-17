@@ -422,17 +422,114 @@ class Plugin_Abilities {
 		// Anything the ability prints is dropped: it would reach the client unchecked, ahead of the reply.
 		$level = ob_get_level();
 		ob_start();
+		// While theme writes are off, a bridged ability may not change the theme's settings or posts either.
+		$guard = ! self::theme_writes_allowed();
+		if ( $guard ) {
+			self::guard_theme_writes( true );
+		}
 		try {
 			$out = $ability->execute( $input );
+		} catch ( \Throwable $e ) {
+			if ( null === self::$theme_refusal ) {
+				throw $e;
+			}
+			$out = null;
 		} finally {
+			if ( $guard ) {
+				self::guard_theme_writes( false );
+			}
 			while ( ob_get_level() > $level ) {
 				ob_end_clean();
 			}
+		}
+		if ( null !== self::$theme_refusal ) {
+			$what                = self::$theme_refusal;
+			self::$theme_refusal = null;
+			return new \WP_Error( 'theme_writes_off', sprintf( '%s tried to change %s. Theme writes are disabled; enable "Allow AI to modify theme appearance" under Royal MCP > Settings to allow it.', $ability->get_name(), $what ) );
 		}
 		if ( is_wp_error( $out ) ) {
 			return new \WP_Error( $out->get_error_code(), sprintf( '%s: %s', $ability->get_name(), \Royal_MCP\MCP\Support\Secret_Scrubber::scrub_text( (string) $out->get_error_message(), 'strict' ) ) );
 		}
 		return self::finish_result( (string) $ability->get_name(), is_array( $out ) ? $out : [ 'result' => $out ] );
+	}
+
+	/** What a refused theme write tried to change, while a bridged ability runs; null otherwise. */
+	private static $theme_refusal = null;
+
+	/** Post types that hold the theme's appearance: Custom CSS, Customizer drafts, global styles, block templates, navigation and fonts. */
+	const THEME_POST_TYPES = [ 'custom_css', 'customize_changeset', 'wp_template', 'wp_template_part', 'wp_global_styles', 'wp_navigation', 'wp_font_family', 'wp_font_face' ];
+
+	/** Options that hold the active theme, its settings and the widget layout. */
+	const THEME_OPTIONS = [ 'template', 'stylesheet', 'current_theme', 'sidebars_widgets' ];
+
+	/** Whether the site owner lets AI tools change the theme's appearance. */
+	private static function theme_writes_allowed() {
+		$settings = get_option( 'royal_mcp_settings', [] );
+		return is_array( $settings ) && ! empty( $settings['allow_theme_writes'] );
+	}
+
+	/**
+	 * Turn the theme-write guard on or off for the length of one bridged call. It sees writes
+	 * made through the options and posts APIs; theme files written to disk, direct database
+	 * queries and work an ability leaves for a later request are outside what it can see.
+	 */
+	private static function guard_theme_writes( $on ) {
+		if ( $on ) {
+			self::$theme_refusal = null;
+		}
+		$fn = $on ? 'add_filter' : 'remove_filter';
+		$fn( 'pre_update_option', [ __CLASS__, 'refuse_theme_option' ], PHP_INT_MAX, 3 );
+		$fn( 'add_option', [ __CLASS__, 'refuse_theme_option_add' ], PHP_INT_MAX, 1 );
+		$fn( 'delete_option', [ __CLASS__, 'refuse_theme_option_add' ], PHP_INT_MAX, 1 );
+		$fn( 'wp_insert_post_data', [ __CLASS__, 'refuse_theme_post' ], PHP_INT_MAX, 2 );
+		$fn( 'pre_delete_post', [ __CLASS__, 'refuse_theme_post_removal' ], PHP_INT_MAX, 2 );
+		$fn( 'pre_trash_post', [ __CLASS__, 'refuse_theme_post_removal' ], PHP_INT_MAX, 2 );
+	}
+
+	/** Whether an option holds the active theme, its settings or its widgets. */
+	private static function is_theme_option( $option ) {
+		// Option names are matched without regard to case, as the database compares them.
+		$option = strtolower( (string) $option );
+		return 0 === strpos( $option, 'theme_mods_' ) || 0 === strpos( $option, 'widget_' ) || in_array( $option, self::THEME_OPTIONS, true );
+	}
+
+	/** Stops the call at a theme option update. */
+	public static function refuse_theme_option( $value, $option, $old_value = null ) {
+		if ( self::is_theme_option( $option ) ) {
+			self::$theme_refusal = 'the theme setting ' . $option;
+			throw new \RuntimeException( 'theme_writes_off' );
+		}
+		return $value;
+	}
+
+	/** Stops the call before a theme option is added or deleted. */
+	public static function refuse_theme_option_add( $option ) {
+		if ( self::is_theme_option( $option ) ) {
+			self::$theme_refusal = 'the theme setting ' . $option;
+			throw new \RuntimeException( 'theme_writes_off' );
+		}
+	}
+
+	/** Stops the call before a theme post is saved, or before an existing one is given another type. */
+	public static function refuse_theme_post( $data, $postarr = [] ) {
+		$type     = is_array( $data ) ? (string) ( $data['post_type'] ?? '' ) : '';
+		$existing = ( is_array( $postarr ) && ! empty( $postarr['ID'] ) ) ? (string) get_post_type( (int) $postarr['ID'] ) : '';
+		foreach ( [ $type, $existing ] as $checked ) {
+			if ( in_array( $checked, self::THEME_POST_TYPES, true ) ) {
+				self::$theme_refusal = 'a ' . $checked . ' post';
+				throw new \RuntimeException( 'theme_writes_off' );
+			}
+		}
+		return $data;
+	}
+
+	/** Stops the call before a theme post is deleted or trashed. */
+	public static function refuse_theme_post_removal( $check, $post = null ) {
+		if ( $post instanceof \WP_Post && in_array( $post->post_type, self::THEME_POST_TYPES, true ) ) {
+			self::$theme_refusal = 'a ' . $post->post_type . ' post';
+			throw new \RuntimeException( 'theme_writes_off' );
+		}
+		return $check;
 	}
 
 	/**

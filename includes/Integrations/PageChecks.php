@@ -107,21 +107,120 @@ class PageChecks {
 		if ( ! in_array( $scheme, [ 'http', 'https' ], true ) ) {
 			return false;
 		}
-		if ( ! empty( $parts['port'] ) && (int) $parts['port'] !== (int) ( $home['port'] ?? 0 ) && (int) $parts['port'] !== ( 'https' === $scheme ? 443 : 80 ) ) {
-			return false;
-		}
-		// A site that lives under a path (a subdirectory install, one site of a network) only covers that path.
-		$base = trim( (string) ( $home['path'] ?? '' ), '/' );
-		if ( '' !== $base ) {
-			$path = '/' . ltrim( (string) ( $parts['path'] ?? '/' ), '/' );
-			if ( false !== strpos( $path, '/.' ) || false !== strpos( $path, '\\' ) || false !== strpos( $path, '%' ) && preg_match( '/%(2e|2f|5c)/i', $path ) ) {
+		if ( ! empty( $parts['port'] ) ) {
+			$port      = (int) $parts['port'];
+			$home_port = (int) ( $home['port'] ?? 0 );
+			$default   = 'https' === $scheme ? 443 : 80;
+			if ( $port !== $default && ( 0 === $home_port || $port !== $home_port ) ) {
 				return false;
 			}
-			if ( '/' . $base !== untrailingslashit( $path ) && 0 !== strpos( $path, '/' . $base . '/' ) ) {
+		}
+		$path = (string) ( $parts['path'] ?? '/' );
+		if ( '' === $path ) {
+			$path = '/';
+		}
+		// Dot segments (plain or encoded) could step out of the home path once the server resolves them.
+		if ( 1 === preg_match( '#(?:^|/)(?:\.|%2e){1,2}(?:/|$)#i', $path ) ) {
+			return false;
+		}
+		// Encoded or backward slashes can be read as path separators by the server or a proxy.
+		if ( false !== strpos( $path, '\\' ) || 1 === preg_match( '/%(?:2f|5c)/i', $path ) ) {
+			return false;
+		}
+		$home_path = untrailingslashit( (string) ( $home['path'] ?? '' ) );
+		if ( '' !== $home_path && $path !== $home_path && 0 !== strpos( $path, $home_path . '/' ) ) {
+			return false;
+		}
+		// On a network whose sites share this host, a path under another site's path is that site's page.
+		// Compared without case, since site paths are matched that way when the request is routed.
+		$path_lc = strtolower( $path );
+		foreach ( self::nested_site_paths( strtolower( (string) $home['host'] ), $home_path ) as $other ) {
+			$other_lc = strtolower( (string) $other );
+			if ( untrailingslashit( $path_lc ) === $other_lc || 0 === strpos( $path_lc, $other_lc . '/' ) ) {
 				return false;
 			}
 		}
 		return true;
+	}
+
+	/** @var array<string,string[]> Other sites' paths per host and home path, for this request. */
+	private static $nested_paths = [];
+
+	/**
+	 * Paths (no trailing slash) of the other sites of this network on the same host that sit
+	 * below this site's home path. Empty outside a subdirectory network.
+	 *
+	 * @param string $host      Lower-case host of this site.
+	 * @param string $home_path This site's home path without a trailing slash.
+	 * @return string[]
+	 */
+	private static function nested_site_paths( $host, $home_path ) {
+		if ( ! is_multisite() || ( function_exists( 'is_subdomain_install' ) && is_subdomain_install() ) || ! function_exists( 'get_sites' ) ) {
+			return [];
+		}
+		$memo = $host . '|' . $home_path;
+		if ( isset( self::$nested_paths[ $memo ] ) ) {
+			return self::$nested_paths[ $memo ];
+		}
+		$cache_key = 'nested_' . md5( (int) get_current_network_id() . '|' . $memo );
+		$paths     = wp_cache_get( $cache_key, 'royal_mcp_sites' );
+		if ( ! is_array( $paths ) ) {
+			$paths = [];
+			$sites = get_sites( [ 'network_id' => (int) get_current_network_id(), 'domain' => $host, 'number' => 1000, 'fields' => '', 'site__not_in' => [ (int) get_current_blog_id() ] ] );
+			foreach ( (array) $sites as $site ) {
+				$p = untrailingslashit( (string) ( is_object( $site ) ? $site->path : '' ) );
+				if ( '' !== $p && strlen( $p ) > strlen( $home_path ) && ( '' === $home_path || 0 === strpos( $p, $home_path . '/' ) ) ) {
+					$paths[] = $p;
+				}
+			}
+			wp_cache_set( $cache_key, $paths, 'royal_mcp_sites', 300 );
+		}
+		self::$nested_paths[ $memo ] = $paths;
+		return $paths;
+	}
+
+	/**
+	 * A URL in one spelling for rate limiting: scheme and host in lower case, the default port
+	 * and the fragment dropped, query parameters sorted.
+	 */
+	public static function limit_key_url( $url ) {
+		$p = wp_parse_url( (string) $url );
+		if ( ! is_array( $p ) ) {
+			return strtolower( (string) $url );
+		}
+		$scheme = strtolower( (string) ( $p['scheme'] ?? '' ) );
+		$host   = strtolower( (string) ( $p['host'] ?? '' ) );
+		$port   = isset( $p['port'] ) ? (int) $p['port'] : 0;
+		if ( ( 'http' === $scheme && 80 === $port ) || ( 'https' === $scheme && 443 === $port ) ) {
+			$port = 0;
+		}
+		$path = self::decode_unreserved( (string) ( $p['path'] ?? '' ) );
+		$path = (string) preg_replace( '#/{2,}#', '/', $path );
+		$query = [];
+		if ( isset( $p['query'] ) && '' !== $p['query'] ) {
+			foreach ( explode( '&', (string) $p['query'] ) as $pair ) {
+				if ( '' === $pair ) {
+					continue;
+				}
+				$kv      = explode( '=', $pair, 2 );
+				$name    = rawurlencode( rawurldecode( str_replace( '+', ' ', $kv[0] ) ) );
+				$query[] = isset( $kv[1] ) ? $name . '=' . rawurlencode( rawurldecode( str_replace( '+', ' ', $kv[1] ) ) ) : $name;
+			}
+			sort( $query, SORT_STRING );
+		}
+		return $scheme . '://' . $host . ( $port ? ':' . $port : '' ) . untrailingslashit( $path ) . ( $query ? '?' . implode( '&', $query ) : '' );
+	}
+
+	/** Percent-escapes of letters, digits and - . _ ~ written as the characters; other escapes in upper case. */
+	private static function decode_unreserved( $s ) {
+		return (string) preg_replace_callback(
+			'/%([0-9A-Fa-f]{2})/',
+			static function ( $m ) {
+				$c = chr( hexdec( $m[1] ) );
+				return 1 === preg_match( '/[A-Za-z0-9\-._~]/', $c ) ? $c : '%' . strtoupper( $m[1] );
+			},
+			$s
+		);
 	}
 
 	/**
@@ -283,45 +382,103 @@ class PageChecks {
 		return $doc ? count( self::visible_h1s( new \DOMXPath( $doc ) ) ) : null;
 	}
 
-	/** The page a URL stands for when calls are counted: its post, else host, path and sorted query. */
-	private static function rate_target( $url, $post_id ) {
-		if ( $post_id > 0 ) {
-			return 'post:' . (int) $post_id;
-		}
-		$parts = wp_parse_url( (string) $url );
-		$query = [];
-		wp_parse_str( (string) ( is_array( $parts ) ? ( $parts['query'] ?? '' ) : '' ), $query );
-		ksort( $query );
-		return strtolower( (string) ( is_array( $parts ) ? ( $parts['host'] ?? '' ) : '' ) ) . untrailingslashit( (string) ( is_array( $parts ) ? ( $parts['path'] ?? '' ) : '' ) ) . '?' . md5( (string) wp_json_encode( $query ) );
-	}
+	/** Calls per minute on one page, across all page tools. */
+	const PAGE_LIMIT = 10;
+
+	/** Calls per minute one user may make across all page tools. */
+	const USER_LIMIT = 30;
 
 	/**
-	 * Up to 10 calls a minute per tool and page, and 30 a minute per tool and user whatever the
-	 * pages. Returns the seconds to wait, 0 when the call may go on.
+	 * Seconds to wait before the next page-tool call, or 0 when it may run. Counts per page and
+	 * per user. A page is the post the URL resolves to, otherwise the URL in one spelling; every
+	 * page tool counts in the same per-page window, so the tool name and the post_id passed with
+	 * a URL do not open a new one.
+	 *
+	 * @param string $tool    Tool name (kept for callers; the windows do not depend on it).
+	 * @param string $url     URL the tool will fetch.
+	 * @param int    $post_id Post the call names, used only when there is no URL.
+	 * @return int
 	 */
 	private static function rate_limited( $tool, $url, $post_id = 0 ) {
-		$now  = time();
-		$wait = 0;
-		$next = [];
-		foreach ( [ [ 'royal_mcp_page_' . md5( $tool . '|' . self::rate_target( $url, $post_id ) ), 10 ], [ 'royal_mcp_page_u' . md5( $tool . '|' . get_current_user_id() ), 30 ] ] as $bucket ) {
-			$state = get_transient( $bucket[0] );
-			if ( is_array( $state ) && isset( $state['start'], $state['count'] ) && ( $now - (int) $state['start'] ) < 60 ) {
-				if ( (int) $state['count'] >= $bucket[1] ) {
-					$wait = max( $wait, 1, 60 - ( $now - (int) $state['start'] ) );
-				}
-				$state['count'] = (int) $state['count'] + 1;
-			} else {
-				$state = [ 'start' => $now, 'count' => 1 ];
+		$norm     = self::limit_key_url( $url );
+		$resolved = '' !== (string) $url ? (int) url_to_postid( $norm ) : (int) $post_id;
+		$target   = $resolved > 0 ? 'post:' . $resolved : 'url:' . $norm;
+		$page_key = self::limit_key( $target );
+		$user_key = 'royal_mcp_page_u_' . (int) get_current_user_id();
+		if ( function_exists( 'wp_using_ext_object_cache' ) && wp_using_ext_object_cache() ) {
+			$wait = self::cache_window( $page_key, self::PAGE_LIMIT, $user_key, self::USER_LIMIT );
+			if ( null !== $wait ) {
+				return $wait;
 			}
-			$next[ $bucket[0] ] = $state;
 		}
+		// Without a shared object cache the count is read and written back, so requests that
+		// arrive at the same moment can each pass one call over the limit.
+		$wait = max( self::window_wait( $page_key, self::PAGE_LIMIT ), self::window_wait( $user_key, self::USER_LIMIT ) );
 		if ( $wait > 0 ) {
 			return $wait;
 		}
-		foreach ( $next as $key => $state ) {
-			set_transient( $key, $state, 60 ); // audit:transient-ttl-only -- rolling rate window
+		self::window_count( $page_key );
+		self::window_count( $user_key );
+		return 0;
+	}
+
+	/**
+	 * Count one call in both windows with atomic increments in the shared object cache
+	 * (fixed one-minute windows). A call over either limit is taken back out of both.
+	 *
+	 * @return int|null Seconds to wait, 0 when counted, null when the cache cannot count.
+	 */
+	private static function cache_window( $page_key, $page_limit, $user_key, $user_limit ) {
+		$minute = (int) floor( time() / 60 );
+		$wait   = max( 1, 60 - ( time() % 60 ) );
+		$group  = 'royal_mcp_rate';
+		$keys   = [ [ $page_key . '_' . $minute, $page_limit ], [ $user_key . '_' . $minute, $user_limit ] ];
+		$done   = [];
+		foreach ( $keys as $k ) {
+			wp_cache_add( $k[0], 0, $group, 120 );
+			$n = wp_cache_incr( $k[0], 1, $group );
+			if ( false === $n ) {
+				foreach ( $done as $d ) {
+					wp_cache_decr( $d, 1, $group );
+				}
+				return null;
+			}
+			$done[] = $k[0];
+			if ( (int) $n > $k[1] ) {
+				foreach ( $done as $d ) {
+					wp_cache_decr( $d, 1, $group );
+				}
+				return $wait;
+			}
 		}
 		return 0;
+	}
+
+	/** Transient key for one page, shared by every page tool. */
+	private static function limit_key( $target ) {
+		return 'royal_mcp_page_' . md5( 'page|' . $target );
+	}
+
+	/** Seconds left in a full one-minute window, or 0. */
+	private static function window_wait( $key, $limit ) {
+		$state = get_transient( $key );
+		$now   = time();
+		if ( is_array( $state ) && ( $now - (int) $state['start'] ) < 60 && (int) $state['count'] >= $limit ) {
+			return max( 1, 60 - ( $now - (int) $state['start'] ) );
+		}
+		return 0;
+	}
+
+	/** Counts one call in a one-minute window. */
+	private static function window_count( $key ) {
+		$state = get_transient( $key );
+		$now   = time();
+		if ( is_array( $state ) && ( $now - (int) $state['start'] ) < 60 ) {
+			$state['count'] = (int) $state['count'] + 1;
+		} else {
+			$state = [ 'start' => $now, 'count' => 1 ];
+		}
+		set_transient( $key, $state, 60 ); // audit:transient-ttl-only -- rolling one-minute rate window
 	}
 
 	/**
@@ -745,9 +902,19 @@ class PageChecks {
 		return $t && $t->length ? (string) $t->item( 0 )->textContent : '';
 	}
 
-	/** The SEO value stored for a post by the active SEO plugin, when it is plain text and not a template. */
+	/**
+	 * The SEO value stored for a post by the active SEO plugin, when it is plain text and not a
+	 * template: AIOSEO's from its own table (where its tools write), the others' from post meta.
+	 */
 	private static function stored_seo_value( $post_id, $field ) {
 		$plugin = Seo_Plugin::detect();
+		if ( 'aioseo' === $plugin ) {
+			$value = Seo_Plugin::aioseo_value( (int) $post_id, $field );
+			if ( null !== $value ) {
+				$value = is_string( $value ) ? $value : '';
+				return preg_match( '/#[a-z_]+/i', $value ) ? '' : $value;
+			}
+		}
 		$maps   = Seo_Plugin::field_maps();
 		$key    = $maps[ $plugin ][ $field ] ?? '';
 		$value  = '' !== $key ? get_post_meta( $post_id, $key, true ) : '';
@@ -950,16 +1117,19 @@ class PageChecks {
 		}
 		if ( class_exists( '\\WPO_Page_Cache' ) && class_exists( '\\WPO_Cache_Config' ) && (bool) \WPO_Cache_Config::instance()->get_option( 'enable_page_caching', false ) ) {
 			$try( 'wp_optimize', static function () use ( $url, $post_id ) {
-				// By post where possible, except the page shown as the home page: WP-Optimize's per-post
-				// purge also removes every page below the post's address, which for the home page is the whole site.
+				// By post where possible (its own address and numbered pages only, never the pages
+				// below it), except the page shown as the home page, which is purged by address.
 				$is_front = $post_id && 'page' === get_option( 'show_on_front' ) && (int) get_option( 'page_on_front' ) === (int) $post_id;
-				if ( $post_id && ! $is_front && method_exists( '\\WPO_Page_Cache', 'delete_single_post_cache' ) ) {
-					\WPO_Page_Cache::delete_single_post_cache( $post_id );
+				if ( $post_id && ! $is_front && class_exists( '\\Royal_MCP\\Integrations\\WPOptimize' ) && method_exists( '\\Royal_MCP\\Integrations\\WPOptimize', 'purge_post_page' ) ) {
+					if ( ! \Royal_MCP\Integrations\WPOptimize::purge_post_page( $post_id ) ) {
+						throw new \Exception( 'Some cached files could not be deleted.' );
+					}
 					return 'by post';
 				}
 				if ( ! method_exists( '\\WPO_Page_Cache', 'delete_cache_by_url' ) ) {
 					throw new \Exception( 'This version of WP-Optimize has no per-page purge.' );
 				}
+				// Only this address, never the pages below it.
 				\WPO_Page_Cache::delete_cache_by_url( $url, false );
 				return '';
 			} );

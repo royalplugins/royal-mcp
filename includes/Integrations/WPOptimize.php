@@ -333,7 +333,7 @@ class WPOptimize {
 			if ( 'post' === $tg['mode'] ) {
 				$folder = \WPO_Page_Cache::get_full_path_from_url( (string) get_permalink( $tg['post_id'] ) );
 				$before = self::page_files( $folder );
-				$ok     = (bool) \WPO_Page_Cache::delete_single_post_cache( $tg['post_id'] );
+				$ok     = self::purge_post_page( $tg['post_id'] );
 			} else {
 				$target = 'home' === $tg['mode'] ? home_url( '/' ) : $tg['url'];
 				$folder = \WPO_Page_Cache::get_full_path_from_url( $target );
@@ -379,5 +379,29 @@ class WPOptimize {
 			}
 		}
 		return $n;
+	}
+
+	/**
+	 * Delete the cached files of one post's own address, plus its own numbered pages when
+	 * the post is split with <!--nextpage-->. The cached pages of addresses below it (child
+	 * pages, for example) are left alone.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return bool False when a cached file could not be deleted or WP-Optimize has no per-address purge.
+	 */
+	public static function purge_post_page( $post_id ) {
+		$post = get_post( (int) $post_id );
+		$url  = $post ? (string) get_permalink( $post ) : '';
+		if ( '' === $url || ! class_exists( '\\WPO_Page_Cache' ) || ! method_exists( '\\WPO_Page_Cache', 'delete_cache_by_url' ) ) {
+			return false;
+		}
+		$ok    = (bool) \WPO_Page_Cache::delete_cache_by_url( $url, false );
+		$pages = min( 100, substr_count( (string) $post->post_content, '<!--nextpage-->' ) + 1 );
+		if ( $pages > 1 && false === strpos( $url, '?' ) ) {
+			for ( $n = 2; $n <= $pages; $n++ ) {
+				$ok = (bool) \WPO_Page_Cache::delete_cache_by_url( trailingslashit( $url ) . $n . '/', false ) && $ok;
+			}
+		}
+		return $ok;
 	}
 }

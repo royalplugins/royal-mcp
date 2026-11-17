@@ -38,6 +38,9 @@ class SeoAudit {
 	/** Seconds one call may spend auditing before it stops and says where it stopped. */
 	const TIME_BUDGET = 20;
 
+	/** Most bytes of findings one call sends back. */
+	const MAX_REPLY_BYTES = 1048576;
+
 	/** Whether a tool name belongs to this class. */
 	public static function handles( $name ) {
 		return self::TOOL === $name;
@@ -47,7 +50,7 @@ class SeoAudit {
 		return [
 			'wp_audit_seo_bulk' => [
 				'name'        => 'wp_audit_seo_bulk',
-				'description' => 'On-page SEO audit across a post type: title and description length, noindex, H1 count, word count, images and alt text, featured image. Titles and meta descriptions come from the active SEO plugin when one is detected (SEObolt, Yoast, Rank Math, SEOPress or AIOSEO) and from the WordPress fields (post title, excerpt) otherwise. It does not report plugin scores. Returns findings per page and, unless rollup is false, a summary (issues by type, worst offenders). Published content only unless include_drafts is true. The content is read as stored and nothing in it is run (no shortcodes, blocks or embeds), so text and images that a shortcode or dynamic block adds when the page is served are not counted; such pages are marked content_made_when_served. When the theme prints the title outside the post content the H1 cannot be counted and the page is marked h1_unverifiable_theme_title. Title and description text is sent back up to 300 characters with its full length. A call stops after about 20 seconds and says so (stopped_early); ask for fewer per page then. post_ids takes up to 500 ids and results come in ID order. Read-only. Requires manage_options.',
+				'description' => 'On-page SEO audit across a post type: title and description length, noindex, H1 count, word count, images and alt text, featured image. Titles and meta descriptions come from the active SEO plugin when one is detected (SEObolt, Yoast, Rank Math, SEOPress or AIOSEO) and from the WordPress fields (post title, excerpt) otherwise. It does not report plugin scores. Returns findings per page and, unless rollup is false, a summary (issues by type, worst offenders). Published content only unless include_drafts is true. The content is read as stored and nothing in it is run (no shortcodes, blocks or embeds), so text and images that a shortcode or dynamic block adds when the page is served are not counted; such pages are marked content_made_when_served. When the theme prints the title outside the post content the H1 cannot be counted and the page is marked h1_unverifiable_theme_title. Title and description text is sent back up to 300 characters with its full length. A call stops after about 20 seconds or about 1 MB of findings and says so (stopped_early, with remaining_post_ids to send back as post_ids, and next_page). post_ids takes up to 500 ids and results come in ID order. Read-only. Requires manage_options.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -196,20 +199,36 @@ class SeoAudit {
 		$issue_counter = [];
 		$worst_offenders = [];
 
-		$started  = microtime( true );
-		$stopped  = false;
-		$site_off = '0' === (string) get_option( 'blog_public', '1' );
+		// One call works for at most TIME_BUDGET seconds and sends back at most MAX_REPLY_BYTES of
+		// findings; the posts left are listed so they can be asked for next.
+		$started    = microtime( true );
+		$stopped    = false;
+		$remaining  = [];
+		$reply_size = 0;
+		$site_off   = '0' === (string) get_option( 'blog_public', '1' );
 		if ( $q->have_posts() ) {
 			foreach ( $q->posts as $post ) {
+				if ( $stopped ) {
+					$remaining[] = (int) $post->ID;
+					continue;
+				}
 				if ( ! current_user_can( 'read_post', $post->ID ) ) {
 					continue;
 				}
 				if ( microtime( true ) - $started > self::TIME_BUDGET ) {
-					$stopped = true;
-					break;
+					$stopped     = true;
+					$remaining[] = (int) $post->ID;
+					continue;
 				}
 				$findings = self::audit_single_post( $post, $detected, $count_decorative_alts );
-				$pages[] = $findings;
+				$size     = strlen( (string) wp_json_encode( $findings ) );
+				if ( $pages && $reply_size + $size > self::MAX_REPLY_BYTES ) {
+					$stopped     = true;
+					$remaining[] = (int) $post->ID;
+					continue;
+				}
+				$reply_size += $size;
+				$pages[]     = $findings;
 
 				foreach ( $findings['issues'] as $issue_key ) {
 					// Normalize compound issues ("3_images_missing_alt")
@@ -256,8 +275,11 @@ class SeoAudit {
 				'total_pages' => (int) $q->max_num_pages,
 				'total_posts' => (int) $q->found_posts,
 			],
-			// True when the time budget ran out before the page was finished: ask for fewer per page.
+			// True when the time or size budget ran out before the page was finished. remaining_post_ids
+			// can be sent back as post_ids to finish it; next_page is the page after this one.
 			'stopped_early'        => $stopped,
+			'remaining_post_ids'   => $remaining,
+			'next_page'            => $page < (int) $q->max_num_pages ? $page + 1 : null,
 			// WordPress's own "discourage search engines" switch covers every page, whatever each page says.
 			'site_discourages_search_engines' => $site_off,
 			'seo_plugin_detected'  => $detected,
@@ -574,6 +596,50 @@ class SeoAudit {
 	 *   SEObolt:  no template system for post meta — returns '' (caller falls to post_title)
 	 */
 	private static function get_site_default_template( $engine, $field, \WP_Post $post ) {
+		return self::without_site_code( static function () use ( $engine, $field, $post ) {
+			return self::site_default_template( $engine, $field, $post );
+		} );
+	}
+
+	/**
+	 * Runs an SEO plugin's title or description resolver without running the site's shortcodes or
+	 * excerpt filters: every shortcode renders as nothing (its tag is still known, so stripping
+	 * shortcodes keeps working), the plugins' own "run shortcodes" switches are turned off where
+	 * they have a filter for it, and get_the_excerpt returns the stored excerpt. Everything is put
+	 * back afterwards.
+	 */
+	private static function without_site_code( callable $fn ) {
+		global $shortcode_tags, $wp_filter;
+		$saved_tags     = $shortcode_tags;
+		$shortcode_tags = is_array( $saved_tags ) ? array_fill_keys( array_keys( $saved_tags ), '__return_empty_string' ) : []; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- restored in finally
+		$had_excerpt    = is_array( $wp_filter ) && isset( $wp_filter['get_the_excerpt'] );
+		$saved_excerpt  = $had_excerpt ? $wp_filter['get_the_excerpt'] : null;
+		if ( $had_excerpt ) {
+			unset( $wp_filter['get_the_excerpt'] );
+		}
+		$yes = static function () {
+			return true;
+		};
+		$no  = static function () {
+			return false;
+		};
+		add_filter( 'aioseo_disable_shortcode_parsing', $yes, PHP_INT_MAX );
+		add_filter( 'rank_math/paper/auto_generated_description/apply_shortcode', $no, PHP_INT_MAX );
+		try {
+			return $fn();
+		} finally {
+			remove_filter( 'aioseo_disable_shortcode_parsing', $yes, PHP_INT_MAX );
+			remove_filter( 'rank_math/paper/auto_generated_description/apply_shortcode', $no, PHP_INT_MAX );
+			if ( $had_excerpt ) {
+				$wp_filter['get_the_excerpt'] = $saved_excerpt; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- put back as it was
+			} elseif ( is_array( $wp_filter ) ) {
+				unset( $wp_filter['get_the_excerpt'] );
+			}
+			$shortcode_tags = $saved_tags; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- put back as it was
+		}
+	}
+
+	private static function site_default_template( $engine, $field, \WP_Post $post ) {
 		$post_type = (string) $post->post_type;
 		try {
 			switch ( $engine ) {
@@ -689,6 +755,12 @@ class SeoAudit {
 		if ( $template === '' ) {
 			return '';
 		}
+		return self::without_site_code( static function () use ( $template, $engine, $field, $post ) {
+			return self::render_template_now( $template, $engine, $field, $post );
+		} );
+	}
+
+	private static function render_template_now( $template, $engine, $field, \WP_Post $post ) {
 		try {
 			switch ( $engine ) {
 				case 'yoast':

@@ -680,6 +680,15 @@ class Settings_Page {
         return self::LOG_RETENTION_DAYS;
     }
 
+    /**
+     * Whether the current user may not change the retention period: on a network, keeping
+     * entries until they are cleared is a network administrator's choice, and only a network
+     * administrator can shorten it again.
+     */
+    public static function log_retention_locked() {
+        return is_multisite() && 0 === self::log_retention_choice() && ! current_user_can( 'manage_network_options' );
+    }
+
     /** The Activity Log screen's retention form: save the chosen period and record who changed it. */
     public function handle_set_log_retention() {
         if ( ! current_user_can( self::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from admin_capability(); per-site retention of the per-site log table
@@ -694,6 +703,9 @@ class Settings_Page {
         // On a network, keeping a site's log for ever is a network administrator's call.
         if ( 0 === $days && is_multisite() && ! current_user_can( 'manage_network_options' ) ) {
             $done = 'network';
+            $days = -1;
+        } elseif ( $days >= 0 && $days !== self::log_retention_choice() && self::log_retention_locked() ) {
+            $done = 'network_kept';
             $days = -1;
         }
         if ( in_array( $days, self::LOG_RETENTION_CHOICES, true ) ) {

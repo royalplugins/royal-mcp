@@ -146,7 +146,7 @@ class AcfSetup {
 		$out = [];
 		foreach ( $group_keys as $key ) {
 			$group        = function_exists( 'acf_get_field_group' ) ? acf_get_field_group( $key ) : null;
-			$fields       = ( is_array( $group ) && function_exists( 'acf_get_fields' ) ) ? acf_get_fields( $group ) : [];
+			$fields       = is_array( $group ) ? self::stored_fields( $group ) : [];
 			$out[ $key ] = is_array( $group ) && ! empty( $group['ID'] ) ? md5( (string) wp_json_encode( [ $group, $fields ] ) ) : 'absent';
 		}
 		return $out;
@@ -385,7 +385,7 @@ class AcfSetup {
 			);
 		}
 
-		$source_fields = function_exists( 'acf_get_fields' ) ? (array) acf_get_fields( $source ) : [];
+		$source_fields = self::stored_fields( $source );
 
 		$override_in = isset( $args['location_overrides'] ) && is_array( $args['location_overrides'] ) ? array_values( $args['location_overrides'] ) : null;
 		$location_final = isset( $source['location'] ) && is_array( $source['location'] ) ? $source['location'] : [];
@@ -637,7 +637,9 @@ class AcfSetup {
 
 		$force    = ! empty( $args['force'] );
 		$post_id  = (int) $existing['ID'];
-		$fields   = function_exists( 'acf_get_fields' ) ? self::expand_field_tree( (array) acf_get_fields( $existing ) ) : [];
+		$fields   = self::with_stored_fields( static function () use ( $existing ) {
+			return self::expand_field_tree( self::stored_fields( $existing ) );
+		} );
 
 		if ( $force ) {
 
@@ -652,9 +654,7 @@ class AcfSetup {
 				$fields_snapshot[] = $field_arr;
 			}
 
-			$deleted = function_exists( 'acf_delete_field_group' )
-				? acf_delete_field_group( $post_id )
-				: wp_delete_post( $post_id, true );
+			$deleted = self::delete_stored_group( $post_id );
 			if ( ! $deleted ) {
 				return self::error(
 					'acf_delete_failed',
@@ -678,9 +678,9 @@ class AcfSetup {
 			$was_trashed = false;
 		} else {
 
-			$trashed = function_exists( 'acf_trash_field_group' )
-				? acf_trash_field_group( $post_id )
-				: wp_trash_post( $post_id );
+			$trashed = self::with_stored_fields( static function () use ( $post_id ) {
+				return function_exists( 'acf_trash_field_group' ) ? acf_trash_field_group( $post_id ) : wp_trash_post( $post_id );
+			} );
 			if ( ! $trashed ) {
 				return self::error(
 					'acf_trash_failed',
@@ -862,7 +862,7 @@ class AcfSetup {
 				unset( $meta_snapshot['fields'] );
 				$fields_snapshot = [];
 				if ( function_exists( 'acf_get_fields' ) ) {
-					foreach ( self::expand_field_tree( (array) acf_get_fields( $existing ) ) as $f ) {
+					foreach ( self::with_stored_fields( static function () use ( $existing ) { return self::expand_field_tree( self::stored_fields( $existing ) ); } ) as $f ) {
 						$farr = (array) $f;
 						unset( $farr['ID'], $farr['parent'] );
 						$fields_snapshot[] = $farr;
@@ -937,7 +937,9 @@ class AcfSetup {
 			}
 
 			$to_import = acf_prepare_internal_post_type_for_import( $to_import, 'acf-field-group' );
-			$result    = acf_import_internal_post_type( $to_import, 'acf-field-group' );
+			$result    = self::with_stored_fields( static function () use ( $to_import ) {
+				return acf_import_internal_post_type( $to_import, 'acf-field-group' );
+			} );
 
 			if ( ! is_array( $result ) || empty( $result['ID'] ) ) {
 				return self::error(
@@ -1045,7 +1047,7 @@ class AcfSetup {
 		$exported = [];
 		foreach ( $resolved as $key => $post ) {
 			if ( $include_fields && function_exists( 'acf_get_fields' ) ) {
-				$post['fields'] = acf_get_fields( $post );
+				$post['fields'] = self::stored_fields( $post );
 			}
 			$exported[] = acf_prepare_internal_post_type_for_export( $post, 'acf-field-group' );
 		}
@@ -1101,7 +1103,7 @@ class AcfSetup {
 			);
 		}
 
-		$existing = function_exists( 'acf_get_fields' ) ? (array) acf_get_fields( $group ) : [];
+		$existing = self::stored_fields( $group );
 
 		$position = isset( $args['position'] ) ? $args['position'] : 'append';
 		$max_order = -1;
@@ -1458,7 +1460,7 @@ class AcfSetup {
 			$meta_purge_capped = $meta_purged_count >= $meta_cap;
 		}
 
-		$deleted = acf_delete_field( $field_id );
+		$deleted = self::delete_stored_field( $field_id );
 		if ( ! $deleted ) {
 			return self::error(
 				'acf_delete_failed',
@@ -1551,7 +1553,7 @@ class AcfSetup {
 			return self::error( 'invalid_field_keys_ordered', 'field_keys_ordered must be a non-empty array of field keys.' );
 		}
 
-		$existing = function_exists( 'acf_get_fields' ) ? (array) acf_get_fields( $group ) : [];
+		$existing = self::stored_fields( $group );
 		$current_keys = [];
 		$current_by_key = [];
 		foreach ( $existing as $f ) {
@@ -1668,7 +1670,7 @@ class AcfSetup {
 
 		$field_count = 0;
 		if ( $include_fields && function_exists( 'acf_get_fields' ) ) {
-			$fields      = (array) acf_get_fields( $group );
+			$fields      = self::stored_fields( $group );
 			$field_count = count( $fields );
 			if ( $include_sub_fields ) {
 				$group['fields'] = self::expand_field_tree( $fields );
@@ -1947,9 +1949,8 @@ class AcfSetup {
 				'group_key'              => $group_key,
 			];
 		}
-		$deleted = function_exists( 'acf_delete_field_group' )
-			? acf_delete_field_group( (int) $existing['ID'] )
-			: wp_delete_post( (int) $existing['ID'], true );
+		self::refuse_if_group_has_values( (int) $existing['ID'], sprintf( 'field group "%s"', $group_key ), $token_row );
+		$deleted = self::delete_stored_group( (int) $existing['ID'] );
 		if ( ! $deleted ) {
 			throw new \RuntimeException( sprintf( 'Delete failed for field group "%s".', $group_key ) );
 		}
@@ -1982,9 +1983,8 @@ class AcfSetup {
 				'clone_group_key'        => $clone_key,
 			];
 		}
-		$deleted = function_exists( 'acf_delete_field_group' )
-			? acf_delete_field_group( (int) $existing['ID'] )
-			: wp_delete_post( (int) $existing['ID'], true );
+		self::refuse_if_group_has_values( (int) $existing['ID'], sprintf( 'cloned field group "%s"', $clone_key ), $token_row );
+		$deleted = self::delete_stored_group( (int) $existing['ID'] );
 		if ( ! $deleted ) {
 			throw new \RuntimeException( sprintf( 'Delete failed for cloned field group "%s".', $clone_key ) );
 		}
@@ -2058,9 +2058,9 @@ class AcfSetup {
 				];
 			}
 
-			$untrashed = function_exists( 'acf_untrash_field_group' )
-				? acf_untrash_field_group( $post_id )
-				: wp_untrash_post( $post_id );
+			$untrashed = self::with_stored_fields( static function () use ( $post_id ) {
+				return function_exists( 'acf_untrash_field_group' ) ? acf_untrash_field_group( $post_id ) : wp_untrash_post( $post_id );
+			} );
 			if ( ! $untrashed ) {
 				throw new \RuntimeException( sprintf( 'Untrash failed for post id %d.', $post_id ) );
 			}
@@ -2181,9 +2181,7 @@ class AcfSetup {
 					$noop_count++;
 					continue;
 				}
-				$deleted = function_exists( 'acf_delete_field_group' )
-					? acf_delete_field_group( (int) $existing['ID'] )
-					: wp_delete_post( (int) $existing['ID'], true );
+				$deleted = self::delete_stored_group( (int) $existing['ID'] );
 				if ( ! $deleted ) {
 					throw new \RuntimeException( sprintf( 'Delete failed for created field group "%s".', $group_key ) );
 				}
@@ -2226,9 +2224,10 @@ class AcfSetup {
 					$group_id = (int) $saved['ID'];
 
 					if ( function_exists( 'acf_get_fields' ) && function_exists( 'acf_delete_field' ) ) {
-						foreach ( self::expand_field_tree( (array) acf_get_fields( $existing ) ) as $f ) {
+						// Top-level fields only: deleting a container removes its own sub-fields.
+						foreach ( self::stored_fields( $existing ) as $f ) {
 							if ( is_array( $f ) && ! empty( $f['ID'] ) ) {
-								acf_delete_field( (int) $f['ID'] );
+								self::delete_stored_field( (int) $f['ID'] );
 							}
 						}
 					}
@@ -2296,7 +2295,7 @@ class AcfSetup {
 				'field_key'              => $field_key,
 			];
 		}
-		$deleted = acf_delete_field( (int) $field['ID'] );
+		$deleted = self::delete_stored_field( (int) $field['ID'] );
 		if ( ! $deleted ) {
 			throw new \RuntimeException( sprintf( 'Delete failed for field "%s" during undo.', $field_key ) );
 		}
@@ -3143,6 +3142,172 @@ class AcfSetup {
 		}
 	}
 
+	/**
+	 * Runs $fn with ACF's clone expansion switched off and its loaded-field cache emptied before
+	 * and after. Every field read inside sees only the posts stored under its own parent: a
+	 * seamless clone stays one clone field instead of copies of the fields it points at (which
+	 * carry the other group's post ids), and deleting a container removes only its own sub-fields.
+	 */
+	private static function with_stored_fields( callable $fn ) {
+		static $depth = 0;
+		if ( $depth > 0 ) {
+			return $fn();
+		}
+		$store  = function_exists( 'acf_get_store' ) ? acf_get_store( 'fields' ) : false;
+		$can    = function_exists( 'acf_is_filter_enabled' ) && function_exists( 'acf_disable_filter' ) && function_exists( 'acf_enable_filter' );
+		$was_on = $can && acf_is_filter_enabled( 'clone' );
+		if ( $was_on ) {
+			acf_disable_filter( 'clone' );
+		}
+		if ( is_object( $store ) && method_exists( $store, 'reset' ) ) {
+			$store->reset();
+		}
+		$depth++;
+		try {
+			return $fn();
+		} finally {
+			$depth--;
+			if ( $was_on ) {
+				acf_enable_filter( 'clone' );
+			}
+			if ( is_object( $store ) && method_exists( $store, 'reset' ) ) {
+				$store->reset();
+			}
+		}
+	}
+
+	/** The fields stored directly under a group or field, as saved. A clone field comes back as itself, without copies of its target fields. */
+	private static function stored_fields( $parent ) {
+		if ( ! function_exists( 'acf_get_fields' ) ) {
+			return [];
+		}
+		$fields = (array) self::with_stored_fields( static function () use ( $parent ) {
+			return acf_get_fields( $parent );
+		} );
+		$out = [];
+		foreach ( $fields as $field ) {
+			if ( ! is_array( $field ) ) {
+				continue;
+			}
+			if ( 'clone' === (string) ( $field['type'] ?? '' ) ) {
+				unset( $field['sub_fields'] );
+			}
+			$out[] = $field;
+		}
+		return $out;
+	}
+
+	/** Deletes a field group and its own fields only. */
+	private static function delete_stored_group( $group_id ) {
+		return self::with_stored_fields( static function () use ( $group_id ) {
+			return function_exists( 'acf_delete_field_group' ) ? acf_delete_field_group( (int) $group_id ) : wp_delete_post( (int) $group_id, true );
+		} );
+	}
+
+	/** Deletes a field and its own sub-fields only. */
+	private static function delete_stored_field( $field_id ) {
+		return self::with_stored_fields( static function () use ( $field_id ) {
+			return acf_delete_field( (int) $field_id );
+		} );
+	}
+
+	/** Post ids of every acf-field row below a field or group, at every depth, read from the posts table. */
+	private static function descendant_field_ids( $post_id ) {
+		global $wpdb;
+		$ids     = [];
+		$parents = [ (int) $post_id ];
+		for ( $depth = 0; $parents && $depth < 10 && count( $ids ) < 5000; $depth++ ) {
+			$in = implode( ',', array_map( 'intval', $parents ) );
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $in holds integers only.
+			$parents = array_map( 'intval', (array) $wpdb->get_col( "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'acf-field' AND post_parent IN ({$in})" ) );
+			$ids     = array_merge( $ids, $parents );
+		}
+		return $ids;
+	}
+
+	/**
+	 * Whether a stored field holds a saved value anywhere: post, term, user or comment meta,
+	 * options, or an ACF block in post content. A clone field's values are stored under
+	 * "<clone key>_<field key>" references.
+	 */
+	private static function field_has_values( $field_post_id ) {
+		global $wpdb;
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		$row = $wpdb->get_row( $wpdb->prepare(
+			"SELECT p.post_name, p.post_excerpt, p.post_content, parent.post_type AS parent_type FROM {$wpdb->posts} p LEFT JOIN {$wpdb->posts} parent ON parent.ID = p.post_parent WHERE p.ID = %d",
+			(int) $field_post_id
+		), ARRAY_A );
+		if ( ! is_array( $row ) || '' === (string) $row['post_name'] ) {
+			return false;
+		}
+		$key      = (string) $row['post_name'];
+		$name     = (string) $row['post_excerpt'];
+		$settings = maybe_unserialize( (string) $row['post_content'] );
+		$is_clone = is_array( $settings ) && 'clone' === (string) ( $settings['type'] ?? '' );
+		$ref_like = $wpdb->esc_like( '_' ) . '%';
+		$tables   = [ $wpdb->postmeta, $wpdb->termmeta, $wpdb->usermeta, $wpdb->commentmeta ];
+		if ( $is_clone ) {
+			$value_sql = 'LIKE %s';
+			$value_arg = $wpdb->esc_like( $key . '_' ) . '%';
+			$block_arg = '%' . $wpdb->esc_like( '"' . $key . '_' ) . '%';
+		} else {
+			$value_sql = '= %s';
+			$value_arg = $key;
+			$block_arg = '%' . $wpdb->esc_like( '"' . $key . '"' ) . '%';
+		}
+		$by_name = '' !== $name && ! $is_clone && 'acf-field' !== (string) $row['parent_type'];
+		foreach ( $tables as $table ) {
+			if ( $by_name ) {
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- core table names.
+				$hit = $wpdb->get_var( $wpdb->prepare( "SELECT 1 FROM {$table} WHERE meta_key = %s AND meta_value = %s LIMIT 1", '_' . $name, $key ) );
+			} else {
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare -- core table names; $value_sql is one of two fixed fragments.
+				$hit = $wpdb->get_var( $wpdb->prepare( "SELECT 1 FROM {$table} WHERE meta_key LIKE %s AND meta_value {$value_sql} LIMIT 1", $ref_like, $value_arg ) );
+			}
+			if ( $hit ) {
+				return true;
+			}
+		}
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare -- $value_sql is one of two fixed fragments.
+		if ( $wpdb->get_var( $wpdb->prepare( "SELECT 1 FROM {$wpdb->options} WHERE option_name LIKE %s AND option_value {$value_sql} LIMIT 1", $ref_like, $value_arg ) ) ) {
+			return true;
+		}
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		return (bool) $wpdb->get_var( $wpdb->prepare(
+			"SELECT 1 FROM {$wpdb->posts} WHERE post_type <> 'revision' AND post_status IN ('publish', 'future', 'draft', 'pending', 'private') AND post_content LIKE %s AND post_content LIKE %s LIMIT 1",
+			'%' . $wpdb->esc_like( '<!-- wp:acf/' ) . '%',
+			$block_arg
+		) );
+	}
+
+	/** Key of the first field stored under this group, at any depth, that holds a saved value; '' when none does. */
+	private static function group_field_with_values( $group_id ) {
+		global $wpdb;
+		foreach ( self::descendant_field_ids( (int) $group_id ) as $field_id ) {
+			if ( self::field_has_values( (int) $field_id ) ) {
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+				return (string) $wpdb->get_var( $wpdb->prepare( "SELECT post_name FROM {$wpdb->posts} WHERE ID = %d", (int) $field_id ) );
+			}
+		}
+		return '';
+	}
+
+	/**
+	 * Refuses an undo that would delete a group whose fields hold saved values, unless the caller
+	 * forces it. The undo token stays usable.
+	 *
+	 * @throws Tool_Refusal When a field holds values and force is off.
+	 */
+	private static function refuse_if_group_has_values( $group_id, $label, array $token_row ) {
+		if ( ! empty( $token_row['force'] ) ) {
+			return;
+		}
+		$valued = self::group_field_with_values( (int) $group_id );
+		if ( '' !== $valued ) {
+			throw new Tool_Refusal( 'fields_have_values', esc_html( sprintf( 'Content now has saved values for field "%s" of %s, so the undo left it in place. Undo again with force: true to delete it anyway (the saved values stay in the database but are no longer shown or edited through ACF).', $valued, $label ) ), [ 'field_key' => $valued ] );
+		}
+	}
+
 	private static function expand_field_tree( array $fields ) {
 		$expanded = [];
 		foreach ( $fields as $field ) {
@@ -3152,10 +3317,10 @@ class AcfSetup {
 			}
 			$type = isset( $field['type'] ) ? (string) $field['type'] : '';
 			if ( in_array( $type, [ 'repeater', 'group', 'clone' ], true ) && function_exists( 'acf_get_fields' ) ) {
-				$children            = (array) acf_get_fields( $field );
+				$children            = self::stored_fields( $field );
 				$field['sub_fields'] = self::expand_field_tree( $children );
 			} elseif ( $type === 'flexible_content' && function_exists( 'acf_get_fields' ) && isset( $field['layouts'] ) && is_array( $field['layouts'] ) ) {
-				$children_flat = (array) acf_get_fields( $field );
+				$children_flat = self::stored_fields( $field );
 
 				$by_layout_key = [];
 				foreach ( $children_flat as $child ) {

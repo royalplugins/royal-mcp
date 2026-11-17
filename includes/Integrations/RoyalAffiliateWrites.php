@@ -188,7 +188,7 @@ class RoyalAffiliateWrites {
 	private static function referral_row( $id ) {
 		global $wpdb;
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-		$row = $wpdb->get_row( $wpdb->prepare( "SELECT status, payout_id, affiliate_id FROM {$wpdb->prefix}rafp_referrals WHERE referral_id = %d", (int) $id ), ARRAY_A );
+		$row = $wpdb->get_row( $wpdb->prepare( "SELECT status, payout_id, affiliate_id, date_approved FROM {$wpdb->prefix}rafp_referrals WHERE referral_id = %d", (int) $id ), ARRAY_A );
 		return is_array( $row ) ? $row : null;
 	}
 
@@ -199,7 +199,7 @@ class RoyalAffiliateWrites {
 	private static function tier_referrals( $id ) {
 		global $wpdb;
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-		$rows = (array) $wpdb->get_results( $wpdb->prepare( "SELECT referral_id, status, payout_id, affiliate_id FROM {$wpdb->prefix}rafp_referrals WHERE parent_referral_id = %d ORDER BY referral_id LIMIT 50", (int) $id ), ARRAY_A );
+		$rows = (array) $wpdb->get_results( $wpdb->prepare( "SELECT referral_id, status, payout_id, affiliate_id, date_approved FROM {$wpdb->prefix}rafp_referrals WHERE parent_referral_id = %d ORDER BY referral_id LIMIT 50", (int) $id ), ARRAY_A );
 		return array_column( $rows, null, 'referral_id' );
 	}
 
@@ -224,20 +224,37 @@ class RoyalAffiliateWrites {
 	 * Runs $fn with Royal Affiliate's challenge counting switched off, for a status that was already
 	 * counted once (putting a referral back to approved must not count it a second time).
 	 */
-	private static function without_challenge_counting( callable $fn ) {
+	/**
+	 * Runs $fn with two of Royal Affiliate's status listeners switched off while an undo puts
+	 * statuses back: challenge counting (a status already counted once must not count again) and
+	 * the multi-tier cascade (each upline referral is put back to its own earlier status and
+	 * approval date instead, without the cascade's new dates and emails).
+	 */
+	private static function without_status_listeners( callable $fn ) {
 		$hook = 'rafp_referral_status_changed';
-		$cb   = [ 'Royal_Affiliate_Challenge_Progress', 'on_referral_status_changed' ];
-		$prio = has_action( $hook, $cb );
-		if ( false !== $prio ) {
-			remove_action( $hook, $cb, $prio );
+		$off  = [];
+		foreach ( [ [ 'Royal_Affiliate_Challenge_Progress', 'on_referral_status_changed' ], [ 'Royal_Affiliate_Multi_Tier', 'process_status_change' ] ] as $cb ) {
+			$prio = has_action( $hook, $cb );
+			if ( false !== $prio ) {
+				remove_action( $hook, $cb, $prio );
+				$off[] = [ $cb, $prio ];
+			}
 		}
 		try {
 			return $fn();
 		} finally {
-			if ( false !== $prio ) {
-				add_action( $hook, $cb, $prio, 2 );
+			foreach ( $off as $was ) {
+				add_action( $hook, $was[0], $was[1], 2 );
 			}
 		}
+	}
+
+	/** A date_approved value from a snapshot (a MySQL date-time or null), or false when it is not one. */
+	private static function snapshot_date( $value ) {
+		if ( null === $value ) {
+			return null;
+		}
+		return ( is_string( $value ) && 1 === preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $value ) ) ? $value : false;
 	}
 
 	/** Runs $fn and returns [ its result, how many emails WordPress was asked to send meanwhile ]. */
@@ -271,6 +288,7 @@ class RoyalAffiliateWrites {
 			$ids[ $id ] = $id;
 		}
 		$change     = [];
+		$rows_of    = [];
 		$tiers      = [];
 		$same       = [];
 		$skipped    = [];
@@ -291,8 +309,10 @@ class RoyalAffiliateWrites {
 				$same[] = $id;
 			} else {
 				$change[ $id ]  = (string) $row['status'];
+				$rows_of[ $id ] = $row;
 				$affiliates[]   = (int) $row['affiliate_id'];
 				foreach ( $kin as $kid => $k ) {
+					$rows_of[ (int) $kid ]      = $k;
 					$tiers[ $id ][ (int) $kid ] = (string) $k['status'];
 					$affiliates[]               = (int) $k['affiliate_id'];
 				}
@@ -313,40 +333,85 @@ class RoyalAffiliateWrites {
 				[ 'dry_run' => true, 'new_status' => $new, 'would_change' => $listing( $change ), 'unchanged_ids' => $same, 'skipped' => $skipped ]
 			);
 		}
-		$before = self::progress_of( $affiliates );
-		list( $done, $mails ) = self::counting_mail( static function () use ( $change, $new, &$skipped ) {
-			$done = [];
-			foreach ( $change as $id => $from ) {
-				if ( \Royal_Affiliate_Referral::update_status( $id, $new ) ) {
+		// Challenge progress and rewards are measured around each referral's own change, so an undo
+		// can take off exactly what the referrals it puts back added. Royal Affiliate grants a reward
+		// each time it reports a challenge completed; a recurring challenge keeps doing so past its goal.
+		$progress_by_ref = [];
+		$progress_floor  = [];
+		$rewards_by_ref  = [];
+		$completions     = 0;
+		$on_completed    = static function () use ( &$completions ) {
+			$completions++;
+		};
+		add_action( 'rafp_challenge_completed', $on_completed, 1, 0 );
+		try {
+			list( $done, $mails ) = self::counting_mail( static function () use ( $change, $new, $tiers, $rows_of, &$skipped, &$progress_by_ref, &$progress_floor, &$rewards_by_ref, &$completions ) {
+				$done = [];
+				foreach ( $change as $id => $from ) {
+					$watch = [ (int) ( $rows_of[ $id ]['affiliate_id'] ?? 0 ) ];
+					foreach ( (array) ( $tiers[ $id ] ?? [] ) as $kid => $unused ) {
+						$watch[] = (int) ( $rows_of[ $kid ]['affiliate_id'] ?? 0 );
+					}
+					$before      = self::progress_of( $watch );
+					$completions = 0;
+					if ( ! \Royal_Affiliate_Referral::update_status( $id, $new ) ) {
+						$skipped[] = [ 'referral_id' => $id, 'reason' => 'not_saved' ];
+						continue;
+					}
 					$done[ $id ] = $from;
-				} else {
-					$skipped[] = [ 'referral_id' => $id, 'reason' => 'not_saved' ];
+					$flips       = 0;
+					foreach ( self::progress_of( $watch ) as $key => $now ) {
+						$was   = $before[ $key ] ?? [ 0.0, 0 ];
+						$delta = round( $now[0] - $was[0], 2 );
+						if ( $delta > 0 ) {
+							$progress_by_ref[ $id ][ $key ] = $delta;
+							if ( ! array_key_exists( $key, $progress_floor ) ) {
+								$progress_floor[ $key ] = $was[0];
+							}
+						}
+						if ( 1 === $now[1] && 1 !== $was[1] ) {
+							$flips++;
+						}
+					}
+					// A completion seen only in the progress table counts as well.
+					$granted = max( $completions, $flips );
+					if ( $granted > 0 ) {
+						$rewards_by_ref[ $id ] = $granted;
+					}
 				}
-			}
-			return $done;
-		} );
-		// What this call added to challenge progress, so an undo can take exactly that off again.
-		$progress = [];
-		$rewards  = 0;
-		foreach ( self::progress_of( $affiliates ) as $key => $now ) {
-			$was   = $before[ $key ] ?? [ 0.0, 0 ];
-			$delta = round( $now[0] - $was[0], 2 );
-			$won   = 1 === $now[1] && 1 !== $was[1];
-			if ( $delta > 0 || $won ) {
-				$progress[ $key ] = [ 'delta' => max( 0, $delta ), 'completed' => $won ];
-				$rewards         += $won ? 1 : 0;
+				return $done;
+			} );
+		} finally {
+			remove_action( 'rafp_challenge_completed', $on_completed, 1 );
+		}
+		$rewards = (int) array_sum( $rewards_by_ref );
+		$kept    = array_intersect_key( $tiers, $done );
+		$dates   = [];
+		$kdates  = [];
+		foreach ( array_keys( $done ) as $id ) {
+			$dates[ $id ] = $rows_of[ $id ]['date_approved'] ?? null;
+			foreach ( array_keys( (array) ( $kept[ $id ] ?? [] ) ) as $kid ) {
+				$kdates[ (int) $kid ] = $rows_of[ $kid ]['date_approved'] ?? null;
 			}
 		}
-		$kept = array_intersect_key( $tiers, $done );
 		$undo = $done ? Undo_Store::store( [
 			'op'           => 'rafp_update_referral_status',
 			'summary'      => sprintf( 'Put %d referral(s) back to their earlier status', count( $done ) ),
 			'target'       => [ 'referral_ids' => array_keys( $done ) ],
-			'pre_op_state' => [ 'rows' => $done, 'written' => $new, 'tiers' => $kept, 'progress' => $progress ],
+			'pre_op_state' => [
+				'rows'            => $done,
+				'written'         => $new,
+				'tiers'           => $kept,
+				'dates'           => $dates,
+				'tier_dates'      => $kdates,
+				'progress_by_ref' => array_intersect_key( $progress_by_ref, $done ),
+				'progress_floor'  => $progress_floor,
+				'rewards_by_ref'  => array_intersect_key( $rewards_by_ref, $done ),
+			],
 		] ) : null;
 		return Envelope::success(
 			sprintf( '%d referral(s) set to %s, %d already were, %d left alone.%s%s%s', count( $done ), $new, count( $same ), count( $skipped ), $done ? $also : '', $rewards ? sprintf( ' %d challenge(s) were completed by this and their reward granted; an undo does not take a reward back.', $rewards ) : '', $done ? $note : '' ),
-			[ 'dry_run' => false, 'new_status' => $new, 'changed' => $listing( $done ), 'unchanged_ids' => $same, 'skipped' => $skipped, 'emails_sent' => $mails, 'challenge_progress_rows_changed' => count( $progress ), 'challenge_rewards_granted' => $rewards ],
+			[ 'dry_run' => false, 'new_status' => $new, 'changed' => $listing( $done ), 'unchanged_ids' => $same, 'skipped' => $skipped, 'emails_sent' => $mails, 'challenge_progress_rows_changed' => count( $progress_floor ), 'challenge_rewards_granted' => $rewards ],
 			$undo ?: null
 		);
 	}
@@ -357,7 +422,12 @@ class RoyalAffiliateWrites {
 		$rows     = (array) ( $pre['rows'] ?? [] );
 		$written  = (string) ( $pre['written'] ?? '' );
 		$tiers    = (array) ( $pre['tiers'] ?? [] );
-		$progress = (array) ( $pre['progress'] ?? [] );
+		$by_ref   = isset( $pre['progress_by_ref'] ) && is_array( $pre['progress_by_ref'] ) ? $pre['progress_by_ref'] : null;
+		$floor    = (array) ( $pre['progress_floor'] ?? [] );
+		$dates    = (array) ( $pre['dates'] ?? [] );
+		$kdates   = (array) ( $pre['tier_dates'] ?? [] );
+		// An older snapshot carries one progress total per challenge instead of a share per referral.
+		$progress = null === $by_ref ? (array) ( $pre['progress'] ?? [] ) : [];
 		if ( ! $rows || ! in_array( $written, self::REFERRAL_TARGETS, true ) ) {
 			throw new \Exception( 'Undo snapshot missing the referrals.' );
 		}
@@ -388,36 +458,73 @@ class RoyalAffiliateWrites {
 		if ( $drifted && ! $force ) {
 			throw new Tool_Refusal( 'edited_since_write', esc_html( sprintf( '%d of these referrals changed status again after this write, so the undo changed nothing. Pass force: true to put the ones that are not paid or on a payout back to their earlier status anyway.', count( $drifted ) ) ), [ 'changed_since' => array_slice( $drifted, 0, 100 ) ] );
 		}
-		$won = count( array_filter( $progress, static function ( $p ) { return ! empty( $p['completed'] ); } ) );
+		$won = null !== $by_ref
+			? (int) array_sum( array_map( 'intval', (array) ( $pre['rewards_by_ref'] ?? [] ) ) )
+			: count( array_filter( $progress, static function ( $p ) { return ! empty( $p['completed'] ); } ) );
 		if ( $won && ! $force ) {
 			throw new Tool_Refusal( 'reward_granted', esc_html( sprintf( 'That change completed %d challenge(s) and Royal Affiliate granted the reward, which an undo cannot take back. Nothing was changed. Pass force: true to put the referrals back anyway; the reward stays and has to be removed in Royal Affiliate by hand.', $won ) ) );
 		}
-		list( $restored, $mails ) = self::counting_mail( static function () use ( $plan, $tiers, &$skipped ) {
-			// These statuses were counted toward challenges before the write; putting them back must not count them again.
-			return self::without_challenge_counting( static function () use ( $plan, $tiers, &$skipped ) {
+		list( $restored, $mails ) = self::counting_mail( static function () use ( $plan, $tiers, $dates, $kdates, &$skipped, $wpdb ) {
+			// These statuses were counted toward challenges before the write; putting them back must not
+			// count them again, nor run the multi-tier cascade (upline referrals are put back below).
+			return self::without_status_listeners( static function () use ( $plan, $tiers, $dates, $kdates, &$skipped, $wpdb ) {
 				$restored = [];
 				foreach ( $plan as $id => $prior ) {
 					if ( ! \Royal_Affiliate_Referral::update_status( $id, $prior ) ) {
 						$skipped[] = [ 'referral_id' => $id, 'reason' => 'not_saved' ];
 						continue;
 					}
+					// Putting a referral back to approved stamps it with now; it gets its own approval date back.
+					$date = array_key_exists( $id, $dates ) ? self::snapshot_date( $dates[ $id ] ) : false;
+					if ( false !== $date ) {
+						// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Royal Affiliate's own table
+						$wpdb->update( $wpdb->prefix . 'rafp_referrals', [ 'date_approved' => $date ], [ 'referral_id' => (int) $id ], [ '%s' ], [ '%d' ] );
+					}
 					$kids = [];
-					// Royal Affiliate has just given the upline referrals the same status; each one goes back to its own.
+					// Each upline referral goes back to its own earlier status and approval date.
 					foreach ( (array) ( $tiers[ $id ] ?? [] ) as $kid => $own ) {
 						$now = self::referral_row( (int) $kid );
-						if ( $now && null === self::lock_reason( $now ) && in_array( (string) $own, self::REFERRAL_TARGETS, true ) && (string) $own !== (string) $now['status'] ) {
-							\Royal_Affiliate_Referral::update_status( (int) $kid, (string) $own );
-						}
 						$kids[] = (int) $kid;
+						if ( ! $now || null !== self::lock_reason( $now ) || ! in_array( (string) $own, self::REFERRAL_TARGETS, true ) ) {
+							continue;
+						}
+						$set = [];
+						if ( (string) $own !== (string) $now['status'] ) {
+							$set['status'] = (string) $own;
+						}
+						$kdate = array_key_exists( (int) $kid, $kdates ) ? self::snapshot_date( $kdates[ (int) $kid ] ) : false;
+						if ( false !== $kdate && $kdate !== ( isset( $now['date_approved'] ) ? (string) $now['date_approved'] : null ) ) {
+							$set['date_approved'] = $kdate;
+						}
+						if ( $set ) {
+							// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Royal Affiliate's own table, written the way its cascade writes it
+							$wpdb->update( $wpdb->prefix . 'rafp_referrals', $set, [ 'referral_id' => (int) $kid ], array_fill( 0, count( $set ), '%s' ), [ '%d' ] );
+						}
 					}
 					$restored[] = [ 'referral_id' => $id, 'restored_to' => $prior, 'tier_referral_ids' => $kids ];
 				}
 				return $restored;
 			} );
 		} );
-		// Take off the challenge progress the write added, where the challenge is still open.
+		// Take off the challenge progress the restored referrals' changes added (recurring challenges
+		// included), never below the value captured when the status changed.
 		$taken = 0;
-		if ( $restored && 'approved' === $written ) {
+		if ( null !== $by_ref ) {
+			$sum = [];
+			foreach ( $restored as $r ) {
+				foreach ( (array) ( $by_ref[ (int) $r['referral_id'] ] ?? [] ) as $key => $delta ) {
+					$sum[ (string) $key ] = ( $sum[ (string) $key ] ?? 0.0 ) + (float) $delta;
+				}
+			}
+			foreach ( $sum as $key => $delta ) {
+				$parts = array_map( 'intval', explode( ':', $key ) );
+				$delta = round( $delta, 2 );
+				if ( 2 === count( $parts ) && $delta > 0 ) {
+					// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+					$taken += (int) $wpdb->query( $wpdb->prepare( "UPDATE {$wpdb->prefix}rafp_challenge_progress SET current_value = GREATEST( current_value - %f, LEAST( current_value, %f ) ) WHERE challenge_id = %d AND affiliate_id = %d", $delta, (float) ( $floor[ $key ] ?? 0 ), $parts[0], $parts[1] ) );
+				}
+			}
+		} elseif ( $restored && 'approved' === $written ) {
 			foreach ( $progress as $key => $p ) {
 				$parts = array_map( 'intval', explode( ':', (string) $key ) );
 				$delta = round( (float) ( $p['delta'] ?? 0 ), 2 );

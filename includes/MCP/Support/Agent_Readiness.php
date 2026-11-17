@@ -129,22 +129,44 @@ class Agent_Readiness {
 	}
 
 	/**
-	 * One GET to this site, following up to three redirects on the site's own host only.
-	 * Null when the request could not be made, was blocked (401 / 403 / 429 / 5xx: a firewall
-	 * or maintenance page), the time budget is used up, or the site has already failed to
-	 * reach itself twice in a row.
+	 * Scheme, host and port of a URL in one comparable string (default ports filled in);
+	 * empty when the URL has no http(s) scheme or no host.
+	 */
+	public static function origin( $url ) {
+		$p = wp_parse_url( (string) $url );
+		if ( ! is_array( $p ) || empty( $p['host'] ) || empty( $p['scheme'] ) ) {
+			return '';
+		}
+		$scheme = strtolower( (string) $p['scheme'] );
+		if ( 'http' !== $scheme && 'https' !== $scheme ) {
+			return '';
+		}
+		$port = isset( $p['port'] ) ? (int) $p['port'] : ( 'https' === $scheme ? 443 : 80 );
+		return $scheme . '://' . strtolower( (string) $p['host'] ) . ':' . $port;
+	}
+
+	/**
+	 * One GET to this site, following up to three redirects that stay on the site's own
+	 * scheme, host and port. Null when the request could not be made, was blocked
+	 * (401 / 403 / 429 / 5xx: a firewall or maintenance page), the time budget is used up,
+	 * or the site has already failed to reach itself twice in a row.
 	 */
 	private static function fetch( $path, array $headers = [] ) {
-		$left = self::RUN_BUDGET - ( microtime( true ) - self::$started );
-		if ( self::$fails_in_row >= 2 || $left < 1 ) {
+		if ( self::$fails_in_row >= 2 ) {
 			self::$unreachable = true;
 			return null;
 		}
-		$host = strtolower( (string) wp_parse_url( home_url( '/' ), PHP_URL_HOST ) );
+		$home = self::origin( home_url( '/' ) );
 		$url  = home_url( $path );
 		for ( $hop = 0; $hop <= 3; $hop++ ) {
-			if ( strtolower( (string) wp_parse_url( $url, PHP_URL_HOST ) ) !== $host ) {
+			if ( '' === $home || self::origin( $url ) !== $home ) {
 				return [ 'code' => 0, 'type' => '', 'link' => '', 'body' => '' ]; // redirected off the site: not followed
+			}
+			// Each hop gets only what is left of the run's budget.
+			$left = self::RUN_BUDGET - ( microtime( true ) - self::$started );
+			if ( $left < 1 ) {
+				self::$unreachable = true;
+				return null;
 			}
 			$res = wp_remote_get( $url, [ 'timeout' => min( 4, max( 1, (int) floor( $left ) ) ), 'redirection' => 0, 'sslverify' => false, 'headers' => $headers, 'limit_response_size' => 262144 ] );
 			if ( is_wp_error( $res ) ) {

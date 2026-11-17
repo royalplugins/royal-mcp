@@ -1,6 +1,10 @@
 <?php
 namespace Royal_MCP\MCP;
 
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 use Royal_MCP\Integrations\WooCommerce as WooIntegration;
 use Royal_MCP\Integrations\GuardPress as GPIntegration;
 use Royal_MCP\Integrations\SiteVault as SVIntegration;
@@ -51,10 +55,6 @@ use Royal_MCP\Integrations\WPMailSMTP as WPMailSMTPIntegration;
 use Royal_MCP\Integrations\Akismet as AkismetIntegration;
 use Royal_MCP\Integrations\FluentForms as FluentFormsIntegration;
 use Royal_MCP\Integrations\Elementor_Coexistence;
-
-if (!defined('ABSPATH')) {
-    exit;
-}
 
 /**
  * MCP Server — Streamable HTTP Transport.
@@ -1735,9 +1735,51 @@ class Server {
             $reasons[] = 'the parent of other terms';
         }
         if ( get_term_meta( $tid ) ) {
-            $reasons[] = 'given extra settings (term meta) since';
+            $reasons[] = self::TERM_META_IN_USE;
         }
         return $reasons;
+    }
+
+    /**
+     * Why a coupon counts as used, or '' when nothing shows it was: a usage count, a used-by
+     * entry, or any order of any status that carries it.
+     */
+    private static function coupon_use_reason( $cid, $code ) {
+        global $wpdb;
+        $cid = (int) $cid;
+        clean_post_cache( $cid );
+        if ( (int) get_post_meta( $cid, 'usage_count', true ) > 0 ) {
+            return 'usage_count';
+        }
+        if ( ! empty( get_post_meta( $cid, '_used_by', false ) ) ) {
+            return 'used_by';
+        }
+        $lookup = $wpdb->prefix . 'wc_order_coupon_lookup';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $lookup ) ) ) === $lookup
+            && (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$lookup} WHERE coupon_id = %d", $cid ) ) > 0 ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- core WooCommerce table name
+            return 'order_coupon_lookup';
+        }
+        $code = (string) $code;
+        if ( '' !== $code ) {
+            $items = $wpdb->prefix . 'woocommerce_order_items';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $items ) ) ) === $items
+                && (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$items} WHERE order_item_type = 'coupon' AND order_item_name = %s", $code ) ) > 0 ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- core WooCommerce table name
+                return 'order_item';
+            }
+        }
+        return '';
+    }
+
+    /** The reason term_in_use() gives for a term that holds term meta. */
+    const TERM_META_IN_USE = 'given extra settings (term meta) since';
+
+    /** A hash of every term meta value a term holds now. */
+    private static function term_meta_hash( $term_id ) {
+        wp_cache_delete( (int) $term_id, 'term_meta' );
+        $meta = get_term_meta( (int) $term_id );
+        return md5( (string) wp_json_encode( is_array( $meta ) ? $meta : [] ) );
     }
 
     /** Ids of posts that use a media item as their featured image, other than $except. */
@@ -2258,7 +2300,7 @@ class Server {
             ['name' => 'wp_create_term', 'description' => 'Create a term in any registered taxonomy (category, post_tag, or any custom taxonomy). Description may contain inline HTML — WordPress permits <a>, <strong>, <em>, <blockquote>, <code>, <cite>, <abbr>, <acronym> in term descriptions; block-level tags (<p>, <h1>-<h6>, <ul>) are stripped by WP core. Use wp_get_taxonomies to discover available taxonomy slugs.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)'], 'description' => ['type' => 'string', 'description' => 'Optional description. May contain inline HTML (<a>, <strong>, <em>, etc.); block-level tags are stripped by WP core.'], 'parent' => ['type' => 'integer', 'description' => 'Parent term ID (only applies to hierarchical taxonomies)'], 'slug' => ['type' => 'string', 'description' => 'Optional URL-friendly slug. Auto-generated from name if omitted.']], 'required' => ['name', 'taxonomy']]],
             ['name' => 'wp_update_term', 'description' => 'Update an existing term in any taxonomy. Use this to rename a tag/category, edit its description, or change its slug. Description may contain inline HTML (WP core strips block-level tags). Pair with wp_update_term_meta to edit SEO meta on tags (Yoast/Rank Math/AIOSEO store tag SEO data in wp_termmeta).', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to'], 'name' => ['type' => 'string'], 'slug' => ['type' => 'string'], 'description' => ['type' => 'string', 'description' => 'Optional description. May contain inline HTML.'], 'parent' => ['type' => 'integer', 'description' => 'Parent term ID (hierarchical taxonomies only)']], 'required' => ['id', 'taxonomy']]],
             ['name' => 'wp_delete_term', 'description' => 'Delete a term from any registered taxonomy.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to']], 'required' => ['id', 'taxonomy']]],
-            ['name' => 'wp_add_post_terms', 'description' => 'Add or replace terms on a post in any taxonomy. Accepts term IDs (integers), slugs (for hierarchical taxonomies like category), or names (for non-hierarchical like post_tag).', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'terms' => ['type' => 'array', 'items' => ['anyOf' => [['type' => 'integer'], ['type' => 'string']]], 'description' => 'Array of term IDs (integers) OR term slugs/names (strings). Must be an array — pass ["my-tag"] not "my-tag".'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)']], 'required' => ['post_id', 'terms', 'taxonomy']]],
+            ['name' => 'wp_add_post_terms', 'description' => 'Add terms to a post in any taxonomy (the terms it already has stay). Accepts term IDs (integers), slugs (for hierarchical taxonomies like category), or names (for non-hierarchical like post_tag); a name that matches no term creates one. dry_run true shows the terms before and after, what would be added and which terms would be created, changing nothing.', 'inputSchema' => ['type' => 'object', 'properties' => ['dry_run' => ['type' => 'boolean', 'description' => 'true previews (default false).'], 'post_id' => ['type' => 'integer'], 'terms' => ['type' => 'array', 'items' => ['anyOf' => [['type' => 'integer'], ['type' => 'string']]], 'description' => 'Array of term IDs (integers) OR term slugs/names (strings). Must be an array — pass ["my-tag"] not "my-tag".'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)']], 'required' => ['post_id', 'terms', 'taxonomy']]],
             ['name' => 'wp_get_terms', 'description' => 'List terms in any registered taxonomy with paginated output. Returns id, name, slug, description, count, parent. Use to map term names to IDs before wp_add_post_terms, or to walk a taxonomy tree.', 'inputSchema' => ['type' => 'object', 'properties' => ['taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat, any custom taxonomy)'], 'search' => ['type' => 'string', 'description' => 'Optional name-substring filter (case-insensitive).'], 'hide_empty' => ['type' => 'boolean', 'description' => 'Exclude terms with zero attached posts. Default false.'], 'parent' => ['type' => 'integer', 'description' => 'Return only children of this parent term ID (hierarchical taxonomies).'], 'per_page' => ['type' => 'integer', 'description' => 'Results per page. Default 100, max 500.'], 'page' => ['type' => 'integer', 'description' => 'Page number, 1-indexed. Default 1.']], 'required' => ['taxonomy']]],
             ['name' => 'wp_count_terms', 'description' => 'Get term counts in a taxonomy', 'inputSchema' => ['type' => 'object', 'properties' => ['taxonomy' => ['type' => 'string']]]],
             ['name' => 'wp_get_taxonomies', 'description' => 'Get all registered public taxonomies (built-in plus custom taxonomies registered by themes/plugins like product_cat, brand, etc.). Returns the taxonomy slug, label, hierarchical flag, and which post types it applies to.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
@@ -2298,7 +2340,7 @@ class Server {
             ['name' => 'wp_get_php_errors', 'description' => 'PHP fatal errors on this site, recorded as they happen (with or without the debug log), and the plugins and themes WordPress paused after a fatal error. Each error: message (credentials hidden), file (relative to the WordPress folder), line, plugin_slug or theme_slug, count, first_seen, last_seen; the last 50 distinct errors are kept. capture_enabled says whether recording is on (Settings > Advanced). No request data is stored. Read-only. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => ['since' => ['type' => 'string', 'description' => 'ISO time: only errors last seen after it.'], 'limit' => ['type' => 'integer', 'description' => '1-50, default 50.']]]],
             ['name' => 'wp_get_error_log_tail', 'description' => 'Read the tail of wp-content/debug.log. Returns the last N lines (default 100, max 1000), optionally filtered by a case-insensitive substring. Automatically caps file read at last 1MB to prevent memory blowup on huge logs (truncated=true when this happens). Returns status="disabled" with instructions when WP_DEBUG_LOG is not enabled in wp-config.php. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => ['lines' => ['type' => 'integer', 'description' => 'Number of lines to return from the tail (default 100, max 1000).'], 'filter' => ['type' => 'string', 'description' => 'Optional case-insensitive substring filter applied before the last-N slice (e.g. "Fatal error", "Deprecated", a plugin slug).']]]],
             ['name' => 'wp_get_cron_schedule', 'description' => 'Enumerate scheduled wp_cron events. Returns each event with hook name, next run (unix + ISO 8601), seconds until next run, is_overdue flag, recurrence (hourly / twicedaily / daily / custom + interval in seconds), and args. Sorted by next-run ascending so overdue events come first. Useful for diagnosing missed schedules, plugin cron conflicts, or unfired hooks. Requires manage_options.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
-            ['name' => 'royal_mcp_connection_health', 'description' => 'Diagnostic probe for the current MCP connection. Returns MCP endpoint route, authentication method used by this request (api-key or oauth-bearer), OAuth access token time-to-live in seconds (null for api-key), current MCP session ID, active MCP capabilities negotiated at initialize, plus a builders block with active-flag booleans for Divi / Elementor / Gutenberg so agents can branch on which page-builder is installed without probing for it. No arguments. Call at connection start to confirm setup, or when diagnosing 401/403/404 issues. Any authenticated caller.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
+            ['name' => 'royal_mcp_connection_health', 'description' => 'Diagnostic probe for the current MCP connection. Returns MCP endpoint route, authentication method used by this request (api-key or oauth-bearer), OAuth access token time-to-live in seconds (null for api-key), current MCP session ID, active MCP capabilities negotiated at initialize, plus (for administrators) a builders block with active-flag booleans for Divi / Elementor / Gutenberg so agents can branch on which page-builder is installed without probing for it. No arguments. Call at connection start to confirm setup, or when diagnosing 401/403/404 issues. Any authenticated caller.', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
             ['name' => 'discover_tools', 'description' => 'List Royal MCP tools filtered by category, plugin, capability class, or undo support. Returns a compact index — name, description, and metadata only — WITHOUT the full inputSchema. Use with the compact tool discovery profile (X-MCP-Profile: compact on initialize) to keep the tools/list payload small on context-limited clients: caller discovers, calls get_tool_info for the specific tool it wants to invoke, then dispatches via execute_tool.', 'inputSchema' => ['type' => 'object', 'properties' => ['by_category' => ['type' => 'string', 'description' => 'Filter by category prefix, e.g. "posts", "pages", "media", "terms", "menus", "options", "elementor", "divi", "wc".'], 'by_plugin' => ['type' => 'string', 'description' => 'Filter by third-party integration slug, e.g. "core", "woocommerce", "elementor", "divi", "acf", "yoast".'], 'by_capability' => ['type' => 'string', 'enum' => ['read_only', 'write', 'destructive'], 'description' => 'Filter by capability class inferred from the tool name (get_/list_ = read_only, update_/create_/add_ = write, delete_/reset_/bulk_delete_ = destructive).'], 'by_undo_support' => ['type' => 'string', 'enum' => ['has_undo_token', 'no_undo'], 'description' => 'Filter by whether the tool emits an undo token.']]]],
             ['name' => 'get_tool_info', 'description' => 'Return the full inputSchema (and, when available, an example invocation) for a single tool named in tool_name. Pairs with discover_tools + execute_tool for the compact discovery flow.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name (e.g. "wp_update_post").']], 'required' => ['tool_name']]],
             ['name' => 'execute_tool', 'description' => 'Pass-through dispatcher for the compact discovery flow. Invokes the tool named in tool_name with the arguments in arguments — semantically identical to a direct tools/call for that tool. Useful when the client only advertised the routing tools via X-MCP-Profile: compact but still wants to invoke a specific underlying tool without renegotiating the profile.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name to invoke.'], 'arguments' => ['type' => 'object', 'description' => 'Arguments object forwarded to the underlying tool. Same shape you\'d pass in tools/call.']], 'required' => ['tool_name']]],
@@ -2321,7 +2363,7 @@ class Server {
             ['name' => 'wp_create_menu', 'description' => 'Create a new WordPress navigation menu. Wraps wp_create_nav_menu(). Returns the new menu_id which can then be passed to wp_create_menu_item / wp_reorder_menu_items. Use this on a site that has no menus yet so the menu-item tools have a menu to write into. Requires edit_theme_options capability. Returns WP_Error on duplicate menu name. Undo deletes the menu while it is still empty.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string', 'description' => 'Display name for the new menu. Must be unique among existing menus.']], 'required' => ['name']]],
             ['name' => 'wp_create_menu_item', 'description' => 'Create a menu item in a navigation menu. On a site with no menus, call wp_create_menu first to obtain a menu_id. Requires edit_theme_options capability. Undo deletes the item while it is unchanged.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'url' => ['type' => 'string', 'description' => 'External URL (leave empty if linking to a post/page via object_id)'], 'object_id' => ['type' => 'integer', 'description' => 'ID of the post or term the item links to'], 'object_type' => ['type' => 'string', 'description' => 'custom (default, needs url), any post type (post, page, product…) or any taxonomy (category, post_tag, product_cat…)'], 'parent_id' => ['type' => 'integer', 'description' => 'Parent menu item ID for nested items (0 = top level)'], 'position' => ['type' => 'integer', 'description' => 'Position in menu order (default: end)'], 'target' => ['type' => 'string', 'enum' => ['_self', '_blank'], 'description' => 'Link target']], 'required' => ['menu_id', 'title']]],
             ['name' => 'wp_update_menu_item', 'description' => 'Update an existing menu item. Only the fields you pass will change; unspecified fields are preserved from the existing item. The tool will refuse explicit-empty values for title or url that would destroy a non-empty existing value — to intentionally clear those, use wp_delete_menu_item then wp_create_menu_item. dry_run true returns current and proposed values and whether the write is allowed, changing nothing. expected {title?, url?} refuses (expected_mismatch) when the item changed since it was read. Refusal codes: insufficient_caps, menu_item_not_found, url_dropped (a post_type or taxonomy item keeps its own link; nothing is changed), expected_mismatch, field_dropped (WordPress did not keep a field; the item is put back). Requires edit_theme_options capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_item_id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'url' => ['type' => 'string'], 'parent_id' => ['type' => 'integer'], 'position' => ['type' => 'integer'], 'target' => ['type' => 'string', 'enum' => ['_self', '_blank']], 'expected' => ['type' => 'object', 'description' => 'The values you read: {title?, url?}. The write is refused when the item now differs.', 'properties' => ['title' => ['type' => 'string'], 'url' => ['type' => 'string']]], 'dry_run' => ['type' => 'boolean', 'description' => 'true previews (default false).']], 'required' => ['menu_item_id']]],
-            ['name' => 'wp_delete_menu', 'description' => 'Delete a whole navigation menu with its items. Requires edit_theme_options. The menu is removed from any theme location it was assigned to. Undo recreates the menu, its items (with their nesting) and its theme locations; the items get new IDs. Undo refuses when a menu with the same name exists again, unless force.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_id' => ['type' => 'integer', 'description' => 'Menu ID from wp_get_menus.']], 'required' => ['menu_id']]],
+            ['name' => 'wp_delete_menu', 'description' => 'Delete a whole navigation menu with its items. Requires edit_theme_options. The menu is removed from any theme location it was assigned to. Undo recreates the menu, its items (with their nesting and other saved item settings), its theme locations and its auto-add-pages setting; the items get new IDs. Undo refuses when a menu with the same name exists again, unless force.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_id' => ['type' => 'integer', 'description' => 'Menu ID from wp_get_menus.']], 'required' => ['menu_id']]],
             ['name' => 'wp_delete_menu_item', 'description' => 'Delete a menu item. Requires edit_theme_options capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_item_id' => ['type' => 'integer']], 'required' => ['menu_item_id']]],
             ['name' => 'wp_reorder_menu_items', 'description' => 'Reorder menu items by passing an array of menu_item_ids in the desired order. Existing titles, URLs, parents, and other fields are preserved on every item touched. Every response includes an "undo" envelope with a token that mcp_undo_last_operation can consume for ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' to restore the pre-op menu order. If the response includes a "skipped" array, those items could not be safely reordered (e.g. missing or recently deleted) — the rest were reordered correctly. Requires edit_theme_options capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['menu_id' => ['type' => 'integer'], 'item_order' => ['type' => 'array', 'items' => ['type' => 'integer'], 'description' => 'Array of menu_item_ids in the desired order']], 'required' => ['menu_id', 'item_order']]],
 
@@ -2432,7 +2474,10 @@ class Server {
         $tools = array_merge( $tools, BuddyPressIntegration::get_tools() );
 
         // If Elementor's own MCP module is present, prefix our elementor_* descriptions with a routing hint.
-        $tools = Elementor_Coexistence::filter_elementor_tool_descriptions( $tools );
+        // The hint shows Elementor is active, so only callers who may see the plugin list get it.
+        if ( self::caller_sees_plugin_presence() ) {
+            $tools = Elementor_Coexistence::filter_elementor_tool_descriptions( $tools );
+        }
 
         return $tools;
     }
@@ -4139,7 +4184,7 @@ class Server {
      * @return array
      */
     private function connection_health_data() {
-        return [
+        $data = [
             'route'          => rest_url('royal-mcp/v1/mcp'),
             'auth_method'    => $this->request_auth_method ?? 'unauthenticated',
             'access_level'   => $this->connection_access_level()[0],
@@ -4147,15 +4192,24 @@ class Server {
             'token_ttl'      => $this->request_token_ttl,
             'session_id'     => $this->request_session_id,
             'active_scopes'  => ['tools'],
-            'builders'       => [
+        ];
+        // Which builders are active is plugin presence: only for callers who may see the plugin list.
+        if ( self::caller_sees_plugin_presence() ) {
+            $data['builders'] = [
                 'divi_active'      => defined('ET_BUILDER_VERSION'),
                 'elementor_active' => defined('ELEMENTOR_VERSION'),
                 'gutenberg_active' => defined('GUTENBERG_VERSION'),
-            ],
-            'oauth_sign_in'  => '' === (string) get_option( 'permalink_structure' )
-                ? [ 'available' => false, 'note' => 'OAuth sign-in (Claude and ChatGPT connectors) needs pretty permalinks: choose any setting other than Plain under Settings > Permalinks. API key and Application Password connections work with any setting.' ]
-                : [ 'available' => true, 'note' => '' ],
-        ];
+            ];
+        }
+        $data['oauth_sign_in'] = '' === (string) get_option( 'permalink_structure' )
+            ? [ 'available' => false, 'note' => 'OAuth sign-in (Claude and ChatGPT connectors) needs pretty permalinks: choose any setting other than Plain under Settings > Permalinks. API key and Application Password connections work with any setting.' ]
+            : [ 'available' => true, 'note' => '' ];
+        return $data;
+    }
+
+    /** Whether the current user may learn which plugins are active (the same users who can see the plugin list). */
+    public static function caller_sees_plugin_presence() {
+        return current_user_can( is_multisite() ? 'manage_network_options' : 'manage_options' );
     }
 
     private function handle_prompts_list($params, $id) {
@@ -7214,6 +7268,79 @@ class Server {
                         throw new \Exception( sprintf( 'No %s term matches %s. Use wp_get_terms to list them, or wp_create_term to add one.', esc_html( $taxonomy ), esc_html( implode( ', ', $apt_unknown ) ) ) );
                     }
                 }
+                // dry_run follows the other write tools: false unless asked for, so a call without it writes as before.
+                $apt_dry = false;
+                if ( array_key_exists( 'dry_run', $args ) && null !== $args['dry_run'] ) {
+                    $apt_dflag = is_string( $args['dry_run'] ) ? strtolower( trim( $args['dry_run'] ) ) : $args['dry_run'];
+                    if ( true === $apt_dflag || 1 === $apt_dflag || 'true' === $apt_dflag || '1' === $apt_dflag ) {
+                        $apt_dry = true;
+                    } elseif ( ! ( false === $apt_dflag || 0 === $apt_dflag || 'false' === $apt_dflag || '0' === $apt_dflag || '' === $apt_dflag ) ) {
+                        throw new \Exception( 'dry_run must be true or false.' );
+                    }
+                }
+                if ( $apt_dry ) {
+                    // What WordPress would do with each entry: an ID or a matching slug or name is an
+                    // existing term, any other text becomes a new term. Terms are only added.
+                    $apt_row = static function ( $tid ) use ( $taxonomy ) {
+                        $apt_t = get_term( (int) $tid, $taxonomy );
+                        return ( $apt_t instanceof \WP_Term ) ? [ 'id' => (int) $apt_t->term_id, 'name' => $apt_t->name, 'slug' => $apt_t->slug ] : [ 'id' => (int) $tid, 'name' => '', 'slug' => '' ];
+                    };
+                    $apt_before_ids = array_values( array_unique( array_map( 'intval', (array) wp_get_object_terms( $post_id, $taxonomy, [ 'fields' => 'ids' ] ) ) ) );
+                    sort( $apt_before_ids );
+                    $apt_target = [];
+                    $apt_new    = [];
+                    foreach ( $normalized_terms as $t ) {
+                        if ( is_int( $t ) ) {
+                            if ( $t > 0 && term_exists( $t, $taxonomy ) ) {
+                                $apt_target[] = $t;
+                            }
+                            continue;
+                        }
+                        // Like WordPress: blank entries are skipped, names are trimmed, and a name whose
+                        // slug or name (any case) matches one made earlier in the list reuses that term.
+                        $t = sanitize_text_field( $t );
+                        if ( '' === $t ) {
+                            continue;
+                        }
+                        $apt_info = term_exists( $t, $taxonomy );
+                        if ( $apt_info ) {
+                            $apt_target[] = (int) ( is_array( $apt_info ) ? $apt_info['term_id'] : $apt_info );
+                            continue;
+                        }
+                        $apt_slug  = sanitize_title( $t );
+                        $apt_lower = function_exists( 'mb_strtolower' ) ? mb_strtolower( $t, 'UTF-8' ) : strtolower( $t );
+                        $apt_dupe  = false;
+                        foreach ( $apt_new as $apt_seen ) {
+                            $apt_seen_lower = function_exists( 'mb_strtolower' ) ? mb_strtolower( $apt_seen, 'UTF-8' ) : strtolower( $apt_seen );
+                            if ( $apt_seen_lower === $apt_lower || ( '' !== $apt_slug && sanitize_title( $apt_seen ) === $apt_slug ) ) {
+                                $apt_dupe = true;
+                                break;
+                            }
+                        }
+                        if ( ! $apt_dupe ) {
+                            $apt_new[] = $t;
+                        }
+                    }
+                    $apt_after_ids = array_values( array_unique( array_merge( $apt_before_ids, $apt_target ) ) );
+                    sort( $apt_after_ids );
+                    $apt_created_rows = array_map( static function ( $n ) { return [ 'id' => null, 'name' => (string) $n, 'slug' => sanitize_title( (string) $n ) ]; }, $apt_new );
+                    $apt_added_ids    = array_values( array_diff( $apt_after_ids, $apt_before_ids ) );
+                    return [
+                        'state'         => 'dry_run',
+                        'preview'       => [
+                            'post_id'  => $post_id,
+                            'taxonomy' => $taxonomy,
+                            'mode'     => 'add',
+                            'before'   => array_map( $apt_row, $apt_before_ids ),
+                            'after'    => array_merge( array_map( $apt_row, $apt_after_ids ), $apt_created_rows ),
+                            'added'    => array_map( $apt_row, $apt_added_ids ),
+                            'removed'  => [],
+                            'created'  => $apt_created_rows,
+                        ],
+                        'would_execute' => true,
+                        'message'       => sprintf( 'Dry run: post %d would have %d term(s) in %s (%d added, %d new term(s) created). Nothing was changed.', $post_id, count( $apt_after_ids ) + count( $apt_new ), $taxonomy, count( $apt_added_ids ) + count( $apt_new ), count( $apt_new ) ),
+                    ];
+                }
                 // What the post had, and which terms existed, so undo takes back only what this call added or made.
                 $apt_before = array_map( 'intval', (array) wp_get_object_terms( $post_id, $taxonomy, [ 'fields' => 'ids' ] ) );
                 // Terms made by this call get ids above the highest one before it (a term list
@@ -7226,8 +7353,11 @@ class Server {
                 $apt_added = array_values( array_diff( $apt_after, $apt_before ) );
                 $apt_made  = array_values( array_filter( $apt_added, static function ( $tid ) use ( $apt_max_before ) { return $tid > $apt_max_before; } ) );
                 $apt_made_state = [];
+                $apt_made_meta  = [];
                 foreach ( $apt_made as $apt_tid ) {
                     $apt_made_state[ $apt_tid ] = self::term_undo_state( get_term( $apt_tid, $taxonomy ) );
+                    // Term meta another plugin gave the new term while it was made is part of the term as created.
+                    $apt_made_meta[ $apt_tid ] = self::term_meta_hash( $apt_tid );
                 }
                 $apt_reply = [
                     'message'  => 'Terms added to post successfully',
@@ -7245,7 +7375,7 @@ class Server {
                     'op'           => 'wp_add_post_terms',
                     'summary'      => sprintf( 'Take %d term(s) back off post %d in %s%s.', count( $apt_added ), $post_id, $taxonomy, $apt_made ? sprintf( ' and delete the %d it created', count( $apt_made ) ) : '' ),
                     'target'       => [ 'post_id' => $post_id, 'taxonomy' => $taxonomy ],
-                    'pre_op_state' => [ 'added' => $apt_added, 'created' => $apt_made, 'created_state' => $apt_made_state, 'written' => $apt_after ],
+                    'pre_op_state' => [ 'added' => $apt_added, 'created' => $apt_made, 'created_state' => $apt_made_state, 'created_meta' => $apt_made_meta, 'written' => $apt_after ],
                 ] );
                 $apt_names = [];
                 foreach ( $apt_added as $apt_tid ) {
@@ -8578,7 +8708,10 @@ class Server {
                     throw new \Exception('You do not have permission to run the agent readiness check.');
                 }
                 $ar_result = \Royal_MCP\MCP\Support\Agent_Readiness::run();
-                update_option(\Royal_MCP\MCP\Support\Agent_Readiness::RESULT_OPTION, $ar_result, false);
+                // The dashboard copy is a write: skipped when the site or this connection is read-only.
+                if (!self::read_only_mode() && 'read-only' !== $this->connection_access_level()[0]) {
+                    update_option(\Royal_MCP\MCP\Support\Agent_Readiness::RESULT_OPTION, $ar_result, false);
+                }
                 return $ar_result;
 
             case 'wp_security_triage':
@@ -9436,6 +9569,7 @@ class Server {
                         'attr_title'  => (string) $dm_post->post_excerpt,
                         'raw_title'   => (string) $dm_post->post_title,
                         'status'      => (string) $dm_post->post_status,
+                        'meta'        => self::menu_item_meta((int) $dm_post->ID),
                     ];
                 }
                 $dm_locations = array_keys(array_filter((array) get_nav_menu_locations(), static function ($mid) use ($dm_id) { return (int) $mid === $dm_id; }));
@@ -9445,7 +9579,9 @@ class Server {
                         $dm_widgets[] = (string) $dm_wkey;
                     }
                 }
-                $dm_state = ['name' => (string) $dm_menu->name, 'description' => (string) $dm_menu->description, 'items' => $dm_items, 'locations' => array_values($dm_locations), 'widgets' => $dm_widgets];
+                $dm_nav_opts = get_option('nav_menu_options', []);
+                $dm_auto_add = is_array($dm_nav_opts) && isset($dm_nav_opts['auto_add']) && is_array($dm_nav_opts['auto_add']) && in_array($dm_id, array_map('intval', $dm_nav_opts['auto_add']), true);
+                $dm_state = ['name' => (string) $dm_menu->name, 'description' => (string) $dm_menu->description, 'items' => $dm_items, 'locations' => array_values($dm_locations), 'widgets' => $dm_widgets, 'auto_add' => $dm_auto_add];
                 $dm_fits  = strlen(gzcompress((string) wp_json_encode($dm_state), 9)) <= 1024 * 1024;
                 $dm_res   = wp_delete_nav_menu($dm_id);
                 if (!$dm_res || is_wp_error($dm_res)) {
@@ -11112,6 +11248,13 @@ class Server {
                         if ( ! current_user_can( 'manage_woocommerce' ) || ! current_user_can( 'delete_shop_coupon', $undo_cc_id ) ) {
                             throw new \Exception('delete_shop_coupon capability required to undo this operation.');
                         }
+                        // A coupon an order carries is part of that order's record: never deleted, even with force.
+                        // Orders store the coupon code as typed, so the raw code is compared (not the display title).
+                        $cc_code = class_exists( '\WC_Coupon' ) ? (string) ( new \WC_Coupon( $undo_cc_id ) )->get_code( 'edit' ) : (string) get_post_field( 'post_title', $undo_cc_id, 'raw' );
+                        $cc_used = self::coupon_use_reason( $undo_cc_id, $cc_code );
+                        if ( '' !== $cc_used ) {
+                            throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'coupon_used', sprintf( 'Cannot undo: coupon %d has been used (%s), so it stays as part of the order record. Nothing was changed (force does not apply); delete or disable it in WooCommerce if it must go.', $undo_cc_id, esc_html( str_replace( '_', ' ', $cc_used ) ) ), [ 'coupon_id' => $undo_cc_id, 'used' => $cc_used ] );
+                        }
                         $cc_print = (string) ( $undo_snapshot['pre_op_state']['created_fingerprint'] ?? '' );
                         if ( '' !== $cc_print && ! $undo_force && \Royal_MCP\Integrations\WooCommerce::undo_fingerprint( 'coupon', $undo_cc_id ) !== $cc_print ) {
                             throw self::undo_drift_refusal( sprintf( 'coupon %d was edited or used after it was created, and undo would delete it with those changes.', $undo_cc_id ), 'delete it anyway' );
@@ -11121,6 +11264,11 @@ class Server {
                         // woocommerce_delete_coupon action. Plain wp_delete_post
                         // leaves the code lookup returning the stale ID, breaking
                         // subsequent wc_create_coupon calls with the same code.
+                        // Checked again right before the delete, so an order placed meanwhile still keeps the coupon.
+                        $cc_used = self::coupon_use_reason( $undo_cc_id, $cc_code );
+                        if ( '' !== $cc_used ) {
+                            throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'coupon_used', sprintf( 'Cannot undo: coupon %d has been used (%s), so it stays as part of the order record. Nothing was changed (force does not apply); delete or disable it in WooCommerce if it must go.', $undo_cc_id, esc_html( str_replace( '_', ' ', $cc_used ) ) ), [ 'coupon_id' => $undo_cc_id, 'used' => $cc_used ] );
+                        }
                         if ( class_exists( '\WC_Coupon' ) ) {
                             $cc_undo_coupon = new \WC_Coupon( $undo_cc_id );
                             $cc_undo_coupon->delete( true );
@@ -11232,8 +11380,9 @@ class Server {
                                 'menu-item-attr-title'  => (string) ( $udm_row['attr_title'] ?? '' ),
                                 'menu-item-status'      => 'draft' === ( $udm_row['status'] ?? '' ) ? 'draft' : 'publish',
                             ] ) );
-                            if ( ! is_wp_error( $udm_new ) ) {
+                            if ( ! is_wp_error( $udm_new ) && (int) $udm_new > 0 ) {
                                 $udm_map[ (int) $udm_row['id'] ] = (int) $udm_new;
+                                self::restore_menu_item_meta( (int) $udm_new, $udm_row['meta'] ?? null );
                             }
                         }
                         // Nesting: point each item at its parent's new id.
@@ -11272,10 +11421,21 @@ class Server {
                         if ( $udm_wfixed ) {
                             update_option( 'widget_nav_menu', $udm_widgets );
                         }
+                        // "Automatically add new top-level pages" comes back when the deleted menu had it.
+                        $udm_auto_add = ! empty( $udm_pre['auto_add'] );
+                        if ( $udm_auto_add ) {
+                            $udm_nav_opts = get_option( 'nav_menu_options', [] );
+                            $udm_nav_opts = is_array( $udm_nav_opts ) ? $udm_nav_opts : [];
+                            $udm_list     = isset( $udm_nav_opts['auto_add'] ) && is_array( $udm_nav_opts['auto_add'] ) ? array_map( 'intval', $udm_nav_opts['auto_add'] ) : [];
+                            $udm_list     = array_values( array_diff( $udm_list, [ $udm_old ] ) );
+                            $udm_list[]   = (int) $udm_id;
+                            $udm_nav_opts['auto_add'] = array_values( array_unique( $udm_list ) );
+                            update_option( 'nav_menu_options', $udm_nav_opts );
+                        }
                         \Royal_MCP\MCP\Undo_Store::consume( $undo_token );
                         return \Royal_MCP\MCP\Support\Envelope::success(
                             sprintf( 'Recreated menu "%s" as menu %d with %d of %d item(s)%s%s. Items have new IDs.', $udm_create_name, (int) $udm_id, count( $udm_map ), count( $udm_items ), $udm_back ? '; assigned again to ' . implode( ', ', $udm_back ) : '', $udm_taken ? '; not reassigned to ' . implode( ', ', $udm_taken ) . ' (another menu is there now)' : '' ),
-                            [ 'undone' => true, 'op' => $undo_op, 'restored' => true, 'menu_id' => (int) $udm_id, 'original_menu_id' => (int) ( $undo_snapshot['target']['menu_id'] ?? 0 ), 'items_restored' => count( $udm_map ), 'item_id_map' => $udm_map, 'locations_restored' => $udm_back, 'locations_taken' => $udm_taken, 'widgets_repointed' => $udm_wfixed ]
+                            [ 'undone' => true, 'op' => $undo_op, 'restored' => true, 'menu_id' => (int) $udm_id, 'original_menu_id' => (int) ( $undo_snapshot['target']['menu_id'] ?? 0 ), 'items_restored' => count( $udm_map ), 'item_id_map' => $udm_map, 'locations_restored' => $udm_back, 'locations_taken' => $udm_taken, 'widgets_repointed' => $udm_wfixed, 'auto_add_restored' => $udm_auto_add ]
                         );
 
                     case 'wp_delete_menu_item':
@@ -11395,6 +11555,7 @@ class Server {
                         $apu_deleted = [];
                         $apu_kept    = [];
                         $apu_states  = (array) ( $apu_pre['created_state'] ?? [] );
+                        $apu_metas   = (array) ( $apu_pre['created_meta'] ?? [] );
                         foreach ( array_map( 'intval', (array) ( $apu_pre['created'] ?? [] ) ) as $apu_tid ) {
                             clean_term_cache( $apu_tid, $apu_tax );
                             $apu_t = get_term( $apu_tid, $apu_tax );
@@ -11402,7 +11563,12 @@ class Server {
                                 continue;
                             }
                             $apu_same = ! isset( $apu_states[ $apu_tid ] ) || self::term_undo_state( $apu_t ) === (array) $apu_states[ $apu_tid ];
-                            if ( $apu_same && ! self::term_in_use( $apu_tid, $apu_tax ) && current_user_can( 'delete_term', $apu_tid ) && wp_delete_term( $apu_tid, $apu_tax ) ) {
+                            $apu_use  = self::term_in_use( $apu_tid, $apu_tax );
+                            // Term meta that is exactly what the term had when it was made does not count as use since.
+                            if ( isset( $apu_metas[ $apu_tid ] ) && hash_equals( (string) $apu_metas[ $apu_tid ], self::term_meta_hash( $apu_tid ) ) ) {
+                                $apu_use = array_values( array_diff( $apu_use, [ self::TERM_META_IN_USE ] ) );
+                            }
+                            if ( $apu_same && ! $apu_use && current_user_can( 'delete_term', $apu_tid ) && true === wp_delete_term( $apu_tid, $apu_tax ) ) {
                                 $apu_deleted[] = $apu_tid;
                             } else {
                                 $apu_kept[] = $apu_tid;
@@ -12652,6 +12818,21 @@ class Server {
                         if ( ! current_user_can( 'edit_theme_options' ) ) {
                             throw new \Exception('edit_theme_options capability required to undo this operation.');
                         }
+                        // Theme mods belong to one theme: an undo after a theme switch would
+                        // write into the other theme's settings, so it is refused even with force.
+                        $tmundo_sheet = (string) ( $tmundo_target['stylesheet'] ?? '' );
+                        if ( $tmundo_sheet !== '' && $tmundo_sheet !== get_stylesheet() ) {
+                            throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'theme_changed', sprintf( 'Cannot undo: theme mod %s was written for the theme %s, and the active theme is now %s. Nothing was changed (force does not apply). Switch back to %s, then undo again.', esc_html( $undo_tm_name ), esc_html( $tmundo_sheet ), esc_html( get_stylesheet() ), esc_html( $tmundo_sheet ) ) );
+                        }
+                        $tmundo_settings = get_option( 'royal_mcp_settings', [] );
+                        if ( empty( $tmundo_settings['allow_theme_writes'] ) ) {
+                            throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'theme_writes_disabled', 'Cannot undo: theme writes are disabled. Enable "Allow AI to modify theme appearance" under Royal MCP > Settings, then undo again. Nothing was changed.' );
+                        }
+                        // The undo writes the mod again, so it follows the same allowlist the write does.
+                        $tmundo_writable = apply_filters( 'royal_mcp_writable_theme_mods', [] );
+                        if ( 'custom_css_post_id' === strtolower( $undo_tm_name ) || ! is_array( $tmundo_writable ) || ! in_array( $undo_tm_name, $tmundo_writable, true ) ) {
+                            throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'theme_mod_not_writable', sprintf( 'Cannot undo: theme mod %s is no longer in the list of theme mods Royal MCP may change (royal_mcp_writable_theme_mods). Nothing was changed (force does not apply). The undo token stays valid if the mod is allowed again.', esc_html( $undo_tm_name ) ), [ 'mod_name' => $undo_tm_name ] );
+                        }
                         $tmundo_pre    = ( isset( $undo_snapshot['pre_op_state'] ) && is_array( $undo_snapshot['pre_op_state'] ) ) ? $undo_snapshot['pre_op_state'] : [];
                         $tmundo_all    = (array) get_theme_mods();
                         $tmundo_current = array_key_exists( $undo_tm_name, $tmundo_all ) ? $tmundo_all[ $undo_tm_name ] : null;
@@ -13478,7 +13659,7 @@ class Server {
                     $tm_undo_envelope = \Royal_MCP\MCP\Undo_Store::store([
                         'op'      => 'wp_update_theme_mod',
                         'summary' => sprintf( 'Restore theme mod %s to prior state (%s).', $mod_name, $tm_existed ? 'prior value' : 'remove mod' ),
-                        'target'  => [ 'mod_name' => $mod_name ],
+                        'target'  => [ 'mod_name' => $mod_name, 'stylesheet' => get_stylesheet() ],
                         'pre_op_state' => [
                             'prior_value'    => $tm_previous,
                             'applied_value'  => $tm_actual,
@@ -14989,6 +15170,96 @@ class Server {
         return [$bare, (string) $ips[0]];
     }
 
+    /** Meta keys a menu item rebuilds from its own fields on undo, or the editor manages. */
+    const MENU_ITEM_REBUILT_META = [
+        '_menu_item_type', '_menu_item_menu_item_parent', '_menu_item_object_id', '_menu_item_object',
+        '_menu_item_target', '_menu_item_classes', '_menu_item_xfn', '_menu_item_url', '_edit_lock', '_edit_last',
+    ];
+
+    /**
+     * A menu item's other post meta (plugin settings such as icons or mega-menu options), kept
+     * as the stored database strings, base64-encoded so any bytes survive the JSON snapshot.
+     *
+     * @return array<string, string[]>
+     */
+    private static function menu_item_meta($post_id) {
+        $out = [];
+        foreach ((array) get_post_meta((int) $post_id) as $key => $values) {
+            $key = (string) $key;
+            if (in_array($key, self::MENU_ITEM_REBUILT_META, true)) {
+                continue;
+            }
+            foreach ((array) $values as $raw) {
+                $out[$key][] = base64_encode((string) $raw);
+            }
+        }
+        return $out;
+    }
+
+    /** Puts a menu item's saved meta back on its new post, value for value. */
+    private static function restore_menu_item_meta($post_id, $meta) {
+        if (!is_array($meta)) {
+            return;
+        }
+        foreach ($meta as $key => $values) {
+            $key = (string) $key;
+            if ('' === $key || in_array($key, self::MENU_ITEM_REBUILT_META, true) || !is_array($values)) {
+                continue;
+            }
+            // Replace anything a save hook wrote while the item was recreated.
+            delete_post_meta($post_id, $key);
+            foreach ($values as $enc) {
+                $raw = is_string($enc) ? base64_decode($enc, true) : false;
+                if (false === $raw) {
+                    continue;
+                }
+                add_post_meta($post_id, wp_slash($key), wp_slash(maybe_unserialize($raw)));
+            }
+        }
+    }
+
+    /**
+     * Whether a download can be connected to the address that was checked: that needs the
+     * curl transport and its resolve option.
+     */
+    private static function download_pin_available() {
+        $available = function_exists('curl_init') && defined('CURLOPT_RESOLVE');
+        /**
+         * Filters whether downloads by URL can be pinned to the checked address. Returning
+         * false makes every download by URL to a remote host refuse.
+         *
+         * @param bool $available Whether curl with CURLOPT_RESOLVE is present.
+         */
+        return $available && (bool) apply_filters('royal_mcp_download_pin_available', $available);
+    }
+
+    /**
+     * Whether WordPress would send a request for this address through the site's proxy
+     * (WP_PROXY_HOST, minus WP_PROXY_BYPASS_HOSTS).
+     */
+    private static function download_goes_through_proxy($url) {
+        $through = false;
+        if (class_exists('\WP_HTTP_Proxy')) {
+            $proxy   = new \WP_HTTP_Proxy();
+            $through = $proxy->is_enabled() && $proxy->send_through_proxy($url);
+        }
+        /**
+         * Filters whether a download by URL is treated as going through a proxy. A download
+         * that goes through a proxy cannot be pinned and is refused.
+         *
+         * @param bool   $through Whether the request would use the proxy.
+         * @param string $url     The address being downloaded.
+         */
+        return (bool) apply_filters('royal_mcp_download_proxy_configured', $through, (string) $url);
+    }
+
+    /** Whether two IP address strings name the same address (IPv6 spellings included). */
+    private static function same_ip_address($a, $b) {
+        $pa = @inet_pton(trim((string) $a, '[] '));
+        $pb = @inet_pton(trim((string) $b, '[] '));
+        return false !== $pa && false !== $pb && $pa === $pb;
+    }
+
     /**
      * Download a public file for the media library.
      *
@@ -15002,15 +15273,55 @@ class Server {
         $response = null;
         for ($hop = 0; $hop <= 3; $hop++) {
             list($pin_host, $pin_ip) = self::check_download_url($current, 0 === $hop, $allow_http);
-            $pin = static function ($handle, $r, $request_url) use ($pin_host, $pin_ip) {
-                if ('' === $pin_ip || !defined('CURLOPT_RESOLVE')) {
+            $needs_pin = '' !== $pin_ip;
+            // Without the pin the host would be looked up again when connecting, and could then
+            // answer with an address that was never checked, so the download is refused instead.
+            if ($needs_pin && !self::download_pin_available()) {
+                throw new \Exception("This server can't pin the address of the download; downloads by URL need PHP's curl extension.");
+            }
+            // Through a proxy the connection goes to the proxy, which looks the host up again itself.
+            if ($needs_pin && self::download_goes_through_proxy($current)) {
+                throw new \Exception("This site sends outgoing requests through a proxy, so the download can't be pinned to the checked address; nothing was downloaded."); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- fixed text
+            }
+            $pinned = false;
+            $answered_locally = false;
+            $pin_handle = null;
+            $pin_info = null;
+            $pin = static function ($handle, $r, $request_url) use ($pin_host, $pin_ip, &$pinned, &$pin_handle) {
+                if ('' === $pin_ip || trim(strtolower((string) wp_parse_url($request_url, PHP_URL_HOST)), '[]') !== $pin_host) {
                     return;
                 }
                 $port = (int) (wp_parse_url($request_url, PHP_URL_PORT) ?: ('http' === strtolower((string) wp_parse_url($request_url, PHP_URL_SCHEME)) ? 80 : 443));
                 $addr = false !== strpos($pin_ip, ':') ? '[' . $pin_ip . ']' : $pin_ip;
-                curl_setopt($handle, CURLOPT_RESOLVE, [$pin_host . ':' . $port . ':' . $addr]);
+                curl_setopt($handle, CURLOPT_RESOLVE, [$pin_host . ':' . $port . ':' . $addr]); // phpcs:ignore WordPress.WP.AlternativeFunctions.curl_curl_setopt -- pins the connection WordPress opens to the checked address
+                $pinned = true;
+                $pin_handle = $handle;
+            };
+            // The address curl actually connected to, read once the transfer is done.
+            $pin_after = static function ($headers, $info = null) use (&$pin_info) {
+                if (is_array($info) && isset($info['primary_ip'])) {
+                    $pin_info = (string) $info['primary_ip'];
+                }
+            };
+            // A reply supplied by other code before any connection is opened.
+            $local_answer = static function ($pre) use (&$answered_locally) {
+                if (false !== $pre) {
+                    $answered_locally = true;
+                }
+                return $pre;
+            };
+            $unpinned_message = "The download did not go through a connection pinned to the checked address, so nothing was saved. Downloads by URL need PHP's curl extension.";
+            // Only the curl transport takes the pin; any other transport is stopped before it connects.
+            $no_unpinned = static function () use ($unpinned_message) {
+                throw new \Exception($unpinned_message); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- fixed text
             };
             add_action('http_api_curl', $pin, 10, 3);
+            add_action('requests-curl.after_request', $pin_after, PHP_INT_MAX, 2);
+            add_filter('pre_http_request', $local_answer, PHP_INT_MAX);
+            if ($needs_pin) {
+                add_filter('use_streams_transport', '__return_false', PHP_INT_MAX);
+                add_action('requests-fsockopen.before_request', $no_unpinned, PHP_INT_MAX);
+            }
             try {
                 $response = wp_safe_remote_get($current, [
                     'timeout'             => 10,
@@ -15019,9 +15330,43 @@ class Server {
                 ]);
             } finally {
                 remove_action('http_api_curl', $pin, 10);
+                remove_action('requests-curl.after_request', $pin_after, PHP_INT_MAX);
+                remove_filter('pre_http_request', $local_answer, PHP_INT_MAX);
+                if ($needs_pin) {
+                    remove_filter('use_streams_transport', '__return_false', PHP_INT_MAX);
+                    remove_action('requests-fsockopen.before_request', $no_unpinned, PHP_INT_MAX);
+                }
             }
             if (is_wp_error($response)) {
                 break;
+            }
+            // A reply handed back by other code never went through the pinned connection, so it
+            // is refused unless the site opts in.
+            if ($needs_pin && $answered_locally) {
+                /**
+                 * Filters whether a download by URL may use a reply that other code supplied on
+                 * pre_http_request instead of a pinned connection. Default false.
+                 *
+                 * @param bool   $allow Whether to accept the supplied reply.
+                 * @param string $url   The address being downloaded.
+                 */
+                if (true !== apply_filters('royal_mcp_download_allow_short_circuit', false, $current)) {
+                    throw new \Exception('The download was answered by another plugin before a pinned connection could be made, so nothing was saved.'); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- fixed text
+                }
+            } elseif ($needs_pin && !$pinned) {
+                throw new \Exception($unpinned_message); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- fixed text
+            } elseif ($needs_pin) {
+                // When curl reports the address it connected to, it must be the checked one.
+                $connected_ip = $pin_info;
+                if (null === $connected_ip && null !== $pin_handle && defined('CURLINFO_PRIMARY_IP')) {
+                    $handle_ip = @curl_getinfo($pin_handle, CURLINFO_PRIMARY_IP); // phpcs:ignore WordPress.WP.AlternativeFunctions.curl_curl_getinfo,WordPress.PHP.NoSilencedErrors.Discouraged -- the handle may already be closed on older PHP
+                    if (is_string($handle_ip)) {
+                        $connected_ip = $handle_ip;
+                    }
+                }
+                if (null !== $connected_ip && '' !== $connected_ip && !self::same_ip_address($connected_ip, $pin_ip)) {
+                    throw new \Exception('The download connected to an address other than the checked one, so nothing was saved.'); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- fixed text
+                }
             }
             $hop_code = (int) wp_remote_retrieve_response_code($response);
             $location = wp_remote_retrieve_header($response, 'location');

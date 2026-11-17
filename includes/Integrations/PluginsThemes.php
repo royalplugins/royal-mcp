@@ -269,9 +269,9 @@ class PluginsThemes {
 		if ( self::file_mods_refusal( 'capability_update_core' ) ) {
 			return [ 'restored_state_summary' => 'Files cannot be changed on this site; the plugin was left installed.', 'restored' => false ];
 		}
-		$others = self::active_in_folder( $file );
-		if ( $others ) {
-			return [ 'restored_state_summary' => sprintf( 'Removing this plugin deletes its whole folder, and that folder also holds active plugins (%s); it was left installed.', implode( ', ', $others ) ), 'restored' => false, 'skipped' => [ [ 'plugin' => $file, 'reason' => 'plugin_folder_in_use' ] ] ];
+		$in_use = self::folder_in_use( $file );
+		if ( null !== $in_use ) {
+			return [ 'restored_state_summary' => $in_use[1] . ' The plugin was left installed.', 'restored' => false, 'skipped' => [ [ 'plugin' => $file, 'reason' => $in_use[0], 'active_plugins' => $in_use[2] ] ] ];
 		}
 		if ( is_plugin_active( $file ) ) {
 			if ( self::has_active_dependents( $file ) ) {
@@ -322,7 +322,7 @@ class PluginsThemes {
 			$why = is_wp_error( $result ) ? $result->get_error_message() : self::skin_errors( $skin );
 			return Envelope::error( 'install_failed', 'WordPress could not install the theme' . ( '' !== $why ? ': ' . $why : '.' ), [ 'slug' => $slug ] );
 		}
-		return Envelope::success( sprintf( 'Installed the theme %s %s (not activated).', $facts['name'], $facts['version'] ), array_merge( [ 'dry_run' => false, 'installed' => true, 'theme' => $slug ], $facts ), self::token( 'wp_install_theme', [ 'theme' => $slug ] ) );
+		return Envelope::success( sprintf( 'Installed the theme %s %s (not activated).', $facts['name'], $facts['version'] ), array_merge( [ 'dry_run' => false, 'installed' => true, 'theme' => $slug ], $facts ), self::token( 'wp_install_theme', [ 'theme' => $slug, 'written_state_fp' => self::theme_state_fingerprint( $slug ) ] ) );
 	}
 
 	private static function undo_install_theme( array $payload, array $token_row ) {
@@ -334,8 +334,30 @@ class PluginsThemes {
 		if ( in_array( $slug, [ get_stylesheet(), get_template() ], true ) ) {
 			return [ 'restored_state_summary' => 'The theme is now in use; it was left installed.', 'restored' => false, 'skipped' => [ [ 'theme' => $slug, 'reason' => 'theme_in_use' ] ] ];
 		}
+		// Another site of the network, or an installed child theme, may use it: refused even with force.
+		$elsewhere = self::theme_used_elsewhere( $slug );
+		if ( null !== $elsewhere ) {
+			return [ 'restored_state_summary' => $elsewhere, 'restored' => false, 'skipped' => [ [ 'theme' => $slug, 'reason' => 'theme_in_use' ] ] ];
+		}
+		if ( empty( $token_row['force'] ) ) {
+			$state = (string) ( $payload['written_state_fp'] ?? '' );
+			if ( 'too_large' === $state ) {
+				return [ 'restored_state_summary' => sprintf( 'The theme %s has too many files to check for changes since it was installed. It was left installed; undo again with force: true to remove it anyway.', $slug ), 'restored' => false, 'skipped' => [ [ 'theme' => $slug, 'reason' => 'edited_since_write' ] ] ];
+			}
+			if ( '' !== $state ) {
+				$now = self::theme_state_fingerprint( $slug );
+				if ( '' !== $now && ! hash_equals( $state, $now ) ) {
+					return [ 'restored_state_summary' => sprintf( 'The theme %s changed after it was installed (its files were updated or edited, or its Customizer or site-editor settings were saved). It was left installed; undo again with force: true to remove it anyway.', $slug ), 'restored' => false, 'skipped' => [ [ 'theme' => $slug, 'reason' => 'edited_since_write' ] ] ];
+				}
+			}
+		}
 		if ( self::file_mods_refusal( 'capability_update_core' ) ) {
 			return [ 'restored_state_summary' => 'Files cannot be changed on this site; the theme was left installed.', 'restored' => false ];
+		}
+		// Links in the folder refuse the removal even with force.
+		$links = self::folder_link_refusal( wp_get_theme( $slug )->get_stylesheet_directory(), 'theme' );
+		if ( null !== $links ) {
+			return [ 'restored_state_summary' => $links[1], 'restored' => false, 'skipped' => [ [ 'theme' => $slug, 'reason' => $links[0] ] ] ];
 		}
 		$deleted = delete_theme( $slug );
 		return [ 'restored_state_summary' => true === $deleted ? sprintf( 'Removed the theme %s.', $slug ) : sprintf( 'Could not remove the theme %s.', $slug ), 'restored' => true === $deleted ];
@@ -449,18 +471,253 @@ class PluginsThemes {
 		return 'the home page loads';
 	}
 
-	/** Other plugins in the same folder that are active: deleting one plugin of a folder deletes the folder. */
-	private static function active_in_folder( $file ) {
-		$out = [];
-		if ( false === strpos( (string) $file, '/' ) ) {
-			return $out;
-		}
-		foreach ( array_keys( get_plugins() ) as $other ) {
-			if ( $other !== $file && dirname( $other ) === dirname( $file ) && ( is_plugin_active( $other ) || is_plugin_active_for_network( $other ) ) ) {
-				$out[] = $other;
+	/** Most sites of a network whose active plugins are read before a folder is deleted. */
+	const MAX_NETWORK_SITES_CHECKED = 1000;
+
+	/**
+	 * Active plugin files other than $file on this site, active for the network,
+	 * and (multisite) active on any other site of the network, where $file
+	 * itself counts too. Null when the network has too many sites to check.
+	 */
+	private static function active_plugin_files_besides( $file ) {
+		$others = array_diff( array_map( 'strval', (array) get_option( 'active_plugins', [] ) ), [ $file ] );
+		if ( is_multisite() ) {
+			$others = array_merge( $others, array_diff( array_map( 'strval', array_keys( (array) get_site_option( 'active_sitewide_plugins', [] ) ) ), [ $file ] ) );
+			$site_ids = get_sites( [ 'fields' => 'ids', 'number' => self::MAX_NETWORK_SITES_CHECKED + 1 ] );
+			if ( count( $site_ids ) > self::MAX_NETWORK_SITES_CHECKED ) {
+				return null;
+			}
+			foreach ( $site_ids as $site_id ) {
+				if ( (int) $site_id === get_current_blog_id() ) {
+					continue;
+				}
+				$others = array_merge( $others, array_map( 'strval', (array) get_blog_option( (int) $site_id, 'active_plugins', [] ) ) );
 			}
 		}
-		return $out;
+		return array_values( array_unique( array_filter( $others, static function ( $v ) { return is_scalar( $v ) && '' !== (string) $v; } ) ) );
+	}
+
+	/** A resolved path with forward slashes and no trailing slash, or '' when it does not exist. */
+	private static function real_path( $path ) {
+		$real = realpath( $path );
+		return false === $real ? '' : untrailingslashit( wp_normalize_path( $real ) );
+	}
+
+	/** Whether $inner is $outer or sits somewhere below it. */
+	private static function path_within( $inner, $outer ) {
+		return '' !== $inner && '' !== $outer && ( $inner === $outer || 0 === strpos( $inner . '/', $outer . '/' ) );
+	}
+
+	/** Most files and folders folder_link_refusal() walks before it refuses the folder as too large to check. */
+	const LINK_WALK_MAX_ENTRIES = 20000;
+
+	/**
+	 * Why a plugin or theme folder cannot be deleted because of links in it, as [ code, message ],
+	 * or null. Deleting a folder removes what its links point at too, which can sit outside the
+	 * folder, so any link refuses it, as does a folder too large or unreadable to walk in full.
+	 *
+	 * @param string $dir  Folder to walk (links are not followed).
+	 * @param string $what 'plugin' or 'theme', for the code and message.
+	 * @return array|null
+	 */
+	private static function folder_link_refusal( $dir, $what ) {
+		$dir = untrailingslashit( wp_normalize_path( (string) $dir ) );
+		if ( '' === $dir ) {
+			return null;
+		}
+		if ( is_link( $dir ) ) {
+			return [ $what . '_folder_symlinked', sprintf( 'This %s\'s folder is a link to a folder elsewhere on the server; it was not removed. Remove it on the server instead.', $what ) ];
+		}
+		$real_root = realpath( $dir );
+		if ( false === $real_root ) {
+			return null;
+		}
+		$real_root = untrailingslashit( wp_normalize_path( $real_root ) );
+		$fold_case = '\\' === DIRECTORY_SEPARATOR;
+		$same_path = static function ( $a, $b ) use ( $fold_case ) {
+			return $fold_case ? 0 === strcasecmp( $a, $b ) : $a === $b;
+		};
+		// The folder itself resolving outside its parent is a link the platform may not report as one (a Windows junction).
+		$real_parent = realpath( dirname( $dir ) );
+		if ( false !== $real_parent && ! $same_path( $real_root, untrailingslashit( wp_normalize_path( $real_parent ) ) . '/' . basename( $dir ) ) ) {
+			return [ $what . '_folder_symlinked', sprintf( 'This %s\'s folder is a link to a folder elsewhere on the server; it was not removed. Remove it on the server instead.', $what ) ];
+		}
+		if ( ! is_dir( $dir ) ) {
+			return null;
+		}
+		$count = 0;
+		try {
+			$iter = new \RecursiveIteratorIterator( new \RecursiveDirectoryIterator( $dir, \FilesystemIterator::SKIP_DOTS ), \RecursiveIteratorIterator::SELF_FIRST );
+			foreach ( $iter as $info ) {
+				if ( ++$count > self::LINK_WALK_MAX_ENTRIES ) {
+					return [ $what . '_folder_too_large', sprintf( 'This %s\'s folder holds more than %d files and folders, too many to check for links before deleting it; it was not removed. Remove it on the server instead.', $what, self::LINK_WALK_MAX_ENTRIES ) ];
+				}
+				$rel    = ltrim( substr( wp_normalize_path( $info->getPathname() ), strlen( $dir ) ), '/' );
+				$linked = $info->isLink();
+				if ( ! $linked && ! $info->isFile() ) {
+					// An entry that resolves to somewhere else is a link the platform does not report as one (a Windows junction).
+					$found  = realpath( $info->getPathname() );
+					$found  = false === $found ? '' : untrailingslashit( wp_normalize_path( $found ) );
+					$linked = ! $same_path( $found, $real_root . '/' . $rel );
+				}
+				if ( $linked ) {
+					return [ $what . '_folder_has_links', sprintf( 'This %s\'s folder holds a link (%s) to files elsewhere on the server, which deleting the folder could remove too; it was not removed. Remove it on the server instead.', $what, $rel ) ];
+				}
+			}
+		} catch ( \Throwable $e ) {
+			return [ $what . '_folder_unreadable', sprintf( 'Part of this %s\'s folder could not be read, so it could not be checked for links before deleting it; it was not removed. Remove it on the server instead.', $what ) ];
+		}
+		return null;
+	}
+
+	/**
+	 * Why deleting this plugin's files would take files an active plugin uses,
+	 * as [ code, message, active plugin files ], or null. Deleting a plugin in a
+	 * folder deletes the whole folder; the folder is refused when it is a
+	 * symlink, or when it is, holds, or sits inside the folder of a plugin
+	 * active on this site, the network, or any site of the network.
+	 */
+	private static function folder_in_use( $file ) {
+		$active = self::active_plugin_files_besides( $file );
+		if ( null === $active ) {
+			return [ 'too_many_sites', sprintf( 'This network has more than %d sites, too many to check which of them use this plugin\'s files. Delete it from Network Admin.', self::MAX_NETWORK_SITES_CHECKED ), [] ];
+		}
+		$in_dir = false !== strpos( (string) $file, '/' );
+		$path   = WP_PLUGIN_DIR . '/' . ( $in_dir ? strtok( (string) $file, '/' ) : (string) $file );
+		if ( is_link( $path ) ) {
+			return [ 'plugin_folder_symlinked', 'This plugin\'s folder is a link to a folder elsewhere on the server; it was not removed. Remove it on the server instead.', [] ];
+		}
+		if ( $in_dir ) {
+			$links = self::folder_link_refusal( $path, 'plugin' );
+			if ( null !== $links ) {
+				return [ $links[0], $links[1], [] ];
+			}
+		}
+		$real  = self::real_path( $path );
+		$using = [];
+		foreach ( $active as $other ) {
+			if ( $other === $file && ! $in_dir ) {
+				$using[] = $other;
+				continue;
+			}
+			if ( false === strpos( $other, '/' ) ) {
+				// A single-file plugin: only its own file matters.
+				if ( self::path_within( self::real_path( WP_PLUGIN_DIR . '/' . $other ), $real ) ) {
+					$using[] = $other;
+				}
+				continue;
+			}
+			$other_real = self::real_path( WP_PLUGIN_DIR . '/' . strtok( $other, '/' ) );
+			if ( $in_dir && ( self::path_within( $other_real, $real ) || self::path_within( $real, $other_real ) ) ) {
+				$using[] = $other;
+			}
+		}
+		if ( $using ) {
+			return [ 'plugin_folder_in_use', sprintf( 'Removing this plugin deletes %s, and active plugins use those files (%s).', $in_dir ? 'its whole folder' : 'its file', implode( ', ', $using ) ), $using ];
+		}
+		return null;
+	}
+
+	/** Most files and bytes theme_state_fingerprint() reads before it gives up. */
+	const THEME_FP_MAX_FILES = 2000;
+	const THEME_FP_MAX_BYTES = 20971520;
+
+	/**
+	 * Fingerprint of everything that changes when someone works on an installed
+	 * theme: the path, size and modified time of each of its files, the contents
+	 * of style.css, functions.php, theme.json and the block templates and parts,
+	 * whether its saved Customizer settings exist, and how many site-editor
+	 * templates, parts and global styles are saved for it. 'too_large' when the
+	 * theme has more files or bytes than are read; '' when it is not installed.
+	 */
+	private static function theme_state_fingerprint( $slug ) {
+		global $wpdb;
+		wp_clean_themes_cache( false );
+		$slug  = (string) $slug;
+		$theme = wp_get_theme( $slug );
+		if ( ! $theme->exists() ) {
+			return '';
+		}
+		$dir = untrailingslashit( wp_normalize_path( $theme->get_stylesheet_directory() ) );
+		if ( ! is_dir( $dir ) ) {
+			return '';
+		}
+		clearstatcache();
+		$content_dirs = [ 'templates/', 'parts/', 'block-templates/', 'block-template-parts/' ];
+		$content_root = [ 'style.css', 'functions.php', 'theme.json' ];
+		$files        = [];
+		$count        = 0;
+		$bytes        = 0;
+		try {
+			$iter = new \RecursiveIteratorIterator( new \RecursiveDirectoryIterator( $dir, \FilesystemIterator::SKIP_DOTS ), \RecursiveIteratorIterator::SELF_FIRST );
+			foreach ( $iter as $info ) {
+				$path = wp_normalize_path( $info->getPathname() );
+				$rel  = ltrim( substr( $path, strlen( $dir ) ), '/' );
+				if ( $info->isLink() ) {
+					$files[ $rel ] = 'link:' . (string) @readlink( $path ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- an unreadable link still counts as a change.
+					continue;
+				}
+				if ( ! $info->isFile() ) {
+					continue;
+				}
+				$count++;
+				$size   = (int) $info->getSize();
+				$bytes += $size;
+				if ( $count > self::THEME_FP_MAX_FILES || $bytes > self::THEME_FP_MAX_BYTES ) {
+					return 'too_large';
+				}
+				$entry = $size . ':' . (int) $info->getMTime();
+				$hash  = in_array( $rel, $content_root, true );
+				foreach ( $content_dirs as $cd ) {
+					$hash = $hash || 0 === strpos( $rel, $cd );
+				}
+				if ( $hash ) {
+					$entry .= ':' . ( is_readable( $path ) ? (string) md5_file( $path ) : '' );
+				}
+				$files[ $rel ] = $entry;
+			}
+		} catch ( \Exception $e ) {
+			return 'too_large';
+		}
+		ksort( $files, SORT_STRING );
+		$mods_exist = null !== get_option( 'theme_mods_' . $slug, null );
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- read at undo time, must not come from a cache.
+		$site_posts = (int) $wpdb->get_var( $wpdb->prepare(
+			"SELECT COUNT(*) FROM {$wpdb->posts} p INNER JOIN {$wpdb->term_relationships} tr ON tr.object_id = p.ID INNER JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id INNER JOIN {$wpdb->terms} t ON t.term_id = tt.term_id WHERE tt.taxonomy = 'wp_theme' AND t.slug = %s AND p.post_type IN ('wp_template', 'wp_template_part', 'wp_global_styles')",
+			$slug
+		) );
+		return md5( (string) wp_json_encode( [ (string) $theme->get( 'Version' ), $files, $mods_exist, $site_posts ] ) );
+	}
+
+	/**
+	 * Why removing this theme would break a site, or null: a site of the
+	 * network uses it as its theme or parent theme, or an installed theme is
+	 * built on it. A network with more sites than are checked is refused.
+	 */
+	private static function theme_used_elsewhere( $slug ) {
+		$slug = (string) $slug;
+		if ( is_multisite() ) {
+			$site_ids = get_sites( [ 'fields' => 'ids', 'number' => self::MAX_NETWORK_SITES_CHECKED + 1 ] );
+			if ( count( $site_ids ) > self::MAX_NETWORK_SITES_CHECKED ) {
+				return sprintf( 'This network has more than %d sites, too many to check which of them use the theme %s. Delete it from Network Admin.', self::MAX_NETWORK_SITES_CHECKED, $slug );
+			}
+			foreach ( $site_ids as $site_id ) {
+				$site_id = (int) $site_id;
+				if ( $slug === (string) get_blog_option( $site_id, 'stylesheet' ) || $slug === (string) get_blog_option( $site_id, 'template' ) ) {
+					return sprintf( 'Site %d of this network uses the theme %s. Switch that site to another theme first, then run this undo again.', $site_id, $slug );
+				}
+			}
+		}
+		$children = [];
+		foreach ( wp_get_themes( [ 'errors' => null ] ) as $stylesheet => $theme ) {
+			if ( (string) $stylesheet !== $slug && $slug === (string) $theme->get_template() ) {
+				$children[] = (string) $stylesheet;
+			}
+		}
+		if ( $children ) {
+			return sprintf( 'The installed theme(s) %s use %s as their parent theme. Delete those first, then run this undo again.', implode( ', ', $children ), $slug );
+		}
+		return null;
 	}
 
 	private static function handle_activate_plugin( array $args ) {
@@ -584,9 +841,9 @@ class PluginsThemes {
 		if ( $facts['active'] || is_plugin_active_for_network( $file ) ) {
 			return Envelope::error( 'plugin_active', 'Deactivate the plugin before deleting it (wp_deactivate_plugin).', $facts );
 		}
-		$others = self::active_in_folder( $file );
-		if ( $others ) {
-			return Envelope::error( 'plugin_folder_in_use', sprintf( 'Deleting this plugin removes its whole folder, and that folder also holds active plugins (%s). Deactivate them first.', implode( ', ', $others ) ), array_merge( $facts, [ 'active_in_folder' => $others ] ) );
+		$in_use = self::folder_in_use( $file );
+		if ( null !== $in_use ) {
+			return Envelope::error( $in_use[0], $in_use[1], array_merge( $facts, [ 'active_in_folder' => $in_use[2] ] ) );
 		}
 		$in_dir  = false !== strpos( $file, '/' );
 		$path    = WP_PLUGIN_DIR . '/' . $file;
@@ -707,6 +964,10 @@ class PluginsThemes {
 		}
 		if ( is_multisite() ) {
 			return Envelope::error( 'multisite_network_admin', 'On a network, delete themes from Network Admin.', $facts );
+		}
+		$links = self::folder_link_refusal( $theme->get_stylesheet_directory(), 'theme' );
+		if ( null !== $links ) {
+			return Envelope::error( $links[0], $links[1], $facts );
 		}
 		$preview = array_merge( $facts, self::folder_size( $theme->get_stylesheet_directory() ) );
 		if ( self::is_dry_run( $args ) ) {

@@ -125,24 +125,41 @@ class GuardPressControls {
 	 * wrap an IPv4 address.
 	 */
 	private static function is_internal_ip( $ip ) {
-		if ( false === filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE ) ) {
-			return true;
-		}
 		$packed = self::packed_ip( $ip );
 		if ( false === $packed ) {
 			return true;
 		}
-		if ( 4 === strlen( $packed ) ) {
-			// 100.64.0.0/10, shared address space.
-			return 100 === ord( $packed[0] ) && 64 === ( ord( $packed[1] ) & 0xC0 );
-		}
-		// fec0::/10, the old site-local range.
-		if ( 0xFE === ord( $packed[0] ) && 0xC0 === ( ord( $packed[1] ) & 0xC0 ) ) {
+		$text = (string) inet_ntop( $packed );
+		if ( false === filter_var( $text, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE ) ) {
 			return true;
 		}
-		// 64:ff9b::/96 (NAT64) and 2002::/16 (6to4) carry an IPv4 address inside.
+		if ( 4 === strlen( $packed ) ) {
+			$a = ord( $packed[0] );
+			$b = ord( $packed[1] );
+			$c = ord( $packed[2] );
+			return 0 === $a                                  // 0.0.0.0/8, this network
+				|| 10 === $a                                 // 10.0.0.0/8, private
+				|| ( 100 === $a && 64 === ( $b & 0xC0 ) )    // 100.64.0.0/10, shared address space
+				|| 127 === $a                                // 127.0.0.0/8, loopback
+				|| ( 169 === $a && 254 === $b )              // 169.254.0.0/16, link-local
+				|| ( 172 === $a && 16 === ( $b & 0xF0 ) )    // 172.16.0.0/12, private
+				|| ( 192 === $a && 0 === $b && 0 === $c )    // 192.0.0.0/24, protocol assignments
+				|| ( 192 === $a && 168 === $b )              // 192.168.0.0/16, private
+				|| ( 198 === $a && 18 === ( $b & 0xFE ) )    // 198.18.0.0/15, benchmarking
+				|| $a >= 224;                                // multicast, reserved and broadcast
+		}
+		$first  = ord( $packed[0] );
+		$second = ord( $packed[1] );
+		if ( 0xFF === $first                                       // ff00::/8, multicast
+			|| 0xFC === ( $first & 0xFE )                          // fc00::/7, unique local
+			|| ( 0xFE === $first && 0x80 === ( $second & 0xC0 ) )  // fe80::/10, link-local
+			|| ( 0xFE === $first && 0xC0 === ( $second & 0xC0 ) )  // fec0::/10, the old site-local range
+			|| "\x00\x64\xff\x9b\x00\x01" === substr( $packed, 0, 6 ) ) { // 64:ff9b:1::/48, local-use NAT64
+			return true;
+		}
+		// 64:ff9b::/96 (NAT64), ::a.b.c.d (IPv4-compatible) and 2002::/16 (6to4) carry an IPv4 address inside.
 		$inner = null;
-		if ( "\x00\x64\xff\x9b" . str_repeat( "\0", 8 ) === substr( $packed, 0, 12 ) ) {
+		if ( "\x00\x64\xff\x9b" . str_repeat( "\0", 8 ) === substr( $packed, 0, 12 ) || str_repeat( "\0", 12 ) === substr( $packed, 0, 12 ) ) {
 			$inner = substr( $packed, 12, 4 );
 		} elseif ( "\x20\x02" === substr( $packed, 0, 2 ) ) {
 			$inner = substr( $packed, 2, 4 );
@@ -152,7 +169,8 @@ class GuardPressControls {
 
 	/**
 	 * Addresses the site's own host name resolves to (this server, or the service in front of it).
-	 * Looked up at most once an hour: a name that does not resolve can take seconds to say so.
+	 * Looked up at most once an hour, or every five minutes while the lookup finds nothing: a
+	 * name that does not resolve can take seconds to say so.
 	 */
 	private static function site_addresses() {
 		$host = wp_parse_url( home_url(), PHP_URL_HOST );
@@ -174,7 +192,7 @@ class GuardPressControls {
 		}
 		$found = function_exists( 'gethostbynamel' ) ? gethostbynamel( $host ) : false;
 		$found = is_array( $found ) ? array_values( array_filter( $found, 'is_string' ) ) : [];
-		set_transient( $key, $found, HOUR_IN_SECONDS ); // audit:transient-ttl-only -- the site's own addresses, looked up again after an hour
+		set_transient( $key, $found, $found ? HOUR_IN_SECONDS : 5 * MINUTE_IN_SECONDS ); // audit:transient-ttl-only -- the site's own addresses, looked up again after an hour (five minutes when none were found)
 		return $found;
 	}
 
@@ -371,7 +389,7 @@ class GuardPressControls {
 				// What the lockout looked like right after this write, to tell a later change apart.
 				'written'  => is_array( $written ) ? [ 'unblock_at' => (string) ( $written['unblock_at'] ?? '' ), 'is_permanent' => ! empty( $written['is_permanent'] ) ] : null,
 				// A shorter lockout this block replaced, put back by the undo while it still has time to run.
-				'previous' => ( null !== $hours && $lockout && $held_until > 0 ) ? [ 'unblock_at' => $held_until, 'reason' => (string) ( $lockout['reason'] ?? '' ) ] : null,
+				'previous' => ( null !== $hours && $lockout && $held_until > 0 ) ? [ 'unblock_at' => $held_until, 'reason' => (string) ( $lockout['reason'] ?? '' ), 'blocked_at' => (string) ( $lockout['blocked_at'] ?? '' ) ] : null,
 			],
 		] );
 		return Envelope::success( sprintf( 'Blocked %s %s.', $ip, null === $hours ? 'permanently' : 'for ' . $hours . ' hours' ), [
@@ -445,22 +463,57 @@ class GuardPressControls {
 			if ( ! $same && ! $force ) {
 				throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'edited_since_write', esc_html( sprintf( 'The block on %s was changed after this write (it now ends at a different time or is permanent), so the undo left it alone. Pass force: true with the same token to remove it anyway.', $ip ) ) );
 			}
-			if ( ! self::lift_lockout( $ip ) ) {
-				return $gone;
-			}
 			$previous = is_array( $pre['previous'] ?? null ) ? $pre['previous'] : null;
-			if ( $previous && (int) $previous['unblock_at'] > time() && is_callable( [ 'GuardPress_Utilities', 'block_ip_until' ] ) ) {
-				// GuardPress may refuse to block the address again (it was allowlisted, or an administrator used it since).
-				if ( \GuardPress_Utilities::block_ip_until( $ip, (int) $previous['unblock_at'], (string) $previous['reason'] ) ) {
+			$restored = false;
+			if ( $previous && (int) ( $previous['unblock_at'] ?? 0 ) > time() ) {
+				// An address allowlisted since is not held any longer; otherwise the existing row goes
+				// back to the earlier end time, keeping GuardPress's lockout count on it.
+				$allowlisted = is_callable( [ 'GuardPress_Settings', 'is_ip_whitelisted' ] ) && ( \GuardPress_Settings::is_ip_whitelisted( $ip ) || \GuardPress_Settings::is_ip_whitelisted( self::plain_ip( $ip ) ) );
+				$restored    = ! $allowlisted && self::shorten_lockout( (string) ( $now['ip'] ?? $ip ), $ip, $previous );
+				if ( $restored ) {
 					$target['restored_earlier_block_until'] = gmdate( 'c', (int) $previous['unblock_at'] );
 				} else {
 					$target['earlier_block_not_restored'] = true;
 				}
 			}
+			if ( ! $restored && ! self::lift_lockout( $ip ) ) {
+				return $gone;
+			}
 		}
 		\GuardPress_Utilities::flush_ip_block_cache( $ip );
 		self::gp_audit( 'ip_unblocked_via_royal_mcp', sprintf( 'Undid the Royal MCP block on IP %s', $ip ) );
-		return Envelope::success( sprintf( 'Unblocked %s.', $ip ), [ 'undone' => true, 'op' => 'gp_block_ip', 'target' => $target ] );
+		// When the lockout went back to the earlier, shorter block, the address is still blocked until then.
+		$message = isset( $target['restored_earlier_block_until'] )
+			? sprintf( 'Took the block on %s back to the earlier one, which ends %s.', $ip, $target['restored_earlier_block_until'] )
+			: sprintf( 'Unblocked %s.', $ip );
+		return Envelope::success( $message, [ 'undone' => true, 'op' => 'gp_block_ip', 'target' => $target ] );
+	}
+
+	/**
+	 * Takes a lockout row back to an earlier, shorter block in place: its end time, reason and
+	 * start, keeping the lockout count GuardPress holds on the row.
+	 */
+	private static function shorten_lockout( $stored_ip, $ip, array $previous ) {
+		global $wpdb;
+		$data = [ 'unblock_at' => gmdate( 'Y-m-d H:i:s', (int) $previous['unblock_at'] ) ];
+		$fmt  = [ '%s' ];
+		$why  = mb_substr( sanitize_text_field( (string) ( $previous['reason'] ?? '' ) ), 0, 255 );
+		if ( '' !== $why ) {
+			$data['reason'] = $why;
+			$fmt[]          = '%s';
+		}
+		$began = (string) ( $previous['blocked_at'] ?? '' );
+		if ( 1 === preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $began ) ) {
+			$data['blocked_at'] = $began;
+			$fmt[]              = '%s';
+		}
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- GuardPress's own block table, its cache flushed below
+		$changed = $wpdb->update( $wpdb->prefix . 'gp_ip_blocklist', $data, [ 'ip_address' => (string) $stored_ip, 'is_permanent' => 0 ], $fmt, [ '%s', '%d' ] );
+		\GuardPress_Utilities::flush_ip_block_cache( (string) $stored_ip );
+		if ( (string) $stored_ip !== (string) $ip ) {
+			\GuardPress_Utilities::flush_ip_block_cache( (string) $ip );
+		}
+		return is_int( $changed ) && $changed > 0;
 	}
 
 	/** Remove the lockout row for $ip through GuardPress's brute-force module. */

@@ -639,17 +639,26 @@ class WooCommerce {
 	/**
 	 * Save a product so backslashes in its description and short description survive.
 	 * WooCommerce passes these fields to WordPress unslashed, so WordPress's unslash on save drops
-	 * every backslash (block attributes, JSON). The text set on the product (already filtered for
-	 * users without unfiltered_html) is put back just before the write, with the processing
-	 * WordPress gives post content: invalid entities converted, tags balanced when the site asks
-	 * for it, emoji encoded where the posts table cannot store them. On a new product the first
-	 * product written in the call is the one.
+	 * every backslash (block attributes, JSON). The text set on the product is put back just
+	 * before the write, with the processing WordPress gives post content: HTML filtered for users
+	 * without unfiltered_html, invalid entities converted, tags balanced when the site asks for
+	 * it, emoji encoded where the posts table cannot store them. Only the post write WooCommerce's
+	 * own data store makes for this save is changed: the override is armed as the last step before
+	 * the data store runs (outermost save of this product only), fires on the first product post
+	 * write after that, and is dropped when the save ends. A save in which WooCommerce writes no
+	 * post fields (a price or stock change) arms nothing, so other writes in the call keep their text.
 	 */
 	public static function save_product_exact( $product ) {
-		$id      = (int) $product->get_id();
 		$content = (string) $product->get_description( 'edit' );
 		$excerpt = (string) $product->get_short_description( 'edit' );
+		if ( ! current_user_can( 'unfiltered_html' ) ) {
+			// wp_filter_post_kses takes and returns slashed text, as WordPress's save filters do.
+			$content = (string) wp_unslash( wp_filter_post_kses( wp_slash( $content ) ) );
+			$excerpt = (string) wp_unslash( wp_filter_post_kses( wp_slash( $excerpt ) ) );
+		}
 		$done    = false;
+		$armed   = false;
+		$depth   = 0;
 		$prepare = static function ( $text, $field ) {
 			global $wpdb;
 			$text = convert_invalid_entities( $text );
@@ -661,19 +670,51 @@ class WooCommerce {
 			}
 			return $text;
 		};
-		$keep = static function ( $data, $postarr ) use ( $id, $content, $excerpt, $prepare, &$done ) {
-			if ( ! $done && isset( $data['post_type'] ) && 'product' === $data['post_type'] && $id === (int) ( $postarr['ID'] ?? 0 ) ) {
-				$done                 = 0 === $id;
+		// Saves of this same product nested inside its own save hooks are left alone.
+		$enter = static function ( $obj ) use ( $product, &$depth ) {
+			if ( $obj === $product ) {
+				++$depth;
+			}
+		};
+		$leave = static function ( $obj ) use ( $product, &$depth, &$armed ) {
+			if ( $obj === $product ) {
+				--$depth;
+				$armed = false;
+			}
+		};
+		$arm = static function ( $obj ) use ( $product, &$depth, &$armed, &$done ) {
+			if ( $obj !== $product || $done || 1 !== $depth ) {
+				return;
+			}
+			if ( (int) $obj->get_id() > 0 ) {
+				// The fields that make WooCommerce's data store write the post row.
+				$post_fields = [ 'description', 'short_description', 'name', 'parent_id', 'reviews_allowed', 'status', 'menu_order', 'date_created', 'date_modified', 'slug', 'post_password' ];
+				if ( doing_action( 'save_post' ) || ! array_intersect( $post_fields, array_keys( (array) $obj->get_changes() ) ) ) {
+					return;
+				}
+			}
+			$armed = true;
+		};
+		$keep = static function ( $data, $postarr ) use ( $product, $content, $excerpt, $prepare, &$done, &$armed ) {
+			if ( $armed && ! $done && isset( $data['post_type'] ) && 'product' === $data['post_type'] && (int) $product->get_id() === (int) ( $postarr['ID'] ?? 0 ) ) {
+				$done                 = true;
+				$armed                = false;
 				$data['post_content'] = wp_slash( $prepare( $content, 'post_content' ) );
 				$data['post_excerpt'] = wp_slash( $prepare( $excerpt, 'post_excerpt' ) );
 			}
 			return $data;
 		};
+		add_action( 'woocommerce_before_product_object_save', $enter, PHP_INT_MIN );
+		add_action( 'woocommerce_before_product_object_save', $arm, PHP_INT_MAX );
+		add_action( 'woocommerce_after_product_object_save', $leave, PHP_INT_MAX );
 		add_filter( 'wp_insert_post_data', $keep, PHP_INT_MAX, 2 );
 		try {
 			return $product->save();
 		} finally {
 			remove_filter( 'wp_insert_post_data', $keep, PHP_INT_MAX );
+			remove_action( 'woocommerce_after_product_object_save', $leave, PHP_INT_MAX );
+			remove_action( 'woocommerce_before_product_object_save', $arm, PHP_INT_MAX );
+			remove_action( 'woocommerce_before_product_object_save', $enter, PHP_INT_MIN );
 		}
 	}
 

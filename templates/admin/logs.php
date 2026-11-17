@@ -31,6 +31,8 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
             <div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'How long entries are kept was saved.', 'royal-mcp' ); ?></p></div>
         <?php elseif ( 'network' === $royal_mcp_retention_done ) : ?>
             <div class="notice notice-warning is-dismissible"><p><?php esc_html_e( 'Nothing was saved: on a network, only a network administrator can keep entries until they are cleared.', 'royal-mcp' ); ?></p></div>
+        <?php elseif ( 'network_kept' === $royal_mcp_retention_done ) : ?>
+            <div class="notice notice-warning is-dismissible"><p><?php esc_html_e( 'Nothing was saved: a network administrator chose to keep entries until they are cleared, and only a network administrator can change that.', 'royal-mcp' ); ?></p></div>
         <?php elseif ( 'failed' === $royal_mcp_retention_done ) : ?>
             <div class="notice notice-error is-dismissible"><p><?php esc_html_e( 'The setting could not be saved. Try again.', 'royal-mcp' ); ?></p></div>
         <?php else : ?>
@@ -113,6 +115,9 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
             <?php endforeach; ?>
         </select>
         <button type="submit" class="button"><?php esc_html_e( 'Save', 'royal-mcp' ); ?></button>
+        <?php if ( \Royal_MCP\Admin\Settings_Page::log_retention_locked() ) : ?>
+            <span class="description" style="margin-left:12px;"><?php esc_html_e( 'A network administrator chose to keep entries until they are cleared; only a network administrator can change this.', 'royal-mcp' ); ?></span>
+        <?php endif; ?>
         <span class="description" style="margin-left:12px;">
             <?php
             if ( $royal_mcp_keep_days !== $royal_mcp_keep_choice ) {

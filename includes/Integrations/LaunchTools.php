@@ -1632,6 +1632,8 @@ class LaunchTools {
 		}
 		$mode      = self::resolve_mode( $args, 'best_effort' );
 		$dry_run   = ! empty( $args['dry_run'] ) || 'report_only' === $mode;
+		// Posts are scanned in ID order after this ID (next_after_id of the previous call).
+		$after_id  = isset( $args['after_id'] ) && is_numeric( $args['after_id'] ) ? max( 0, (int) $args['after_id'] ) : 0;
 		$post_types = ( isset( $args['post_types'] ) && is_array( $args['post_types'] ) )
 			? array_values( array_filter( array_map( 'sanitize_key', $args['post_types'] ) ) )
 			: [ 'post', 'page' ];
@@ -1652,17 +1654,23 @@ class LaunchTools {
 		];
 
 		global $wpdb;
+		$batch_limit = 500;
 		$like  = '%' . $wpdb->esc_like( "/wp-content/themes/{$from}/" ) . '%';
 		$like2 = '%' . $wpdb->esc_like( "\\/wp-content\\/themes\\/{$from}\\/" ) . '%';
 		$type_placeholders = implode( ',', array_fill( 0, count( $post_types ), '%s' ) );
 		$sql = "SELECT ID, post_content FROM {$wpdb->posts}
 				WHERE post_type IN ($type_placeholders)
 				  AND post_status IN ('publish','draft','private','pending','future')
+				  AND ID > %d
 				  AND ( post_content LIKE %s OR post_content LIKE %s )
 				ORDER BY ID ASC
-				LIMIT 500";
+				LIMIT %d";
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-		$matches = $wpdb->get_results( $wpdb->prepare( $sql, array_merge( $post_types, [ $like, $like2 ] ) ), ARRAY_A );
+		$matches = $wpdb->get_results( $wpdb->prepare( $sql, array_merge( $post_types, [ $after_id, $like, $like2, $batch_limit ] ) ), ARRAY_A );
+		$more_may_remain = count( (array) $matches ) >= $batch_limit;
+		// Skipped posts are behind the cursor too, so the next call always moves on.
+		$last_row      = $matches ? end( $matches ) : null;
+		$next_after_id = ( $more_may_remain && is_array( $last_row ) ) ? (int) $last_row['ID'] : null;
 
 		$snapshot = [];
 		$result = [ 'updated' => [], 'skipped' => [], 'errors' => [] ];
@@ -1671,15 +1679,15 @@ class LaunchTools {
 		foreach ( (array) $matches as $row ) {
 			$pid = (int) $row['ID'];
 			$orig = (string) $row['post_content'];
+			// A plain replace breaks the stored lengths of serialized data, whole or embedded in otherwise normal content.
+			if ( is_serialized( $orig ) || preg_match( '/\b[aOs]:\d+:[{"]/', $orig ) ) {
+				$result['skipped'][] = [ 'id' => $pid, 'reason' => 'serialized_content' ];
+				continue;
+			}
 			$count = 0;
 			$new = str_replace( $needle_paths, $replacements, $orig, $count );
 			if ( $count === 0 || $new === $orig ) {
 				$result['skipped'][] = [ 'id' => $pid, 'reason' => 'no_effective_change' ];
-				continue;
-			}
-			// A plain replace inside serialized data breaks its stored lengths.
-			if ( is_serialized( $orig ) ) {
-				$result['skipped'][] = [ 'id' => $pid, 'reason' => 'serialized_content' ];
 				continue;
 			}
 
@@ -1691,15 +1699,26 @@ class LaunchTools {
 				$result['updated'][] = $pid;
 				continue;
 			}
-			$upd = wp_update_post( [ 'ID' => $pid, 'post_content' => wp_slash( $new ) ], true );
+			$upd = self::write_post_content( $pid, $new );
 			if ( is_wp_error( $upd ) ) {
 				$result['errors'][] = [ 'id' => $pid, 'reason' => $upd->get_error_message() ];
 				if ( 'strict' === $mode ) {
 					// strict: the first failure stops the run and the posts already rewritten get their content back.
-					foreach ( $snapshot as $done ) {
-						wp_update_post( [ 'ID' => (int) $done['post_id'], 'post_content' => wp_slash( (string) $done['post_content'] ) ] );
+					$rollback_failures = [];
+					foreach ( array_reverse( $snapshot ) as $done ) {
+						$back = self::write_post_content( (int) $done['post_id'], (string) $done['post_content'] );
+						if ( is_wp_error( $back ) ) {
+							$rollback_failures[] = (int) $done['post_id'];
+						}
 					}
-					return self::error_envelope( 'aborted', sprintf( 'Post %d could not be saved (%s). strict mode: the %d posts already rewritten were put back; nothing is changed.', $pid, $upd->get_error_message(), count( $snapshot ) ), [ 'failed_post_id' => $pid ] );
+					$put_back = count( $snapshot ) - count( $rollback_failures );
+					return self::error_envelope(
+						'aborted',
+						$rollback_failures
+							? sprintf( 'Post %d could not be saved (%s). strict mode: %d of the %d posts already rewritten were put back; %d could not be put back (rollback_failures).', $pid, $upd->get_error_message(), $put_back, count( $snapshot ), count( $rollback_failures ) )
+							: sprintf( 'Post %d could not be saved (%s). strict mode: the %d posts already rewritten were put back; nothing is changed.', $pid, $upd->get_error_message(), count( $snapshot ) ),
+						[ 'failed_post_id' => $pid, 'rolled_back' => $put_back, 'rollback_failures' => $rollback_failures ]
+					);
 				}
 			} else {
 				// The original content for the undo, plus a hash of what was stored, so an undo can tell a later edit from this change.
@@ -1731,8 +1750,11 @@ class LaunchTools {
 				'from_theme'   => $from,
 				'to_theme'     => $to,
 				'post_types'   => $post_types,
-				'sample_capped_at' => 500,
-				'more_may_remain'  => 500 === count( (array) $matches ),
+				'sample_capped_at' => $batch_limit,
+				// Posts are taken in ID order; run again with after_id = next_after_id for the next batch.
+				'more_may_remain'  => $more_may_remain,
+				'after_id'         => $after_id,
+				'next_after_id'    => $next_after_id,
 			] )
 		);
 		if ( ! $dry_run && ( $content_length_before > 0 || $content_length_after > 0 ) ) {
@@ -1817,6 +1839,54 @@ class LaunchTools {
 		];
 	}
 
+	/**
+	 * Writes a post's content exactly as given. The content filters of a normal save are not run:
+	 * for a user without unfiltered_html they would strip markup the post already holds, and
+	 * callers have already checked edit_post for the post. A revision of the earlier content is
+	 * kept when the post type keeps revisions, then the usual save hooks fire.
+	 *
+	 * @return true|\WP_Error
+	 */
+	private static function write_post_content( $post_id, $content ) {
+		global $wpdb;
+		$post_id = (int) $post_id;
+		$post    = get_post( $post_id );
+		if ( ! $post ) {
+			return new \WP_Error( 'post_not_found', sprintf( 'Post %d not found.', $post_id ) );
+		}
+		if ( wp_revisions_enabled( $post ) ) {
+			self::without_kses( static function () use ( $post_id ) {
+				wp_save_post_revision( $post_id );
+			} );
+		}
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- written as stored; caches cleared below
+		$done = $wpdb->update( $wpdb->posts, [ 'post_content' => (string) $content ], [ 'ID' => $post_id ], [ '%s' ], [ '%d' ] );
+		if ( false === $done ) {
+			return new \WP_Error( 'write_failed', sprintf( 'Post %d content could not be written.', $post_id ) );
+		}
+		clean_post_cache( $post_id );
+		// The save hooks may store a revision of the new content; it is kept as written too.
+		self::without_kses( static function () use ( $post_id ) {
+			\Royal_MCP\MCP\Support\Post_Write_Hooks::trigger( $post_id );
+		} );
+		return true;
+	}
+
+	/** Runs a callback with the post content filters off, putting them back after. */
+	private static function without_kses( callable $fn ) {
+		$on = false !== has_filter( 'content_save_pre', 'wp_filter_post_kses' );
+		if ( $on ) {
+			kses_remove_filters();
+		}
+		try {
+			return $fn();
+		} finally {
+			if ( $on ) {
+				kses_init_filters();
+			}
+		}
+	}
+
 	private static function undo_migrate_theme_assets( array $payload, array $token_row ) {
 		$restored = 0;
 		$gone     = 0;
@@ -1845,7 +1915,7 @@ class LaunchTools {
 				$gone++;
 				continue;
 			}
-			$upd = wp_update_post( [ 'ID' => $pid, 'post_content' => wp_slash( (string) ( $row['post_content'] ?? '' ) ) ], true );
+			$upd = self::write_post_content( $pid, (string) ( $row['post_content'] ?? '' ) );
 			if ( is_wp_error( $upd ) ) {
 				$gone++;
 			} else {
@@ -2735,11 +2805,12 @@ class LaunchTools {
 		if ( ! $post ) {
 			return (string) $current;
 		}
-		$source = trim( (string) $post->post_excerpt );
-		// The body of a private or password-protected post never becomes its public description.
-		if ( $source === '' && ( '' !== (string) $post->post_password || 'private' === $post->post_status ) ) {
+		// Neither the excerpt nor the body of a password-protected or private post is public, so
+		// neither becomes its public description.
+		if ( '' !== (string) $post->post_password || 'private' === (string) $post->post_status ) {
 			return (string) $current;
 		}
+		$source = trim( (string) $post->post_excerpt );
 		if ( $source === '' ) {
 			$stripped = wp_strip_all_tags( strip_shortcodes( (string) $post->post_content ), true );
 			$stripped = preg_replace( '/\s+/u', ' ', (string) $stripped );
@@ -3068,12 +3139,13 @@ class LaunchTools {
 				'window_days'       => [ 'type' => 'integer', 'description' => 'Days to look back, 1 to 365. Default 30.' ],
 				'include_error_log' => $bool( 'Also return the last lines of the PHP error log (secrets removed, at most 2 KB; lines can name server paths). Default false.' ),
 			], [] ),
-			$tool( 'wp_migrate_theme_assets', 'After a theme change, rewrite theme asset URLs in post content from /wp-content/themes/{from}/ to /wp-content/themes/{to}/ on the given post types (plain and JSON-escaped forms). Pass dry_run true first to see what would change. At most 500 posts per call (more_may_remain says when to run it again). compose_mode report_only is the same as dry_run; strict stops at the first post that cannot be saved and puts the rewritten ones back. Serialized content is skipped. Every changed post is recorded; undo puts the earlier content back. Requires edit_others_posts; posts you may not edit are skipped.', [
+			$tool( 'wp_migrate_theme_assets', 'After a theme change, rewrite theme asset URLs in post content from /wp-content/themes/{from}/ to /wp-content/themes/{to}/ on the given post types (plain and JSON-escaped forms). Pass dry_run true first to see what would change. At most 500 matching posts per call, in ID order; when more_may_remain is true, call again with after_id set to the returned next_after_id. Content is written as stored, without HTML filtering, and a revision of the earlier content is kept. compose_mode report_only is the same as dry_run; strict stops at the first post that cannot be saved and puts the rewritten ones back (any it could not put back are listed in rollback_failures). Posts whose content is or contains serialized data are skipped. Every changed post is recorded; undo puts the earlier content back. Requires edit_others_posts; posts you may not edit are skipped.', [
 				'from_theme_slug' => [ 'type' => 'string', 'description' => 'Folder name of the theme being replaced.' ],
 				'to_theme_slug'   => [ 'type' => 'string', 'description' => 'Folder name of the theme to point to.' ],
 				'dry_run'         => $bool( 'Report the matches and write nothing. No undo token.' ),
 				'compose_mode'    => $mode,
 				'post_types'      => [ 'type' => 'array', 'items' => [ 'type' => 'string' ], 'description' => 'Post types to scan. Default post and page.' ],
+				'after_id'        => [ 'type' => 'integer', 'minimum' => 0, 'description' => 'Scan posts with an ID above this one: pass next_after_id from the previous call to continue. Default 0.' ],
 			], [ 'from_theme_slug', 'to_theme_slug' ] ),
 		];
 		return array_column( $out, null, 'name' );
