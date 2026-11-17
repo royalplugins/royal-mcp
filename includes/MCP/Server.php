@@ -564,6 +564,20 @@ class Server {
                 unset( $declared['readOnlyHint'] );
             }
             $tools[ $i ]['annotations'] = array_merge( $inferred, $declared );
+            // A human-readable title for Royal MCP's own tools (MCP tool title and annotations.title).
+            if ( self::is_known_builtin( $tool['name'] ) ) {
+                $title = isset( $tool['title'] ) && is_string( $tool['title'] ) && '' !== trim( $tool['title'] )
+                    ? $tool['title']
+                    : self::tool_title( (string) $tool['name'] );
+                $tools[ $i ]['title'] = $title;
+                if ( ! isset( $tools[ $i ]['annotations']['title'] ) ) {
+                    $tools[ $i ]['annotations']['title'] = $title;
+                }
+                // Tools whose writes mcp_undo_last_operation can reverse say so, with the undo window.
+                if ( in_array( (string) $tool['name'], self::undo_tool_names(), true ) && empty( $tool['_meta']['royal-mcp/undo_window_hours'] ) ) {
+                    $tools[ $i ]['_meta'] = array_merge( isset( $tool['_meta'] ) && is_array( $tool['_meta'] ) ? $tool['_meta'] : [], [ 'royal-mcp/undo_window_hours' => (int) \Royal_MCP\MCP\Undo_Store::ttl_hours() ] );
+                }
+            }
             if ( isset( self::CONTENT_LOCK_TOOLS[ $tool['name'] ] ) && isset( $tool['inputSchema']['properties'] ) && is_array( $tool['inputSchema']['properties'] )
                 && self::is_known_builtin( $tool['name'] ) && ! isset( $tool['inputSchema']['properties']['expected_hash'] ) ) {
                 $tools[ $i ]['inputSchema']['properties']['expected_hash'] = [
@@ -573,6 +587,106 @@ class Server {
             }
         }
         return $tools;
+    }
+
+    /** Paging facts of the list the running tool call returned (see list_window() / list_page()). */
+    private $list_paging = null;
+
+    /**
+     * Start one page of a list: the page asked for (1 when missing), and the offset and row count to
+     * query. One row more than the page is fetched, so list_page() can tell whether more follow.
+     *
+     * @param array $args     Tool arguments.
+     * @param int   $per_page Rows per page.
+     * @return array{0:int,1:int} [ offset, rows to fetch ].
+     */
+    private function list_window( $args, $per_page ) {
+        $per_page = max( 1, (int) $per_page );
+        $page     = is_array( $args ) && isset( $args['page'] ) && is_numeric( $args['page'] ) ? (int) $args['page'] : 1;
+        $page     = max( 1, min( $page, 10000 ) );
+        $this->list_paging = [ 'page' => $page, 'per_page' => $per_page ];
+        return [ ( $page - 1 ) * $per_page, $per_page + 1 ];
+    }
+
+    /**
+     * Finish one page of a list: drop the extra row list_window() asked for and note whether
+     * more rows follow (has_more, next_page). The reply stays the list itself; the paging facts
+     * go into structuredContent next to it.
+     *
+     * @param array $rows Rows fetched (at most per_page + 1).
+     * @return array The rows of this page.
+     */
+    private function list_page( array $rows ) {
+        if ( null === $this->list_paging ) {
+            return $rows;
+        }
+        $per_page = (int) $this->list_paging['per_page'];
+        $more     = count( $rows ) > $per_page;
+        $this->list_paging['has_more']  = $more;
+        $this->list_paging['next_page'] = $more ? (int) $this->list_paging['page'] + 1 : null;
+        return array_slice( array_values( $rows ), 0, $per_page );
+    }
+
+    /** structuredContent of a list reply with the page facts next to its results. */
+    private function with_list_paging( array $sc ) {
+        if ( is_array( $this->list_paging ) && isset( $this->list_paging['has_more'] ) && ( isset( $sc['results'] ) || [] === $sc ) ) {
+            $sc = array_merge( [ 'results' => $sc['results'] ?? [] ], $this->list_paging );
+        }
+        return $sc;
+    }
+
+    /** Name prefix => product name used in tool titles (longest prefix wins). */
+    const TITLE_BRANDS = [
+        'wc_' => 'WooCommerce', 'gp_' => 'GuardPress', 'sv_' => 'SiteVault', 'rl_' => 'Royal Ledger', 'fc_' => 'ForgeCache',
+        'rlinks_' => 'Royal Links', 'elementor_' => 'Elementor', 'acf_' => 'ACF', 'raif_' => 'Royal AI Firewall',
+        'redirection_' => 'Redirection', 'divi_' => 'Divi', 'divi5_' => 'Divi 5', 'yoast_' => 'Yoast SEO', 'updraftplus_' => 'UpdraftPlus',
+        'wpforms_' => 'WPForms', 'solid_' => 'Solid Security', 'wordfence_' => 'Wordfence', 'litespeed_' => 'LiteSpeed Cache',
+        'cf7_' => 'Contact Form 7', 'monsterinsights_' => 'MonsterInsights', 'w3tc_' => 'W3 Total Cache', 'duplicator_' => 'Duplicator',
+        'ai1wm_' => 'All-in-One WP Migration', 'wpvivid_' => 'WPvivid', 'jetpack_' => 'Jetpack', 'backwpup_' => 'BackWPup',
+        'rankmath_' => 'Rank Math', 'seobolt_' => 'SEObolt', 'seopress_' => 'SEOPress', 'aioseo_' => 'All in One SEO', 'bp_' => 'BuddyPress',
+        'tablepress_' => 'TablePress', 'snippets_' => 'Code Snippets', 'complianz_' => 'Complianz', 'wpcode_' => 'WPCode',
+        'relevanssi_' => 'Relevanssi', 'ninjaforms_' => 'Ninja Forms', 'fluentform_' => 'Fluent Forms', 'formforge_' => 'FormForge',
+        'rafp_' => 'Royal Affiliate', 'mailpoet_' => 'MailPoet', 'image_optimisation_' => 'Image optimisation', 'rsssl_' => 'Really Simple Security',
+        'wpo_' => 'WP-Optimize', 'wpmailsmtp_' => 'WP Mail SMTP', 'akismet_' => 'Akismet', 'spectra_' => 'Spectra',
+        'royal_mcp_' => '', 'mcp_' => '', 'wp_' => '',
+    ];
+
+    /** Words written in capitals (or a fixed spelling) in tool titles. */
+    const TITLE_WORDS = [
+        'seo' => 'SEO', 'id' => 'ID', 'ids' => 'IDs', 'url' => 'URL', 'urls' => 'URLs', 'css' => 'CSS', 'php' => 'PHP', 'ip' => 'IP',
+        'ips' => 'IPs', 'json' => 'JSON', 'html' => 'HTML', 'api' => 'API', 'mcp' => 'MCP', 'ai' => 'AI', 'gsc' => 'Search Console',
+        'faq' => 'FAQ', 'sku' => 'SKU', 'smtp' => 'SMTP', 'csv' => 'CSV', 'rss' => 'RSS', 'utm' => 'UTM', 'cpt' => 'CPT', 'ga4' => 'GA4',
+        'indexnow' => 'IndexNow', 'woocommerce' => 'WooCommerce', 'wordpress' => 'WordPress', 'webmcp' => 'WebMCP', 'oauth' => 'OAuth',
+        'acf' => 'ACF', '404' => '404', 'mfa' => 'MFA', '2fa' => '2FA', 'waf' => 'WAF', 'cdn' => 'CDN', 'xml' => 'XML',
+    ];
+
+    /**
+     * A title for a Royal MCP tool, from its name: the product it works with, then what it does
+     * ("WooCommerce: Update order status", "Get posts").
+     *
+     * @param string $name Tool name.
+     * @return string
+     */
+    public static function tool_title( $name ) {
+        $name  = (string) $name;
+        $brand = '';
+        $rest  = $name;
+        $best  = 0;
+        foreach ( self::TITLE_BRANDS as $prefix => $label ) {
+            $len = strlen( $prefix );
+            if ( $len > $best && 0 === strncmp( $name, $prefix, $len ) && strlen( $name ) > $len ) {
+                $best  = $len;
+                $brand = $label;
+                $rest  = substr( $name, $len );
+            }
+        }
+        $words = array_values( array_filter( explode( '_', $rest ), 'strlen' ) ); // audit:strlen-safe -- explode() returns strings
+        foreach ( $words as $k => $w ) {
+            $lw          = strtolower( $w );
+            $words[ $k ] = self::TITLE_WORDS[ $lw ] ?? $lw;
+        }
+        $text = ucfirst( implode( ' ', $words ) );
+        return '' === $brand ? $text : $brand . ': ' . $text;
     }
 
     /** Whether the name is a Royal MCP tool; true for every name until get_tools() has run. */
@@ -2283,7 +2397,7 @@ class Server {
     private function get_builtin_tools() {
         $tools = [
             // Posts (supports custom post types)
-            ['name' => 'wp_get_posts', 'description' => 'Get WordPress posts (supports custom post types). Each item includes date (publish date, site local time), modified (last change, ISO 8601 UTC) and content_length (bytes of stored post_content) so you can size-check before fetching — on page-builder sites a short page can still carry a very large body. Sort with orderby / order; use modified_after to find posts edited recently. Content edits, Royal MCP custom-field tools, ACF field writes (acf_update_field) and Elementor writes update modified; other plugins changing only custom fields may leave it unchanged.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of posts (max 100)'], 'search' => ['type' => 'string', 'description' => 'Search term'], 'status' => ['type' => 'string', 'description' => 'Post status (publish, draft, etc)'], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post). Use wp_get_post_types to discover available types'], 'include' => ['type' => 'array', 'items' => ['type' => 'integer'], 'maxItems' => 100, 'description' => 'Up to 100 post IDs. Returns exactly those posts (any status you can read, trashed posts included) in this order; per_page, search, orderby, order and modified_after are ignored (invalid values are still refused).'], 'orderby' => ['type' => 'string', 'enum' => ['date', 'modified', 'title', 'menu_order', 'id'], 'description' => 'Sort field (default date, the publish date). modified sorts by the last change.'], 'order' => ['type' => 'string', 'enum' => ['asc', 'desc'], 'description' => 'asc or desc. Default: asc (A to Z) for orderby title, desc for every other sort.'], 'modified_after' => ['type' => 'string', 'description' => 'Only items last modified after this moment: a date (2026-11-01) or date and time (2026-11-01T09:30:00Z). No timezone means UTC.'], 'with_content' => ['type' => 'boolean', 'description' => 'When true, each item adds content_text (content with shortcodes and tags removed, whitespace collapsed, at most 3000 characters) and content_truncated.']]]],
+            ['name' => 'wp_get_posts', 'description' => 'Get WordPress posts (supports custom post types). Each item includes date (publish date, site local time), modified (last change, ISO 8601 UTC) and content_length (bytes of stored post_content) so you can size-check before fetching — on page-builder sites a short page can still carry a very large body. Sort with orderby / order; use modified_after to find posts edited recently. Content edits, Royal MCP custom-field tools, ACF field writes (acf_update_field) and Elementor writes update modified; other plugins changing only custom fields may leave it unchanged.', 'inputSchema' => ['type' => 'object', 'properties' => ['page' => ['type' => 'integer', 'minimum' => 1, 'description' => 'Page of results, 1 for the first. Each page holds per_page rows; structuredContent says has_more and next_page.'], 'per_page' => ['type' => 'integer', 'description' => 'Number of posts (max 100)'], 'search' => ['type' => 'string', 'description' => 'Search term'], 'status' => ['type' => 'string', 'description' => 'Post status (publish, draft, etc)'], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post). Use wp_get_post_types to discover available types'], 'include' => ['type' => 'array', 'items' => ['type' => 'integer'], 'maxItems' => 100, 'description' => 'Up to 100 post IDs. Returns exactly those posts (any status you can read, trashed posts included) in this order; per_page, search, orderby, order and modified_after are ignored (invalid values are still refused).'], 'orderby' => ['type' => 'string', 'enum' => ['date', 'modified', 'title', 'menu_order', 'id'], 'description' => 'Sort field (default date, the publish date). modified sorts by the last change.'], 'order' => ['type' => 'string', 'enum' => ['asc', 'desc'], 'description' => 'asc or desc. Default: asc (A to Z) for orderby title, desc for every other sort.'], 'modified_after' => ['type' => 'string', 'description' => 'Only items last modified after this moment: a date (2026-11-01) or date and time (2026-11-01T09:30:00Z). No timezone means UTC.'], 'with_content' => ['type' => 'boolean', 'description' => 'When true, each item adds content_text (content with shortcodes and tags removed, whitespace collapsed, at most 3000 characters) and content_truncated.']]]],
             ['name' => 'wp_get_post', 'description' => 'Get single post by ID (any post type)', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Post ID']], 'required' => ['id']]],
             ['name' => 'wp_create_post', 'description' => 'Create new post (supports custom post types). Combine status="future" with date to schedule. Excerpt may contain safe HTML (same allow-list as post content). Backslashes (JSON unicode escapes, embedded JSON-LD, Divi loop field bindings) are stored as sent.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule. Past dates auto-publish with that timestamp.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional excerpt. May contain safe HTML (same allow-list as post content).'], 'categories' => ['type' => 'array', 'items' => ['type' => 'integer']], 'post_type' => ['type' => 'string', 'description' => 'Post type slug (default: post)'], 'featured_media' => ['type' => 'integer', 'description' => 'Attachment ID to set as featured image'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to assign as the post author. Defaults to the authenticated MCP user (admin). Use wp_get_users to discover available author IDs.']], 'required' => ['title', 'content']]],
             ['name' => 'wp_clone_post_as_draft', 'description' => 'Copy a post, page or other public content item you can edit into a new draft owned by you: title, content, excerpt, parent, order, comment settings, password, page template, featured image, the terms you may assign and custom fields that are not protected. The original is not changed. Use it to prepare changes to published content (required in drafts-only mode), then edit the copy. Builder pages use elementor_clone_page or divi_clone_page, which also copy the layout; products are copied in WooCommerce. Undo moves the copy to the trash.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'ID of the post to copy'], 'title' => ['type' => 'string', 'description' => 'Title for the copy (default: the original title)']], 'required' => ['id']]],
@@ -2294,7 +2408,7 @@ class Server {
             ['name' => 'wp_count_posts', 'description' => 'Get post counts by status', 'inputSchema' => ['type' => 'object', 'properties' => ['post_type' => ['type' => 'string', 'description' => 'Post type (post, page, etc)']]]],
 
             // Pages
-            ['name' => 'wp_get_pages', 'description' => 'List WordPress pages. Returns id, title, status, URL, date (publish date, site local time), modified (last change, ISO 8601 UTC) and content_length (bytes of stored content — size-check before fetching) for each. Filter by parent to walk the page hierarchy; sort with orderby / order; use modified_after to find pages edited recently. Content edits, Royal MCP custom-field tools, ACF field writes and Elementor writes update modified; other plugins changing only custom fields may leave it unchanged.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of pages (default 10, max 100)'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID — returns only direct children of this page'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'pending', 'private', 'future', 'any'], 'description' => 'publish (default), one status, or any (every status you can read except trash), so a draft you just created can be found.'], 'orderby' => ['type' => 'string', 'enum' => ['date', 'modified', 'title', 'menu_order', 'id'], 'description' => 'Sort field. Without orderby or modified_after, pages are listed by title A to Z.'], 'order' => ['type' => 'string', 'enum' => ['asc', 'desc'], 'description' => 'asc or desc. Default when orderby is given: asc (A to Z) for title, desc for every other sort.'], 'modified_after' => ['type' => 'string', 'description' => 'Only items last modified after this moment: a date (2026-11-01) or date and time (2026-11-01T09:30:00Z). No timezone means UTC.']]]],
+            ['name' => 'wp_get_pages', 'description' => 'List WordPress pages. Returns id, title, status, URL, date (publish date, site local time), modified (last change, ISO 8601 UTC) and content_length (bytes of stored content — size-check before fetching) for each. Filter by parent to walk the page hierarchy; sort with orderby / order; use modified_after to find pages edited recently. Content edits, Royal MCP custom-field tools, ACF field writes and Elementor writes update modified; other plugins changing only custom fields may leave it unchanged.', 'inputSchema' => ['type' => 'object', 'properties' => ['page' => ['type' => 'integer', 'minimum' => 1, 'description' => 'Page of results, 1 for the first. Each page holds per_page rows; structuredContent says has_more and next_page.'], 'per_page' => ['type' => 'integer', 'description' => 'Number of pages (default 10, max 100)'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID — returns only direct children of this page'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'pending', 'private', 'future', 'any'], 'description' => 'publish (default), one status, or any (every status you can read except trash), so a draft you just created can be found.'], 'orderby' => ['type' => 'string', 'enum' => ['date', 'modified', 'title', 'menu_order', 'id'], 'description' => 'Sort field. Without orderby or modified_after, pages are listed by title A to Z.'], 'order' => ['type' => 'string', 'enum' => ['asc', 'desc'], 'description' => 'asc or desc. Default when orderby is given: asc (A to Z) for title, desc for every other sort.'], 'modified_after' => ['type' => 'string', 'description' => 'Only items last modified after this moment: a date (2026-11-01) or date and time (2026-11-01T09:30:00Z). No timezone means UTC.']]]],
             ['name' => 'wp_get_page', 'description' => 'Get single page by ID', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer', 'description' => 'Page ID']], 'required' => ['id']]],
             ['name' => 'wp_create_page', 'description' => 'Create new page. Combine status="future" with date to schedule. Excerpt (via wp_update_post_meta on _excerpt or via wp_create_post fallback) may contain safe HTML.', 'inputSchema' => ['type' => 'object', 'properties' => ['title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'future', 'pending', 'private']], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to schedule.'], 'parent' => ['type' => 'integer', 'description' => 'Parent page ID'], 'template' => ['type' => 'string', 'description' => 'Page template: default, or a template filename the theme offers for pages. Anything else is refused and the error lists the valid values.']], 'required' => ['title', 'content']]],
             ['name' => 'wp_update_page', 'description' => 'Update existing page. Response includes saved_fields (actual stored values, read back from DB) so silent-drop / silent-modify by WordPress is surfaced rather than hidden. Pass date to reschedule or backdate. The reply carries an undo token that puts the page back; a template change has its own token (template_undo_token).', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'title' => ['type' => 'string'], 'content' => ['type' => 'string'], 'status' => ['type' => 'string'], 'date' => ['type' => 'string', 'description' => 'ISO 8601 datetime in the site timezone (e.g. 2026-12-25T09:00:00). Combine with status=future to reschedule, or use alone to backdate.'], 'excerpt' => ['type' => 'string', 'description' => 'Optional page excerpt. May contain safe HTML.'], 'post_author' => ['type' => 'integer', 'description' => 'User ID to reassign as page author.'], 'menu_order' => ['type' => 'integer', 'description' => 'Order among sibling pages. Lower = earlier in navigation.'], 'post_parent' => ['type' => 'integer', 'description' => 'Parent page ID (0 = top-level). Throws if the ID does not exist.'], 'password' => ['type' => 'string', 'description' => 'Page password. Empty string removes protection.'], 'template' => ['type' => 'string', 'description' => 'Page template: default, or a template filename the theme offers for pages. Anything else is refused and the error lists the valid values. The reply carries an undo token that restores the prior template (only the template).']], 'required' => ['id']]],
@@ -2313,8 +2427,8 @@ class Server {
             ['name' => 'wp_count_media', 'description' => 'Get media counts by type', 'inputSchema' => ['type' => 'object', 'properties' => new \stdClass()]],
 
             // Categories & Tags (Terms)
-            ['name' => 'wp_get_categories', 'description' => 'List blog categories (the `category` taxonomy). Returns id, name, slug, count, and parent for each. For custom taxonomies (product_cat, brand, etc.), use wp_get_terms instead.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of categories (default 100, max 100)']]]],
-            ['name' => 'wp_get_tags', 'description' => 'List blog tags (the `post_tag` taxonomy). Returns id, name, slug, and count for each. For custom taxonomies, use wp_get_terms.', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of tags (default 100, max 100)']]]],
+            ['name' => 'wp_get_categories', 'description' => 'List blog categories (the `category` taxonomy). Returns id, name, slug, count, and parent for each. For custom taxonomies (product_cat, brand, etc.), use wp_get_terms instead.', 'inputSchema' => ['type' => 'object', 'properties' => ['page' => ['type' => 'integer', 'minimum' => 1, 'description' => 'Page of results, 1 for the first. Each page holds per_page rows; structuredContent says has_more and next_page.'], 'per_page' => ['type' => 'integer', 'description' => 'Number of categories (default 100, max 100)']]]],
+            ['name' => 'wp_get_tags', 'description' => 'List blog tags (the `post_tag` taxonomy). Returns id, name, slug, and count for each. For custom taxonomies, use wp_get_terms.', 'inputSchema' => ['type' => 'object', 'properties' => ['page' => ['type' => 'integer', 'minimum' => 1, 'description' => 'Page of results, 1 for the first. Each page holds per_page rows; structuredContent says has_more and next_page.'], 'per_page' => ['type' => 'integer', 'description' => 'Number of tags (default 100, max 100)']]]],
             ['name' => 'wp_create_term', 'description' => 'Create a term in any registered taxonomy (category, post_tag, or any custom taxonomy). Description may contain inline HTML — WordPress permits <a>, <strong>, <em>, <blockquote>, <code>, <cite>, <abbr>, <acronym> in term descriptions; block-level tags (<p>, <h1>-<h6>, <ul>) are stripped by WP core. Use wp_get_taxonomies to discover available taxonomy slugs.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug (e.g. category, post_tag, product_cat)'], 'description' => ['type' => 'string', 'description' => 'Optional description. May contain inline HTML (<a>, <strong>, <em>, etc.); block-level tags are stripped by WP core.'], 'parent' => ['type' => 'integer', 'description' => 'Parent term ID (only applies to hierarchical taxonomies)'], 'slug' => ['type' => 'string', 'description' => 'Optional URL-friendly slug. Auto-generated from name if omitted.']], 'required' => ['name', 'taxonomy']]],
             ['name' => 'wp_update_term', 'description' => 'Update an existing term in any taxonomy. Use this to rename a tag/category, edit its description, or change its slug. Description may contain inline HTML (WP core strips block-level tags). Pair with wp_update_term_meta to edit SEO meta on tags (Yoast/Rank Math/AIOSEO store tag SEO data in wp_termmeta).', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to'], 'name' => ['type' => 'string'], 'slug' => ['type' => 'string'], 'description' => ['type' => 'string', 'description' => 'Optional description. May contain inline HTML.'], 'parent' => ['type' => 'integer', 'description' => 'Parent term ID (hierarchical taxonomies only)']], 'required' => ['id', 'taxonomy']]],
             ['name' => 'wp_delete_term', 'description' => 'Delete a term from any registered taxonomy.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'taxonomy' => ['type' => 'string', 'description' => 'Taxonomy slug the term belongs to']], 'required' => ['id', 'taxonomy']]],
@@ -2330,7 +2444,7 @@ class Server {
             ['name' => 'wp_delete_term_meta', 'description' => 'Delete term meta data (every value of the key). The reply carries an undo token that puts the deleted values back.', 'inputSchema' => ['type' => 'object', 'properties' => ['term_id' => ['type' => 'integer'], 'key' => ['type' => 'string']], 'required' => ['term_id', 'key']]],
 
             // Comments
-            ['name' => 'wp_get_comments', 'description' => 'List comments on the site or a specific post. Returns id, post_id, author, content, date, and status. Lists approved comments unless status is passed, for moderators too; any status other than "approve" requires moderate_comments.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer', 'description' => 'Limit to comments on this post ID'], 'per_page' => ['type' => 'integer', 'description' => 'Number of comments (default 10, max 100)'], 'status' => ['type' => 'string', 'enum' => ['approve', 'hold', 'spam', 'trash', 'all'], 'description' => 'Comment status filter. "approve" is public; other values require moderate_comments.']]]],
+            ['name' => 'wp_get_comments', 'description' => 'List comments on the site or a specific post. Returns id, post_id, author, content, date, and status. Lists approved comments unless status is passed, for moderators too; any status other than "approve" requires moderate_comments.', 'inputSchema' => ['type' => 'object', 'properties' => ['page' => ['type' => 'integer', 'minimum' => 1, 'description' => 'Page of results, 1 for the first. Each page holds per_page rows; structuredContent says has_more and next_page.'], 'post_id' => ['type' => 'integer', 'description' => 'Limit to comments on this post ID'], 'per_page' => ['type' => 'integer', 'description' => 'Number of comments (default 10, max 100)'], 'status' => ['type' => 'string', 'enum' => ['approve', 'hold', 'spam', 'trash', 'all'], 'description' => 'Comment status filter. "approve" is public; other values require moderate_comments.']]]],
             ['name' => 'wp_create_comment', 'description' => 'Create a comment. Content may contain WordPress\'s standard comment HTML tags (<a>, <strong>, <em>, <blockquote>, <code>, <cite>, <abbr>, <acronym>) — matches what the WP comment form permits. Other tags are stripped.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'content' => ['type' => 'string'], 'author' => ['type' => 'string', 'description' => 'Author name to record. Only users who can moderate comments may set it; otherwise the comment is posted as the signed-in user.'], 'author_email' => ['type' => 'string', 'description' => 'Author email to record. Only users who can moderate comments may set it.']], 'required' => ['post_id', 'content']]],
             ['name' => 'wp_delete_comment', 'description' => 'Delete a comment', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer'], 'force' => ['type' => 'boolean']], 'required' => ['id']]],
             ['name' => 'wp_get_pending_comments', 'description' => 'Get comments awaiting moderation (status=hold). Requires moderate_comments capability.', 'inputSchema' => ['type' => 'object', 'properties' => ['post_id' => ['type' => 'integer'], 'limit' => ['type' => 'integer', 'description' => 'Max comments to return (default 20, max 100)']]]],
@@ -2339,7 +2453,7 @@ class Server {
             ['name' => 'wp_trash_comment', 'description' => 'Move a comment to trash. Requires moderate_comments capability and edit rights on the comment\'s post.', 'inputSchema' => ['type' => 'object', 'properties' => ['comment_id' => ['type' => 'integer']], 'required' => ['comment_id']]],
 
             // Users
-            ['name' => 'wp_get_users', 'description' => 'List site users. Returns id, display_name, roles, user_registered (UTC) and extra_caps (capabilities granted to the user beyond their roles, empty for most users). Emails and usernames are NOT exposed. Filter by role slug (administrator / editor / author / contributor / subscriber, or any custom role).', 'inputSchema' => ['type' => 'object', 'properties' => ['per_page' => ['type' => 'integer', 'description' => 'Number of users (default 10, max 100)'], 'role' => ['type' => 'string', 'description' => 'Filter by role slug. Use wp_get_user for a single user by ID.']]]],
+            ['name' => 'wp_get_users', 'description' => 'List site users. Returns id, display_name, roles, user_registered (UTC) and extra_caps (capabilities granted to the user beyond their roles, empty for most users). Emails and usernames are NOT exposed. Filter by role slug (administrator / editor / author / contributor / subscriber, or any custom role).', 'inputSchema' => ['type' => 'object', 'properties' => ['page' => ['type' => 'integer', 'minimum' => 1, 'description' => 'Page of results, 1 for the first. Each page holds per_page rows; structuredContent says has_more and next_page.'], 'per_page' => ['type' => 'integer', 'description' => 'Number of users (default 10, max 100)'], 'role' => ['type' => 'string', 'description' => 'Filter by role slug. Use wp_get_user for a single user by ID.']]]],
             ['name' => 'wp_get_user', 'description' => 'Get one user by ID: id, display_name, roles, user_registered (UTC) and extra_caps (capabilities granted beyond their roles). Emails and usernames are NOT exposed.', 'inputSchema' => ['type' => 'object', 'properties' => ['id' => ['type' => 'integer']], 'required' => ['id']]],
 
             // Post Meta
@@ -2363,11 +2477,11 @@ class Server {
             ['name' => 'get_tool_info', 'description' => 'Return the full inputSchema (and, when available, an example invocation) for a single tool named in tool_name. Pairs with discover_tools + execute_tool for the compact discovery flow.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name (e.g. "wp_update_post").']], 'required' => ['tool_name']]],
             ['name' => 'execute_tool', 'description' => 'Pass-through dispatcher for the compact discovery flow. Invokes the tool named in tool_name with the arguments in arguments — semantically identical to a direct tools/call for that tool. Useful when the client only advertised the routing tools via X-MCP-Profile: compact but still wants to invoke a specific underlying tool without renegotiating the profile.', 'inputSchema' => ['type' => 'object', 'properties' => ['tool_name' => ['type' => 'string', 'description' => 'Exact tool name to invoke.'], 'arguments' => ['type' => 'object', 'description' => 'Arguments object forwarded to the underlying tool. Same shape you\'d pass in tools/call.']], 'required' => ['tool_name']]],
             ['name' => 'wp_verify_rendered_page', 'description' => 'Post-write verification tool. Fetches the actual rendered HTML that WordPress serves at a URL via a loopback request and returns the response status, a subset of response headers (content-type, cache-control, x-cache), the page title, meta description, first h1, counts of script and stylesheet link tags, robots_meta (content of <meta name="robots">, null when absent), x_robots_tag (the X-Robots-Tag header, null when absent), redirect_chain ([{url, status}] for each redirect followed, up to 5; [] when none — response_status is the final status), tls_valid (whether the https certificate verifies; null for http), and (when include_body_excerpt is true) a 500-char excerpt of the page body. Optional selector arg reports whether an id/class selector is present in the served HTML. Use after any write that changes content, theme, or options to catch page-builder caches, object caches, or edge caches serving stale HTML even when the DB write returned success. Rate-limited to 10 calls per minute per URL; the redirect hops within one call are not counted separately. Requires read on the target post/page or manage_options. URL must belong to the current WordPress site.', 'inputSchema' => ['type' => 'object', 'properties' => ['url' => ['type' => 'string', 'description' => 'Absolute URL on this site to fetch (must match home_url() origin).'], 'selector' => ['type' => 'string', 'description' => 'Optional #id or .class selector to check for presence in the rendered HTML.'], 'include_body_excerpt' => ['type' => 'boolean', 'description' => 'When true, include a 500-char excerpt of the <body> in the response. Default false.']], 'required' => ['url']]],
-            ['name' => 'mcp_undo_last_operation', 'description' => 'Reverses a prior tool operation using the undo token emitted in that tool\'s response envelope (surfaced as structuredContent.undo_token). Currently supported tools: wp_reorder_menu_items, the block tools (wp_insert_blocks, wp_replace_block, wp_move_block, wp_delete_block, wp_replace_text_in_blocks, wp_update_block_attributes, wp_update_synced_pattern), wp_create_post, wp_create_page and wp_clone_post_as_draft (undo moves the new post to the trash), wp_update_post, wp_replace_in_post and wp_replace_in_page (undo puts the earlier content back), wp_create_term (undo deletes the new term; refused while items use it), wp_add_post_terms (undo takes the added terms off and deletes terms the call created when nothing uses them), wp_set_featured_image (undo puts the earlier featured image back, and deletes an image the call downloaded when no other post uses it), wp_upload_media and wp_upload_media_from_url (undo deletes the new library item and its file for good; refused while it is a featured image), wp_update_post_meta, wp_add_post_meta, wp_delete_post_meta, wp_delete_post, wp_delete_page, wp_delete_media (when it moves the item to the media trash), wp_restore_revision, wp_update_media, wp_delete_term, wp_update_term, wp_update_term_meta, wp_delete_term_meta, wp_create_menu and wp_create_menu_item (undo deletes the new menu or item), wp_delete_menu_item, wp_update_menu_item, wp_update_option, wp_update_theme_mod, wp_update_theme_design, wp_update_custom_css, wp_update_permalink_structure, wp_update_seo_meta, yoast_update_meta (aliases wp_update_seo_meta), wp_update_widget, the comment tools (wp_create_comment, wp_delete_comment, wp_approve_comment, wp_spam_comment, wp_trash_comment), the WooCommerce writes (products, variations, orders, order notes, attributes, coupons), the Redirection writes (redirection_create_redirect deletes the new redirect, redirection_update_redirect restores it as it was), the Relevanssi writes (relevanssi_reindex_post puts the earlier index entry back, relevanssi_update_synonyms and relevanssi_add_stopword restore the earlier list), the MailPoet writes (mailpoet_save_subscriber and mailpoet_set_subscriber_lists restore the subscriber\'s earlier details and lists, or delete a subscriber the call added; mailpoet_save_draft restores the earlier draft, or deletes a draft the call created), the TablePress writes (tablepress_create_table and tablepress_copy_table delete the new table, tablepress_update_cells restores the earlier cells), snippets_update_metadata (restores the snippet\'s earlier name, description and tags), the Complianz writes (complianz_update_banner_text and complianz_update_cookie_description restore the earlier texts), the Royal AI Firewall writes (raif_set_bot_policies and raif_block_all_ai_bots restore the earlier bot policies), gp_block_ip (undo lifts the block; refused with edited_since_write when the block was changed since, unless forced), the launch tools (wp_publish_and_launch removes the post and the image it uploaded, seo_optimize_for_launch restores the earlier SEO title and description and removes the redirects it made, wp_migrate_theme_assets puts the earlier post content back; search engine submissions and cache purges cannot be taken back), the plugin and theme tools (wp_install_plugin and wp_install_theme remove what was installed, wp_activate_plugin and wp_deactivate_plugin switch back, wp_switch_theme returns to the earlier theme, the auto-update switches restore the earlier setting; refused with edited_since_write after a later change, or security_plugin for the active security plugin, unless forced; updates and deletes have no undo), the ACF setup tools (field group and field creates, changes, deletes, imports, reorders and acf_register_post_type: undo puts the earlier definition back or removes what was made, and is refused with edited_since_write when the field group changed again since, unless forced), wp_set_maintenance_mode (undo restores the earlier state; refused with edited_since_write when the mode was changed again, unless forced), jetpack_set_module (undo switches the module back; refused while Jetpack cannot switch it, for example a module that needs a connection), the Royal Affiliate writes (rafp_update_referral_status puts each referral back to its earlier status; rafp_create_campaign and rafp_create_challenge delete what they made, refused with in_use once it is used; rafp_assign_landing_page gives the page back; all four are refused with edited_since_write after a later change unless forced), the FormForge form tools (formforge_duplicate and formforge_create_from_template: undo deletes the new form, and is refused with has_entries while the form holds entries or with edited_since_write once it was edited, unless forced), the Elementor write tools (elementor_replace_text, elementor_replace_image, elementor_add_widget, elementor_clone_page, elementor_import_template, elementor_apply_template_to_page, elementor_rebuild_post_content, and elementor_rebuild_post_content_bulk, whose undo empties again the pages it filled and leaves pages edited since alone unless forced) and the Divi write tools (divi_replace_image, divi_clone_page, divi_import_template). Tokens live ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' and are one-shot (consumed on successful undo). Cap requirement matches the original operation. Most undos are refused with edited_since_write if the target was modified between the tracked write and this undo call (protects later edits from a silent overwrite; see force). These restore without that check: jetpack_set_module (a module is only on or off), the undos that recreate a permanently deleted item (wp_delete_term, wp_delete_post / wp_delete_page / wp_delete_media with force, wp_delete_comment with force, WooCommerce permanent deletes), wc_add_order_note and divi_clone_page. For a browser agent (WebMCP), these undos delete what their operation created and are refused while the matching delete tool is switched off for browser agents: wp_create_post, wp_create_page, wp_clone_post_as_draft, elementor_clone_page, elementor_import_template and divi_clone_page (wp_delete_post, or wp_delete_page for a page), wp_insert_blocks (wp_delete_block), elementor_add_widget (elementor_delete_widget, where that tool exists), wp_create_menu_item (wp_delete_menu_item), wp_create_term and wp_add_post_terms when it created terms (wp_delete_term), wp_upload_media, wp_upload_media_from_url and wp_set_featured_image when it downloaded the image (wp_delete_media), wp_create_comment (wp_delete_comment), wp_add_post_meta (wp_delete_post_meta), wc_create_variation and the variations a wc_batch_update_variations call created (wc_delete_variation), and wc_create_coupon (wc_delete_coupon); a browser agent cannot undo wp_create_menu with force. Other undos are not tied to a delete tool. Free basic mode — single-op restore, local storage; Pro extends with cross-plugin batch reversal and dashboard visualization.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).'], 'undo_token' => ['type' => 'string', 'description' => 'Same as token; either name works.'], 'force' => ['type' => 'boolean', 'description' => 'These undos are refused with edited_since_write when the target changed after the tracked write, and accept force: the post content undos (wp_update_post, wp_replace_in_post, wp_replace_in_page, wp_restore_revision and the block tools), wp_create_term, wp_add_post_terms, wp_set_featured_image, wp_upload_media, wp_upload_media_from_url, wp_create_post, wp_create_page and wp_clone_post_as_draft, post and page trash, post and term meta updates, wp_add_post_meta, wp_delete_post_meta, wp_delete_term_meta, wp_update_media, wp_update_term, menus and menu items (wp_create_menu, wp_create_menu_item, wp_update_menu_item, wp_delete_menu_item, wp_delete_menu, wp_reorder_menu_items, wp_update_global_styles, wp_update_block_template, wp_update_theme_design), wp_update_option, the WooCommerce writes (products, variations, batch variation updates, product attributes and attribute creation, orders and order status, coupons, emptying the coupon trash), the comment tools (wp_create_comment, wp_approve_comment, wp_spam_comment, wp_trash_comment, wp_delete_comment to the trash), wp_update_seo_meta / yoast_update_meta, wp_update_theme_mod, wp_update_custom_css, wp_update_permalink_structure, wp_update_widget, the Elementor write tools (an Elementor undo is also refused while an editor is open on the page), divi_replace_image and divi_import_template, the Redirection writes, the MailPoet writes, the Relevanssi writes and raif_set_bot_policies / raif_block_all_ai_bots (bots changed since are skipped, the others restored). Nothing is changed and the token stays valid; pass force: true to restore anyway, removing those later edits (an item the operation created is deleted with them; undoing wp_create_menu deletes the menu with its items). An item already out of the trash is left as it is and the token is closed; coupons whose code another coupon uses now are skipped while the others are recreated; a batch variation undo leaves off a SKU another product uses now and reports it. The other undos that check for later edits (the TablePress writes, snippets_update_metadata and the Complianz writes) refuse with an error and cannot be forced, and recreating a deleted term or coupon is refused while another term or coupon has its slug or code. Default false.']]]],
+            ['name' => 'mcp_undo_last_operation', 'description' => 'Reverse an earlier write with the undo_token from its reply (structuredContent.undo_token or undo.token). Every tool that can be undone says so in its reply and lists its undo window in tools/list (_meta royal-mcp/undo_window_hours); searches, cache purges and search engine submissions cannot be taken back. Tokens last ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' and work once. The undo needs the same permission as the original write. Most undos are refused with edited_since_write when the item changed after the write, so later edits are not overwritten; send force: true to restore anyway. An undo that deletes what a write created (a new post, term, image, menu item, comment, coupon or variation) is refused for a browser agent (WebMCP) while the matching delete tool is switched off for browser agents.', 'inputSchema' => ['type' => 'object', 'properties' => ['token' => ['type' => 'string', 'description' => 'The undo token from a prior tool response (structuredContent.undo_token or top-level undo.token).'], 'undo_token' => ['type' => 'string', 'description' => 'Same as token; either name works.'], 'force' => ['type' => 'boolean', 'description' => 'Restore even though the item changed after the write (edited_since_write), removing those later edits; an item the write created is deleted with them. Some undos cannot be forced and say so in their refusal (for example a TablePress, Code Snippets or Complianz change, or a term or coupon whose slug or code is taken again). Default false.']]]],
             ['name' => 'mcp_list_recent_changes', 'description' => 'List the changes made through Royal MCP that can still be reviewed: every undo-tracked write from the last ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' by the same WordPress user (administrators can pass all_users for every user\'s), newest first. Each row has the time, the tool, what it changed (target_label), what undo would restore (undo_summary), which connection made it (AI client, API key, another MCP server or a browser agent), whether it was undone, and the undo token while undo is still possible. Pass a change_id to mcp_get_change for the before and after values. Changes older than ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' are not kept.', 'inputSchema' => ['type' => 'object', 'properties' => ['limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 100, 'description' => 'Rows to return (default 20, max 100).'], 'tool' => ['type' => 'string', 'description' => 'Only changes made by this tool, for example wp_update_post.'], 'include_undone' => ['type' => 'boolean', 'description' => 'Include changes that were already undone (default true).'], 'all_users' => ['type' => 'boolean', 'description' => 'Administrators only: list every user\'s changes (each row names its user; undo tokens only for your own changes). Default false.']]]],
             ['name' => 'mcp_get_change', 'description' => 'Show one change field by field: the value before the change, the value the change wrote, and the value now, plus a line diff for post content, CSS and page-builder data. Flags fields that were changed again since, which undo would refuse. Takes a change_id from mcp_list_recent_changes, or the undo token from the original tool response. A change older than ' . \Royal_MCP\MCP\Undo_Store::window_label() . ' reports status "expired".', 'inputSchema' => ['type' => 'object', 'properties' => ['change_id' => ['type' => 'string', 'description' => 'change_id from mcp_list_recent_changes, or the undo token from the tool response that made the change.']], 'required' => ['change_id']]],
             ['name' => 'mcp_get_skill', 'description' => 'Read a skill: the site owner\'s chosen instructions for one kind of work on this site (for example editing Elementor pages or changing WooCommerce products). Read the skill before you start that kind of work and follow it. Without arguments it lists the skills loaded on this site. With a skill it returns the core of that skill and the list of its workflows; with a skill and a section it returns that one workflow.', 'inputSchema' => ['type' => 'object', 'properties' => ['skill' => ['type' => 'string', 'description' => 'Skill id from the list, for example "elementor". Leave out to list the loaded skills.'], 'section' => ['type' => 'string', 'description' => 'Id of one workflow of the skill, from the list in the skill\'s core. Leave out for the core.']]]],
-            ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page). Each result includes content_length (bytes of stored content) for size triage.', 'inputSchema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'pending', 'private', 'future', 'any'], 'description' => 'publish (default), one status, or any (every status you can read except trash), so a draft you just created can be found.']], 'required' => ['query']]],
+            ['name' => 'wp_search', 'description' => 'Search all content. Pass snippet>0 to receive a content excerpt around each match (saves tokens vs. fetching each result with wp_get_page). Each result includes content_length (bytes of stored content) for size triage.', 'inputSchema' => ['type' => 'object', 'properties' => ['page' => ['type' => 'integer', 'minimum' => 1, 'description' => 'Page of results, 1 for the first. Each page holds per_page rows; structuredContent says has_more and next_page.'], 'query' => ['type' => 'string'], 'post_type' => ['type' => 'string'], 'per_page' => ['type' => 'integer', 'description' => 'Number of results (default 20, max 100)'], 'snippet' => ['type' => 'integer', 'description' => 'Snippet length in characters around the matched term (default 0 = off, recommended 160-240). When set, results include slug and snippet fields.'], 'status' => ['type' => 'string', 'enum' => ['publish', 'draft', 'pending', 'private', 'future', 'any'], 'description' => 'publish (default), one status, or any (every status you can read except trash), so a draft you just created can be found.']], 'required' => ['query']]],
 
             // Options
             ['name' => 'wp_get_option', 'description' => 'Get a single WordPress option value. Requires manage_options capability. The option name must be in the readable allowlist — 13 defaults (blogname, blogdescription, siteurl, home, admin_email, posts_per_page, date_format, time_format, timezone_string, googlesitekit_analytics-4_settings, show_on_front, page_on_front, blog_public) plus any keys plugin authors opt in via the royal_mcp_readable_options filter, plus options an admin allowlists under Royal MCP settings (Allowlisted plugin options) while option writes are enabled. Values are masked: values under credential-like names (keys, secrets, passwords, tokens) and values shaped like credentials are redacted; a short random value stored under an ordinary name cannot be told apart from normal data and is returned. An administrator can list an allowlisted option under Return as stored (Royal MCP settings); its value is then returned unmasked, except that credential fields, provider key formats, private keys and credentials in links inside it stay hidden, and the reply says as_stored: true. That never applies to protected options or names that look like credentials.', 'inputSchema' => ['type' => 'object', 'properties' => ['name' => ['type' => 'string']], 'required' => ['name']]],
@@ -4413,6 +4527,7 @@ class Server {
         try {
             $this->as_stored_grants = [];
             self::$as_stored_served = [];
+            $this->list_paging      = null;
             $result = $this->run_tool($name, $args);
             // A skill is a fixed text shipped with the plugin, also when it is read through execute_tool.
             $skill_read = 'execute_tool' === $name && is_array( $args ) && 'mcp_get_skill' === ( $args['tool_name'] ?? '' );
@@ -4446,7 +4561,7 @@ class Server {
                         'type' => 'text',
                         'text' => is_string($result) ? $result : wp_json_encode($result, JSON_PRETTY_PRINT),
                     ]],
-                    'structuredContent' => self::seed_structured_content( $result ),
+                    'structuredContent' => $this->with_list_paging( self::seed_structured_content( $result ) ),
                 ] ),
             ];
         } catch (\Exception $e) {
@@ -5221,6 +5336,7 @@ class Server {
             }
             $this->as_stored_grants = [];
             self::$as_stored_served = [];
+            $this->list_paging      = null;
             $result = $this->run_tool( $name, $args );
             if ( $log ) {
                 $this->log_tool_call( $name, $args, 'success', '', $start, $result );
@@ -5692,8 +5808,10 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to list posts.');
                 }
+                list($gp_offset, $gp_fetch) = $this->list_window($args, max(1, min(intval($args['per_page'] ?? 10), 100)));
                 $query_args = [
-                    'numberposts' => max(1, min(intval($args['per_page'] ?? 10), 100)),
+                    'numberposts' => $gp_fetch,
+                    'offset'      => $gp_offset,
                     's' => \Royal_MCP\MCP\Support\SafeText::field($args['search'] ?? ''),
                 ];
                 if (!empty($args['post_type'])) {
@@ -5750,6 +5868,7 @@ class Server {
                     }
                 }
                 if ($gp_include) {
+                    $this->list_paging = null;
                     $query_args = [
                         'post__in'    => $gp_include,
                         'orderby'     => 'post__in',
@@ -5774,6 +5893,7 @@ class Server {
                         || !\Royal_MCP\MCP\Support\Post_Access::content_withheld($p)
                         || false !== mb_stripos((string) $p->post_title, $gp_search);
                 }));
+                $posts = $gp_include ? $posts : $this->list_page($posts);
                 $gp_with_content = !empty($args['with_content']);
                 return array_map(function($p) use ($gp_with_content) {
                     // Surface featured_media symmetrically with the write
@@ -6245,7 +6365,8 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to list pages.');
                 }
-                $page_args = ['number' => max(1, min(intval($args['per_page'] ?? 10), 100)), 'post_status' => self::listing_statuses($args['status'] ?? 'publish')];
+                list($pg_offset, $pg_fetch) = $this->list_window($args, max(1, min(intval($args['per_page'] ?? 10), 100)));
+                $page_args = ['number' => $pg_fetch, 'offset' => $pg_offset, 'post_status' => self::listing_statuses($args['status'] ?? 'publish')];
                 if (!empty($args['parent'])) $page_args['parent'] = intval($args['parent']);
                 list( $pg_orderby, $pg_order, $pg_after ) = self::listing_sort( $args );
                 if ( '' !== $pg_after ) {
@@ -6256,6 +6377,7 @@ class Server {
                         'post_type'   => 'page',
                         'post_status' => $page_args['post_status'],
                         'numberposts' => $page_args['number'],
+                        'offset'      => $page_args['offset'],
                         'orderby'     => 'ID' === $pg_ob ? [ 'ID' => $pg_od ] : [ $pg_ob => $pg_od, 'ID' => $pg_od ],
                         'date_query'  => [ [ 'column' => 'post_modified_gmt', 'after' => $pg_after, 'inclusive' => false ] ],
                     ];
@@ -6277,6 +6399,7 @@ class Server {
                     }
                     $pg_found = get_pages( $page_args );
                 }
+                $pg_found = $this->list_page((array) $pg_found);
                 $pages = array_values(array_filter((array) $pg_found, static function ($p) {
                     return 'publish' === $p->post_status || current_user_can('read_post', $p->ID);
                 }));
@@ -7005,7 +7128,8 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to list categories.');
                 }
-                $cats = get_categories(['number' => max(1, min(intval($args['per_page'] ?? 100), 100)), 'hide_empty' => false]);
+                list($gc_offset, $gc_fetch) = $this->list_window($args, max(1, min(intval($args['per_page'] ?? 100), 100)));
+                $cats = $this->list_page((array) get_categories(['number' => $gc_fetch, 'offset' => $gc_offset, 'hide_empty' => false]));
                 return array_map(function($c) {
                     return ['id' => $c->term_id, 'name' => $c->name, 'slug' => $c->slug, 'count' => $c->count, 'parent' => $c->parent];
                 }, $cats);
@@ -7014,7 +7138,9 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to list tags.');
                 }
-                $tags = get_tags(['number' => max(1, min(intval($args['per_page'] ?? 100), 100)), 'hide_empty' => false]);
+                list($gt_offset, $gt_fetch) = $this->list_window($args, max(1, min(intval($args['per_page'] ?? 100), 100)));
+                $tags = get_tags(['number' => $gt_fetch, 'offset' => $gt_offset, 'hide_empty' => false]);
+                $tags = is_wp_error($tags) ? $tags : $this->list_page((array) $tags);
                 return array_map(function($t) {
                     return ['id' => $t->term_id, 'name' => $t->name, 'slug' => $t->slug, 'count' => $t->count];
                 }, $tags ?: []);
@@ -7657,7 +7783,8 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to list comments.');
                 }
-                $comment_args = ['number' => max(1, min(intval($args['per_page'] ?? 10), 100)), 'status' => 'approve'];
+                list($cm_offset, $cm_fetch) = $this->list_window($args, max(1, min(intval($args['per_page'] ?? 10), 100)));
+                $comment_args = ['number' => $cm_fetch, 'offset' => $cm_offset, 'status' => 'approve'];
                 if (!empty($args['post_id'])) {
                     $comment_args['post_id'] = intval($args['post_id']);
                     if (!\Royal_MCP\MCP\Support\Post_Access::can_read($comment_args['post_id'])) {
@@ -7679,7 +7806,7 @@ class Server {
                 }
                 // Only comments on posts the caller may read; moderators see
                 // held comments through status, but never on unreadable posts.
-                $comments = array_values(array_filter(get_comments($comment_args), static function ($c) {
+                $comments = array_values(array_filter($this->list_page((array) get_comments($comment_args)), static function ($c) {
                     $parent = (int) $c->comment_post_ID;
                     return $parent > 0 && \Royal_MCP\MCP\Support\Post_Access::can_read($parent)
                         && !\Royal_MCP\MCP\Support\Post_Access::content_withheld(get_post($parent));
@@ -7991,9 +8118,10 @@ class Server {
                     throw new \Exception('You do not have permission to list users.');
                 }
                 // WP_User_Query treats a number of 0 or less as no limit.
-                $user_args = ['number' => max(1, min(intval($args['per_page'] ?? 10), 100))];
+                list($us_offset, $us_fetch) = $this->list_window($args, max(1, min(intval($args['per_page'] ?? 10), 100)));
+                $user_args = ['number' => $us_fetch, 'offset' => $us_offset];
                 if (!empty($args['role'])) $user_args['role'] = sanitize_text_field($args['role']);
-                $users = get_users($user_args);
+                $users = $this->list_page((array) get_users($user_args));
                 return array_map(function($u) {
                     $fields = [
                         'id' => $u->ID,
@@ -9045,6 +9173,7 @@ class Server {
                 }
                 $query = \Royal_MCP\MCP\Support\SafeText::field($args['query']);
                 $per_page = isset($args['per_page']) ? max(1, min(intval($args['per_page']), 100)) : 20;
+                $sr_window = $this->list_window($args, $per_page);
                 $snippet_len = isset($args['snippet']) ? max(0, min(intval($args['snippet']), 1000)) : 0;
                 if (!empty($args['post_type'])) {
                     $search_type = sanitize_key($args['post_type']);
@@ -9068,14 +9197,15 @@ class Server {
                     // One type as a string: get_posts() only looks at inherit
                     // status (attachments) when post_type is exactly 'attachment'.
                     'post_type' => 1 === count($search_types) ? $search_types[0] : $search_types,
-                    'numberposts' => $per_page,
+                    'numberposts' => $sr_window[1],
+                    'offset'      => $sr_window[0],
                     'post_status' => self::listing_statuses($args['status'] ?? 'publish'),
                 ];
                 // Attachments are always 'inherit'.
                 if (in_array('attachment', $search_types, true)) {
                     $search_args['post_status'] = array_values(array_unique(array_merge((array) $search_args['post_status'], ['inherit'])));
                 }
-                $posts = array_values(array_filter(get_posts($search_args), static function ($p) use ($query) {
+                $posts = array_values(array_filter($this->list_page((array) get_posts($search_args)), static function ($p) use ($query) {
                     if (!\Royal_MCP\MCP\Support\Post_Access::can_read($p)) {
                         return false;
                     }
