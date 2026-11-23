@@ -52,7 +52,7 @@ class Redirection {
 			),
 			array(
 				'name'        => 'redirection_create_redirect',
-				'description' => 'Create a redirect using the Redirection plugin. Wraps Red_Item::create. status_code defaults to 301 (permanent). Returns an undo token (undo deletes the redirect). Pass dry_run: true to check the redirect without creating it.',
+				'description' => 'Create a redirect using the Redirection plugin. Wraps Red_Item::create. status_code defaults to 301 (permanent). Returns an undo token (undo deletes the redirect). Pass dry_run: true to check the redirect without creating it. A regex source that can match more than one address needs confirm: true.',
 				'inputSchema' => array(
 					'type'       => 'object',
 					'properties' => array(
@@ -63,6 +63,7 @@ class Redirection {
 						'regex'       => array( 'type' => 'boolean', 'description' => 'Treat source_url as a regex pattern. Default false. Regex sources are limited to 250 characters, may not nest repeats such as (a+)+, and may not name wp-admin, wp-login, xmlrpc, wp-json or wp-cron.' ),
 						'title'       => array( 'type' => 'string', 'description' => 'Optional human-readable title for admin display.' ),
 						'allow_protected_source' => array( 'type' => 'boolean', 'description' => 'Allow a source that matches the home page, wp-login.php, wp-admin, the REST API, xmlrpc.php or wp-cron.php. Redirecting those can lock everyone out of the site. Default false.' ),
+						'confirm'     => array( 'type' => 'boolean', 'description' => 'Required as true for a regex source that can match more than one address (anything but ^/one/literal/path$), after the user agreed to the pattern.' ),
 						'dry_run'     => array( 'type' => 'boolean', 'description' => 'Check the redirect and report what would be created, without creating it. Default false.' ),
 					),
 					'required'   => array( 'source_url', 'target_url' ),
@@ -70,7 +71,7 @@ class Redirection {
 			),
 			array(
 				'name'        => 'redirection_update_redirect',
-				'description' => 'Update an existing Redirection entry by ID. Pass only the fields you want to change. Returns an undo token (undo restores the redirect as it was). Pass dry_run: true to see the change without making it.',
+				'description' => 'Update an existing Redirection entry by ID. Pass only the fields you want to change. Returns an undo token (undo restores the redirect as it was). Pass dry_run: true to see the change without making it. Changing or enabling a redirect whose regex source can match more than one address needs confirm: true.',
 				'inputSchema' => array(
 					'type'       => 'object',
 					'properties' => array(
@@ -79,6 +80,7 @@ class Redirection {
 						'status_code' => array( 'type' => 'integer', 'enum' => array( 301, 302, 307 ) ),
 						'enabled'     => array( 'type' => 'boolean', 'description' => 'Enable (true) or disable (false) the redirect' ),
 						'allow_protected_source' => array( 'type' => 'boolean', 'description' => 'Allow a source that matches the home page, wp-login.php, wp-admin, the REST API, xmlrpc.php or wp-cron.php. Redirecting those can lock everyone out of the site. Default false.' ),
+						'confirm'     => array( 'type' => 'boolean', 'description' => 'Required as true for a regex source that can match more than one address (anything but ^/one/literal/path$), after the user agreed to the pattern.' ),
 						'dry_run'     => array( 'type' => 'boolean', 'description' => 'Report what would change, without changing it. Default false.' ),
 					),
 					'required'   => array( 'id' ),
@@ -159,6 +161,37 @@ class Redirection {
 		}, $rows );
 	}
 
+	/**
+	 * A destination is a path on this site that starts with one "/", or a full http(s) address
+	 * that names its host. Anything else (a scheme with no host such as "http:example.com",
+	 * "//host", backslashes, a bare name) can be read by a browser as another site without
+	 * naming it, so it is refused rather than guessed.
+	 *
+	 * @param mixed $raw Requested destination.
+	 * @return string The destination as stored.
+	 */
+	public static function checked_target( $raw ) {
+		$t = is_string( $raw ) ? trim( $raw ) : '';
+		$refuse = 'target_url must be a path on this site starting with one "/" (for example /new-page/) or a full address starting with https:// or http:// and naming its host. Nothing was changed.';
+		if ( '' === $t || false !== strpos( $t, chr( 92 ) ) || preg_match( '/[\x00-\x20\x7f]/', $t ) ) {
+			throw new \Exception( esc_html( $refuse ) );
+		}
+		if ( '/' === $t[0] ) {
+			if ( isset( $t[1] ) && '/' === $t[1] ) {
+				throw new \Exception( esc_html( $refuse ) );
+			}
+			return esc_url_raw( $t );
+		}
+		if ( ! preg_match( '#^https?://[^/?\#@]+#i', $t ) || '' === (string) wp_parse_url( $t, PHP_URL_HOST ) ) {
+			throw new \Exception( esc_html( $refuse ) );
+		}
+		$clean = esc_url_raw( $t );
+		if ( '' === $clean ) {
+			throw new \Exception( esc_html( $refuse ) );
+		}
+		return $clean;
+	}
+
 	private static function create_redirect( $args ) {
 		if ( empty( $args['source_url'] ) || empty( $args['target_url'] ) || ! is_string( $args['source_url'] ) || ! is_string( $args['target_url'] ) ) {
 			throw new \Exception( 'source_url and target_url are required strings' );
@@ -193,7 +226,7 @@ class Redirection {
 
 		$data = array(
 			'url'         => $source,
-			'action_data' => array( 'url' => esc_url_raw( $args['target_url'] ) ),
+			'action_data' => array( 'url' => self::checked_target( $args['target_url'] ) ),
 			'action_type' => 'url',
 			'action_code' => $status_code,
 			'match_type'  => 'url',
@@ -210,12 +243,16 @@ class Redirection {
 			'group_id'    => $group_id,
 		);
 
+		$needs_confirm = $is_regex && ! self::regex_is_single_path( $source );
 		if ( self::flag( $args, 'dry_run' ) ) {
 			self::check_with_sanitizer( $data );
 			return Envelope::success(
-				'Dry run: nothing was created. This redirect would be created.' . $group_note,
-				array( 'dry_run' => true, 'would_create' => $struct, 'message' => 'Dry run: nothing was created.' . $group_note )
+				'Dry run: nothing was created. This redirect would be created.' . $group_note . ( $needs_confirm ? ' The regex can match more than one address, so creating it needs confirm: true.' : '' ),
+				array( 'dry_run' => true, 'would_create' => $struct, 'confirm_required' => $needs_confirm, 'message' => 'Dry run: nothing was created.' . $group_note )
 			);
+		}
+		if ( $is_regex ) {
+			self::require_regex_confirm( $source, $args );
 		}
 
 		$result = \Red_Item::create( $data );
@@ -262,7 +299,7 @@ class Redirection {
 			if ( ! is_string( $args['target_url'] ) || '' === trim( $args['target_url'] ) ) {
 				throw new \Exception( 'target_url must be a non-empty string.' );
 			}
-			$changes['target_url'] = esc_url_raw( $args['target_url'] );
+			$changes['target_url'] = self::checked_target( $args['target_url'] );
 		}
 		if ( isset( $args['status_code'] ) ) {
 			$changes['status_code'] = self::status_code_arg( $args['status_code'] );
@@ -332,14 +369,18 @@ class Redirection {
 			$would['enabled'] = array( 'from' => $is_enabled, 'to' => $enable );
 		}
 
+		$needs_confirm = $will_be_on && ( ! empty( $changes ) || ( true === $enable && ! $is_enabled ) ) && ! empty( $details['regex'] ) && ! self::regex_is_single_path( $details['url'] );
 		if ( self::flag( $args, 'dry_run' ) ) {
 			if ( ! empty( $changes ) ) {
 				self::check_with_sanitizer( $details );
 			}
 			return Envelope::success(
-				sprintf( 'Dry run: redirect %d was not changed.', $id ),
-				array( 'id' => $id, 'dry_run' => true, 'would_change' => $would, 'message' => 'Dry run: nothing was changed.' )
+				sprintf( 'Dry run: redirect %d was not changed.', $id ) . ( $needs_confirm ? ' Its regex source can match more than one address, so this change needs confirm: true.' : '' ),
+				array( 'id' => $id, 'dry_run' => true, 'would_change' => $would, 'confirm_required' => $needs_confirm, 'message' => 'Dry run: nothing was changed.' )
 			);
+		}
+		if ( $needs_confirm ) {
+			self::require_regex_confirm( $details['url'], $args );
 		}
 
 		if ( ! empty( $changes ) ) {
@@ -498,6 +539,33 @@ class Redirection {
 	/** A boolean argument, read the way FILTER_VALIDATE_BOOLEAN reads it. */
 	private static function flag( array $args, $key ) {
 		return isset( $args[ $key ] ) && filter_var( $args[ $key ], FILTER_VALIDATE_BOOLEAN );
+	}
+
+	/**
+	 * Whether a regex source can match only one path: anchored at both ends with nothing but
+	 * literal characters (escaped ones included) in between. Anything else can match many
+	 * addresses at once.
+	 */
+	public static function regex_is_single_path( $source ) {
+		$p = rawurldecode( (string) $source );
+		if ( '^' !== substr( $p, 0, 1 ) || '$' !== substr( $p, -1 ) || '\\$' === substr( $p, -2 ) ) {
+			return false;
+		}
+		$body = substr( $p, 1, -1 );
+		// Escaped punctuation is literal; an escaped letter or digit (\d, \w, \s, \1) is a class or reference.
+		$body = (string) preg_replace( '/\\\\[^A-Za-z0-9]/', 'x', $body );
+		return '' !== $body && 0 === preg_match( '/[\\\\.^$|?*+()\[\]{}]/', $body );
+	}
+
+	/** Refuse a regex source that can match more than one path unless the caller confirmed it. */
+	private static function require_regex_confirm( $source, array $args ) {
+		if ( self::regex_is_single_path( $source ) ) {
+			return;
+		}
+		if ( array_key_exists( 'confirm', $args ) && true === $args['confirm'] ) {
+			return;
+		}
+		throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'confirm_required', 'This regex source can match more than one address, so every page whose address fits it would be redirected. Show the user the pattern and call again with confirm: true once they agree, or use a plain source for one page. Nothing was changed.' );
 	}
 
 	/** Run Redirection's own validation on a redirect without saving it. */

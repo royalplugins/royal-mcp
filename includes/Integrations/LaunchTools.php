@@ -36,6 +36,9 @@ class LaunchTools {
 	/** The public address search engines read the site's IndexNow key from. */
 	const KEY_ROUTE = '/indexnow-key';
 
+	/** The key whose file this plugin wrote in the site root ('' when none). */
+	const KEY_FILE_OPTION = 'royal_mcp_indexnow_key_file';
+
 	public static function register() {
 		// The IndexNow protocol has search engines fetch the site's key, signed out, to confirm
 		// the site sent a submission. The key is a public identifier, not a secret.
@@ -55,7 +58,8 @@ class LaunchTools {
 			] );
 		} );
 		// IndexNow accepts URLs only under the folder its key file sits in, so the key is also served
-		// at the site's root as /<key>.txt (the address search engines check first). No file is written.
+		// at the site's root as /<key>.txt (the address search engines check first). Where the root is
+		// writable a real file is written too, for servers that answer .txt addresses without WordPress.
 		add_action( 'parse_request', static function () {
 			if ( empty( $_SERVER['REQUEST_URI'] ) ) {
 				return;
@@ -1308,6 +1312,15 @@ class LaunchTools {
 		$deps = self::probe_dependencies();
 
 		$do_backup = ! empty( $args['backup'] ) && empty( $args['skip_backup'] );
+		// The home page is fetched once for all checks, and the link sample stops at a time limit.
+		$home_page = null;
+		$home_html_of = static function () use ( &$home_page ) {
+			if ( null === $home_page ) {
+				$home_page = (string) wp_remote_retrieve_body( wp_safe_remote_get( home_url( '/' ), [ 'timeout' => 10 ] ) );
+			}
+			return $home_page;
+		};
+		$started = microtime( true );
 
 		$steps = [
 			[
@@ -1323,9 +1336,9 @@ class LaunchTools {
 				'reversible' => false,
 				'read_only'  => true,  
 				'condition'  => true,
-				'run'        => static function () use ( $deps ) {
+				'run'        => static function () use ( $deps, $home_html_of ) {
 
-					$home_html = @wp_remote_retrieve_body( wp_safe_remote_get( home_url( '/' ), [ 'timeout' => 10 ] ) );
+					$home_html = $home_html_of();
 					if ( ! is_string( $home_html ) || $home_html === '' ) {
 						return [ 'status' => 'error', 'message' => 'could not fetch home page' ];
 					}
@@ -1333,10 +1346,12 @@ class LaunchTools {
 					$has_meta  = (bool) preg_match( '/<meta[^>]+name=["\']description["\']/i', $home_html );
 					$has_h1    = (bool) preg_match( '/<h1[\s>]/i', $home_html );
 					return [ 'status' => 'ok', 'data' => [
-						'via'      => $deps['seobolt']['available'] ? 'seobolt' : 'native_scan',
-						'has_title' => $has_title,
-						'has_meta_description' => $has_meta,
-						'has_h1'    => $has_h1,
+						'via'                    => 'native_scan',
+						'seobolt_active'         => (bool) $deps['seobolt']['available'],
+						'search_engines_allowed' => '0' !== (string) get_option( 'blog_public', '1' ),
+						'has_title'              => $has_title,
+						'has_meta_description'   => $has_meta,
+						'has_h1'                 => $has_h1,
 					] ];
 				},
 			],
@@ -1345,9 +1360,9 @@ class LaunchTools {
 				'reversible' => false,
 				'read_only'  => true,  
 				'condition'  => true,
-				'run'        => static function () {
+				'run'        => static function () use ( $home_html_of, $started ) {
 
-					$home_html = @wp_remote_retrieve_body( wp_safe_remote_get( home_url( '/' ), [ 'timeout' => 10 ] ) );
+					$home_html = $home_html_of();
 					if ( ! is_string( $home_html ) || $home_html === '' ) {
 						return [ 'status' => 'error', 'message' => 'could not fetch home page' ];
 					}
@@ -1362,19 +1377,34 @@ class LaunchTools {
 						}
 					}
 					$urls  = array_slice( array_unique( $urls ), 0, 25 ); 
-					$broken = [];
+					$broken      = [];
+					$unreachable = [];
+					$checked     = 0;
+					$budget      = (int) apply_filters( 'royal_mcp_launch_check_seconds', 45 );
 					foreach ( $urls as $u ) {
+						if ( microtime( true ) - $started > $budget ) {
+							break;
+						}
+						$checked++;
 						$resp = wp_safe_remote_head( $u, [ 'timeout' => 3 ] );
 						$code = is_wp_error( $resp ) ? 0 : (int) wp_remote_retrieve_response_code( $resp );
-						if ( $code >= 400 || $code === 0 ) {
+						// Some servers refuse HEAD requests: the address is asked again with GET before it counts as broken.
+						if ( 0 === $code || 405 === $code || 501 === $code || 403 === $code ) {
+							$resp = wp_safe_remote_get( $u, [ 'timeout' => 3, 'limit_response_size' => 4096 ] );
+							$code = is_wp_error( $resp ) ? 0 : (int) wp_remote_retrieve_response_code( $resp );
+						}
+						if ( 0 === $code ) {
+							$unreachable[] = $u;
+						} elseif ( $code >= 400 ) {
 							$broken[] = [ 'url' => $u, 'code' => $code ];
 						}
 					}
 					return [ 'status' => 'ok', 'data' => [
-						'sampled'       => count( $urls ),
-						'broken_count'  => count( $broken ),
-						'broken_urls'   => $broken,
-					] ];
+						'sampled'          => $checked,
+						'broken_count'     => count( $broken ),
+						'broken_urls'      => $broken,
+						'unreachable_urls' => $unreachable,
+					] + ( $checked < count( $urls ) ? [ 'note' => sprintf( 'Stopped after %d of %d links to stay within the time limit.', $checked, count( $urls ) ) ] : [] ) ];
 				},
 			],
 			[
@@ -1400,7 +1430,7 @@ class LaunchTools {
 				'condition'  => true,
 				'run'        => static function () use ( $deps ) {
 					$data = [
-						'via'                   => $deps['guardpress']['available'] ? 'guardpress' : 'native_scan',
+						'via'                   => 'native_scan',
 						'wp_debug_enabled'      => (bool) ( defined( 'WP_DEBUG' ) && WP_DEBUG ),
 						'wp_debug_display'      => (bool) ( defined( 'WP_DEBUG_DISPLAY' ) && WP_DEBUG_DISPLAY ),
 						'disallow_file_edit'    => (bool) ( defined( 'DISALLOW_FILE_EDIT' ) && DISALLOW_FILE_EDIT ),
@@ -1807,7 +1837,10 @@ class LaunchTools {
 			global $wpdb;
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- one lookup: is the image the featured image of another post now
 			$used = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = '_thumbnail_id' AND meta_value = %s AND post_id <> %d", (string) $media_id, $post_id ) );
-			if ( $used > 0 ) {
+			// A failed lookup, or any other place the image is used, keeps it.
+			$used_error = '' !== (string) $wpdb->last_error;
+			$elsewhere  = $used > 0 || $used_error ? [] : \Royal_MCP\MCP\Server::media_use_reasons( $media_id, $post_id );
+			if ( $used > 0 || $used_error || $elsewhere ) {
 				$media_kept = true;
 			} else {
 				$media_deleted = (bool) wp_delete_attachment( $media_id, true );
@@ -2468,6 +2501,11 @@ class LaunchTools {
 		$target_types = [ 'Article', 'BlogPosting', 'NewsArticle', 'WebPage', 'ItemPage', 'Product' ];
 		$walk = static function ( $node ) use ( &$walk, &$types ) {
 			if ( ! is_array( $node ) ) return;
+			// A JSON-LD block can be a list of nodes.
+			if ( array_keys( $node ) === range( 0, count( $node ) - 1 ) ) {
+				foreach ( $node as $child ) $walk( $child );
+				return;
+			}
 			if ( isset( $node['@type'] ) ) {
 				$t = $node['@type'];
 				if ( is_string( $t ) ) {
@@ -2503,6 +2541,11 @@ class LaunchTools {
 	}
 
 	private static function push_indexnow_for_post( $post_id ) {
+		// The site key, the key file in the site root and pings under the site's name are an
+		// administrator's to create and send.
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return [ 'status' => 'skipped', 'message' => 'IndexNow skipped: needs an administrator' ];
+		}
 		$post = get_post( (int) $post_id );
 		$type = $post ? get_post_type_object( $post->post_type ) : null;
 		if ( ! $post || 'publish' !== $post->post_status || '' !== (string) $post->post_password
@@ -2514,16 +2557,19 @@ class LaunchTools {
 		if ( ! is_string( $url ) || $url === '' ) {
 			return [ 'status' => 'error', 'message' => sprintf( 'could not resolve permalink for post %d', (int) $post_id ) ];
 		}
-		$host = wp_parse_url( home_url(), PHP_URL_HOST );
-		if ( ! is_string( $host ) || $host === '' ) {
+		$key = self::get_or_create_indexnow_key();
+		// The host and key address come from the page's own address: a language on its own
+		// domain (fr.example.com) is submitted under that domain, where the key is served too.
+		list( $host, $key_location ) = self::key_location_for( $url, $key );
+		if ( '' === $host ) {
 			return [ 'status' => 'error', 'message' => 'cannot resolve site host' ];
 		}
-		$key = self::get_or_create_indexnow_key();
+		self::write_key_file( $key );
 
 		$payload = [
 			'host'        => $host,
 			'key'         => $key,
-			'keyLocation' => self::indexnow_key_url( $key ),
+			'keyLocation' => $key_location,
 			'urlList'     => [ $url ],
 		];
 		$resp = wp_safe_remote_post( 'https://api.indexnow.org/indexnow', [
@@ -2533,7 +2579,12 @@ class LaunchTools {
 			'user-agent'  => 'Royal MCP IndexNow',
 		] );
 		if ( is_wp_error( $resp ) ) {
-			return [ 'status' => 'error', 'message' => 'IndexNow POST failed: ' . $resp->get_error_message() ];
+			$why = (string) $resp->get_error_message();
+			// A request that ran out of time may or may not have arrived: it counts as not sent.
+			if ( false !== stripos( $why, 'timed out' ) || false !== stripos( $why, 'cURL error 28' ) || false !== stripos( $why, 'timeout' ) ) {
+				return [ 'status' => 'error', 'message' => 'IndexNow did not answer within 8 seconds, so the submission may not have arrived; send it again later' ];
+			}
+			return [ 'status' => 'error', 'message' => 'IndexNow POST failed: ' . $why ];
 		}
 		$code = (int) wp_remote_retrieve_response_code( $resp );
 
@@ -2555,7 +2606,101 @@ class LaunchTools {
 
 	/** Where the site's IndexNow key is served: the site root, which covers every page URL. */
 	private static function indexnow_key_url( $key ) {
-		return home_url( '/' . $key . '.txt' );
+		return self::site_root_url() . '/' . $key . '.txt';
+	}
+
+	/**
+	 * The site's home address without the language folder a translation plugin adds to
+	 * home_url() (/en/, /fr/), so the key sits at the root that covers every language.
+	 */
+	private static function site_root_url() {
+		return untrailingslashit( (string) get_option( 'home' ) );
+	}
+
+	/**
+	 * The host to submit and the key address for one page address: the site root for a page on the
+	 * home domain, or the root of the page's own domain (same scheme and folder) for a language
+	 * served on a domain of its own.
+	 *
+	 * @return array{0:string, 1:string} [ host, key address ]
+	 */
+	public static function key_location_for( $url, $key ) {
+		$home  = wp_parse_url( (string) get_option( 'home' ) );
+		$page  = wp_parse_url( (string) $url );
+		$home  = is_array( $home ) ? $home : [];
+		$page  = is_array( $page ) ? $page : [];
+		$hhost = strtolower( (string) ( $home['host'] ?? '' ) );
+		$phost = strtolower( (string) ( $page['host'] ?? '' ) );
+		if ( '' === $phost || $phost === $hhost ) {
+			return [ $hhost, self::indexnow_key_url( $key ) ];
+		}
+		$scheme = (string) ( $page['scheme'] ?? ( $home['scheme'] ?? 'https' ) );
+		$port   = isset( $page['port'] ) ? ':' . (int) $page['port'] : '';
+		$path   = untrailingslashit( (string) ( $home['path'] ?? '' ) );
+		return [ $phost, $scheme . '://' . $phost . $port . $path . '/' . $key . '.txt' ];
+	}
+
+	/** Path of the key file in the site root, or '' where this install cannot have one. */
+	private static function key_file_path( $key ) {
+		if ( is_multisite() || ! is_string( $key ) || 32 !== strlen( $key ) || ! ctype_xdigit( $key ) ) {
+			return '';
+		}
+		// Only when WordPress sits in the folder the home address points at.
+		$home_path = untrailingslashit( (string) wp_parse_url( (string) get_option( 'home' ), PHP_URL_PATH ) );
+		$site_path = untrailingslashit( (string) wp_parse_url( (string) get_option( 'siteurl' ), PHP_URL_PATH ) );
+		if ( $home_path !== $site_path ) {
+			return '';
+		}
+		return trailingslashit( ABSPATH ) . $key . '.txt';
+	}
+
+	/**
+	 * Write the key file in the site root when it is writable, so the key is found even where the
+	 * web server answers .txt addresses itself. Without it the key is still served by WordPress.
+	 *
+	 * @return bool Whether the file is in place.
+	 */
+	private static function write_key_file( $key ) {
+		$file = self::key_file_path( $key );
+		if ( '' === $file ) {
+			return false;
+		}
+		$previous = (string) get_option( self::KEY_FILE_OPTION, '' );
+		if ( '' !== $previous && $previous !== $key ) {
+			self::remove_key_file( $previous );
+		}
+		if ( file_exists( $file ) ) {
+			// A file this plugin did not write is used as it is, never taken over or later deleted.
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- small local file
+			return trim( (string) file_get_contents( $file ) ) === $key;
+		}
+		if ( ! function_exists( 'get_filesystem_method' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/file.php';
+		}
+		if ( ! wp_is_writable( ABSPATH ) || 'direct' !== get_filesystem_method( [], ABSPATH ) || ! WP_Filesystem() ) {
+			return false;
+		}
+		global $wp_filesystem;
+		if ( ! $wp_filesystem || ! $wp_filesystem->put_contents( $file, $key, defined( 'FS_CHMOD_FILE' ) ? FS_CHMOD_FILE : 0644 ) ) {
+			return false;
+		}
+		update_option( self::KEY_FILE_OPTION, $key, false );
+		return true;
+	}
+
+	/** Remove a key file this plugin wrote (recorded at write time), when it still holds that key. */
+	public static function remove_key_file( $key ) {
+		$file = self::key_file_path( $key );
+		$ours = (string) get_option( self::KEY_FILE_OPTION, '' ) === (string) $key;
+		if ( $ours && '' !== $file && file_exists( $file ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- small local file
+			if ( trim( (string) file_get_contents( $file ) ) === $key ) {
+				wp_delete_file( $file );
+			}
+		}
+		if ( (string) get_option( self::KEY_FILE_OPTION, '' ) === $key ) {
+			delete_option( self::KEY_FILE_OPTION );
+		}
 	}
 
 	/**
@@ -2583,10 +2728,23 @@ class LaunchTools {
 	}
 
 	private static function get_or_create_indexnow_key() {
-		$key = get_option( 'royal_mcp_indexnow_key', '' );
+		$key = get_option( 'royal_mcp_indexnow_key', false );
 		if ( ! is_string( $key ) || strlen( $key ) !== 32 || ! ctype_xdigit( $key ) ) {
-			$key = bin2hex( random_bytes( 16 ) );
-			update_option( 'royal_mcp_indexnow_key', $key, false );
+			$new = bin2hex( random_bytes( 16 ) );
+			// Two requests making the first key at once: the first insert wins (the other insert is
+			// ignored), and both go on with the key that is stored.
+			global $wpdb;
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->query( $wpdb->prepare( "INSERT IGNORE INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')", 'royal_mcp_indexnow_key', $new ) );
+			wp_cache_delete( 'royal_mcp_indexnow_key', 'options' );
+			wp_cache_delete( 'notoptions', 'options' );
+			wp_cache_delete( 'alloptions', 'options' );
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$key = (string) $wpdb->get_var( $wpdb->prepare( "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", 'royal_mcp_indexnow_key' ) );
+			if ( 32 !== strlen( $key ) || ! ctype_xdigit( $key ) ) {
+				$key = $new;
+				update_option( 'royal_mcp_indexnow_key', $key, false );
+			}
 		}
 		return $key;
 	}

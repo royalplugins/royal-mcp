@@ -42,6 +42,13 @@ class MailPoet {
 	const GUARD_OPTION         = 'royal_mcp_mailpoet_send_guard';
 	const TEST_SENDS_OPTION    = 'royal_mcp_mailpoet_test_sends';
 	const CONFIRMATIONS_OPTION = 'royal_mcp_mailpoet_confirmations';
+	const CREATIONS_OPTION     = 'royal_mcp_mailpoet_creations';
+
+	/** New subscribers Royal MCP adds per site per 24 hours; the royal_mcp_mailpoet_daily_creations filter may change it. */
+	const CREATIONS_PER_DAY = 50;
+
+	/** Sign-up record columns an update keeps as they were. */
+	const SIGNUP_COLUMNS = [ 'subscribed_ip', 'source' ];
 
 	/** Statuses that mean the person asked not to get email, or MailPoet stopped sending to them. */
 	const NO_MAIL_STATUSES = [ 'unsubscribed', 'bounced', 'inactive' ];
@@ -170,7 +177,7 @@ class MailPoet {
 			],
 			[
 				'name'        => 'mailpoet_save_subscriber',
-				'description' => 'Add a MailPoet subscriber, or update one (by subscriber_id, or by email when it exists): email, first_name, last_name, custom_fields, and list_ids as the exact set of ordinary lists. When MailPoet requires sign-up confirmation (double opt-in), new list members get its confirmation email and stay unconfirmed until they click it; skip_confirmation is accepted only when MailPoet does not require confirmation. Anyone who unsubscribed, bounced or went inactive is never put back on a list; a subscriber in the MailPoet trash is not changed. At most ' . self::CONFIRMATIONS_PER_DAY . ' confirmation emails go to one address per 24 hours. Returns the subscriber and an undo token (valid ' . $window . ') that restores the earlier details and lists, or deletes a subscriber this call created, but never resubscribes anyone who has left since. Undo refuses with edited_since_write if the subscriber changed again; force: true restores anyway. Sent emails stay sent.' . $admins,
+				'description' => 'Add a MailPoet subscriber, or update one (by subscriber_id, or by email): email, first_name, last_name, custom_fields, and list_ids (the exact set of ordinary lists). With double opt-in, new list members get MailPoet\'s confirmation email and stay unconfirmed until they click it; skip_confirmation works only when MailPoet does not require confirmation. Unsubscribed, bounced or inactive people are never put back on a list; trashed subscribers are not changed. A new email address makes the subscriber unconfirmed and MailPoet emails it for confirmation; the recorded sign-up IP and source are kept. Limits: ' . self::CONFIRMATIONS_PER_DAY . ' confirmation emails per address and ' . self::CREATIONS_PER_DAY . ' new subscribers per site per 24 hours. Returns an undo token (valid ' . $window . ') that restores the earlier details and lists or deletes a created subscriber, never resubscribing anyone who left; refused with edited_since_write unless force: true.' . $admins,
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -686,9 +693,15 @@ class MailPoet {
 		$ss   = self::table( 'SubscriberSegmentEntity', 'subscriber_segment' );
 		$scf  = self::table( 'SubscriberCustomFieldEntity', 'subscriber_custom_field' );
 		// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-		$row = $wpdb->get_row( $wpdb->prepare( "SELECT email, first_name, last_name, status FROM {$subs} WHERE id = %d", (int) $id ), ARRAY_A );
+		$row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$subs} WHERE id = %d", (int) $id ), ARRAY_A );
 		if ( ! $row ) {
 			return null;
+		}
+		$signup = [];
+		foreach ( self::SIGNUP_COLUMNS as $col ) {
+			if ( array_key_exists( $col, $row ) ) {
+				$signup[ $col ] = null === $row[ $col ] ? null : (string) $row[ $col ];
+			}
 		}
 		$lists = [];
 		foreach ( $list_ids as $lid ) {
@@ -708,7 +721,86 @@ class MailPoet {
 			'status'        => (string) $row['status'],
 			'lists'         => $lists,
 			'custom_fields' => $cfs,
+			'signup'        => $signup,
 		];
+	}
+
+	/** Put back the sign-up IP and source an update replaced. */
+	private static function keep_signup( $id, array $before ) {
+		global $wpdb;
+		$now = self::subscriber_state( $id, [], [] );
+		$set = [];
+		foreach ( (array) ( $before['signup'] ?? [] ) as $col => $value ) {
+			if ( in_array( $col, self::SIGNUP_COLUMNS, true ) && ( $now['signup'][ $col ] ?? null ) !== $value ) {
+				$set[ $col ] = $value;
+			}
+		}
+		if ( $set ) {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->update( self::table( 'SubscriberEntity', 'subscribers' ), $set, [ 'id' => (int) $id ] );
+			self::forget_cached();
+		}
+	}
+
+	/** Subscribers Royal MCP added in the last 24 hours, as timestamps. */
+	private static function recent_creations() {
+		return array_values( array_filter( array_map( 'intval', (array) get_option( self::CREATIONS_OPTION, [] ) ), static function ( $t ) {
+			return $t > time() - DAY_IN_SECONDS;
+		} ) );
+	}
+
+	private static function creations_cap() {
+		return max( 0, (int) apply_filters( 'royal_mcp_mailpoet_daily_creations', self::CREATIONS_PER_DAY ) );
+	}
+
+	/** Refuse a new subscriber once the site's daily number of additions is reached. */
+	private static function check_creation_quota() {
+		$times = self::recent_creations();
+		if ( count( $times ) >= self::creations_cap() ) {
+			$retry = $times ? max( 60, (int) min( $times ) + DAY_IN_SECONDS - time() ) : DAY_IN_SECONDS;
+			throw new Tool_Refusal( 'creation_limit', sprintf( 'Royal MCP already added %d MailPoet subscribers in the last 24 hours, the most it adds per day. Try again in about %d minutes, or add them in MailPoet.', self::creations_cap(), (int) ceil( $retry / 60 ) ), [ 'retry_after_seconds' => $retry ] );
+		}
+	}
+
+	private static function count_creation() {
+		$times   = self::recent_creations();
+		$times[] = time();
+		update_option( self::CREATIONS_OPTION, array_slice( $times, -500 ), false );
+	}
+
+	/**
+	 * After an address change: the new address has not confirmed anything, so the subscriber becomes
+	 * unconfirmed and MailPoet is asked to send its confirmation email. Returns a note for the reply.
+	 */
+	private static function reconfirm_new_address( $id, $address ) {
+		global $wpdb;
+		$state = self::subscriber_state( $id, [], [] );
+		if ( ! $state || 'subscribed' !== $state['status'] ) {
+			return null;
+		}
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		$wpdb->update( self::table( 'SubscriberEntity', 'subscribers' ), [ 'status' => 'unconfirmed', 'updated_at' => current_time( 'mysql', true ) ], [ 'id' => (int) $id ] );
+		self::forget_cached();
+		$sent = false;
+		try {
+			$mailer_class = 'MailPoet\Subscribers\ConfirmationEmailMailer';
+			if ( class_exists( '\\' . $mailer_class ) ) {
+				self::check_confirmation_quota( $address );
+				$mailer = \MailPoet\DI\ContainerWrapper::getInstance()->get( $mailer_class );
+				$entity = self::service( 'subscribers' )->findOneById( (int) $id );
+				if ( is_object( $mailer ) && is_object( $entity ) && method_exists( $mailer, 'sendConfirmationEmailOnce' ) ) {
+					$sent = (bool) $mailer->sendConfirmationEmailOnce( $entity );
+					if ( $sent ) {
+						self::count_confirmation( $address );
+					}
+				}
+			}
+		} catch ( \Throwable $e ) {
+			$sent = false;
+		}
+		return $sent
+			? 'The email address changed, so the subscriber is unconfirmed again and MailPoet sent its confirmation email to the new address.'
+			: 'The email address changed, so the subscriber is unconfirmed again; MailPoet did not send a confirmation email, so they receive no newsletters until they confirm through a MailPoet form.';
 	}
 
 	private static function state_fingerprint( array $state ) {
@@ -901,6 +993,7 @@ class MailPoet {
 		if ( null === $existing ) {
 			$list_ids = null === $list_ids ? [] : $list_ids;
 			$confirm  = ! $skip && self::confirmation_will_send( '', $list_ids );
+			self::check_creation_quota();
 			if ( $confirm ) {
 				self::check_confirmation_quota( $email );
 			}
@@ -911,6 +1004,9 @@ class MailPoet {
 				$created    = (array) $api->getSubscriber( $email );
 			}
 			$id    = (int) ( $created['id'] ?? 0 );
+			if ( $id > 0 ) {
+				self::count_creation();
+			}
 			if ( $confirm ) {
 				self::count_confirmation( $email );
 			}
@@ -956,8 +1052,16 @@ class MailPoet {
 		}
 		$touched = array_values( array_unique( array_merge( $add, $remove ) ) );
 		$before  = self::subscriber_state( $id, $cf_ids, $touched );
+		$new_address = isset( $data['email'] ) && strtolower( (string) $data['email'] ) !== strtolower( (string) ( $existing['email'] ?? '' ) );
 		if ( $data ) {
 			$api->updateSubscriber( $id, $data );
+			self::keep_signup( $id, (array) $before );
+		}
+		$reconfirm = null;
+		$saved_now = $new_address ? self::subscriber_state( $id, [], [] ) : null;
+		// Only when MailPoet really kept the new address (a WordPress user's address comes from their account).
+		if ( null !== $saved_now && strtolower( (string) $saved_now['email'] ) === strtolower( (string) $data['email'] ) ) {
+			$reconfirm = self::reconfirm_new_address( $id, (string) $data['email'] );
 		}
 		$warnings = array_merge( $warnings, self::apply_lists( $id, $add, $remove ) );
 		if ( $confirm ) {
@@ -968,6 +1072,9 @@ class MailPoet {
 		self::verify_saved( $struct['subscriber'], $data, $warnings );
 		if ( $add ) {
 			$struct['confirmation'] = self::confirmation_note( $struct['subscriber'], $add );
+		}
+		if ( null !== $reconfirm ) {
+			$struct['reconfirmation'] = $reconfirm;
 		}
 		if ( $warnings ) {
 			$struct['warnings'] = $warnings;
@@ -1715,6 +1822,25 @@ class MailPoet {
 		return null;
 	}
 
+	/** How two texts differ, in words that do not repeat either of them. */
+	private static function how_texts_differ( $given, $actual ) {
+		$a = (string) $given;
+		$b = (string) $actual;
+		if ( mb_strlen( $a ) !== mb_strlen( $b ) ) {
+			return sprintf( 'the confirmed one is %d characters, the current one %d', mb_strlen( $a ), mb_strlen( $b ) );
+		}
+		if ( strtolower( $a ) === strtolower( $b ) ) {
+			return 'they differ in upper and lower case';
+		}
+		$len = mb_strlen( $a );
+		for ( $i = 0; $i < $len; $i++ ) {
+			if ( mb_substr( $a, $i, 1 ) !== mb_substr( $b, $i, 1 ) ) {
+				return sprintf( 'they first differ at character %d', $i + 1 );
+			}
+		}
+		return 'they differ';
+	}
+
 	private static function schedule_newsletter( array $args ) {
 		if ( \Royal_MCP\MCP\Server::read_only_mode() ) {
 			throw new Tool_Refusal( 'read_only_mode', 'This site is in read-only mode: tools that change the site are switched off.' );
@@ -1743,7 +1869,8 @@ class MailPoet {
 			throw new Tool_Refusal( 'no_subject', 'This newsletter has no subject.' );
 		}
 		if ( $args['expected_subject'] !== (string) $n->getSubject() ) {
-			throw new Tool_Refusal( 'subject_mismatch', 'Nothing was sent: the newsletter\'s subject is not the one confirmed. Read it again with mailpoet_get_newsletter and show the user what will be sent.', [ 'subject' => (string) $n->getSubject() ] );
+			// Says how the subjects differ, never the subject itself, so the reply cannot simply be copied into the next call.
+			throw new Tool_Refusal( 'subject_mismatch', 'Nothing was sent: the newsletter\'s subject is not the one confirmed (' . self::how_texts_differ( $args['expected_subject'], (string) $n->getSubject() ) . '). Read it again with mailpoet_get_newsletter and show the user what will be sent before calling again.' );
 		}
 		if ( ! array_filter( (array) $n->getSegmentIds() ) ) {
 			throw new Tool_Refusal( 'no_lists', 'This newsletter has no lists to send to. Set list_ids with mailpoet_save_draft.' );
@@ -1767,7 +1894,7 @@ class MailPoet {
 			throw new Tool_Refusal( 'no_recipients', 'The newsletter\'s lists have no subscribed members.', [ 'recipient_count' => 0 ] );
 		}
 		if ( $count !== $expected ) {
-			throw new Tool_Refusal( 'recipients_mismatch', sprintf( 'Nothing was sent: the newsletter would go to %d subscriber(s), not %d. Show the user the new number and call again with expected_recipients: %d if they agree.', $count, $expected, $count ), [ 'recipient_count' => $count ] );
+			throw new Tool_Refusal( 'recipients_mismatch', sprintf( 'Nothing was sent: the newsletter would go to %s subscribers than the %d confirmed. Read the count again with mailpoet_get_newsletter and show the user the new number before calling again.', $count > $expected ? 'more' : 'fewer', $expected ) );
 		}
 		$queue   = self::service( 'queue' );
 		$saver   = self::service( 'save' );
@@ -1892,6 +2019,11 @@ class MailPoet {
 		foreach ( [ 'first_name', 'last_name', 'status', 'email' ] as $k ) {
 			if ( array_key_exists( $k, $prior ) && is_string( $prior[ $k ] ) ) {
 				$set[ $k ] = $prior[ $k ];
+			}
+		}
+		foreach ( (array) ( $prior['signup'] ?? [] ) as $col => $value ) {
+			if ( in_array( $col, self::SIGNUP_COLUMNS, true ) && ( null === $value || is_string( $value ) ) && array_key_exists( $col, (array) ( $now['signup'] ?? [] ) ) ) {
+				$set[ $col ] = $value;
 			}
 		}
 		// Someone who unsubscribed, bounced or went inactive after the change is never set back to

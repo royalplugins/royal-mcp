@@ -49,6 +49,54 @@ class Media_Fingerprint {
 		return sha1( (string) wp_json_encode( $opts ) );
 	}
 
+	/** Query parameter names whose value grants access (signed links, tokens, keys). */
+	const SIGNED_PARAM_PATTERN = '/^(?:x-amz-(?:signature|credential|security-token)|x-goog-(?:signature|credential)|signature|sig|token|access[_-]?token|refresh[_-]?token|id[_-]?token|auth[_-]?token|auth|authorization|key|api[_-]?key|apikey|access[_-]?key|client[_-]?secret|auth[_-]?key|secret[_-]?key|private[_-]?key|download[_-]?key|secret|password|pass|pwd|code|hmac|jwt|session(?:id)?|oh|rlkey|resourcekey|hdnts|__token__|md5)$/i';
+
+	/**
+	 * A source URL as it may be shown: the full address is kept in storage (so a later upload of
+	 * the same link is recognised), but the values of parameters that grant access are replaced.
+	 *
+	 * @param string $url Stored source URL.
+	 * @return string
+	 */
+	public static function redact_signed_params( $url ) {
+		$url = (string) $url;
+		$q   = strpos( $url, '?' );
+		if ( false === $q ) {
+			return $url;
+		}
+		$hash     = strpos( $url, '#', $q );
+		$query    = false === $hash ? substr( $url, $q + 1 ) : substr( $url, $q + 1, $hash - $q - 1 );
+		$fragment = false === $hash ? '' : substr( $url, $hash );
+		$pairs    = explode( '&', $query );
+		$hid      = false;
+		$expiries = [];
+		foreach ( $pairs as $i => $pair ) {
+			$eq = strpos( $pair, '=' );
+			if ( false === $eq ) {
+				continue;
+			}
+			// token[]=x and token[0]=x count as token.
+			$name = (string) preg_replace( '/(?:\[[^\]]*\])+$/', '', rawurldecode( substr( $pair, 0, $eq ) ) );
+			if ( '' === substr( $pair, $eq + 1 ) ) {
+				continue;
+			}
+			if ( 1 === preg_match( self::SIGNED_PARAM_PATTERN, $name ) ) {
+				$pairs[ $i ] = substr( $pair, 0, $eq ) . '=[REDACTED]';
+				$hid         = true;
+			} elseif ( 1 === preg_match( '/^(?:expires?|x-amz-expires|exp|e)$/i', $name ) ) {
+				$expiries[] = $i;
+			}
+		}
+		// An expiry that belongs to a signed link is part of the signature.
+		if ( $hid ) {
+			foreach ( $expiries as $i ) {
+				$pairs[ $i ] = substr( $pairs[ $i ], 0, (int) strpos( $pairs[ $i ], '=' ) ) . '=[REDACTED]';
+			}
+		}
+		return substr( $url, 0, $q + 1 ) . implode( '&', $pairs ) . $fragment;
+	}
+
 	/**
 	 * Remember where an upload came from and what it contained.
 	 *
@@ -229,7 +277,7 @@ class Media_Fingerprint {
 		$source_url = (string) get_post_meta( $attachment_id, self::SOURCE_URL_META, true );
 		$source_sha = (string) get_post_meta( $attachment_id, self::SOURCE_SHA_META, true );
 		if ( '' !== $source_url ) {
-			$details['downloaded_from'] = $source_url;
+			$details['downloaded_from'] = self::redact_signed_params( $source_url );
 		}
 		if ( '' !== $source_sha ) {
 			$details['source_sha256'] = $source_sha;

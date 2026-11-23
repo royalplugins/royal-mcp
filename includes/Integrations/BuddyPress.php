@@ -25,20 +25,19 @@ class BuddyPress {
 		return [
 			[
 				'name'        => 'bp_list_members',
-				'description' => 'List BuddyPress community members with display name, username, email, registration date, and last activity. Supports pagination via limit + offset, ordering via type (active/newest/alphabetical/popular), and search via search_terms.',
+				'description' => 'List BuddyPress community members with display name, registration date, and last activity (usernames and email addresses are withheld, as in wp_get_users; on a network only members of this site are listed). Supports pagination via limit + offset, and ordering via type (active/newest/alphabetical/popular). There is no search: matching typed text against members would reveal their usernames.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
 						'limit'        => [ 'type' => 'integer', 'description' => 'Max members to return (default 20, max 200).' ],
 						'offset'       => [ 'type' => 'integer', 'description' => 'Row offset for pagination (default 0).' ],
 						'type'         => [ 'type' => 'string', 'description' => 'Ordering: active (default), newest, alphabetical, popular, random.', 'enum' => [ 'active', 'newest', 'alphabetical', 'popular', 'random' ] ],
-						'search_terms' => [ 'type' => 'string', 'description' => 'Optional search string to match against user names / logins.' ],
 					],
 				],
 			],
 			[
 				'name'        => 'bp_get_member',
-				'description' => 'Get a single BuddyPress member profile by WordPress user ID — display name, username, email, registration date, last activity, and community-role summary.',
+				'description' => 'Get a single BuddyPress member profile by WordPress user ID — display name, registration date, last activity, and community-role summary. Usernames and email addresses are withheld, as in wp_get_user; on a network the user must be a member of this site.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -101,7 +100,11 @@ class BuddyPress {
 		$offset   = max( intval( $args['offset'] ?? 0 ), 0 );
 		$page     = (int) floor( $offset / $limit ) + 1;
 		$type     = in_array( $args['type'] ?? 'active', [ 'active', 'newest', 'alphabetical', 'popular', 'random' ], true ) ? ( $args['type'] ?? 'active' ) : 'active';
-		$search   = isset( $args['search_terms'] ) ? sanitize_text_field( $args['search_terms'] ) : false;
+		// BuddyPress matches search text against usernames too, so a search would tell withheld usernames apart.
+		if ( isset( $args['search_terms'] ) && '' !== $args['search_terms'] ) {
+			throw new \Exception( 'search_terms is not supported: matching text against members would reveal their usernames. List members and filter by display name instead.' );
+		}
+		$search   = false;
 
 		$q_args = [
 			'type'         => $type,
@@ -110,15 +113,35 @@ class BuddyPress {
 			'search_terms' => $search,
 			'count_total'  => 'count_query',
 		];
+		// On a network the query itself is limited to this site's members, so paging and the total
+		// count only them.
+		if ( is_multisite() ) {
+			$site_ids = get_users( [ 'blog_id' => get_current_blog_id(), 'fields' => 'ID' ] );
+			if ( ! $site_ids ) {
+				return [ 'limit' => $limit, 'offset' => $offset, 'count' => 0, 'total' => 0, 'entries' => [] ];
+			}
+			$q_args['include'] = array_map( 'intval', $site_ids );
+		}
 
 		$result = bp_core_get_users( $q_args );
 		$users  = $result['users'] ?? [];
 		$total  = (int) ( $result['total'] ?? 0 );
+		// BuddyPress pages by page number; an offset between pages reads the next page too.
+		if ( $offset % $limit > 0 ) {
+			$next  = bp_core_get_users( array_merge( $q_args, [ 'page' => $page + 1 ] ) );
+			$users = array_slice( array_merge( array_values( (array) $users ), array_values( (array) ( $next['users'] ?? [] ) ) ), $offset % $limit, $limit );
+		}
 
-		$out = [];
+		$out     = [];
+		$dropped = 0;
 		foreach ( (array) $users as $u ) {
+			if ( isset( $u->ID ) && ! self::member_of_site( (int) $u->ID ) ) {
+				$dropped++;
+				continue;
+			}
 			$out[] = self::format_member_summary( $u );
 		}
+		$total = max( 0, $total - $dropped );
 
 		$envelope = [
 			'limit'   => $limit,
@@ -152,26 +175,42 @@ class BuddyPress {
 			throw new \Exception( 'user_id is required' );
 		}
 		$user = get_userdata( $user_id );
-		if ( ! $user ) {
-			throw new \Exception( 'User not found: ' . $user_id );
+		if ( ! $user || ! self::member_of_site( $user_id ) ) {
+			throw new \Exception( 'User not found: ' . (int) $user_id );
 		}
 
 		$last_activity   = function_exists( 'bp_get_user_last_activity' ) ? bp_get_user_last_activity( $user_id ) : '';
 		$profile_display = function_exists( 'bp_core_get_user_displayname' ) ? bp_core_get_user_displayname( $user_id ) : $user->display_name;
 		$profile_url     = function_exists( 'bp_members_get_user_url' ) ? bp_members_get_user_url( $user_id ) : '';
 
-		return [
+		return self::user_fields( [
 			'id'                  => (int) $user_id,
-			'user_login'          => $user->user_login,
 			'display_name'        => $profile_display,
-			'user_email'          => $user->user_email,
 			'user_registered'     => \Royal_MCP\MCP\Server::iso_utc_date( $user->user_registered ),
 			'user_registered_iso' => self::to_iso( $user->user_registered ),
 			'last_activity'       => $last_activity,
 			'last_activity_iso'   => self::to_iso( $last_activity ),
 			'roles'               => (array) $user->roles,
 			'profile_url'         => $profile_url,
-		];
+		], $user, 'single' );
+	}
+
+	/** On a network, whether the user belongs to this site; always true on a single site. */
+	private static function member_of_site( $user_id ) {
+		return ! is_multisite() || is_user_member_of_blog( (int) $user_id, get_current_blog_id() );
+	}
+
+	/**
+	 * A member row run through royal_mcp_user_fields, the filter the core user tools use, so a site
+	 * that adds the email address there gets it here too. Only for callers who may list users.
+	 */
+	private static function user_fields( array $fields, $user, $context ) {
+		if ( ! current_user_can( 'list_users' ) || ! $user instanceof \WP_User ) {
+			return $fields;
+		}
+		/** This filter is documented in the wp_get_users tool. */
+		$filtered = apply_filters( 'royal_mcp_user_fields', $fields, $user, $context );
+		return is_array( $filtered ) ? $filtered : $fields;
 	}
 
 	private static function handle_list_groups( $args ) {
@@ -188,15 +227,20 @@ class BuddyPress {
 		$page    = (int) floor( $offset / $limit ) + 1;
 		$orderby = in_array( $args['orderby'] ?? 'date_created', [ 'date_created', 'last_activity', 'total_member_count', 'name' ], true ) ? ( $args['orderby'] ?? 'date_created' ) : 'date_created';
 
-		$result = groups_get_groups( [
+		$g_args = [
 			'per_page' => $limit,
 			'page'     => $page,
 			'orderby'  => $orderby,
 			'order'    => 'DESC',
-		] );
+		];
+		$result = groups_get_groups( $g_args );
 
 		$groups = $result['groups'] ?? [];
 		$total  = (int) ( $result['total'] ?? 0 );
+		if ( $offset % $limit > 0 ) {
+			$next   = groups_get_groups( array_merge( $g_args, [ 'page' => $page + 1 ] ) );
+			$groups = array_slice( array_merge( array_values( (array) $groups ), array_values( (array) ( $next['groups'] ?? [] ) ) ), $offset % $limit, $limit );
+		}
 
 		$out = [];
 		foreach ( (array) $groups as $g ) {
@@ -238,6 +282,10 @@ class BuddyPress {
 		$result     = bp_activity_get( $q_args );
 		$activities = $result['activities'] ?? [];
 		$total      = (int) ( $result['total'] ?? 0 );
+		if ( $offset % $limit > 0 ) {
+			$next       = bp_activity_get( array_merge( $q_args, [ 'page' => $page + 1 ] ) );
+			$activities = array_slice( array_merge( array_values( (array) $activities ), array_values( (array) ( $next['activities'] ?? [] ) ) ), $offset % $limit, $limit );
+		}
 
 		$out = [];
 		foreach ( (array) $activities as $a ) {
@@ -260,27 +308,19 @@ class BuddyPress {
 		// changing the query args (which would change ordering semantics).
 		$id            = isset( $user->ID ) ? (int) $user->ID : 0;
 		$last_activity = $user->last_activity ?? '';
-		$user_login    = $user->user_login ?? '';
-		$user_email    = $user->user_email ?? '';
 		$user_reg      = $user->user_registered ?? '';
-		if ( $id > 0 && ( '' === $user_email || '' === $user_login || '' === $user_reg ) ) {
-			$full = get_userdata( $id );
-			if ( $full ) {
-				if ( '' === $user_email ) $user_email = $full->user_email;
-				if ( '' === $user_login ) $user_login = $full->user_login;
-				if ( '' === $user_reg   ) $user_reg   = $full->user_registered;
-			}
+		$full          = $id > 0 ? get_userdata( $id ) : false;
+		if ( $full && '' === $user_reg ) {
+			$user_reg = $full->user_registered;
 		}
-		return [
+		return self::user_fields( [
 			'id'                  => $id,
-			'user_login'          => $user_login,
 			'display_name'        => $user->display_name ?? '',
-			'user_email'          => $user_email,
 			'user_registered'     => $user_reg,
 			'user_registered_iso' => self::to_iso( $user_reg ),
 			'last_activity'       => $last_activity,
 			'last_activity_iso'   => self::to_iso( $last_activity ),
-		];
+		], $full, 'list' );
 	}
 
 	private static function format_group( $group ) {

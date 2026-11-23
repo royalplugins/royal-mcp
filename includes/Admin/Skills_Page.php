@@ -153,6 +153,7 @@ class Skills_Page {
 		}
 		echo '<p style="max-width:800px;">' . esc_html__( 'A skill is a set of instructions for your AI client. Royal MCP gives the client the tools; a skill teaches it the safe way to use them, for example to clone a page before editing it. Skills are free.', 'royal-mcp' ) . '</p>';
 		echo '<p style="max-width:800px;">' . esc_html__( 'A skill that is switched on here is given to every AI client connected to this site: the client is told about it when it connects and reads it before that kind of work. Nothing to download or upload. You can still open a skill and add its file to your AI client yourself, to have it there on every site.', 'royal-mcp' ) . '</p>';
+		echo '<p style="max-width:800px;">' . esc_html__( 'To add a skill file to Claude yourself: Plugins → Add → Upload plugin, or Plugins → Add → Create a plugin and paste the text into its SKILL.md. Added skills show under Plugins → Skills.', 'royal-mcp' ) . '</p>';
 
 		echo '<h2>' . esc_html__( 'Skills for this site', 'royal-mcp' ) . '</h2>';
 		if ( ! $here ) {

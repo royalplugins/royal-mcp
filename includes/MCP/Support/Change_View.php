@@ -73,6 +73,7 @@ class Change_View {
 		'redirection_create_redirect', 'redirection_update_redirect',
 		'relevanssi_reindex_post', 'relevanssi_update_synonyms', 'relevanssi_add_stopword',
 		'mailpoet_save_subscriber', 'mailpoet_set_subscriber_lists', 'mailpoet_save_draft',
+		'jetengine_update_post_fields', 'jetengine_update_cct_item', 'mc4wp_update_form_lists',
 	];
 
 	/** The tool that made a change. */
@@ -147,6 +148,7 @@ class Change_View {
 				return [ [ 'edit_post', $id( 'post_id' ) ] ];
 			case 'elementor_rebuild_post_content_bulk':
 				return [ [ 'edit_posts' ] ];
+			case 'divi_replace_text':
 			case 'divi_replace_image':
 			case 'divi_import_template':
 				return [ [ 'edit_post', $id( 'post_id' ) ?: $id( 'target_post_id' ) ] ];
@@ -246,6 +248,8 @@ class Change_View {
 				return current_user_can( 'mailpoet_manage_subscribers' ) ? [ [ 'manage_options' ] ] : [];
 			case 'mailpoet_save_draft':
 				return current_user_can( 'mailpoet_manage_emails' ) ? [ [ 'manage_options' ] ] : [];
+			case 'jetengine_update_post_fields':
+				return [ [ 'edit_post', $id( 'post_id' ) ] ];
 		}
 		return [ [ 'manage_options' ] ];
 	}
@@ -275,6 +279,9 @@ class Change_View {
 		}
 		if ( 'api-key' === $auth ) {
 			return [ 'type' => 'api-key', 'label' => __( 'API key', 'royal-mcp' ) ];
+		}
+		if ( 'cli-stdio' === $auth ) {
+			return [ 'type' => 'local-cli', 'label' => __( 'Local WP-CLI connection (wp royal-mcp serve)', 'royal-mcp' ) ];
 		}
 		return [ 'type' => 'none', 'label' => __( 'No MCP connection (WP-CLI or another plugin)', 'royal-mcp' ) ];
 	}
@@ -880,6 +887,7 @@ class Change_View {
 				}
 				break;
 
+			case 'divi_replace_text':
 			case 'divi_replace_image':
 			case 'divi_import_template':
 				$pid    = $int( 'post_id' ) ?: $int( 'target_post_id' );
@@ -917,6 +925,19 @@ class Change_View {
 				$note = __( 'No live comparison for this kind of change. Email addresses are not shown.', 'royal-mcp' );
 				break;
 
+			case 'jetengine_update_post_fields':
+			case 'jetengine_update_cct_item':
+				$rows = \Royal_MCP\Integrations\JetEngine::change_rows( $op, $t, $pre );
+				if ( 'jetengine_update_cct_item' === $op ) {
+					$note = __( 'No live comparison for this kind of change.', 'royal-mcp' );
+				}
+				break;
+
+			case 'mc4wp_update_form_lists':
+				$mc_lists = get_post_meta( $int( 'form_id' ), '_mc4wp_settings', true );
+				$rows[]   = self::pair_row( 'audiences', implode( ', ', (array) ( $pre['prior_lists'] ?? [] ) ), implode( ', ', (array) ( $pre['written_lists'] ?? [] ) ), is_array( $mc_lists ) ? implode( ', ', array_map( 'strval', (array) ( $mc_lists['lists'] ?? [] ) ) ) : null, is_array( $mc_lists ) );
+				break;
+
 			default:
 				foreach ( $pre as $field => $before ) {
 					$rows[] = [ 'field' => (string) $field, 'before' => $before ];
@@ -951,6 +972,7 @@ class Change_View {
 		'table_id' => 'TablePress table', 'snippet_id' => 'snippet',
 		'banner_id' => 'cookie banner', 'cookie_id' => 'cookie', 'relevanssi_setting' => 'Relevanssi',
 		'subscriber_id' => 'MailPoet subscriber', 'newsletter_id' => 'MailPoet email',
+		'cct_type' => 'JetEngine content type', 'item_id' => 'item', 'form_id' => 'Mailchimp for WP form',
 	];
 
 	/** Short name of what a change touched, for example: post 12 "Hello", meta key price. */

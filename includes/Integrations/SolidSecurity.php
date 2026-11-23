@@ -51,12 +51,14 @@ class SolidSecurity {
 			],
 			[
 				'name'        => 'solid_block_ip',
-				'description' => 'Permanently ban an IP address in Solid Security. Additive — the IP is added to the ban list. Whitelisted IPs are refused. Callers should provide an optional reason comment. Requires manage_options.',
+				'description' => 'Permanently ban an IP address in Solid Security. Additive — the IP is added to the ban list. Solid bans do not expire, so the call is refused unless permanent is true. Refused for whitelisted IPs, the address this request came from, the server\'s own addresses, loopback, private and reserved ranges, and the proxies the site trusts. dry_run true checks the address and changes nothing. Each ban is recorded in Royal MCP\'s activity log. No undo: remove the ban in Solid Security. Callers should provide an optional reason comment. Requires manage_options.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
 						'ip'      => [ 'type' => 'string', 'description' => 'IPv4 or IPv6 address to ban.' ],
-						'comment' => [ 'type' => 'string', 'description' => 'Optional note explaining why the ban was applied.' ],
+						'comment'   => [ 'type' => 'string', 'description' => 'Optional note explaining why the ban was applied.' ],
+						'permanent' => [ 'type' => 'boolean', 'description' => 'Must be true: Solid bans never expire.' ],
+						'dry_run'   => [ 'type' => 'boolean', 'description' => 'true checks the address and changes nothing. Default false.' ],
 					],
 					'required'   => [ 'ip' ],
 				],
@@ -170,7 +172,12 @@ class SolidSecurity {
 			$filters['type'] = sanitize_text_field( $args['type'] );
 		}
 
-		$rows = \ITSEC_Log::get_entries( $filters, $limit, $page );
+		// Solid pages by page number; an offset between pages reads the next page too and cuts the window out.
+		$rows = (array) \ITSEC_Log::get_entries( $filters, $limit, $page );
+		$skip = $offset % $limit;
+		if ( $skip > 0 ) {
+			$rows = array_slice( array_merge( array_values( $rows ), array_values( (array) \ITSEC_Log::get_entries( $filters, $limit, $page + 1 ) ) ), $skip, $limit );
+		}
 
 		$out = [];
 		foreach ( (array) $rows as $row ) {
@@ -199,12 +206,37 @@ class SolidSecurity {
 		if ( class_exists( '\\ITSEC_Lib' ) && method_exists( '\\ITSEC_Lib', 'is_ip_whitelisted' ) && \ITSEC_Lib::is_ip_whitelisted( $ip ) ) {
 			throw new \Exception( 'Cannot ban a whitelisted IP: ' . esc_html( $ip ) );
 		}
+		$caller = class_exists( '\\ITSEC_Lib' ) && method_exists( '\\ITSEC_Lib', 'get_ip' ) ? (string) \ITSEC_Lib::get_ip() : '';
+		$caller = '' !== $caller ? $caller : (string) \Royal_MCP\MCP\Server::resolve_client_ip();
+		if ( '' !== $caller && GuardPressControls::same_ip( $ip, $caller ) ) {
+			throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'own_address', 'This is the address this request came from; banning it would lock the caller out.' );
+		}
+		$guard = GuardPressControls::address_refusal( $ip );
+		if ( null !== $guard ) {
+			throw new \Royal_MCP\MCP\Support\Tool_Refusal( esc_html( $guard[0] ), esc_html( $guard[1] ) );
+		}
+		if ( ! is_array( $args ) || ! array_key_exists( 'permanent', $args ) || true !== $args['permanent'] ) {
+			throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'permanent_not_confirmed', 'Solid Security bans never expire. Pass permanent: true once the user agreed to a permanent ban. Nothing was changed.' );
+		}
+		$dry = isset( $args['dry_run'] ) ? filter_var( $args['dry_run'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE ) : false;
+		if ( null === $dry ) {
+			throw new \Exception( 'dry_run must be true or false.' );
+		}
 
 		$was_already_banned = class_exists( '\\ITSEC_Lib' ) && method_exists( '\\ITSEC_Lib', 'is_ip_banned' )
 			? \ITSEC_Lib::is_ip_banned( $ip )
 			: false;
 
 		$comment = isset( $args['comment'] ) ? sanitize_text_field( $args['comment'] ) : '';
+		if ( $dry ) {
+			return [
+				'dry_run'            => true,
+				'blocked'            => false,
+				'would_ban'          => $ip,
+				'was_already_banned' => (bool) $was_already_banned,
+				'note'               => 'Preview only: nothing was changed.',
+			];
+		}
 
 		// Preferred path: repository via ITSEC container. Falls back to
 		// legacy blacklist_ip() when the container / Ban_Users module isn't
@@ -233,11 +265,14 @@ class SolidSecurity {
 			throw new \Exception( 'Failed to persist ban (no supported ban repository available)' );
 		}
 
+		GuardPressControls::log_security_write( 'solid_block_ip', [ 'ip' => $ip, 'was_already_banned' => (bool) $was_already_banned ] );
 		return [
 			'blocked'            => true,
 			'ip'                 => $ip,
 			'was_already_banned' => (bool) $was_already_banned,
 			'comment'            => $comment,
+			'undo'               => 'none',
+			'undo_note'          => 'No undo token: remove the ban in Solid Security.',
 		];
 	}
 

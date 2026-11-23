@@ -165,7 +165,7 @@ class Connected_Clients_Page {
                                     ?>
                                 <?php endif; ?>
                             </td>
-                            <td><?php echo esc_html( null === $row['registered_age'] ? __( 'Set in plugin settings', 'royal-mcp' ) : self::describe_age( $row['registered_age'], $format ) ); ?></td>
+                            <td><?php echo esc_html( null === $row['registered_age'] ? __( 'Set in Royal MCP → Connections → Connection settings', 'royal-mcp' ) : self::describe_age( $row['registered_age'], $format ) ); ?></td>
                             <td><?php echo esc_html( self::describe_age( $row['last_issued_age'], $format ) ); ?></td>
                             <td>
                                 <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin:0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
@@ -439,7 +439,7 @@ class Connected_Clients_Page {
         }
         // Only the form's POST may do this; a followed link must not.
         if ( 'POST' !== strtoupper( (string) ( $_SERVER['REQUEST_METHOD'] ?? '' ) ) ) {
-            wp_die( esc_html__( 'Use the Revoke all button on the Connected Clients screen.', 'royal-mcp' ), '', [ 'response' => 405 ] );
+            wp_die( esc_html__( 'Use the Revoke all button under Royal MCP → Connections → Connected Clients.', 'royal-mcp' ), '', [ 'response' => 405 ] );
         }
         check_admin_referer( self::REVOKE_ALL_NONCE );
 

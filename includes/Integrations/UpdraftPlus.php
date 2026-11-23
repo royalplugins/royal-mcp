@@ -38,6 +38,21 @@ class UpdraftPlus {
 		return class_exists( '\\UpdraftPlus' );
 	}
 
+	/** When this site last started a backup through Royal MCP, and how long until the next may start. */
+	const LAST_TRIGGER_OPTION = 'royal_mcp_updraft_last_trigger';
+	const TRIGGER_COOLDOWN    = 600;
+
+	/** Whether WP-Cron holds an event for this hook, whatever its arguments. */
+	private static function has_queued( $hook ) {
+		$crons = function_exists( '_get_cron_array' ) ? _get_cron_array() : [];
+		foreach ( (array) $crons as $events ) {
+			if ( is_array( $events ) && ! empty( $events[ $hook ] ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	public static function get_tools() {
 		// Always register so tools appear in MCP tools/list regardless of
 		// UpdraftPlus activation state. Callers see the schemas immediately on
@@ -70,7 +85,7 @@ class UpdraftPlus {
 			],
 			[
 				'name'        => 'updraftplus_trigger_backup',
-				'description' => 'Trigger a new UpdraftPlus backup asynchronously via WP-Cron dispatch. Returns immediately (under 1 second) with the backup_id so callers can poll updraftplus_get_backup_status. Additive — creates a new backup, never deletes prior backups. entities filters which components are included via restrict_files_to_override: entities:["plugins"] produces plugins.zip only, entities:["db"] produces db.gz only, entities:["plugins","themes"] produces both zips without db. Default (empty entities) backs up everything (db + all file entities).',
+				'description' => 'Trigger a new UpdraftPlus backup asynchronously via WP-Cron dispatch (queued like the Backup Now button in UpdraftPlus; refused while one is running or queued, and for 10 minutes after one started from here). Returns immediately (under 1 second) with the backup_id so callers can poll updraftplus_get_backup_status. Additive — creates a new backup, never deletes prior backups. entities filters which components are included via restrict_files_to_override: entities:["plugins"] produces plugins.zip only, entities:["db"] produces db.gz only, entities:["plugins","themes"] produces both zips without db. Default (empty entities) backs up everything (db + all file entities).',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -173,7 +188,7 @@ class UpdraftPlus {
 			// Defensive fallback: read the raw option directly if the
 			// class-level accessor throws (e.g. corrupted incremental-set
 			// metadata). Preserves reverse-chronological ordering.
-			$history = (array) get_option( 'updraft_backup_history', [] );
+			$history = (array) self::updraft_option( 'updraft_backup_history', [] );
 			krsort( $history );
 		}
 
@@ -212,7 +227,7 @@ class UpdraftPlus {
 	private static function handle_get_backup_status( $args ) {
 		$nonce = self::resolve_nonce( $args );
 
-		$jobdata = get_option( 'updraft_jobdata_' . $nonce );
+		$jobdata = self::updraft_option( 'updraft_jobdata_' . $nonce, false );
 		if ( is_array( $jobdata ) && isset( $jobdata['jobstatus'] ) && $jobdata['jobstatus'] !== 'finished' ) {
 			$updated_at = 0;
 			if ( isset( $jobdata['job_time_ms'] ) ) {
@@ -222,12 +237,14 @@ class UpdraftPlus {
 			} elseif ( isset( $jobdata['backup_time'] ) ) {
 				$updated_at = (int) $jobdata['backup_time'];
 			}
+			// A job record that has not moved for a long time belongs to a run that stopped.
+			$stale = $updated_at > 0 && ( time() - $updated_at ) > (int) apply_filters( 'royal_mcp_updraft_stalled_after', 12 * HOUR_IN_SECONDS );
 			return [
 				'backup_id'  => self::backup_id( $nonce ),
-				'state'      => 'in_progress',
+				'state'      => $stale ? 'stalled' : 'in_progress',
 				'jobstatus'  => (string) $jobdata['jobstatus'],
 				'updated_at' => $updated_at,
-			];
+			] + ( $stale ? [ 'note' => 'This backup has not reported progress for over 12 hours and has probably stopped. Check UpdraftPlus → Existing backups, or start a new backup.' ] : [] );
 		}
 
 		$backup    = self::ensure_backup_exists( $nonce );
@@ -301,6 +318,16 @@ class UpdraftPlus {
 		if ( method_exists( $updraftplus, 'is_backup_running' ) && $updraftplus->is_backup_running() ) {
 			throw new \Exception( 'A backup is already in progress.' );
 		}
+		// One backup per cool-down: a queued one counts, and so does one started from here a few minutes ago.
+		foreach ( [ 'updraft_backupnow_backup_all', 'updraft_backupnow_backup', 'updraft_backupnow_backup_database' ] as $queued_event ) {
+			if ( self::has_queued( $queued_event ) ) {
+				throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'backup_queued', 'A backup is already queued and starts within a minute. Poll updraftplus_get_backup_status instead of starting another.' );
+			}
+		}
+		$last = (int) get_option( self::LAST_TRIGGER_OPTION, 0 );
+		if ( $last > time() - self::TRIGGER_COOLDOWN ) {
+			throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'backup_cooldown', sprintf( 'A backup was started through Royal MCP %d minute(s) ago. Wait about %d minute(s) before starting another, or start it in UpdraftPlus.', (int) floor( ( time() - $last ) / 60 ), (int) ceil( ( $last + self::TRIGGER_COOLDOWN - time() ) / 60 ) ) );
+		}
 
 		if ( ! method_exists( $updraftplus, 'backup_time_nonce' ) ) {
 			throw new \Exception( 'UpdraftPlus build too old — backup_time_nonce() missing (async dispatch not supported).' );
@@ -343,9 +370,17 @@ class UpdraftPlus {
 		// options (extradata, remote_storage_instances, etc.).
 		$options = apply_filters( 'updraft_backupnow_options', $options, [] );
 
-		do_action( $event, $options );
+		// Queued for WP-Cron the way UpdraftPlus's own "Backup Now" does it, so this request returns at once
+		// instead of running the whole backup inside it.
+		if ( false === wp_schedule_single_event( time(), $event, [ $options ] ) ) {
+			throw new \Exception( 'WordPress did not queue the backup (WP-Cron refused the event). Nothing was started.' );
+		}
+		update_option( self::LAST_TRIGGER_OPTION, time(), false );
+		if ( function_exists( 'spawn_cron' ) && ! ( defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ) ) {
+			spawn_cron();
+		}
 
-		$service = get_option( 'updraft_service', 'local' );
+		$service = self::updraft_option( 'updraft_service', 'local' );
 		if ( is_array( $service ) ) {
 			$service = implode( ',', array_map( 'strval', $service ) );
 		}
@@ -381,10 +416,10 @@ class UpdraftPlus {
 	 * next_run_at (no cron scheduled), retention_count 2.
 	 */
 	private static function handle_get_schedule( $args ) {
-		$files_interval = get_option( 'updraft_interval' );
-		$db_interval    = get_option( 'updraft_interval_database' );
-		$files_retain   = get_option( 'updraft_retain' );
-		$db_retain      = get_option( 'updraft_retain_db' );
+		$files_interval = self::updraft_option( 'updraft_interval' );
+		$db_interval    = self::updraft_option( 'updraft_interval_database' );
+		$files_retain   = self::updraft_option( 'updraft_retain' );
+		$db_retain      = self::updraft_option( 'updraft_retain_db' );
 
 		$files_next = wp_next_scheduled( 'updraft_backup' );
 		$db_next    = wp_next_scheduled( 'updraft_backup_database' );
@@ -435,6 +470,14 @@ class UpdraftPlus {
 
 	// ==================== Helpers ====================
 
+	/** An UpdraftPlus setting, read where UpdraftPlus keeps it (network-wide on multisite). */
+	private static function updraft_option( $name, $default = false ) {
+		if ( class_exists( '\UpdraftPlus_Options' ) && method_exists( '\UpdraftPlus_Options', 'get_updraft_option' ) ) {
+			return \UpdraftPlus_Options::get_updraft_option( $name, $default );
+		}
+		return is_multisite() ? get_site_option( $name, $default ) : get_option( $name, $default );
+	}
+
 	/**
 	 * Resolve the `nonce` arg to a non-empty string. Missing/empty raises
 	 * so handlers can trust the returned string. Mirrors the YoastSEO
@@ -452,7 +495,9 @@ class UpdraftPlus {
 			// A backup still running is not in the history yet: its job record is.
 			global $wpdb;
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-			$jobs = $wpdb->get_col( $wpdb->prepare( "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s ORDER BY option_id DESC", $wpdb->esc_like( 'updraft_jobdata_' ) . '%' ) );
+			$jobs = is_multisite()
+				? $wpdb->get_col( $wpdb->prepare( "SELECT meta_key FROM {$wpdb->sitemeta} WHERE site_id = %d AND meta_key LIKE %s ORDER BY meta_id DESC", get_current_network_id(), $wpdb->esc_like( 'updraft_jobdata_' ) . '%' ) )
+				: $wpdb->get_col( $wpdb->prepare( "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s ORDER BY option_id DESC", $wpdb->esc_like( 'updraft_jobdata_' ) . '%' ) );
 			foreach ( (array) $jobs as $job ) {
 				$nonce = substr( (string) $job, strlen( 'updraft_jobdata_' ) );
 				if ( '' !== $nonce && hash_equals( self::backup_id( $nonce ), $id ) ) {

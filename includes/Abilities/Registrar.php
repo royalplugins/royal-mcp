@@ -67,6 +67,9 @@ class Registrar {
 			'rsssl_'       => 'really-simple-security',
 			'wpo_'         => 'wp-optimize',
 			'wpmailsmtp_'  => 'wpmailsmtp',
+			'jetengine_'   => 'jetengine',
+			'fluentsmtp_'  => 'fluentsmtp',
+			'mc4wp_'       => 'mc4wp',
 			'akismet_'     => 'akismet',
 		);
 	}
@@ -234,7 +237,7 @@ class Registrar {
 			$args = is_array( $input ) ? $input : array();
 			try {
 				$server = new Server();
-				return self::to_ability_result( $server->invoke( $tool_name, $args, 'abilities' ) );
+				return self::mark_untrusted( $tool_name, self::to_ability_result( $server->invoke( $tool_name, $args, 'abilities' ) ) );
 			} catch ( \Throwable $e ) {
 				// Messages are plain text here; the REST layer encodes them. A refusal or a
 				// missing item is the caller's request (400); a PHP error is the site's (500).
@@ -258,6 +261,20 @@ class Registrar {
 	 * @param mixed $result Tool result.
 	 * @return mixed
 	 */
+	/**
+	 * An ability reply that carries visitor-written text says so in an untrusted key, the same
+	 * sentence the MCP route puts in its reply. A plain list stays a list: its tool's description
+	 * carries the sentence.
+	 */
+	public static function mark_untrusted( $tool_name, $result ) {
+		$sentence = \Royal_MCP\MCP\Support\Untrusted_Text::sentence( (string) $tool_name );
+		if ( '' === $sentence || ! is_array( $result ) || ( $result && array_keys( $result ) === range( 0, count( $result ) - 1 ) ) ) {
+			return $result;
+		}
+		$result['untrusted'] = $sentence;
+		return $result;
+	}
+
 	public static function to_ability_result( $result ) {
 		if ( is_wp_error( $result ) ) {
 			return $result;

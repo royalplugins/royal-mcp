@@ -890,6 +890,369 @@
 }
 .rmcp-wn-vis .rmcp-wn-conflict-fix svg { width: 11px; height: 11px; color: #C9A227; }
 
+/* Slide: new integrations — plugin tiles with a tool count */
+.rmcp-wn-intg {
+    background: #FAF8F5;
+    border: 1px solid #ECE4CC;
+    border-radius: 12px;
+    padding: 14px;
+}
+.rmcp-wn-intg-count {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 40px;
+    font-weight: 700;
+    color: #C9A227;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    margin-bottom: 12px;
+}
+.rmcp-wn-intg-count span {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #8a7a4a;
+    margin-left: 6px;
+}
+.rmcp-wn-intg-tile {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    margin-top: 7px;
+    background: #fff;
+    border: 1px solid #e6e6e6;
+    border-radius: 8px;
+}
+.rmcp-wn-intg-mono {
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+    border-radius: 7px;
+    background: #FBF5E2;
+    border: 1px solid #E3D6A8;
+    color: #6b5a1e;
+    font-size: 11px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.rmcp-wn-intg-name {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    font-size: 12px;
+    font-weight: 700;
+}
+.rmcp-wn-intg-name em {
+    font-style: normal;
+    font-weight: 400;
+    font-size: 10.5px;
+    color: #8a8a8a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.rmcp-wn-intg-num {
+    min-width: 24px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: #C9A227;
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 700;
+    text-align: center;
+}
+
+/* Slide: off-by-default switches */
+.rmcp-wn-switches {
+    background: #fff;
+    border: 1px solid #dcdcde;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+}
+.rmcp-wn-switches-head {
+    padding: 9px 12px;
+    border-bottom: 1px solid #dcdcde;
+    background: #f6f7f7;
+    font-size: 11.5px;
+    font-weight: 700;
+}
+.rmcp-wn-switch {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #f0f0f1;
+}
+.rmcp-wn-switch-ico {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: #FAF8F5;
+    color: #8a7a4a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.rmcp-wn-switch-label {
+    flex: 1;
+    font-size: 12px;
+    font-weight: 600;
+}
+.rmcp-wn-switches .rmcp-wn-toggle {
+    width: 30px;
+    height: 16px;
+    border-radius: 8px;
+}
+.rmcp-wn-switches .rmcp-wn-toggle::after {
+    width: 12px;
+    height: 12px;
+}
+.rmcp-wn-switches-foot {
+    padding: 9px 12px;
+    background: #FAF8F5;
+    text-align: right;
+}
+.rmcp-wn-switches-pill {
+    display: inline-block;
+    padding: 2px 9px;
+    border: 1px solid #C9A227;
+    border-radius: 999px;
+    color: #6b5a1e;
+    font-size: 10.5px;
+    font-weight: 700;
+}
+
+/* Slide: WP-CLI terminal (the one dark visual) */
+.rmcp-wn-term {
+    background: #2C2C2C;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+    color: #e8e4da;
+}
+.rmcp-wn-term-bar {
+    display: flex;
+    gap: 5px;
+    padding: 8px 10px;
+    background: #232323;
+}
+.rmcp-wn-term-bar span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #555;
+}
+.rmcp-wn-term-bar span:first-child { background: #C9A227; }
+.rmcp-wn-term-body {
+    padding: 10px 12px 12px;
+    font-family: "JetBrains Mono", Consolas, Monaco, monospace;
+    font-size: 10.5px;
+    line-height: 1.65;
+}
+.rmcp-wn-term-cmd,
+.rmcp-wn-term-out {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.rmcp-wn-term-cmd { color: #fff; font-weight: 700; }
+.rmcp-wn-term-cmd::before { content: "$ "; color: #C9A227; }
+.rmcp-wn-term-cmd + .rmcp-wn-term-out { margin-top: 2px; }
+.rmcp-wn-term-out + .rmcp-wn-term-cmd { margin-top: 6px; }
+.rmcp-wn-term-out { color: #bdb8ad; }
+.rmcp-wn-term-out.is-ok { color: #8fd19e; }
+.rmcp-wn-term-out.is-dim { color: #8a8478; }
+.rmcp-wn-term-caret {
+    display: inline-block;
+    width: 6px;
+    height: 11px;
+    margin-left: 3px;
+    vertical-align: -1px;
+    background: #C9A227;
+}
+
+/* Slide: task prompts as a slash menu */
+.rmcp-wn-slash {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.rmcp-wn-slash-menu {
+    background: #fff;
+    border: 1px solid #e6e6e6;
+    border-radius: 10px;
+    padding: 5px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+.rmcp-wn-slash-item {
+    display: flex;
+    flex-direction: column;
+    padding: 6px 9px;
+    border-radius: 6px;
+}
+.rmcp-wn-slash-item.is-on { background: #FBF5E2; }
+.rmcp-wn-slash-name {
+    font-family: Consolas, Monaco, monospace;
+    font-size: 11.5px;
+    font-weight: 700;
+}
+.rmcp-wn-slash-item.is-on .rmcp-wn-slash-name { color: #6b5a1e; }
+.rmcp-wn-slash-item em {
+    font-style: normal;
+    font-size: 10.5px;
+    color: #8a8a8a;
+}
+.rmcp-wn-slash-input {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 8px 8px 12px;
+    border: 1.5px solid #C9A227;
+    border-radius: 999px;
+    background: #fff;
+}
+.rmcp-wn-slash-typed {
+    font-family: Consolas, Monaco, monospace;
+    font-size: 13px;
+    font-weight: 700;
+}
+.rmcp-wn-slash-caret {
+    width: 1.5px;
+    height: 14px;
+    background: #2C2C2C;
+    flex: 0 0 auto;
+}
+.rmcp-wn-slash-send {
+    margin-left: auto;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #C9A227;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Slide: tool list length bars */
+.rmcp-wn-bars {
+    background: #fff;
+    border: 1px solid #e6e6e6;
+    border-radius: 12px;
+    padding: 14px;
+}
+.rmcp-wn-bar-row { margin-bottom: 12px; }
+.rmcp-wn-bar-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 5px;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+.rmcp-wn-bar-code {
+    font-family: Consolas, Monaco, monospace;
+    font-size: 11px;
+}
+.rmcp-wn-bar-num {
+    font-size: 10.5px;
+    color: #8a8a8a;
+    font-weight: 600;
+}
+.rmcp-wn-bar-num.is-gold {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 20px;
+    font-weight: 700;
+    color: #C9A227;
+    line-height: 1;
+}
+.rmcp-wn-bar {
+    height: 10px;
+    border-radius: 999px;
+    background: #f1efe9;
+    overflow: hidden;
+}
+.rmcp-wn-bar-fill {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+}
+.rmcp-wn-bar-fill.is-long { width: 100%; background: repeating-linear-gradient(90deg, #d6d6d6 0 6px, #e4e4e4 6px 8px); }
+.rmcp-wn-bar-fill.is-short { width: 12%; background: #C9A227; }
+.rmcp-wn-bar-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-top: 10px;
+    border-top: 1px dashed #e0e0e0;
+}
+.rmcp-wn-bar-chips span {
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: #FBF5E2;
+    color: #6b5a1e;
+    font-family: Consolas, Monaco, monospace;
+    font-size: 10px;
+}
+
+/* Slide: Connection Doctor results */
+.rmcp-wn-doctor {
+    background: #FAF8F5;
+    border: 1px solid #ECE4CC;
+    border-radius: 12px;
+    padding: 12px;
+}
+.rmcp-wn-doctor-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    font-weight: 700;
+}
+.rmcp-wn-doctor-head svg { color: #C9A227; }
+.rmcp-wn-doctor-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 9px;
+    margin-top: 5px;
+    background: #fff;
+    border: 1px solid #ebebeb;
+    border-radius: 7px;
+    font-size: 11.5px;
+}
+.rmcp-wn-doctor-row > svg {
+    width: 16px;
+    height: 16px;
+    padding: 2px;
+    border-radius: 50%;
+    background: #E7F4EA;
+    color: #1e8a3c;
+}
+.rmcp-wn-doctor-row > span:first-of-type { flex: 1; min-width: 0; }
+.rmcp-wn-doctor-row.is-new {
+    border-color: #C9A227;
+    box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.15);
+    font-weight: 700;
+}
+.rmcp-wn-doctor-new {
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: #C9A227;
+    color: #fff;
+    font-size: 8.5px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+}
 
 @media (max-width: 700px) {
     .rmcp-wn-slide.is-celebration .rmcp-wn-big-number {

@@ -106,7 +106,7 @@ class Post_Access {
 	public static function theme_writes_refusal() {
 		$settings = get_option( 'royal_mcp_settings', [] );
 		if ( empty( $settings['allow_theme_writes'] ) ) {
-			return new Tool_Refusal( 'theme_writes_off', 'Theme writes are disabled. Enable "Allow AI to modify theme appearance" under Royal MCP > Settings.' );
+			return new Tool_Refusal( 'theme_writes_off', 'Theme writes are disabled. Enable "Allow AI to modify theme appearance" under Royal MCP → Safety → Extra write permissions.' );
 		}
 		return null;
 	}
@@ -435,7 +435,7 @@ class Post_Access {
 	private static function type_allowed( \WP_Post_Type $type ) {
 		// Code snippets keep keys in their code; they are read through the snippet
 		// tools, which redact credentials in code.
-		if ( self::is_code_type( $type->name ) ) {
+		if ( self::is_code_type( $type->name ) || self::is_form_data_type( $type->name ) ) {
 			return false;
 		}
 		if ( is_post_type_viewable( $type ) ) {
@@ -445,6 +445,23 @@ class Post_Access {
 			return false;
 		}
 		return ! empty( $type->show_ui ) || ! empty( $type->show_in_rest ) || current_user_can( 'manage_options' );
+	}
+
+	/**
+	 * Post types that store form definitions (with their notification addresses) or form entries.
+	 * The generic post tools leave them out; the form tools read them with personal data masked.
+	 *
+	 * @param string $post_type Post type name.
+	 * @return bool
+	 */
+	public static function is_form_data_type( $post_type ) {
+		/**
+		 * Filter the post types that hold form settings or entries and stay out of the generic post tools.
+		 *
+		 * @param string[] $types Post type names.
+		 */
+		$types = apply_filters( 'royal_mcp_form_data_post_types', [ 'wpforms', 'wpforms-log', 'flamingo_inbound', 'flamingo_contact', 'flamingo_outbound', 'wpcf7_contact_form', 'nf_sub', 'fluentform' ] );
+		return in_array( (string) $post_type, (array) $types, true );
 	}
 
 	/**

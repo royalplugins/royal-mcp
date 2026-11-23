@@ -242,14 +242,15 @@ class PageChecks {
 			if ( $left < 1 ) {
 				return new \WP_Error( 'fetch_failed', 'The page took too long to load.' );
 			}
-			$resp = wp_remote_get( $current, [
+			$req_args = [
 				'timeout'             => max( 1, min( (int) $timeout, (int) floor( $left ) ) ),
 				'redirection'         => 0,
 				'sslverify'           => false,
 				'cookies'             => [],
 				'limit_response_size' => self::MAX_BYTES,
 				'headers'             => array_merge( [ 'User-Agent' => 'Royal MCP page check/' . ( defined( 'ROYAL_MCP_VERSION' ) ? ROYAL_MCP_VERSION : '2' ) ], $headers ),
-			] );
+			];
+			$resp = \Royal_MCP\MCP\Support\Http_Decode_Guard::run( static function () use ( $current, $req_args ) { return wp_remote_get( $current, $req_args ); } );
 			if ( is_wp_error( $resp ) ) {
 				// The transport's message can carry the server's address; the code is enough.
 				return new \WP_Error( 'fetch_failed', 'The page could not be loaded (' . sanitize_key( (string) $resp->get_error_code() ) . ').' );

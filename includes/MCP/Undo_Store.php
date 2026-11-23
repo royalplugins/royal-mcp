@@ -44,7 +44,7 @@ class Undo_Store {
         $whole = base64_encode( gzcompress( (string) wp_json_encode( $data ), 9 ) );
         self::delete_parts( $token );
         if ( strlen( $whole ) <= self::PART_BYTES || ! isset( $data['pre_op_state'] ) ) {
-            return $whole;
+            return self::wrap( $data, $whole );
         }
         $blob  = base64_encode( gzcompress( (string) wp_json_encode( $data['pre_op_state'] ), 9 ) );
         $parts = str_split( $blob, self::PART_BYTES );
@@ -55,12 +55,188 @@ class Undo_Store {
             }
         }
         $pre = (array) $data['pre_op_state'];
+        $full = $data;
         $data['pre_op_state'] = [
             '__royal_mcp_parts' => count( $parts ),
             '_sha256'           => hash( 'sha256', $blob ),
             'original_op'       => $pre['original_op'] ?? null,
         ];
-        return base64_encode( gzcompress( (string) wp_json_encode( $data ), 9 ) );
+        return self::wrap( $full, base64_encode( gzcompress( (string) wp_json_encode( $data ), 9 ) ) );
+    }
+
+    /** Marks the stored form of a snapshot row: FORMAT|owner|state|head|body. */
+    const FORMAT = 'rmcp2';
+
+    /**
+     * The stored row: a small head (everything a change list shows, without the
+     * earlier state) ahead of the full body. The owner and the used/unused state
+     * sit in plain text so limits and lists can read them in SQL without
+     * decoding any snapshot.
+     */
+    private static function wrap( array $data, string $body ): string {
+        $head = $data;
+        $pre  = isset( $data['pre_op_state'] ) && is_array( $data['pre_op_state'] ) ? $data['pre_op_state'] : [];
+        // Short scalar fields of the earlier state stay in the head (the original
+        // tool name, a created item's id); everything else stays in the body.
+        $head['pre_op_state'] = array_filter( $pre, static function ( $v ) {
+            return is_scalar( $v ) && strlen( (string) $v ) <= 200;
+        } );
+        return implode( '|', [
+            self::FORMAT,
+            (int) ( $data['user_id'] ?? 0 ),
+            empty( $data['undone_at'] ) ? 'a' : 'd',
+            base64_encode( gzcompress( (string) wp_json_encode( $head ), 9 ) ),
+            $body,
+        ] );
+    }
+
+    /** Most snapshot rows kept per user and overall, and their largest total stored size. */
+    const MAX_PER_USER    = 1000;
+    const MAX_TOTAL       = 10000;
+    const MAX_TOTAL_BYTES = 134217728; // 128 MB
+
+    /** @return array{per_user: int, total: int, bytes: int} */
+    public static function limits(): array {
+        $limits = (array) apply_filters( 'royal_mcp_undo_limits', [
+            'per_user' => self::MAX_PER_USER,
+            'total'    => self::MAX_TOTAL,
+            'bytes'    => self::MAX_TOTAL_BYTES,
+        ] );
+        return [
+            'per_user' => max( 1, (int) ( $limits['per_user'] ?? self::MAX_PER_USER ) ),
+            'total'    => max( 1, (int) ( $limits['total'] ?? self::MAX_TOTAL ) ),
+            'bytes'    => max( 1048576, (int) ( $limits['bytes'] ?? self::MAX_TOTAL_BYTES ) ),
+        ];
+    }
+
+    /**
+     * Keep the store inside its limits after a new snapshot was added. Used
+     * snapshots go first, then the oldest; the snapshot just written is kept.
+     *
+     * @return int Snapshots removed.
+     */
+    public static function enforce_limits( string $keep_token = '' ): int {
+        global $wpdb;
+        $limits  = self::limits();
+        $removed = 0;
+        $totals  = self::totals( $keep_token );
+        $count   = $totals['count'];
+        $uid     = (int) get_current_user_id();
+        $like    = $wpdb->esc_like( self::OPTION_PREFIX ) . '%';
+        $namelen = strlen( self::OPTION_PREFIX ) + 32;
+        if ( $uid > 0 && $count > $limits['per_user'] ) {
+            $owner = self::FORMAT . '|' . $uid . '|%';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $mine = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name LIKE %s AND CHAR_LENGTH(option_name) = %d AND option_value LIKE %s", $like, $namelen, $owner ) );
+            if ( $mine > $limits['per_user'] ) {
+                $n        = self::prune( $mine - $limits['per_user'], $uid, $keep_token );
+                $removed += $n;
+                $count   -= $n;
+            }
+        }
+        if ( $count > $limits['total'] ) {
+            $removed += self::prune( $count - $limits['total'], null, $keep_token );
+        }
+        if ( $removed > 0 || $totals['bytes'] > $limits['bytes'] ) {
+            // Over the size ceiling the writing user's own snapshots go first, then everyone's.
+            for ( $round = 0; $round < 50; $round++ ) {
+                $totals = self::totals( $keep_token, true );
+                if ( $totals['bytes'] <= $limits['bytes'] ) {
+                    break;
+                }
+                $n = $uid > 0 ? self::prune( 10, $uid, $keep_token ) : 0;
+                if ( $n < 1 ) {
+                    $n = self::prune( 10, null, $keep_token );
+                }
+                if ( $n < 1 ) {
+                    break;
+                }
+                $removed += $n;
+            }
+        }
+        return $removed;
+    }
+
+    /** Transient holding the snapshot count and stored size, so a store does not re-measure every row. */
+    const TOTALS_TRANSIENT = 'royal_mcp_undo_totals';
+
+    /**
+     * Number of snapshot rows and their stored size (part rows included). Kept in a
+     * short-lived transient: a new snapshot adds its own size, removals clear it.
+     *
+     * @param string $new_token Snapshot just written, added to cached totals once.
+     * @param bool   $fresh     Measure again instead of using the cached totals.
+     * @return array{count: int, bytes: int}
+     */
+    public static function totals( string $new_token = '', bool $fresh = false ): array {
+        global $wpdb;
+        $cached = $fresh ? false : get_transient( self::TOTALS_TRANSIENT );
+        if ( is_array( $cached ) && isset( $cached['count'], $cached['bytes'] ) ) {
+            if ( '' !== $new_token && preg_match( '/^[a-f0-9]{32}$/', $new_token ) ) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+                $add = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COALESCE(SUM(LENGTH(option_value)), 0) FROM {$wpdb->options} WHERE option_name = %s OR option_name LIKE %s", self::OPTION_PREFIX . $new_token, $wpdb->esc_like( self::PART_PREFIX . $new_token . '_' ) . '%' ) );
+                $cached = [ 'count' => (int) $cached['count'] + 1, 'bytes' => (int) $cached['bytes'] + $add ];
+                set_transient( self::TOTALS_TRANSIENT, $cached, 10 * MINUTE_IN_SECONDS );
+            }
+            return [ 'count' => (int) $cached['count'], 'bytes' => (int) $cached['bytes'] ];
+        }
+        $like    = $wpdb->esc_like( self::OPTION_PREFIX ) . '%';
+        $parts   = $wpdb->esc_like( self::PART_PREFIX ) . '%';
+        $namelen = strlen( self::OPTION_PREFIX ) + 32;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $row = $wpdb->get_row( $wpdb->prepare( "SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(option_value)), 0) AS b FROM {$wpdb->options} WHERE option_name LIKE %s AND CHAR_LENGTH(option_name) = %d", $like, $namelen ) );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $part_bytes = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COALESCE(SUM(LENGTH(option_value)), 0) FROM {$wpdb->options} WHERE option_name LIKE %s", $parts ) );
+        $out = [ 'count' => (int) ( $row->n ?? 0 ), 'bytes' => (int) ( $row->b ?? 0 ) + $part_bytes ];
+        set_transient( self::TOTALS_TRANSIENT, $out, 10 * MINUTE_IN_SECONDS );
+        return $out;
+    }
+
+    /** Remove up to $n snapshots, used ones first, then oldest first. */
+    private static function prune( int $n, ?int $user_id, string $keep_token ): int {
+        global $wpdb;
+        if ( $n < 1 ) {
+            return 0;
+        }
+        $like = $wpdb->esc_like( self::OPTION_PREFIX ) . '%';
+        $done = self::FORMAT . '|%|d|%';
+        $keep = self::OPTION_PREFIX . $keep_token;
+        $len  = strlen( self::OPTION_PREFIX ) + 32;
+        if ( null !== $user_id ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $names = $wpdb->get_col( $wpdb->prepare( "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s AND CHAR_LENGTH(option_name) = %d AND option_name <> %s AND option_value LIKE %s ORDER BY ( option_value LIKE %s ) DESC, option_id ASC LIMIT %d", $like, $len, $keep, self::FORMAT . '|' . $user_id . '|%', $done, $n ) );
+        } else {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $names = $wpdb->get_col( $wpdb->prepare( "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s AND CHAR_LENGTH(option_name) = %d AND option_name <> %s ORDER BY ( option_value LIKE %s ) DESC, option_id ASC LIMIT %d", $like, $len, $keep, $done, $n ) );
+        }
+        $removed = 0;
+        foreach ( (array) $names as $name ) {
+            $token = substr( (string) $name, strlen( self::OPTION_PREFIX ) );
+            if ( preg_match( '/^[a-f0-9]{32}$/', $token ) && self::delete( $token ) ) {
+                $removed++;
+            }
+        }
+        return $removed;
+    }
+
+    /**
+     * Snapshot rows with only their heads: option_id, option_name and the head
+     * part of the stored value (rows in the older single-part form come whole).
+     */
+    private static function head_rows( string $where_sql, array $params ): array {
+        global $wpdb;
+        $sql = "SELECT option_id, option_name, CASE WHEN option_value LIKE %s THEN SUBSTRING_INDEX(option_value, '|', 4) ELSE option_value END AS head FROM {$wpdb->options} WHERE option_name LIKE %s " . $where_sql;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared -- $where_sql holds placeholders only; values are in $params
+        return (array) $wpdb->get_results( $wpdb->prepare( $sql, array_merge( [ self::FORMAT . '|%', $wpdb->esc_like( self::OPTION_PREFIX ) . '%' ], $params ) ) );
+    }
+
+    /** Decode a head from head_rows(), or a whole row in the older form. */
+    private static function decode_head( string $head ): ?array {
+        if ( 0 === strpos( $head, self::FORMAT . '|' ) ) {
+            $bits = explode( '|', $head, 5 );
+            $head = (string) ( $bits[3] ?? '' );
+        }
+        return self::decode_body( $head );
     }
 
     /** Put a large snapshot's earlier state back together; null when a part is missing or changed. */
@@ -159,6 +335,7 @@ class Undo_Store {
             self::delete_parts( $token );
             return []; // No token: the caller's reply then offers no undo.
         }
+        self::enforce_limits( $token );
 
         return [
             'token'      => $token,
@@ -231,12 +408,8 @@ class Undo_Store {
         if ( ! $stored || ! is_string( $stored ) ) {
             return null;
         }
-        $raw = @gzuncompress( base64_decode( $stored ) );
-        if ( $raw === false ) {
-            return null;
-        }
-        $data = json_decode( $raw, true );
-        if ( ! is_array( $data ) ) {
+        $data = self::decode( $stored );
+        if ( null === $data ) {
             return null;
         }
         if ( isset( $data['expires_at'] ) && (int) $data['expires_at'] < time() ) {
@@ -267,6 +440,7 @@ class Undo_Store {
             return false;
         }
         self::delete_parts( $token );
+        delete_transient( self::TOTALS_TRANSIENT );
         return delete_option( self::OPTION_PREFIX . $token );
     }
 
@@ -313,7 +487,8 @@ class Undo_Store {
             return false;
         }
         unset( $updates['token'], $updates['user_id'], $updates['created_at'], $updates['expires_at'], $updates['undone_at'], $updates['undone_by'] );
-        $next = base64_encode( gzcompress( wp_json_encode( array_merge( $data, $updates ) ), 9 ) );
+        $merged = array_merge( $data, $updates );
+        $next   = self::wrap( $merged, base64_encode( gzcompress( (string) wp_json_encode( $merged ), 9 ) ) );
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- conditional update, cache cleared below
         $changed = $wpdb->query( $wpdb->prepare( "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value = %s", $next, $name, $stored ) );
         wp_cache_delete( $name, 'options' );
@@ -341,26 +516,21 @@ class Undo_Store {
     public static function all_changes( ?int $user_id = null, bool $include_expired = false, int $limit = self::CHANGES_LIMIT ): array {
         $limit = max( 1, min( self::CHANGES_LIMIT, $limit ) );
         $batch = min( self::CHANGES_BATCH, $limit );
-        global $wpdb;
-        $prefix = $wpdb->esc_like( self::OPTION_PREFIX ) . '%';
         $out    = [];
         $before = PHP_INT_MAX;
         while ( count( $out ) < $limit ) {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-            $rows = $wpdb->get_results(
-                $wpdb->prepare(
-                    "SELECT option_id, option_value FROM {$wpdb->options} WHERE option_name LIKE %s AND option_id < %d ORDER BY option_id DESC LIMIT %d",
-                    $prefix,
-                    $before,
-                    $batch
-                )
-            );
+            // Only heads are read: a list never needs a snapshot's earlier state.
+            if ( null !== $user_id ) {
+                $rows = self::head_rows( 'AND option_id < %d AND ( option_value LIKE %s OR option_value NOT LIKE %s ) ORDER BY option_id DESC LIMIT %d', [ $before, self::FORMAT . '|' . $user_id . '|%', self::FORMAT . '|%', $batch ] );
+            } else {
+                $rows = self::head_rows( 'AND option_id < %d ORDER BY option_id DESC LIMIT %d', [ $before, $batch ] );
+            }
             if ( empty( $rows ) ) {
                 break;
             }
             foreach ( $rows as $row ) {
                 $before = (int) $row->option_id;
-                $data   = self::visible( self::decode( isset( $row->option_value ) ? (string) $row->option_value : '' ), $user_id, $include_expired );
+                $data   = self::visible( self::decode_head( isset( $row->head ) ? (string) $row->head : '' ), $user_id, $include_expired );
                 if ( null !== $data ) {
                     $out[] = $data;
                     if ( count( $out ) >= $limit ) {
@@ -432,6 +602,14 @@ class Undo_Store {
     }
 
     private static function decode( string $stored ): ?array {
+        if ( 0 === strpos( $stored, self::FORMAT . '|' ) ) {
+            $bits   = explode( '|', $stored, 5 );
+            $stored = (string) ( $bits[4] ?? '' );
+        }
+        return self::decode_body( $stored );
+    }
+
+    private static function decode_body( string $stored ): ?array {
         if ( '' === $stored ) {
             return null;
         }
@@ -481,24 +659,12 @@ class Undo_Store {
      * @return array<int, array{token: string, op: string, summary: string, created_at: int, expires_at: int, expires_in_seconds: int}>
      */
     public static function list_active(): array {
-        global $wpdb;
-        $prefix = $wpdb->esc_like( self::OPTION_PREFIX ) . '%';
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $rows = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE %s",
-                $prefix
-            )
-        );
+        $rows = self::head_rows( '', [] );
         $out = [];
         $now = time();
         foreach ( (array) $rows as $row ) {
-            $stored = isset( $row->option_value ) ? (string) $row->option_value : '';
-            if ( '' === $stored ) continue;
-            $raw = @gzuncompress( base64_decode( $stored ) );
-            if ( false === $raw ) continue;
-            $data = json_decode( $raw, true );
-            if ( ! is_array( $data ) ) continue;
+            $data = self::decode_head( isset( $row->head ) ? (string) $row->head : '' );
+            if ( null === $data ) continue;
             $expires_at = isset( $data['expires_at'] ) ? (int) $data['expires_at'] : 0;
             if ( $expires_at <= $now || ! empty( $data['undone_at'] ) ) continue;
             $out[] = [
@@ -531,29 +697,13 @@ class Undo_Store {
      * @return array{count: int, oldest: int|null}
      */
     private static function collect_active_stats(): array {
-        global $wpdb;
-        $prefix = $wpdb->esc_like( self::OPTION_PREFIX ) . '%';
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $rows = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE %s",
-                $prefix
-            )
-        );
+        $rows   = self::head_rows( '', [] );
         $count  = 0;
         $oldest = null;
         $now    = time();
         foreach ( (array) $rows as $row ) {
-            $stored = isset( $row->option_value ) ? (string) $row->option_value : '';
-            if ( '' === $stored ) {
-                continue;
-            }
-            $raw = @gzuncompress( base64_decode( $stored ) );
-            if ( false === $raw ) {
-                continue;
-            }
-            $data = json_decode( $raw, true );
-            if ( ! is_array( $data ) ) {
+            $data = self::decode_head( isset( $row->head ) ? (string) $row->head : '' );
+            if ( null === $data ) {
                 continue;
             }
             $expires_at = isset( $data['expires_at'] ) ? (int) $data['expires_at'] : 0;

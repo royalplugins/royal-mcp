@@ -137,7 +137,7 @@ Your MCP Server URL is `https://yoursite.com/wp-json/royal-mcp/v1/mcp`.
 
 ### Claude (claude.ai, Claude Desktop) - sign in with OAuth
 
-1. **Settings → Connectors → Add custom connector**.
+1. **Plugins → Add → Add custom connector** (earlier versions of Claude: Settings → Connectors).
 2. Paste your MCP Server URL.
 3. Approve the sign-in screen on your site. No API key needed.
 

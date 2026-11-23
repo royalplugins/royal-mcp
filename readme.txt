@@ -24,6 +24,7 @@ Connect Claude, ChatGPT or any AI app to WordPress. Drafts only mode, access lev
 * **Set access for each app** - apps sign in with OAuth 2.1. Give each one Full, Read-only or Drafts only access, and make new apps wait for your approval before they can connect.
 * **See what changed** - Recent Changes lists each AI edit with the value before and after, and the Activity Log records every tool call.
 * **Undo it** - tracked changes to content, settings, menus, WooCommerce, Elementor and Divi can be reversed for 72 hours, and undo will not write over edits made after the AI's change unless you tell it to.
+* **Risky tools start off** - affiliate payouts, mail sends and bulk store changes stay off on new sites until you switch them on under Royal MCP → Safety → What AI clients may do.
 * **No middleman** - no relay server, no account, no telemetry and no license check. Your AI app talks to your site directly.
 
 = New in 2.0 =
@@ -32,8 +33,8 @@ Connect Claude, ChatGPT or any AI app to WordPress. Drafts only mode, access lev
 * **Context** - write down what your site is for, its tone and what to leave alone. Every connected AI client gets it when it connects.
 * **Skills** - switch on a playbook for Elementor, Divi, WooCommerce or SiteVault and connected AI clients read it before that kind of work. Nothing to download.
 * **A shorter tool list** - tools for plugins that are not active on your site are left out, so the AI sees only what it can use.
-* **100 more tools** - plugin and theme management, launch and maintenance reports, page checks, theme colours and fonts, and new integrations for Akismet, Jetpack, WP Mail SMTP, WP-Optimize, Really Simple Security and image optimisers.
-* **Safer setting changes** - an AI client can change one part of a plugin setting without sending the whole thing back, a change that would overwrite a value Royal MCP keeps hidden from AI clients is refused, and you choose which settings an AI may read in full under Return as stored.
+* **100 more tools** - plugin and theme management, launch and maintenance reports, page checks, theme colours and fonts, and new plugin integrations.
+* **Safer setting changes** - an AI client can change one part of a plugin setting, and a change that would overwrite a hidden value is refused.
 * **Clearer tools** - every tool has a plain title, long lists come in pages, and dates include their time zone.
 
 = What you can ask for =
@@ -46,13 +47,13 @@ Connect Claude, ChatGPT or any AI app to WordPress. Drafts only mode, access lev
 * "Why did the site throw a PHP error this morning?"
 * "Show me what you changed today, then undo the last one."
 
-Royal MCP has 400+ MCP tools: 147 for WordPress itself and 258 across 46 plugins, including WooCommerce, Elementor, Divi, Advanced Custom Fields and Yoast SEO. The full list is further down this page.
+Royal MCP has 400+ MCP tools: 147 for WordPress itself and 274 across 51 plugins, including WooCommerce, Elementor, Divi, Advanced Custom Fields and Yoast SEO. The full list is further down this page.
 
 = Connect Claude to WordPress =
 
-1. Install Royal MCP and turn it on under Royal MCP → Connections.
+1. Install Royal MCP and turn it on under Royal MCP → Connections → Connection settings.
 2. Copy the MCP Server URL from that screen.
-3. In Claude, add a custom connector, paste the URL and click Connect.
+3. In Claude, open Plugins → Add → Add custom connector, paste the URL and click Connect.
 4. Sign in to your site when asked and approve the connection.
 
 Works with Claude on the web, Claude Desktop and Claude Code. Setup takes a few minutes.
@@ -67,20 +68,22 @@ https://youtu.be/HsEIoDz9WmY
 
 = Connect ChatGPT to WordPress =
 
-1. Install Royal MCP and turn it on under Royal MCP → Connections.
+1. Install Royal MCP and turn it on under Royal MCP → Connections → Connection settings.
 2. Copy the MCP Server URL from that screen.
 3. In ChatGPT, add Royal MCP as a custom app (Developer Mode) and paste the URL.
 4. Sign in to your site when asked and approve the connection.
 
 ChatGPT can then read your posts, write drafts, update product prices, moderate comments and check SEO across your site, in an ordinary conversation.
 
+https://youtu.be/iTZU8h3Tx-s
+
 **Step-by-step guide:** [Connect ChatGPT to WordPress](https://royalplugins.com/support/royal-mcp/connecting-to-chatgpt/)
 
 = Plugins with dedicated MCP tools =
 
-46 plugins have their own tools. Each one is listed below with what your AI can do in it.
+51 plugins have their own tools. Each one is listed below with what your AI can do in it.
 
-**Not seeing yours?** MCP still works. WordPress core operations (posts, pages, media, users, taxonomies, custom fields, menus, options) cover most day-to-day AI workflows for any plugin — read/write ACF via `wp_get_post_meta` even without ACF-specific tools, edit posts on any custom post type, moderate any plugin's comments. Shared SEO meta tools automatically work with Rank Math, AIOSEO, SEOPress, and SEObolt. A dedicated integration layers specialized tools on top when that plugin exposes its own data model, request features/plugins support [here on the wp.org support forum](https://wordpress.org/support/plugin/royal-mcp/).
+**Not seeing yours?** The core tools still cover most work: posts on any custom post type, custom fields (ACF included, even without its own tools), menus, options and comments. The shared SEO tools also work with Rank Math, AIOSEO, SEOPress and SEObolt. Ask for a new integration on the [support forum](https://wordpress.org/support/plugin/royal-mcp/).
 
 = Use it from any AI app =
 
@@ -88,29 +91,37 @@ ChatGPT can then read your posts, write drafts, update product prices, moderate 
 Connect once, then work on your site from whichever AI app you prefer, and switch apps without redoing the connection:
 
 * **Chat apps** - Claude (web, desktop and Claude Code) and ChatGPT, signing in with OAuth.
-* **Code editors and terminals** - Cursor, VS Code, Codex, Gemini CLI and other MCP-capable editors, with OAuth or an API key.
+* **Code editors and terminals** - Cursor, VS Code, Codex, Gemini CLI and other MCP-capable editors, with OAuth, an API key or a local WP-CLI connection.
 * **Local models** - LM Studio and other local MCP clients, so prompts and site data can stay on your own machine.
 * **Scripts and agent frameworks** - any MCP-compatible framework, or plain HTTP with `Authorization: Bearer <key>`.
 
 = Built to work alongside other MCP tools =
 
-Royal MCP is designed to run next to the MCP tools other plugins ship, so your AI can reach for the best tool for each part of a job. When Elementor's own MCP is switched on, Royal MCP detects it and tells your AI that Elementor's builder is there for designing new layouts, while Royal MCP's Elementor tools keep handling edits to the pages you already have: text and image swaps, widgets, cloning and templates. WooCommerce's own MCP abilities keep working too, and Royal MCP adds the rest of the store: coupons, variations, attributes, customers and store stats. Royal MCP answers on its own endpoint and never switches off another plugin's tools, so together they cover more of your site than any one of them alone.
+Royal MCP runs next to the MCP tools other plugins ship, and it checks for conflicts so you do not have to.
+
+* **Elementor MCP** - when Elementor's own MCP is on, Royal MCP tells your AI to use Elementor's builder for new layouts and Royal MCP's Elementor tools for edits to the pages you already have.
+* **WooCommerce and the WordPress MCP Adapter** - their abilities keep working, and Royal MCP adds coupons, variations, attributes, customers and store stats.
+* **Conflict check** - the Dashboard warns you when another MCP plugin is active (AI Engine, Easy MCP AI, miniOrange Secure MCP Server and others), because an AI app may connect to it instead.
+* **Sign-in check** - Connection Doctor follows the sign-in path an AI app takes, names any plugin that answers in place of Royal MCP and tells you how to fix it.
+* **Coexistence report** - ask your AI for the coexistence report to see what else on the site speaks MCP and which plugin answers the addresses AI apps and crawlers read, such as llms.txt and robots.txt.
+
+Royal MCP answers on its own endpoint and never switches off another plugin's tools.
 
 = See what AI agents do to your site =
 
 The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) companion shows every AI agent hitting your site at the HTTP layer (training crawlers, retrieval bots, AI search engines), not just the ones connected through Royal MCP. Install both for a unified view across MCP tool calls and HTTP-layer bot hits.
 
-= 147 Core Tools + 258 Integration Tools =
+= 147 Core Tools + 274 Integration Tools =
 
 **WordPress Core (147 tools):**
 
 * Posts - create, read, update, delete, search, count, clone as a draft, sort by publish or last-modified date and find posts edited since a given date (any registered public post type, featured images supported)
 * Pages - full CRUD with parent page support
-* Blocks - read a post's block tree; insert, replace, move and delete blocks by path; replace text inside blocks; change attributes of server-rendered blocks; check markup before writing. Works with core blocks and plugin blocks such as GenerateBlocks, Stackable, Spectra and GreenShift, keeps them valid in the editor, and every write has a revision and an undo token
+* Blocks - read a post's block tree; insert, replace, move and delete blocks; replace text and change attributes; check markup before writing. Works with core and plugin blocks, and every write has a revision and an undo token
 * Patterns and Site Editor - list, read, create and update synced patterns; read global styles and block templates
 * Post Types - discover all registered public post types on the site
 * Post Revisions - list revision history and roll a post back to any prior version
-* Media - browse; upload images, PDFs and any other file type the site allows from a URL, base64 or a file handed over by ChatGPT; convert, resize and compress images on upload; find files already in the library by source URL or SHA-256 and reuse them instead of uploading twice; update alt text/caption/title/description, set as featured image, delete
+* Media - browse; upload any file type the site allows from a URL, base64 or a file handed over by ChatGPT; convert, resize and compress images; reuse files already in the library instead of uploading twice; edit alt text, caption, title and description; set a featured image; delete
 * Comments - create, read, delete; full moderation suite (list pending, approve, mark spam, trash)
 * Users - display names and roles (emails and usernames are not exposed)
 * Categories, Tags & Custom Taxonomies - full CRUD, read a single term, assign, count, discover registered taxonomies
@@ -137,53 +148,47 @@ The free [Royal AI Firewall](https://wordpress.org/plugins/royal-ai-firewall/) c
 
 = Third-Party Plugin Integrations (auto-detected) =
 
-If the plugin is active on your WordPress site, its tools register automatically, with nothing more to set up.
+When one of these plugins is active, its tools register automatically. Every tool is listed on the [Royal MCP page](https://royalplugins.com/royal-mcp/#integrations).
 
-* **WooCommerce (29 tools)** — full store CRUD: products (simple + variable), variations, global attributes (`pa_*`), coupons with bulk-trash purge, orders + notes, customers, and store statistics
-* **Elementor (15 tools, free + Pro)** — clone a page with fresh element IDs, bulk text/image replacement across 12+ widget types, add widgets, compact page outlines, widget-level settings reads, widget schema and dynamic-tag discovery, template library import/insert, `post_content` restoration on damaged pages (72-hour undo per write)
-* **Divi (9 tools, Divi 4 + Divi 5)** — format detection, page outlines, layout validation, library reads, dry-run find-and-replace with active-editor-session detection, page cloning (D5 `clientIds` regenerated), image swaps, library-to-page apply in merge or replace mode (72-hour undo per write)
-* **Advanced Custom Fields (17 tools, free + Pro)** — create, clone, update, delete, import and export field groups and their fields (with undo); type-aware field reads (each field's Return Format respected: hydrated post objects, parsed repeater rows, image arrays), bulk-read all fields on a post, type-aware writes, field-group enumeration
-* **Yoast SEO (5 tools)** — read/write Yoast meta (raw + resolved), capture the JSON-LD schema graph, list indexed internal links, list Yoast Premium redirects
-* **UpdraftPlus (4 tools)** — list backups, read status, trigger async backups with per-entity filtering (DB, plugins, themes, uploads), read the backup schedule
-* **WPForms (4 tools, free + Pro)** — list forms, read a form's field schema; submission access (list + read) requires WPForms Pro
-* **Solid Security (4 tools)** — read the security dashboard, list currently locked-out IPs, read the security event log, add an IP to the ban list (also detects iThemes Security and Kadence Security Basic)
-* **Wordfence (8 tools)** — read the security status, firewall mode and scan findings, list blocked IPs, block or unblock an IP, read failed logins and blocked requests, start a scan
-* **Contact Form 7 (3 tools)** — list forms, read a single form's parsed field schema; submission access requires the Flamingo companion plugin, with personal details hidden by default
-* **MonsterInsights (4 tools)** — read the analytics overview, top pages, traffic sources, and top Search Console queries
-* **W3 Total Cache (3 tools)** — read cache config across every module, purge (all / by URL / by post), read cache usage stats
-* **LiteSpeed Cache (4 tools)** — read cache status and the settings that shape caching, purge everything, purge specific pages by URL or post
-* **Duplicator (3 tools)** — list migration packages, read per-package status, get the installer URL for any completed package
-* **BuddyPress (4 tools)** — list community members, read a single member profile, list groups, read the activity feed
-* **Redirection (5 tools)** — list/create/update 301/302/307 redirects (with regex + group + status), list redirect groups, export all redirects
-* **TablePress (6 tools)** — list and read tables, create a table from rows, change cells (dry run + undo), copy a table, export as CSV, JSON or HTML
-* **Code Snippets (5 tools)** — list and read snippets (credential values hidden in returned code), see recently deactivated snippets, deactivate a snippet that breaks the site, change a snippet's name, description or tags; never creates, edits, activates or runs code
-* **Complianz (7 tools)** — consent setup status, cookies, services, cookie banner texts and legal documents; change banner texts and cookie descriptions, with undo
-* **WPCode (3 tools, Lite + Pro)** — list snippets, read one snippet's settings and code (credential values hidden), read its status and last recorded error; read only
-* **MailPoet (12 tools)** — lists, subscribers, newsletter drafts, test sends and stats; schedule a send confirmed with the exact recipient count
-* **Relevanssi (7 tools)** — ranked search, index status, search totals, reindex a post, synonyms and stopwords with undo
-* **Ninja Forms (5 tools)** and **Fluent Forms (5 tools)** — forms and entries, personal details hidden by default
-* **Rank Math (2 tools)** — read a post's SEO score and the 404 log
-* **All-in-One WP Migration, WPvivid, BackWPup and Jetpack (1 tool each)** — read when the last backup ran and whether it finished
-* **Akismet (3 tools)** — key and spam status, run Akismet's spam check on pending comments, spam stats
-* **Jetpack (3 tools)** — site stats, list modules, switch a module on or off with undo (protection and sign-in modules need a confirm)
-* **WP Mail SMTP (3 tools)** — mailer status and last error, send a test email (5 an hour), email log where the plugin keeps one
-* **WP-Optimize (2 tools)** — page cache status, purge the whole cache or listed pages
-* **Really Simple Security (2 tools)** — SSL, hardening and certificate status, stored vulnerability results
-* **Smush, EWWW Image Optimizer, Imagify and ShortPixel (1 tool)** — optimised and unoptimised images, space saved, auto-optimise and bulk-run state
+* **WooCommerce** - products, variations, attributes, coupons, orders, customers and store stats
+* **Elementor** - page outlines, text and image swaps, widgets, cloning and templates, with undo
+* **Divi** - outlines, layout checks, find and replace, cloning, image swaps and library layouts, with undo
+* **Spectra** - read the global styles
+* **Advanced Custom Fields** - field groups and fields, reads and writes that respect each field type, with undo
+* **JetEngine** - post types, meta fields, content types and relations; change field values with undo
+* **Yoast SEO** and **Rank Math** - SEO fields, schema, internal links, redirects, SEO scores and the 404 log
+* **WPForms**, **Contact Form 7**, **Ninja Forms** and **Fluent Forms** - forms and entries, personal details hidden by default
+* **MailPoet** - lists, subscribers, drafts, stats and scheduled sends confirmed with the exact recipient count
+* **Mailchimp for WP** - audiences, forms and which audiences a form adds people to, with undo
+* **WP Mail SMTP** and **FluentSMTP** - mailer status, last error and a test email
+* **Wordfence** and **Solid Security** - security status, scan results, blocked IPs, block an IP
+* **Really Simple Security** - SSL, hardening and vulnerability status
+* **Akismet** - spam status, check pending comments, spam stats
+* **Jetpack** - site stats and modules
+* **UpdraftPlus** - list, check and start backups, read the schedule
+* **Duplicator** - migration packages and installer links
+* **All-in-One WP Migration**, **WPvivid**, **BackWPup** and **Jetpack VaultPress Backup** - when the last backup ran and whether it finished
+* **W3 Total Cache**, **LiteSpeed Cache** and **WP-Optimize** - cache status and purges
+* **Smush**, **EWWW Image Optimizer**, **Imagify** and **ShortPixel** - image optimisation status
+* **MonsterInsights** - traffic overview, top pages, sources and search queries
+* **Redirection** - list, create, update and export redirects
+* **Relevanssi** - search, index status, reindexing, synonyms and stopwords
+* **TablePress** - read, create, edit, copy and export tables
+* **Code Snippets** and **WPCode** - read snippets with credentials hidden; switch off a Code Snippets snippet that breaks the site
+* **Complianz** - consent status, cookies, banner texts and legal documents, with undo
+* **BuddyPress** - members, groups and the activity feed
 
 = Royal Plugins Integrations (auto-detected) =
 
-Every Royal Plugin auto-exposes MCP tools alongside Royal MCP:
-
-* **Royal AI Firewall (8 tools)** — review AI bot traffic, dashboard stats, and set allow, block, log-only, rate-limit or paywall policies per bot, one bot or many at once with a preview and one undo
-* **GuardPress (12 tools)** — review your security score and dashboard summary, run vulnerability scans, read hardening, malware and file-integrity results, inspect failed logins and blocked IPs, block an IP
-* **SiteVault (11 tools)** — list backups, trigger new ones, check progress, review schedules, read a backup health summary, check that a backup file opens
-* **ForgeCache (4 tools)** — purge and inspect your page cache, and read real-user Core Web Vitals
-* **Royal Ledger (4 tools)** — review recurring software costs and masked license entries
-* **Royal Links (4 tools)** — manage branded short links and click stats, list the most-clicked links
-* **Royal Affiliate Pro (17 tools)** — read affiliates, campaigns, referrals, payouts, creatives, landing pages and period summaries
-* **FormForge (6 tools)** — list forms, read entries, entry counts and analytics, duplicate a form, create one from a template
-* **SEObolt (1 tool)** — read search performance
+* **GuardPress**
+* **SiteVault**
+* **Royal AI Firewall**
+* **ForgeCache**
+* **Royal Affiliate Pro**
+* **FormForge**
+* **Royal Links**
+* **Royal Ledger**
+* **SEObolt**
 
 = MCP Spec Compliance =
 
@@ -214,12 +219,14 @@ Your site contacts another server only when a tool call asks for it:
 
 1. In WordPress, go to Plugins → Add New, search for Royal MCP and click Install Now (or upload the `royal-mcp` folder to `/wp-content/plugins/`)
 2. Activate the plugin through the 'Plugins' menu in WordPress
-3. Go to Royal MCP → Connections and turn on Enable Royal MCP Integration
+3. Go to Royal MCP → Connections → Connection settings and turn on Enable Royal MCP Integration
 4. Copy the MCP Server URL from the same page
 5. Add that URL in your AI client. Claude and ChatGPT sign in with OAuth, so there is no key to copy; Claude Code and Codex have copy-ready commands on the settings page; clients without OAuth use the WordPress API Key shown there
 6. New to MCP? Follow the step-by-step connection walkthrough (with videos) at [royalplugins.com/support/royal-mcp/connecting-to-claude/](https://royalplugins.com/support/royal-mcp/connecting-to-claude/)
 
 Full setup guides for each AI client are available at [royalplugins.com/support/royal-mcp/](https://royalplugins.com/support/royal-mcp/).
+
+Other ways to connect: on a site with WP-CLI, `wp royal-mcp setup` checks the connection and prints ready-to-paste settings for Claude Desktop, Claude Code and Cursor, and `wp royal-mcp serve --user=<login>` runs Royal MCP as a local STDIO server for clients on the same machine.
 
 == Frequently Asked Questions ==
 
@@ -233,7 +240,7 @@ Security. Many MCP servers have no authentication at all. Royal MCP requires sig
 
 = Does Royal MCP duplicate what WordPress core now does? =
 
-No. WordPress 6.9 added the Abilities API (a primitive for registering AI-callable functions), and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations the bare primitive does not include: enforced API key auth, OAuth 2.1 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 147 ready-to-use WordPress core tools, and 258 integration tools for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Ninja Forms, Fluent Forms, Redirection, Solid Security, Wordfence, Contact Form 7, MailPoet, Relevanssi, MonsterInsights, W3 Total Cache, LiteSpeed Cache, Duplicator, BuddyPress, TablePress, Code Snippets, WPCode, and Complianz.
+No. WordPress 6.9 added the Abilities API (a primitive for registering AI-callable functions), and the `wordpress/mcp-adapter` package bridges abilities to the MCP protocol. Royal MCP is a full MCP server with the security layer, connector flows, and plugin integrations the bare primitive does not include: enforced API key auth, OAuth 2.1 for Claude Desktop, per-IP rate limiting, audit logging, sensitive-data redaction, 147 ready-to-use WordPress core tools, and 274 integration tools for WooCommerce, GuardPress, Royal AI Firewall, SiteVault, ForgeCache, Royal Ledger, Royal Links, Elementor, Divi, ACF, Yoast SEO, UpdraftPlus, WPForms, Ninja Forms, Fluent Forms, Redirection, Solid Security, Wordfence, Contact Form 7, MailPoet, Mailchimp for WP, FluentSMTP, JetEngine, Relevanssi, MonsterInsights, W3 Total Cache, LiteSpeed Cache, Duplicator, BuddyPress, TablePress, Code Snippets, WPCode, and Complianz.
 
 = Does Royal MCP work with WooCommerce? =
 
@@ -254,15 +261,15 @@ Plugin authors can opt in their settings with one line: `add_filter('royal_mcp_w
 
 = How do I connect Claude Desktop to WordPress? =
 
-Install Royal MCP, go to Royal MCP → Connections, and copy your API key and MCP server URL. In Claude Desktop, add a new MCP server configuration with the URL and send your API key as `Authorization: Bearer <key>` (the settings page shows the exact config). Full step-by-step guide at [royalplugins.com/support/royal-mcp/](https://royalplugins.com/support/royal-mcp/). If the connection fails, see the next FAQ.
+Install Royal MCP, go to Royal MCP → Connections → Connection settings, and copy your API key and MCP server URL. In Claude Desktop, add a new MCP server configuration with the URL and send your API key as `Authorization: Bearer <key>` (the settings page shows the exact config). Full step-by-step guide at [royalplugins.com/support/royal-mcp/](https://royalplugins.com/support/royal-mcp/). If the connection fails, see the next FAQ.
 
 = The connector won't connect — where do I start? =
 
-About 90% of "can't connect" / "OAuth failed" / "tools missing" issues resolve in a basic 4-step pass before any host-specific fix is needed. In order: (1) update Royal MCP to the latest version (each release improves sign-in reliability), (2) run a conflict test — deactivate all other plugins, switch to a default theme like Twenty Twenty-Five, and purge every cache layer (any cache plugin, your host's server-level cache, Cloudflare/CDN, and browser cache), (3) wipe stale OAuth state — use the Reset OAuth State button in Royal MCP → Connections, or run the four `DELETE` SQL queries documented in our support article, (4) check Royal MCP → Activity Logs for the most recent `oauth:` row, which records exactly which validation rule fired. Full walk-through with copy-pasteable commands at [royalplugins.com/support/royal-mcp/troubleshooting-start-here.html](https://royalplugins.com/support/royal-mcp/troubleshooting-start-here.html). Only proceed to host-specific fixes (Cloudflare AI Bots toggle, SiteGround `/.well-known/` static files, edge-cache exclusions) after the four basics are ruled out — most "advanced infrastructure" tickets we receive actually resolve in those four steps.
+About 90% of "can't connect" / "OAuth failed" / "tools missing" issues resolve in a basic 4-step pass before any host-specific fix is needed. In order: (1) update Royal MCP to the latest version (each release improves sign-in reliability), (2) run a conflict test — deactivate all other plugins, switch to a default theme like Twenty Twenty-Five, and purge every cache layer (any cache plugin, your host's server-level cache, Cloudflare/CDN, and browser cache), (3) wipe stale OAuth state — use the Reset OAuth State button in Royal MCP → Connections → Connection settings, or run the four `DELETE` SQL queries documented in our support article, (4) check Royal MCP → Activity → Activity Log for the most recent `oauth:` row, which records exactly which validation rule fired. Full walk-through with copy-pasteable commands at [royalplugins.com/support/royal-mcp/troubleshooting-start-here.html](https://royalplugins.com/support/royal-mcp/troubleshooting-start-here.html). Only proceed to host-specific fixes (Cloudflare AI Bots toggle, SiteGround `/.well-known/` static files, edge-cache exclusions) after the four basics are ruled out — most "advanced infrastructure" tickets we receive actually resolve in those four steps.
 
 = I restored my WordPress database from backup and Claude can't reconnect. How do I fix this? =
 
-When you restore from backup, the OAuth client credentials Claude was holding no longer match anything on the WordPress side, so Claude's connector ends up with a stale token that no Royal MCP installation will accept. The fix is one click: go to **Royal MCP → Connections** and click the **Reset OAuth State** button. This wipes all stale OAuth clients, issued access/refresh tokens, and pending authorization codes. Then in Claude, delete the existing connector entirely, wait 30 seconds, and re-add it from scratch — the full OAuth flow runs fresh against the cleaned-up state and the connection works. The plugin's settings, API key, and Activity Log are not affected by Reset OAuth State — only the OAuth handshake state.
+When you restore from backup, the OAuth client credentials Claude was holding no longer match anything on the WordPress side, so Claude's connector ends up with a stale token that no Royal MCP installation will accept. The fix is one click: go to **Royal MCP → Connections → Connection settings** and click the **Reset OAuth State** button. This wipes all stale OAuth clients, issued access/refresh tokens, and pending authorization codes. Then in Claude, delete the existing connector entirely, wait 30 seconds, and re-add it from scratch — the full OAuth flow runs fresh against the cleaned-up state and the connection works. The plugin's settings, API key, and Activity Log are not affected by Reset OAuth State — only the OAuth handshake state.
 
 = Claude says "Couldn't register with sign-in service" or "Session not found" — what's wrong? =
 
@@ -274,7 +281,7 @@ AI clients sign in at Royal MCP's own address: the token, registration and revoc
 
 = Is my content safe? =
 
-Royal MCP is designed with defense in depth. Sign-in (OAuth, an API key or an Application Password) is required for all MCP sessions, and Application Password sign-ins can be blocked or deleted from Connected Clients. Rate limiting prevents abuse (60 requests per minute per IP without credentials, 300 with; 300 per minute per user through the Abilities API and other MCP servers). Activity logging records every tool call. Sensitive data is filtered — user emails, usernames, admin email, PHP version, and credentials stored by any plugin (API keys, licence keys, tokens, passwords, webhook addresses) are hidden in every tool response, including values stored as JSON or encoded text. Comment creation respects your WordPress moderation settings. Post meta values are sanitized before storage. Option writes are disabled by default and gated by three independent checks (admin toggle, allowlist, hard denylist) when enabled. The plugin itself starts disabled by default — nothing is accessible until you explicitly enable it.
+Royal MCP is designed with defense in depth. Sign-in (OAuth, an API key or an Application Password) is required for all MCP sessions, and Application Password sign-ins can be blocked or deleted under Royal MCP → Connections → Connected Clients. Rate limiting prevents abuse (60 requests per minute per IP without credentials, 300 with; 300 per minute per user through the Abilities API and other MCP servers). Activity logging records every tool call. Sensitive data is filtered — user emails, usernames, admin email, PHP version, and credentials stored by any plugin (API keys, licence keys, tokens, passwords, webhook addresses) are hidden in every tool response, including values stored as JSON or encoded text. Comment creation respects your WordPress moderation settings. Post meta values are sanitized before storage. Option writes are disabled by default and gated by three independent checks (admin toggle, allowlist, hard denylist) when enabled. The plugin itself starts disabled by default — nothing is accessible until you explicitly enable it.
 
 = Can I undo what the AI does? =
 
@@ -304,6 +311,14 @@ Deleting Royal MCP removes its scheduled events, temporary data and undo snapsho
 
 Yes. Any MCP-compliant client can connect to Royal MCP. Configure your IDE or client with the MCP server URL (`https://yoursite.com/wp-json/royal-mcp/v1/mcp`) and the API key, sent as `Authorization: Bearer <key>`. Claude Desktop additionally supports the native "Add Connector" OAuth 2.1 flow, which Royal MCP handles via Dynamic Client Registration (RFC 7591) — no manual API key management required on that path. The same OAuth flow works in any client that follows the MCP 2025-11-25 spec.
 
+= Can I connect a local site without OAuth (STDIO)? =
+
+Yes. With WP-CLI, `wp royal-mcp serve --user=<login>` runs Royal MCP as a local STDIO MCP server: the AI client starts the command itself, nothing listens on the network, and the client acts as the WordPress user you name. Every safety setting still applies, and calls are recorded in the Activity Log as a local WP-CLI connection. `wp royal-mcp setup` prints the exact client settings for your site.
+
+= Does Royal MCP come with ready-made tasks? =
+
+Yes. Royal MCP serves four task prompts that many clients show as slash commands: weekly site check, launch checklist, security review and content audit. Each tells the AI which tools to call and what to report, and asks it to only read.
+
 = Does Royal MCP work with custom fields, ACF, MetaBox, JetEngine, Pods, or CPT UI? =
 
 Yes. Royal MCP exposes WordPress's standard `wp_get_post_meta`, `wp_update_post_meta`, and `wp_delete_post_meta` tools, which read and write any custom field — including Advanced Custom Fields (ACF), MetaBox, JetEngine, Pods, CPT UI, and Custom Field Suite. AI agents can populate ACF fields, set repeater rows, update flexible content blocks, and read computed fields just like a human editor working in the WordPress admin.
@@ -331,18 +346,51 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 
 == Screenshots ==
 
-1. Main settings page with API key and platform overview
-2. Settings: Claude Code and Codex connect commands, client setup guides, API endpoints and session length
-3. Activity log showing authenticated MCP requests
-4. Claude Desktop MCP connector setup
-5. Adding a custom Royal MCP connector in Claude Desktop
-6. Claude authorization screen
-7. Royal MCP tool list in Claude after connection
-8. Dry-run preview of a WordPress option write before commit
-9. Adding Royal MCP in ChatGPT's connector settings
-10. Royal MCP tool list in ChatGPT after connection
+1. Dashboard: your MCP address with connect steps, connection status, Connection Doctor and agent readiness
+2. Site context: tell every AI client what your site is for and what to leave alone
+3. Safety: Read-only and Drafts only modes, who can connect AI clients and extra write permissions
+4. Skills: playbooks for Elementor, WooCommerce, SiteVault and Divi that AI clients read before that work
+5. Connection settings: MCP server URL, client approval and API key
+6. Recent Changes: each AI edit grouped by connection, with undo
+7. Activity Log: every tool call, with an export before clearing and a 24-hour restore
+8. Help: where every screen and setting lives
+9. Claude Desktop MCP connector setup
+10. Claude: Plugins, then Add, then Add custom connector
+11. Claude: paste the MCP server URL and keep the detected sign-in settings
+12. Dry-run preview of a WordPress option write before it is saved
+13. Adding a custom Royal MCP connector in Claude Desktop
+14. Claude authorization screen
+15. Royal MCP tool list in Claude after connection
+16. Adding Royal MCP in ChatGPT's connector settings
+17. ChatGPT asking to connect to your WordPress site, with what it will be allowed to do
+18. Royal MCP tool list in ChatGPT after connection
 
 == Changelog ==
+
+= 2.0.1 =
+* New: JetEngine tools read post types, meta fields, content types and relations, and change field values with undo.
+* New: FluentSMTP tools show mailer status and send a test email.
+* New: Mailchimp for WP tools list audiences and forms, and change which audiences a form uses, with undo.
+* New: Connect an AI app to a local site through WP-CLI, with a setup command that prints ready-to-paste client settings.
+* New: Ready-made task prompts for a weekly site check, a launch checklist, a security review and a content audit.
+* New: Affiliate payout, mail send and bulk store tools each have an on/off switch under Safety, off by default on new sites.
+* New: Export the Activity Log before clearing it, and undo a Clear for 24 hours.
+* New: A short tool list option for AI apps that work best with fewer tools.
+* New: Connection Doctor checks that your host passes sign-in security details through to the site.
+* New: The Help page shows where every screen and setting lives.
+* Enhancement: Large discounts, big price cuts and marking unpaid orders as paid now need an explicit confirmation.
+* Enhancement: Messages that point to a setting now give its full menu path.
+* Enhancement: List results now include a total and whether more results follow.
+* Enhancement: The Activity Log now keeps up to 100,000 entries.
+* Fix: Divi text replace now reaches text inside Divi 5 nested modules.
+* Fix: Media added from a link keeps its full source address.
+* Fix: IndexNow submissions now work on sites with language folders.
+* Fix: The Connection Doctor link for a switched-off connection now opens the right screen.
+* Fix: Undoing a launch keeps an uploaded image that is used elsewhere on the site.
+* Fix: IndexNow submissions from AI publishing tools now need an administrator.
+* Enhancement: Help guides point to Claude's new Plugins page for connectors and skills.
+* Security: Tighter rate limits on sign-in endpoints.
+* Security: Stricter safeguards across sign-in, undo, preview links and integration tools.
 
 = 2.0.0 =
 * New: A dashboard, a Context page, built-in skills, 100 more tools including plugin and theme management, and safer setting changes.
@@ -910,6 +958,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release.
 
 == Upgrade Notice ==
+
+= 2.0.1 =
+JetEngine, FluentSMTP and Mailchimp for WP tools, local WP-CLI connections, safety switches for risky tools and security improvements; recommended for all sites.
 
 = 2.0.0 =
 Major release: new Dashboard, Context and Skills screens and 100 more tools. Settings are now on two screens, Connections and Safety.

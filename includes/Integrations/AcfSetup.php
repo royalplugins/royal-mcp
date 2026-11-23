@@ -12,7 +12,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  * Advanced Custom Fields, setup tools: create, copy, change, delete, import
  * and export field groups; add, change, delete and reorder fields; read a
  * group's full definition and the field types on the site; and register a
- * post type through ACF Pro's own post type screen.
+ * post type through ACF's own post type screen.
  *
  * Everything is stored the way ACF stores it (its own posts and options).
  * Nothing here writes a file. Administrators only.
@@ -208,6 +208,13 @@ class AcfSetup {
 		return self::plugin_active()
 			&& function_exists( 'acf_is_pro' )
 			&& acf_is_pro();
+	}
+
+	/** ACF 6.1 or later, free or Pro: both have the post types screen. */
+	public static function plugin_61_plus() {
+		return self::plugin_active()
+			&& version_compare( ACF_VERSION, '6.1', '>=' )
+			&& function_exists( 'acf_update_internal_post_type' );
 	}
 
 	public static function plugin_pro_61_plus() {
@@ -1769,10 +1776,10 @@ class AcfSetup {
 		if ( ! self::plugin_active() ) {
 			return self::error( 'acf_inactive', 'Advanced Custom Fields 6.0+ is not installed or active on this site.' );
 		}
-		if ( ! self::plugin_pro_61_plus() ) {
+		if ( ! self::plugin_61_plus() ) {
 			return self::error(
-				'requires_acf_pro_6_1_plus',
-				'ACF Pro 6.1+ required for CPT UI.',
+				'requires_acf_6_1_plus',
+				'Post types need ACF 6.1 or later (the free plugin or ACF Pro); nothing was registered.',
 				[ 'current_version' => defined( 'ACF_VERSION' ) ? (string) ACF_VERSION : '' ]
 			);
 		}
@@ -1814,6 +1821,26 @@ class AcfSetup {
 			);
 		}
 
+		// The same collisions ACF's own screen refuses: a post type that already exists, or one ACF already stores.
+		if ( post_type_exists( $post_type_key ) ) {
+			return self::error(
+				'post_type_exists',
+				sprintf( 'A post type "%s" is already registered on this site (by WordPress, a plugin, the theme or ACF). Nothing was registered.', $post_type_key ),
+				[ 'post_type_key' => $post_type_key ]
+			);
+		}
+		if ( function_exists( 'acf_get_internal_post_type_posts' ) ) {
+			foreach ( (array) acf_get_internal_post_type_posts( 'acf-post-type' ) as $stored ) {
+				if ( is_array( $stored ) && isset( $stored['post_type'] ) && $post_type_key === (string) $stored['post_type'] ) {
+					return self::error(
+						'post_type_exists',
+						sprintf( 'ACF already has a post type "%s" (it may be inactive). Edit it in ACF instead. Nothing was registered.', $post_type_key ),
+						[ 'post_type_key' => $post_type_key, 'acf_post_id' => (int) ( $stored['ID'] ?? 0 ) ]
+					);
+				}
+			}
+		}
+
 		$supports_in = isset( $args['supports'] ) && is_array( $args['supports'] )
 			? array_values( array_map( 'strval', $args['supports'] ) )
 			: [ 'title', 'editor', 'thumbnail' ];
@@ -1835,7 +1862,7 @@ class AcfSetup {
 		if ( ! function_exists( 'acf_update_internal_post_type' ) ) {
 			return self::error(
 				'acf_pro_api_missing',
-				'acf_update_internal_post_type function is not available — ACF Pro is loaded partially.'
+				'acf_update_internal_post_type function is not available — ACF is loaded partially.'
 			);
 		}
 
@@ -1844,6 +1871,16 @@ class AcfSetup {
 		$slug     = isset( $args['slug'] ) && is_string( $args['slug'] ) && $args['slug'] !== ''
 			? sanitize_title( (string) $args['slug'] )
 			: $post_type_key;
+		foreach ( get_post_types( [], 'objects' ) as $existing_type ) {
+			$existing_slug = is_array( $existing_type->rewrite ?? null ) ? (string) ( $existing_type->rewrite['slug'] ?? '' ) : '';
+			if ( '' !== $existing_slug && trim( $existing_slug, '/' ) === $slug ) {
+				return self::error(
+					'slug_in_use',
+					sprintf( 'The address slug "%s" is already used by the post type "%s". Pass another slug. Nothing was registered.', $slug, $existing_type->name ),
+					[ 'slug' => $slug, 'used_by' => $existing_type->name ]
+				);
+			}
+		}
 
 		$payload = [
 			'post_type'      => $post_type_key,
@@ -1877,12 +1914,14 @@ class AcfSetup {
 		if ( ! is_array( $saved ) || empty( $saved['ID'] ) ) {
 			return self::error(
 				'acf_write_failed',
-				'acf_update_internal_post_type returned no post id — ACF Pro rejected the CPT payload.',
+				'acf_update_internal_post_type returned no post id — ACF rejected the CPT payload.',
 				[ 'post_type_key' => $post_type_key ]
 			);
 		}
 
 		delete_option( 'royal_mcp_rewrite_version' );
+		// ACF registers stored post types on init, so the type is live from the next request, not this one.
+		$live_now = post_type_exists( $post_type_key );
 
 		try {
 			$undo_meta = self::make_token( [
@@ -1905,9 +1944,10 @@ class AcfSetup {
 			'content'           => [ [
 				'type' => 'text',
 				'text' => sprintf(
-					'acf_register_post_type: registered CPT "%s" (%s). undo_token: %s.',
+					'acf_register_post_type: saved post type "%s" (%s) in ACF%s. undo_token: %s.',
 					$singular,
 					$post_type_key,
+					$live_now ? ', and it is registered now' : '; ACF registers it with WordPress from the next page load',
 					$undo_token ?: 'NOT_ISSUED'
 				),
 			] ],
@@ -1918,6 +1958,9 @@ class AcfSetup {
 				'slug'                   => $slug,
 				'acf_post_id'            => (int) $saved['ID'],
 				'registration_added_to'  => 'acf_post_type_ui',
+				'saved_in_acf'           => true,
+				'active'                 => ! empty( $saved['active'] ),
+				'registered_now'         => $live_now,
 				'admin_url'              => admin_url( 'edit.php?post_type=' . $post_type_key ),
 				'undo_token'             => $undo_token ?: 'NOT_ISSUED',
 				'undo_expires_at'        => is_array( $undo_meta ) ? ( $undo_meta['expires_at'] ?? null ) : null,
@@ -2867,7 +2910,7 @@ class AcfSetup {
 			],
 			'acf_register_post_type' => [
 				'name'        => 'acf_register_post_type',
-				'description' => 'Register a custom post type via ACF Pro\'s built-in Post Types UI (ACF Pro 6.1+). Persisted in the acf-post-type store so the CPT appears in ACF admin and remains editable there. Undo warns when existing posts of the type would be orphaned. Returns admin URL + an undo token. Requires ACF Pro 6.1+ active + manage_options.',
+				'description' => 'Register a custom post type via ACF\'s built-in Post Types screen (ACF 6.1+, free or Pro). Refused when the key is already a post type, ACF already stores one with that key, or another post type uses the slug; ACF registers the type with WordPress from the next page load (registered_now says whether it is live already). Persisted in the acf-post-type store so the CPT appears in ACF admin and remains editable there. Undo warns when existing posts of the type would be orphaned. Returns admin URL + an undo token. Requires ACF 6.1+ (free or Pro) active + manage_options.',
 				'inputSchema' => [
 					'type'                 => 'object',
 					'additionalProperties' => false,

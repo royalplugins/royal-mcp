@@ -81,8 +81,8 @@ class Well_Known_Notice {
         $allowed_screens = [
             'plugins',
             'toplevel_page_royal-mcp',
-            'royal-mcp_page_royal-mcp-connections',
-            'royal-mcp_page_royal-mcp-logs',
+            Menu_Layout::sub_page_prefix() . 'royal-mcp-connections',
+            Menu_Layout::sub_page_prefix() . 'royal-mcp-logs',
             // Pro moves Settings under its own top-level menu.
             'toplevel_page_royal-mcp-pro',
             'royal-mcp-pro_page_royal-mcp',

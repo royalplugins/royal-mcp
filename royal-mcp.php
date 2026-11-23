@@ -310,8 +310,8 @@ class Royal_MCP_Plugin {
      */
     public function add_action_links($links) {
         $plugin_links = [
-            '<a href="' . admin_url('admin.php?page=royal-mcp-connections') . '">' . __('Settings', 'royal-mcp') . '</a>',
-            '<a href="https://royalplugins.com/support/royal-mcp/" target="_blank">' . __('Docs', 'royal-mcp') . '</a>',
+            '<a href="' . esc_url( admin_url('admin.php?page=royal-mcp-connections') ) . '">' . esc_html__('Settings', 'royal-mcp') . '</a>',
+            '<a href="https://royalplugins.com/support/royal-mcp/" target="_blank" rel="noopener noreferrer">' . esc_html__('Docs', 'royal-mcp') . '</a>',
         ];
         return array_merge($plugin_links, $links);
     }
@@ -564,13 +564,62 @@ class Royal_MCP_Plugin {
         }
     }
 
-    public function deactivate() {
+    public function deactivate( $network_wide = false ) {
+        // Network-wide: every other site's stored rules lose this plugin's rules
+        // too. Those sites' rule lists are edited in place, since the rewrite
+        // object in memory belongs to the current site.
+        if ( $network_wide && is_multisite() ) {
+            $current = get_current_blog_id();
+            foreach ( get_sites( [ 'fields' => 'ids', 'number' => 0 ] ) as $site_id ) {
+                if ( (int) $site_id === $current ) {
+                    continue;
+                }
+                switch_to_blog( (int) $site_id );
+                wp_clear_scheduled_hook( 'royal_mcp_token_cleanup' );
+                wp_clear_scheduled_hook( 'royal_mcp_auth_header_probe' );
+                $site_rules = get_option( 'rewrite_rules' );
+                if ( is_array( $site_rules ) ) {
+                    $kept = self::without_own_rewrite_rules( $site_rules );
+                    if ( $kept !== $site_rules ) {
+                        update_option( 'rewrite_rules', $kept );
+                    }
+                }
+                delete_option( 'royal_mcp_rewrite_version' );
+                restore_current_blog();
+            }
+        }
+
         // Clear scheduled events.
         wp_clear_scheduled_hook( 'royal_mcp_token_cleanup' );
         wp_clear_scheduled_hook( 'royal_mcp_auth_header_probe' );
 
-        // Flush rewrite rules
+        // Rebuild the stored rewrite rules without this plugin's OAuth and /mcp
+        // rules, so pages at those addresses are served again once it is off.
+        remove_action( 'init', [ $this, 'register_oauth_rewrites' ] );
+        add_filter( 'rewrite_rules_array', [ __CLASS__, 'without_own_rewrite_rules' ], PHP_INT_MAX );
         flush_rewrite_rules();
+        remove_filter( 'rewrite_rules_array', [ __CLASS__, 'without_own_rewrite_rules' ], PHP_INT_MAX );
+        delete_option( 'royal_mcp_rewrite_version' );
+    }
+
+    /**
+     * A rewrite rule list with this plugin's rules taken out: the ones that
+     * route to its OAuth handler or to its REST namespace.
+     *
+     * @param array $rules Regex => query.
+     * @return array
+     */
+    public static function without_own_rewrite_rules( $rules ) {
+        if ( ! is_array( $rules ) ) {
+            return $rules;
+        }
+        foreach ( $rules as $regex => $query ) {
+            $query = (string) $query;
+            if ( false !== strpos( $query, 'royal_mcp_oauth=' ) || false !== strpos( $query, 'rest_route=/royal-mcp/v1/' ) ) {
+                unset( $rules[ $regex ] );
+            }
+        }
+        return $rules;
     }
 
     private function create_tables() {
@@ -892,18 +941,70 @@ class Royal_MCP_Plugin {
         flush_rewrite_rules( false );
     }
 
+    /** Option holding the sign-in rule restore state: restores in a row, last restore, next allowed try. */
+    const RULE_RESTORE_OPTION = 'royal_mcp_rule_restore';
+
     /**
      * Put the namespace issuer's sign-in rule back when the stored rewrite
-     * rules were rebuilt without it. Tried at most once an hour.
+     * rules were rebuilt without it. The wait between tries doubles each time
+     * the rule has to be put back again (one hour, two, four, up to a day) and
+     * starts over once the rule is found in place after a wait has ended.
      */
     private function maybe_restore_namespace_authorize_rule() {
-        if ( '' === (string) get_option( 'permalink_structure' ) || '' === self::namespace_authorize_slug()
-            || self::has_namespace_authorize_rule() || get_transient( 'royal_mcp_authorize_rule_restore' ) ) {
+        if ( '' === (string) get_option( 'permalink_structure' ) || '' === self::namespace_authorize_slug() ) {
             return;
         }
-        set_transient( 'royal_mcp_authorize_rule_restore', 1, HOUR_IN_SECONDS );
+        if ( self::has_namespace_authorize_rule() ) {
+            self::settle_rule_restore_state();
+            return;
+        }
+        $state = self::rule_restore_state();
+        $now   = time();
+        if ( $state['count'] > 0 && $now < $state['next'] ) {
+            return;
+        }
+        $count = $state['count'] + 1;
+        // Autoloaded, so checking for it on every request costs no query.
+        update_option( self::RULE_RESTORE_OPTION, [ 'count' => $count, 'last' => $now, 'next' => $now + self::rule_restore_delay( $count ) ], true );
         $this->register_oauth_rewrites();
         flush_rewrite_rules( false );
+    }
+
+    /**
+     * Seconds to wait after the given restore in a row: one hour doubled per restore, capped.
+     *
+     * @param int $count Restores in a row, from 1.
+     * @return int
+     */
+    public static function rule_restore_delay( $count ) {
+        $max   = max( HOUR_IN_SECONDS, (int) apply_filters( 'royal_mcp_rule_restore_max_delay', DAY_IN_SECONDS ) );
+        $count = max( 1, min( 30, (int) $count ) );
+        return (int) min( $max, HOUR_IN_SECONDS * ( 2 ** ( $count - 1 ) ) );
+    }
+
+    /**
+     * The sign-in rule restore state.
+     *
+     * @return array{count: int, last: int, next: int}
+     */
+    public static function rule_restore_state() {
+        $s = get_option( self::RULE_RESTORE_OPTION, [] );
+        $s = is_array( $s ) ? $s : [];
+        return [ 'count' => max( 0, (int) ( $s['count'] ?? 0 ) ), 'last' => (int) ( $s['last'] ?? 0 ), 'next' => (int) ( $s['next'] ?? 0 ) ];
+    }
+
+    /** Clear the restore state once the rule is in place after the current wait has ended. */
+    public static function settle_rule_restore_state() {
+        $all = wp_load_alloptions();
+        if ( ! isset( $all[ self::RULE_RESTORE_OPTION ] ) ) {
+            return false;
+        }
+        $s = self::rule_restore_state();
+        if ( $s['count'] > 0 && time() >= $s['next'] && self::has_namespace_authorize_rule() ) {
+            delete_option( self::RULE_RESTORE_OPTION );
+            return true;
+        }
+        return false;
     }
 
     /**

@@ -16,10 +16,53 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
     <?php // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only flag set by our own redirect ?>
     <?php if ( isset( $_GET['royal_mcp_log_cleared'] ) ) : ?>
         <?php // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only flag set by our own redirect ?>
-        <?php if ( '1' === sanitize_text_field( wp_unslash( $_GET['royal_mcp_log_cleared'] ) ) ) : ?>
-            <div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'The Activity Log was cleared.', 'royal-mcp' ); ?></p></div>
+        <?php $royal_mcp_cleared_flag = sanitize_key( wp_unslash( $_GET['royal_mcp_log_cleared'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only flag ?>
+        <?php if ( '1' === $royal_mcp_cleared_flag ) : ?>
+            <?php $royal_mcp_cleared_n = isset( $_GET['royal_mcp_log_count'] ) ? absint( wp_unslash( $_GET['royal_mcp_log_count'] ) ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only count ?>
+            <?php /* translators: %s: number of entries */ ?>
+            <div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( _n( 'The Activity Log was cleared (%s entry). You can restore it below for 24 hours.', 'The Activity Log was cleared (%s entries). You can restore them below for 24 hours.', $royal_mcp_cleared_n, 'royal-mcp' ), number_format_i18n( $royal_mcp_cleared_n ) ) ); ?></p></div>
+        <?php elseif ( 'error' === $royal_mcp_cleared_flag ) : ?>
+            <div class="notice notice-error is-dismissible"><p><?php esc_html_e( 'The Activity Log could not be cleared in full. Entries that were not cleared are still in the log; any that were cleared can be restored below.', 'royal-mcp' ); ?></p></div>
+        <?php elseif ( 'stale' === $royal_mcp_cleared_flag ) : ?>
+            <div class="notice notice-warning is-dismissible"><p><?php esc_html_e( 'Nothing was cleared: reload this page and use the Clear button on it.', 'royal-mcp' ); ?></p></div>
         <?php else : ?>
             <div class="notice notice-warning is-dismissible"><p><?php esc_html_e( 'Nothing was cleared: tick the box next to the Clear button first.', 'royal-mcp' ); ?></p></div>
+        <?php endif; ?>
+    <?php endif; ?>
+
+    <?php // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only flag set by our own redirect ?>
+    <?php if ( isset( $_GET['royal_mcp_log_restored'] ) ) : ?>
+        <?php
+        // phpcs:disable WordPress.Security.NonceVerification.Recommended -- display-only flags set by our own redirect
+        $royal_mcp_restored_flag = sanitize_key( wp_unslash( $_GET['royal_mcp_log_restored'] ) );
+        $royal_mcp_restored_n    = isset( $_GET['royal_mcp_log_count'] ) ? absint( wp_unslash( $_GET['royal_mcp_log_count'] ) ) : 0;
+        $royal_mcp_restored_left = isset( $_GET['royal_mcp_log_left'] ) ? absint( wp_unslash( $_GET['royal_mcp_log_left'] ) ) : 0;
+        // phpcs:enable
+        ?>
+        <?php if ( 'done' === $royal_mcp_restored_flag ) : ?>
+            <div class="notice notice-success is-dismissible"><p>
+                <?php
+                /* translators: %s: number of entries */
+                echo esc_html( sprintf( _n( '%s entry was restored.', '%s entries were restored.', $royal_mcp_restored_n, 'royal-mcp' ), number_format_i18n( $royal_mcp_restored_n ) ) );
+                $royal_mcp_restored_coll = isset( $_GET['royal_mcp_log_collision'] ) ? absint( wp_unslash( $_GET['royal_mcp_log_collision'] ) ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only count
+                if ( $royal_mcp_restored_coll > 0 ) {
+                    /* translators: %s: number of entries */
+                    echo ' ' . esc_html( sprintf( _n( '%s entry was not restored because a newer entry uses its number; nothing was written over.', '%s entries were not restored because newer entries use their numbers; nothing was written over.', $royal_mcp_restored_coll, 'royal-mcp' ), number_format_i18n( $royal_mcp_restored_coll ) ) );
+                } elseif ( $royal_mcp_restored_left > 0 ) {
+                    /* translators: %s: number of entries */
+                    echo ' ' . esc_html( sprintf( _n( '%s older entry did not fit under the entry limit and can still be restored later.', '%s older entries did not fit under the entry limit and can still be restored later.', $royal_mcp_restored_left, 'royal-mcp' ), number_format_i18n( $royal_mcp_restored_left ) ) );
+                }
+                echo ' ' . esc_html__( 'Restored entries older than the retention period are deleted at the next daily clean-up.', 'royal-mcp' );
+                ?>
+            </p></div>
+        <?php elseif ( 'full' === $royal_mcp_restored_flag ) : ?>
+            <div class="notice notice-warning is-dismissible"><p><?php esc_html_e( 'Nothing was restored: the Activity Log is at its entry limit. Clear or export entries first, then restore.', 'royal-mcp' ); ?></p></div>
+        <?php elseif ( 'collision' === $royal_mcp_restored_flag ) : ?>
+            <div class="notice notice-warning is-dismissible"><p><?php esc_html_e( 'Nothing was restored: newer entries now use the same entry numbers. Nothing was written over; the cleared entries stay restorable until they expire.', 'royal-mcp' ); ?></p></div>
+        <?php elseif ( 'copy_failed' === $royal_mcp_restored_flag ) : ?>
+            <div class="notice notice-error is-dismissible"><p><?php esc_html_e( 'The entries could not be written back to the Activity Log. They are still kept for restoring; try again.', 'royal-mcp' ); ?></p></div>
+        <?php else : ?>
+            <div class="notice notice-warning is-dismissible"><p><?php esc_html_e( 'Nothing was restored: those entries can no longer be restored.', 'royal-mcp' ); ?></p></div>
         <?php endif; ?>
     <?php endif; ?>
 
@@ -130,23 +173,71 @@ $royal_mcp_total_pages = ceil($royal_mcp_total_items / $royal_mcp_per_page);
             } elseif ( $royal_mcp_keep_days > 0 ) {
                 esc_html_e( 'Older entries are deleted once a day.', 'royal-mcp' );
             }
+            $royal_mcp_max_rows = \Royal_MCP\Admin\Settings_Page::log_max_rows();
+            if ( $royal_mcp_max_rows > 0 && $royal_mcp_keep_days > 0 ) {
+                /* translators: %s: number of entries */
+                echo ' ' . esc_html( sprintf( __( 'At most %s entries are kept: sign-in request entries go first, then the oldest.', 'royal-mcp' ), number_format_i18n( $royal_mcp_max_rows ) ) );
+            } elseif ( $royal_mcp_max_rows > 0 ) {
+                /* translators: %s: number of entries */
+                echo ' ' . esc_html( sprintf( __( 'Above %s entries, the oldest sign-in request entries are removed; tool calls and settings changes stay until you clear them.', 'royal-mcp' ), number_format_i18n( $royal_mcp_max_rows ) ) );
+            }
             ?>
         </span>
     </form>
 
-    <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin:0 0 12px;">
-        <input type="hidden" name="action" value="<?php echo esc_attr( \Royal_MCP\Admin\Settings_Page::CLEAR_LOG_ACTION ); ?>">
-        <?php wp_nonce_field( \Royal_MCP\Admin\Settings_Page::CLEAR_LOG_ACTION ); ?>
-        <label style="margin-right:8px;">
-            <input type="checkbox" name="royal_mcp_clear_confirm" value="1" required>
-            <?php esc_html_e( 'Delete every entry now', 'royal-mcp' ); ?>
-        </label>
-        <button type="submit" class="button"><?php esc_html_e( 'Clear log', 'royal-mcp' ); ?></button>
-    </form>
+    <?php
+    $royal_mcp_restorable = \Royal_MCP\Admin\Settings_Page::restorable_log_batches();
+    $royal_mcp_clear_upto = \Royal_MCP\Admin\Settings_Page::activity_log_max_id();
+    $royal_mcp_when_fmt   = get_option( 'date_format' ) . ' ' . get_option( 'time_format' );
+    ?>
+    <?php foreach ( $royal_mcp_restorable as $royal_mcp_batch ) : ?>
+        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="royal-mcp-log-restore" style="margin:0 0 12px;padding:8px 12px;background:#fff;border:1px solid #dcdcde;border-left:4px solid #C9A227;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <input type="hidden" name="action" value="<?php echo esc_attr( \Royal_MCP\Admin\Settings_Page::RESTORE_LOG_ACTION ); ?>">
+            <input type="hidden" name="batch_id" value="<?php echo esc_attr( $royal_mcp_batch['batch_id'] ); ?>">
+            <?php wp_nonce_field( \Royal_MCP\Admin\Settings_Page::RESTORE_LOG_ACTION, '_wpnonce', true ); ?>
+            <span>
+                <?php
+                /* translators: %s: number of entries */
+                echo esc_html( sprintf( _n( 'Cleared %s entry.', 'Cleared %s entries.', $royal_mcp_batch['entries'], 'royal-mcp' ), number_format_i18n( $royal_mcp_batch['entries'] ) ) );
+                ?>
+            </span>
+            <button type="submit" class="button"><?php esc_html_e( 'Restore', 'royal-mcp' ); ?></button>
+            <span class="description">
+                <?php
+                /* translators: %s: date and time */
+                echo esc_html( sprintf( __( 'until %s', 'royal-mcp' ), wp_date( $royal_mcp_when_fmt, (int) strtotime( $royal_mcp_batch['expires_at'] . ' UTC' ) ) ) );
+                ?>
+            </span>
+        </form>
+    <?php endforeach; ?>
+
+    <div class="royal-mcp-log-clear" style="margin:0 0 12px;">
+        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin:0 0 6px;">
+            <input type="hidden" name="action" value="<?php echo esc_attr( \Royal_MCP\Admin\Settings_Page::EXPORT_LOG_ACTION ); ?>">
+            <input type="hidden" name="upto" value="<?php echo esc_attr( (string) $royal_mcp_clear_upto ); ?>">
+            <?php wp_nonce_field( \Royal_MCP\Admin\Settings_Page::EXPORT_LOG_ACTION, '_wpnonce', true ); ?>
+            <strong style="margin-right:8px;"><?php esc_html_e( 'Step 1 (optional): download what will be cleared', 'royal-mcp' ); ?></strong>
+            <button type="submit" name="format" value="csv" class="button"><?php esc_html_e( 'CSV', 'royal-mcp' ); ?></button>
+            <button type="submit" name="format" value="json" class="button"><?php esc_html_e( 'JSON', 'royal-mcp' ); ?></button>
+            <span class="description" style="margin-left:12px;"><?php esc_html_e( 'Before you clear, check the download is complete: the CSV ends with a #END line giving the number of entries, the JSON ends with "rows" and "complete": true.', 'royal-mcp' ); ?></span>
+        </form>
+        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" onsubmit="return window.confirm('<?php echo esc_js( __( 'Clear the Activity Log? You can restore the entries for 24 hours.', 'royal-mcp' ) ); ?>');">
+            <input type="hidden" name="action" value="<?php echo esc_attr( \Royal_MCP\Admin\Settings_Page::CLEAR_LOG_ACTION ); ?>">
+            <input type="hidden" name="upto" value="<?php echo esc_attr( (string) $royal_mcp_clear_upto ); ?>">
+            <?php wp_nonce_field( \Royal_MCP\Admin\Settings_Page::CLEAR_LOG_ACTION, '_wpnonce', true ); ?>
+            <strong style="margin-right:8px;"><?php esc_html_e( 'Step 2:', 'royal-mcp' ); ?></strong>
+            <label style="margin-right:8px;">
+                <input type="checkbox" name="royal_mcp_clear_confirm" value="1" required>
+                <?php esc_html_e( 'Delete every entry shown up to now', 'royal-mcp' ); ?>
+            </label>
+            <button type="submit" class="button"><?php esc_html_e( 'Clear log', 'royal-mcp' ); ?></button>
+            <span class="description" style="margin-left:12px;"><?php esc_html_e( 'Cleared entries can be restored for 24 hours.', 'royal-mcp' ); ?></span>
+        </form>
+    </div>
 
     <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin:0 0 12px;">
         <input type="hidden" name="action" value="<?php echo esc_attr( \Royal_MCP\Admin\Settings_Page::EXPORT_LOG_ACTION ); ?>">
-        <?php wp_nonce_field( \Royal_MCP\Admin\Settings_Page::EXPORT_LOG_ACTION ); ?>
+        <?php wp_nonce_field( \Royal_MCP\Admin\Settings_Page::EXPORT_LOG_ACTION, '_wpnonce', true ); ?>
         <button type="submit" class="button"><?php esc_html_e( 'Export CSV', 'royal-mcp' ); ?></button>
         <span class="description" style="margin-left:12px;">
             <?php

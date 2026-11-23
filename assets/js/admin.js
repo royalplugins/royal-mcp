@@ -16,7 +16,7 @@ jQuery(document).ready(function($) {
         e.preventDefault();
         const apiKey = $('#api_key').val();
         copyToClipboard(apiKey);
-        showNotice('API key copied to clipboard!');
+        showNotice(royalMcp.strings.keyCopied || 'API key copied to clipboard!');
     });
 
     // Generic copy button handler
@@ -31,7 +31,7 @@ jQuery(document).ready(function($) {
             setTimeout(function() {
                 $btn.removeClass('copied');
             }, 1500);
-            showNotice('Copied to clipboard!');
+            showNotice(royalMcp.strings.copied || 'Copied to clipboard!');
         }
     });
 
@@ -147,7 +147,7 @@ jQuery(document).ready(function($) {
             },
             error: function() {
                 $btn.prop('disabled', false);
-                showNotice('Network error while clearing field.', 'error');
+                showNotice(royalMcp.strings.networkError || 'Network error while clearing field.', 'error');
             }
         });
     });
@@ -166,17 +166,13 @@ jQuery(document).ready(function($) {
         e.preventDefault();
         const $btn = $(this);
         const $input = $btn.parent().find('input[type="password"], input[type="text"]').first();
-        const $icon = $btn.find('.dashicons');
-
         if ($input.length === 0) return;
 
-        if ($input.attr('type') === 'password') {
-            $input.attr('type', 'text');
-            $icon.removeClass('dashicons-visibility').addClass('dashicons-hidden');
-        } else {
-            $input.attr('type', 'password');
-            $icon.removeClass('dashicons-hidden').addClass('dashicons-visibility');
-        }
+        const show = $input.attr('type') === 'password';
+        $input.attr('type', show ? 'text' : 'password');
+        $btn.attr('aria-pressed', show ? 'true' : 'false');
+        $btn.find('.royal-mcp-eye-show').prop('hidden', show);
+        $btn.find('.royal-mcp-eye-hide').prop('hidden', !show);
     });
 
     // ==========================================
@@ -194,7 +190,7 @@ jQuery(document).ready(function($) {
         const $status = $('#royal-mcp-reset-oauth-state-status');
 
         $btn.prop('disabled', true);
-        $status.css('color', '').text('Resetting... (can take several minutes)');
+        $status.css('color', '').text(royalMcp.strings.resetting || 'Resetting... (can take several minutes)');
 
         $.ajax({
             url: royalMcp.ajaxUrl,
@@ -213,7 +209,7 @@ jQuery(document).ready(function($) {
                 }
             },
             error: function() {
-                $status.css('color', '#d63638').text('Reset request failed (network or server error)');
+                $status.css('color', '#d63638').text(royalMcp.strings.resetFailed || 'Reset request failed (network or server error)');
             },
             complete: function() {
                 $btn.prop('disabled', false);

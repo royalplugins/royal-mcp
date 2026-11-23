@@ -9,6 +9,28 @@ $royal_mcp_client_name   = $rmcp_oauth['client_name'];
 $royal_mcp_site_name     = $rmcp_oauth['site_name'];
 $royal_mcp_user_display  = $rmcp_oauth['user_display_name'];
 $royal_mcp_redirect_host = isset( $rmcp_oauth['redirect_host'] ) ? $rmcp_oauth['redirect_host'] : '';
+$royal_mcp_level         = isset( $rmcp_oauth['access_level'] ) ? (string) $rmcp_oauth['access_level'] : 'full';
+$royal_mcp_can_set       = ! empty( $rmcp_oauth['can_set_access'] );
+// What a connection can do at each access level, always within the signed-in account's own permissions.
+$royal_mcp_grants = [
+    'full'        => [
+        __( 'Read posts, pages, media, comments, users and settings', 'royal-mcp' ),
+        __( 'Create, edit, publish and delete content, media, menus, categories and tags', 'royal-mcp' ),
+        __( 'Install, update, activate and switch plugins and themes', 'royal-mcp' ),
+        __( 'Change site settings and store data, where the Royal MCP settings switch that on', 'royal-mcp' ),
+    ],
+    'drafts-only' => [
+        __( 'Read posts, pages, media and settings', 'royal-mcp' ),
+        __( 'Create, edit and delete drafts; nothing that is live on the site is published, changed or deleted', 'royal-mcp' ),
+    ],
+    'read-only'   => [
+        __( 'Read posts, pages, media and settings', 'royal-mcp' ),
+        __( 'Change nothing', 'royal-mcp' ),
+    ],
+];
+if ( ! isset( $royal_mcp_grants[ $royal_mcp_level ] ) ) {
+    $royal_mcp_level = 'full';
+}
 ?>
 <!DOCTYPE html>
 <html <?php language_attributes(); ?>>
@@ -94,6 +116,24 @@ $royal_mcp_redirect_host = isset( $rmcp_oauth['redirect_host'] ) ? $rmcp_oauth['
             color: #00a32a;
             font-weight: 700;
         }
+        .auth-details .auth-grants + .auth-grants {
+            margin-top: 12px;
+        }
+        .auth-details .auth-grants h4 {
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .auth-details .auth-limit {
+            font-size: 12px;
+            color: #646970;
+            margin-top: 8px;
+        }
+        /* With a level picker, only the picked level's list shows. */
+        .auth-card:has(input[name=access_level]:checked) .auth-grants { display: none; }
+        .auth-card:has(input[name=access_level][value="full"]:checked) .auth-grants-full,
+        .auth-card:has(input[name=access_level][value="drafts-only"]:checked) .auth-grants-drafts-only,
+        .auth-card:has(input[name=access_level][value="read-only"]:checked) .auth-grants-read-only { display: block; }
         .auth-user {
             text-align: center;
             font-size: 13px;
@@ -185,12 +225,26 @@ $royal_mcp_redirect_host = isset( $rmcp_oauth['redirect_host'] ) ? $rmcp_oauth['
 
         <div class="auth-details">
             <h3><?php esc_html_e( 'This will allow the application to:', 'royal-mcp' ); ?></h3>
-            <ul>
-                <li><?php esc_html_e( 'Read your posts, pages, and media', 'royal-mcp' ); ?></li>
-                <li><?php esc_html_e( 'Create and edit content', 'royal-mcp' ); ?></li>
-                <li><?php esc_html_e( 'Manage categories, tags, and menus', 'royal-mcp' ); ?></li>
-                <li><?php esc_html_e( 'View site settings and user info', 'royal-mcp' ); ?></li>
-            </ul>
+            <?php
+            $royal_mcp_titles = [
+                'full'        => __( 'Full access', 'royal-mcp' ),
+                'drafts-only' => __( 'Drafts only', 'royal-mcp' ),
+                'read-only'   => __( 'Read-only', 'royal-mcp' ),
+            ];
+            foreach ( $royal_mcp_can_set ? array_keys( $royal_mcp_grants ) : [ $royal_mcp_level ] as $royal_mcp_g_level ) :
+                ?>
+            <div class="auth-grants auth-grants-<?php echo esc_attr( $royal_mcp_g_level ); ?>">
+                <?php if ( $royal_mcp_can_set ) : ?>
+                <h4><?php echo esc_html( $royal_mcp_titles[ $royal_mcp_g_level ] ); ?></h4>
+                <?php endif; ?>
+                <ul>
+                    <?php foreach ( $royal_mcp_grants[ $royal_mcp_g_level ] as $royal_mcp_grant ) : ?>
+                    <li><?php echo esc_html( $royal_mcp_grant ); ?></li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
+            <?php endforeach; ?>
+            <p class="auth-limit"><?php esc_html_e( 'Never more than your own account can do on this site.', 'royal-mcp' ); ?></p>
         </div>
 
         <p class="auth-user">
@@ -232,20 +286,19 @@ $royal_mcp_redirect_host = isset( $rmcp_oauth['redirect_host'] ) ? $rmcp_oauth['
             <?php endif; ?>
 
             <?php
-            $royal_mcp_level  = isset( $rmcp_oauth['access_level'] ) ? (string) $rmcp_oauth['access_level'] : 'full';
             $royal_mcp_levels = [
-                'full'        => __( 'Full: read and change the site, as your account allows', 'royal-mcp' ),
+                'full'        => __( 'Full: read and change the site, including deleting content and changing plugins, themes and settings, as your account allows', 'royal-mcp' ),
                 'drafts-only' => __( 'Drafts only: read, and write drafts; nothing goes live', 'royal-mcp' ),
                 'read-only'   => __( 'Read-only: read, change nothing', 'royal-mcp' ),
             ];
             ?>
-            <?php if ( ! empty( $rmcp_oauth['can_set_access'] ) ) : ?>
+            <?php if ( $royal_mcp_can_set ) : ?>
             <fieldset class="auth-access">
                 <legend><?php esc_html_e( 'Access for this application', 'royal-mcp' ); ?></legend>
                 <?php foreach ( $royal_mcp_levels as $royal_mcp_value => $royal_mcp_text ) : ?>
                 <label><input type="radio" name="access_level" value="<?php echo esc_attr( $royal_mcp_value ); ?>" <?php checked( $royal_mcp_level, $royal_mcp_value ); ?>> <?php echo esc_html( $royal_mcp_text ); ?></label>
                 <?php endforeach; ?>
-                <p class="auth-access-note"><?php esc_html_e( 'Applies to everyone who connects this application. You can change it later under Royal MCP > Connections.', 'royal-mcp' ); ?></p>
+                <p class="auth-access-note"><?php esc_html_e( 'Applies to everyone who connects this application. You can change it later under Royal MCP → Connections → Connected Clients.', 'royal-mcp' ); ?></p>
             </fieldset>
             <?php else : ?>
             <p class="auth-access-note">

@@ -178,12 +178,21 @@ class RoyalLedger {
 				if ( ! in_array( $category, $valid, true ) ) {
 					throw new \Exception( 'Invalid category. Allowed: ' . esc_html( implode( ', ', $valid ) ) );
 				}
+				$cycle  = isset( $args['billing_cycle'] ) && '' !== $args['billing_cycle'] ? $args['billing_cycle'] : 'annual';
+				$cycles = method_exists( '\RLEDGER_Items', 'get_billing_cycles' ) ? array_keys( (array) \RLEDGER_Items::get_billing_cycles() ) : [ 'monthly', 'annual', 'one-time', 'lifetime', 'custom' ];
+				if ( ! is_string( $cycle ) || ! in_array( $cycle, $cycles, true ) ) {
+					throw new \Exception( 'billing_cycle must be one of: ' . esc_html( implode( ', ', $cycles ) ) . '.' );
+				}
+				$cost = $args['cost'] ?? 0;
+				if ( ! is_numeric( $cost ) || (float) $cost < 0 ) {
+					throw new \Exception( 'cost must be a number of 0 or more.' );
+				}
 				$data = [
 					'name'          => $name_arg,
 					'category'      => $category,
-					'cost'          => floatval( $args['cost'] ?? 0 ),
+					'cost'          => (float) $cost,
 					'currency'      => sanitize_text_field( $args['currency'] ?? 'USD' ),
-					'billing_cycle' => sanitize_text_field( $args['billing_cycle'] ?? 'annual' ),
+					'billing_cycle' => $cycle,
 					'status'        => 'active',
 				];
 				if ( ! empty( $args['renewal_date'] ) ) {

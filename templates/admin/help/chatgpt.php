@@ -109,7 +109,7 @@ $royal_mcp_help_logs_url     = class_exists( '\\Royal_MCP_Pro\\Tool_Registry', f
 					__( 'Open %s in another browser tab before you click Create. You\'ll see live entries fire (oauth:register → oauth:authorize → oauth:token) during the handshake, then mcp:initialize + mcp:tools/list once the connection is live. If anything fails, the log shows which step and why.', 'royal-mcp' ),
 					[ 'a' => [ 'href' => [] ] ]
 				),
-				'<a href="' . esc_url( $royal_mcp_help_logs_url ) . '">' . esc_html__( 'Royal MCP → Activity Log', 'royal-mcp' ) . '</a>'
+				'<a href="' . esc_url( $royal_mcp_help_logs_url ) . '">' . esc_html__( 'Royal MCP → Activity → Activity Log', 'royal-mcp' ) . '</a>'
 			);
 			?>
 		</div>

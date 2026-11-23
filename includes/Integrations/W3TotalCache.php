@@ -108,21 +108,28 @@ class W3TotalCache {
 	}
 
 	private static function handle_purge_cache( $args ) {
-		$scope = in_array( $args['scope'] ?? 'all', [ 'all', 'url', 'post' ], true ) ? $args['scope'] : 'all';
+		$scope = isset( $args['scope'] ) && '' !== $args['scope'] ? $args['scope'] : 'all';
+		if ( ! is_string( $scope ) || ! in_array( $scope, [ 'all', 'url', 'post' ], true ) ) {
+			throw new \Exception( 'scope must be all, url or post. Nothing was purged.' );
+		}
 		$flush = new \W3TC\CacheFlush();
 
 		switch ( $scope ) {
 			case 'all':
-				$flush->flush_all();
-				return [ 'purged' => true, 'scope' => 'all' ];
+				return self::flush_result( $flush->flush_all(), [ 'scope' => 'all' ] );
 
 			case 'url':
 				$url = isset( $args['url'] ) ? esc_url_raw( $args['url'] ) : '';
 				if ( '' === $url ) {
 					throw new \Exception( 'url is required when scope is "url"' );
 				}
-				$flush->flush_url( $url );
-				return [ 'purged' => true, 'scope' => 'url', 'url' => $url ];
+				// Only this site's own addresses are cached here.
+				$url_host  = strtolower( (string) wp_parse_url( $url, PHP_URL_HOST ) );
+				$home_host = strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+				if ( '' === $url_host || $url_host !== $home_host ) {
+					throw new \Exception( 'url must be an address on this site (' . esc_html( $home_host ) . '). Nothing was purged.' );
+				}
+				return self::flush_result( $flush->flush_url( $url ), [ 'scope' => 'url', 'url' => $url ] );
 
 			case 'post':
 				$post_id = intval( $args['post_id'] ?? 0 );
@@ -132,11 +139,24 @@ class W3TotalCache {
 				if ( ! get_post( $post_id ) ) {
 					throw new \Exception( 'Post not found: ' . $post_id );
 				}
-				$flush->flush_post( $post_id );
-				return [ 'purged' => true, 'scope' => 'post', 'post_id' => $post_id ];
+				return self::flush_result( $flush->flush_post( $post_id ), [ 'scope' => 'post', 'post_id' => $post_id ] );
 		}
 
 		return [ 'purged' => false, 'scope' => $scope ];
+	}
+
+	/**
+	 * What a W3 Total Cache flush call says happened. Its flush methods often return nothing, and
+	 * then the purge was only asked for: it is reported as requested, not as done.
+	 */
+	private static function flush_result( $done, array $extra ) {
+		if ( true === $done ) {
+			return [ 'purged' => true, 'status' => 'purged' ] + $extra;
+		}
+		if ( false === $done ) {
+			return [ 'purged' => false, 'status' => 'not_purged' ] + $extra;
+		}
+		return [ 'purged' => null, 'status' => 'requested', 'note' => 'W3 Total Cache took the request but does not report whether the cache was cleared.' ] + $extra;
 	}
 
 	private static function handle_get_stats() {

@@ -44,7 +44,7 @@ class App_Password_Connections {
 			return;
 		}
 		if ( self::is_blocked( $user_id, $uuid ) ) {
-			throw new \Exception( 'This Application Password is blocked from Royal MCP. A site admin can allow it again under Royal MCP > Connected Clients.', 403 );
+			throw new \Exception( 'This Application Password is blocked from Royal MCP. A site admin can allow it again under Royal MCP → Connections → Connected Clients.', 403 );
 		}
 		self::record( $user_id, $uuid );
 	}

@@ -307,6 +307,10 @@ class SeoReads {
 		if ( $is_file ) {
 			return false;
 		}
+		// After key, token, auth or share an ordinary route word stays; only a value shaped like a secret is hidden.
+		if ( self::is_route_word_parent( $parent ) ) {
+			return self::looks_like_secret( $part );
+		}
 		// Under a word that leads to a code, a key or a person, only plain words stay.
 		if ( 1 === preg_match( '/^(?:rp|reset|reset-password|resetpass|password-reset|set-password|invite|invitation|join|share|tokens?|keys?|apikey|api-key|verify|verification|confirm|confirmation|activate|activation|unsubscribe|unsub|magic|magic-link|otp|code|secret|auth|session|sid|sig|signature|hash|password|pass|pwd|login|ssn|dob|birthday|users?|customers?|accounts?|members?|profiles?)$/i', $parent ) ) {
 			return ! self::reads_as_words( $part );
@@ -725,6 +729,44 @@ class SeoReads {
 		];
 	}
 
+	/** Parts after which a path usually goes on with a route word (/auth/login, /share/post-name). */
+	private static function is_route_word_parent( $parent ) {
+		return 1 === preg_match( '/^(?:keys?|tokens?|auth|share)$/i', (string) $parent );
+	}
+
+	/** Route words that may follow key, token, auth or share and stay readable at any length. */
+	const ROUTE_WORDS = [ 'login', 'logout', 'register', 'callback', 'verify', 'reset', 'share', 'post', 'page', 'view', 'edit', 'new', 'settings', 'account', 'profile', 'password', 'signin', 'signup', 'confirm', 'redirect', 'success', 'failure', 'error', 'refresh', 'revoke', 'rotate', 'authorize', 'authorization', 'consent', 'exchange', 'introspect', 'generate', 'regenerate', 'manage', 'details', 'preview', 'download', 'embed', 'features', 'pricing', 'overview', 'request', 'response', 'expired', 'invalid', 'status', 'history', 'create', 'delete', 'update', 'facebook', 'twitter', 'linkedin', 'pinterest', 'whatsapp', 'telegram', 'instagram', 'google', 'github', 'microsoft', 'apple', 'email' ];
+
+	/**
+	 * Whether a part after key, token, auth or share is shaped like a secret rather than a route
+	 * word: anything but letters and hyphens, mixed case inside a word, or a single word of eight
+	 * or more letters that is not a known route word. A slug of several plain words stays.
+	 *
+	 * @param string $part Part.
+	 */
+	private static function looks_like_secret( $part ) {
+		$part = (string) $part;
+		if ( '' === $part ) {
+			return false;
+		}
+		if ( 1 !== preg_match( '/^[A-Za-z]+(?:-[A-Za-z]+)*$/', $part ) ) {
+			return true;
+		}
+		foreach ( explode( '-', $part ) as $word ) {
+			if ( 1 === preg_match( '/^.[a-z]*[A-Z]/', $word ) ) {
+				return true;
+			}
+		}
+		$lower = strtolower( $part );
+		if ( in_array( $lower, self::ROUTE_WORDS, true ) ) {
+			return false;
+		}
+		if ( false !== strpos( $lower, '-' ) ) {
+			return ! self::reads_as_words( $lower );
+		}
+		return strlen( $lower ) >= 8;
+	}
+
 	/**
 	 * A single word of eight or more letters under a word that leads to a code or a key: a code
 	 * can be all letters and still read like a word, so only common page words stay readable.
@@ -733,6 +775,9 @@ class SeoReads {
 	 * @param string $part   Part.
 	 */
 	private static function credential_word( $parent, $part ) {
+		if ( self::is_route_word_parent( $parent ) ) {
+			return false;
+		}
 		if ( 1 !== preg_match( '/^(?:rp|reset|reset-password|resetpass|password-reset|set-password|invite|invitation|join|share|tokens?|keys?|apikey|api-key|verify|verification|confirm|confirmation|activate|activation|unsubscribe|unsub|magic|magic-link|otp|code|secret|auth|session|sid|sig|signature|hash)$/i', $parent ) ) {
 			return false;
 		}
@@ -771,7 +816,7 @@ class SeoReads {
 		// words joined by hyphens stay readable.
 		$phrase = false !== strpos( $part, '-' ) && self::reads_as_words( $part );
 		if ( ! $safe && ! $phrase && 1 === preg_match( '/^(?:verify|verification|otp|reset|code|codes|secret|share|token|tokens|session|sid|go|key|keys|auth|magic|invite|confirm|activate)$/i', $parent ) ) {
-			return true;
+			return self::is_route_word_parent( $parent ) ? self::looks_like_secret( $part ) : true;
 		}
 		if ( ! $safe && 1 === preg_match( '/^(?:users?|e-?mails?|profiles?|authors?)$/i', $parent ) ) {
 			return true;

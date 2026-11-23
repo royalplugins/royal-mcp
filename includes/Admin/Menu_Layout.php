@@ -1,7 +1,7 @@
 <?php
 /**
- * The plugin's admin menu as six sections (Dashboard, Connections, Context,
- * Safety, Activity, Skills). Screens that belong to a section are reached from a row
+ * The plugin's admin menu as seven sections (Dashboard, Connections, Context,
+ * Safety, Activity, Skills, Help). Screens that belong to a section are reached from a row
  * of tabs at the top of that section instead of from the side menu.
  *
  * @package Royal_MCP
@@ -25,6 +25,7 @@ class Menu_Layout {
 	const MOVED = [
 		'royal-mcp-dashboard' => self::PARENT,
 		'royal-mcp-tools'     => self::PARENT,
+		'royal-mcp-settings'  => self::CONNECTIONS,
 	];
 
 	public static function register() {
@@ -65,6 +66,7 @@ class Menu_Layout {
 				],
 			],
 			Skills_Page::PAGE_SLUG         => [ 'label' => __( 'Skills', 'royal-mcp' ), 'tabs' => [] ],
+			Help_Page::SLUG                => [ 'label' => __( 'Help', 'royal-mcp' ), 'tabs' => [] ],
 		];
 	}
 
@@ -80,7 +82,7 @@ class Menu_Layout {
 
 	/**
 	 * Runs after every screen is registered: sends a moved address to its new place and puts the
-	 * five sections first in the side menu under their names. Tab screens stay in the list here:
+	 * sections first in the side menu under their names. Tab screens stay in the list here:
 	 * WordPress decides who may open a screen from this list, so they are only taken out of it
 	 * when the menu is printed (see highlight()).
 	 */
@@ -117,9 +119,9 @@ class Menu_Layout {
 		$submenu[ self::PARENT ] = array_merge( $ordered, $rest );
 	}
 
-	/** Screens reached from a section's tabs or from the Help link, not from the side menu. */
+	/** Screens reached from a section's tabs, not from the side menu. */
 	public static function tab_screens() {
-		$hidden = [ Help_Page::SLUG => true ];
+		$hidden = [];
 		foreach ( self::sections() as $section => $def ) {
 			foreach ( array_keys( $def['tabs'] ) as $tab ) {
 				if ( $tab !== $section ) {
@@ -147,9 +149,6 @@ class Menu_Layout {
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- reads which screen is open, changes nothing
 		$open    = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : '';
 		$section = '' !== $open ? self::section_of( $open ) : '';
-		if ( Help_Page::SLUG === $open ) {
-			$section = self::PARENT;
-		}
 		return '' !== $section ? $section : $submenu_file;
 	}
 
@@ -160,7 +159,7 @@ class Menu_Layout {
 		$section = '' !== $open ? self::section_of( $open ) : '';
 		// Only on this plugin's own screens: the same page name under another menu is not one of them.
 		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
-		$ours   = $screen && ( 'toplevel_page_' . self::PARENT === $screen->id || 0 === strpos( (string) $screen->id, self::PARENT . '_page_' ) );
+		$ours   = $screen && ( 'toplevel_page_' . self::PARENT === $screen->id || 0 === strpos( (string) $screen->id, self::sub_page_prefix() ) );
 		if ( ! $ours || ! current_user_can( Settings_Page::admin_capability() ) ) {
 			return;
 		}
@@ -184,8 +183,17 @@ class Menu_Layout {
 		echo '</div>';
 	}
 
+	/**
+	 * How the screen ids of the pages under this plugin's menu start. WordPress builds them from
+	 * the menu's title, which a translation changes, so the prefix is asked from WordPress.
+	 */
+	public static function sub_page_prefix() {
+		$prefix = function_exists( 'get_plugin_page_hookname' ) ? (string) get_plugin_page_hookname( '', self::PARENT ) : '';
+		return ( '' !== $prefix && 'admin_page_' !== $prefix ) ? $prefix : self::PARENT . '_page_';
+	}
+
 	/** Whether a screen of this plugin is registered on this site (some exist only with a setting on). */
-	private static function registered( $slug ) {
+	public static function registered( $slug ) {
 		global $_registered_pages;
 		return isset( $_registered_pages[ get_plugin_page_hookname( $slug, self::PARENT ) ] );
 	}

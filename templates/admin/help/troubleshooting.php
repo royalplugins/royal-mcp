@@ -25,7 +25,7 @@ $royal_mcp_unknown_client_url = $royal_mcp_help_support_urls['unknown_client_id'
 					__( 'Session length (how long each access token lasts) defaults to 24 hours and is configurable in %s → Session length (1 hour, 8 hours, 24 hours or 7 days). A connected AI client renews its token on its own, so it stays connected until it is revoked or goes 30 days unused; a shorter session means a copied access token stops working sooner.', 'royal-mcp' ),
 					[ 'a' => [ 'href' => [] ] ]
 				),
-				'<a href="' . esc_url( $royal_mcp_help_settings_url ) . '">' . esc_html__( 'Royal MCP → Settings', 'royal-mcp' ) . '</a>'
+				'<a href="' . esc_url( $royal_mcp_help_settings_url ) . '">' . esc_html__( 'Royal MCP → Connections → Connection settings', 'royal-mcp' ) . '</a>'
 			);
 			?>
 		</p>
@@ -43,7 +43,7 @@ $royal_mcp_unknown_client_url = $royal_mcp_help_support_urls['unknown_client_id'
 			<!-- Rung 1: Just reconnect -->
 			<li class="royal-mcp-help-ladder-rung">
 				<h4><?php esc_html_e( 'Reconnect the connector', 'royal-mcp' ); ?></h4>
-				<p><?php esc_html_e( 'In Claude or ChatGPT, open Settings → Connectors (Claude) or Settings → Plugins (ChatGPT) → find the Royal MCP entry → click it → Reconnect / Sign in again. OAuth access tokens expire on a schedule; a reconnect issues a fresh one.', 'royal-mcp' ); ?></p>
+				<p><?php esc_html_e( 'In Claude or ChatGPT, open Plugins → Connectors (Claude) or Settings → Plugins (ChatGPT) → find the Royal MCP entry → click it → Reconnect / Sign in again. In Claude, Your plugins also shows a Reconnect button. Claude moved connectors under Plugins (earlier versions of Claude showed them under Settings → Connectors). OAuth access tokens expire on a schedule; a reconnect issues a fresh one.', 'royal-mcp' ); ?></p>
 				<p class="royal-mcp-help-ladder-meta"><em><?php esc_html_e( 'Takes 5-10 seconds. This is the fix 80% of the time.', 'royal-mcp' ); ?></em></p>
 			</li>
 
@@ -78,7 +78,7 @@ $royal_mcp_unknown_client_url = $royal_mcp_help_support_urls['unknown_client_id'
 								__( 'In %s, click the Reset OAuth State button. This revokes every issued access + refresh token and wipes stale OAuth clients on the WordPress side — no leftover state to conflict with.', 'royal-mcp' ),
 								[ 'a' => [ 'href' => [] ] ]
 							),
-							'<a href="' . esc_url( $royal_mcp_help_settings_url ) . '">' . esc_html__( 'Royal MCP → Settings', 'royal-mcp' ) . '</a>'
+							'<a href="' . esc_url( $royal_mcp_help_settings_url ) . '">' . esc_html__( 'Royal MCP → Connections → Connection settings', 'royal-mcp' ) . '</a>'
 						);
 						?>
 					</li>
@@ -219,7 +219,7 @@ $royal_mcp_unknown_client_url = $royal_mcp_help_support_urls['unknown_client_id'
 							__( 'Go to %s and click the Reset OAuth State button. This clears every stored OAuth client, issued access token, and pending authorization code.', 'royal-mcp' ),
 							[ 'a' => [ 'href' => [] ] ]
 						),
-						'<a href="' . esc_url( $royal_mcp_help_settings_url ) . '">' . esc_html__( 'Royal MCP → Settings', 'royal-mcp' ) . '</a>'
+						'<a href="' . esc_url( $royal_mcp_help_settings_url ) . '">' . esc_html__( 'Royal MCP → Connections → Connection settings', 'royal-mcp' ) . '</a>'
 					);
 					?>
 				</p>
@@ -305,7 +305,7 @@ $royal_mcp_unknown_client_url = $royal_mcp_help_support_urls['unknown_client_id'
 					__( 'Still stuck? Check %1$s for the exact validation rule that fired on your most recent OAuth attempt — that error string is the single most useful thing to include in a support request. Then head to %2$s to reach out.', 'royal-mcp' ),
 					[ 'a' => [ 'href' => [] ] ]
 				),
-				'<a href="' . esc_url( $royal_mcp_help_logs_url ) . '">' . esc_html__( 'Activity Log', 'royal-mcp' ) . '</a>',
+				'<a href="' . esc_url( $royal_mcp_help_logs_url ) . '">' . esc_html__( 'Royal MCP → Activity → Activity Log', 'royal-mcp' ) . '</a>',
 				'<a href="' . esc_url( \Royal_MCP\Admin\Help_Page::tab_url( 'support' ) ) . '">' . esc_html__( 'Support', 'royal-mcp' ) . '</a>'
 			);
 			?>
