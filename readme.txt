@@ -382,13 +382,13 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Enhancement: Messages that point to a setting now give its full menu path.
 * Enhancement: List results now include a total and whether more results follow.
 * Enhancement: The Activity Log now keeps up to 100,000 entries.
+* Enhancement: Help guides point to Claude's new Plugins page for connectors and skills.
 * Fix: Divi text replace now reaches text inside Divi 5 nested modules.
 * Fix: Media added from a link keeps its full source address.
 * Fix: IndexNow submissions now work on sites with language folders.
 * Fix: The Connection Doctor link for a switched-off connection now opens the right screen.
 * Fix: Undoing a launch keeps an uploaded image that is used elsewhere on the site.
 * Fix: IndexNow submissions from AI publishing tools now need an administrator.
-* Enhancement: Help guides point to Claude's new Plugins page for connectors and skills.
 * Security: Tighter rate limits on sign-in endpoints.
 * Security: Stricter safeguards across sign-in, undo, preview links and integration tools.
 
