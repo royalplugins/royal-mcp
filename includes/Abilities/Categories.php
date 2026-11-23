@@ -184,6 +184,18 @@ class Categories {
 				'label'       => __( 'Royal MCP: WP Mail SMTP', 'royal-mcp' ),
 				'description' => __( 'WP Mail SMTP sending status and last error, a rate-limited test email, and email log availability.', 'royal-mcp' ),
 			),
+			'jetengine'     => array(
+				'label'       => __( 'Royal MCP: JetEngine', 'royal-mcp' ),
+				'description' => __( 'JetEngine post types, meta field definitions, custom content type items and relations, and field value changes on posts and content type items, with undo.', 'royal-mcp' ),
+			),
+			'fluentsmtp'    => array(
+				'label'       => __( 'Royal MCP: FluentSMTP', 'royal-mcp' ),
+				'description' => __( 'FluentSMTP connections, health and last error, and a rate-limited test email.', 'royal-mcp' ),
+			),
+			'mc4wp'         => array(
+				'label'       => __( 'Royal MCP: Mailchimp for WP', 'royal-mcp' ),
+				'description' => __( 'Mailchimp for WP connection status, audiences with member counts, sign-up forms and the audiences each form uses, with undo.', 'royal-mcp' ),
+			),
 			'akismet'       => array(
 				'label'       => __( 'Royal MCP: Akismet', 'royal-mcp' ),
 				'description' => __( 'Akismet status and settings, the Check for Spam recheck of pending comments, and spam statistics.', 'royal-mcp' ),

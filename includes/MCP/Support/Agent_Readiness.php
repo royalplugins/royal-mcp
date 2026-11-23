@@ -311,7 +311,7 @@ class Agent_Readiness {
 		}
 		$c['agentSkills'] = self::check( 'agentSkills', __( 'Agent skills index', 'royal-mcp' ), is_array( $skills ) && isset( $skills['skills'] ) && is_array( $skills['skills'] ), $sk_r, $served_fix );
 		$settings = get_option( 'royal_mcp_settings', [] );
-		$c['webMcp'] = self::check( 'webMcp', __( 'WebMCP for browser agents', 'royal-mcp' ), is_array( $settings ) && ! empty( $settings['webmcp_enabled'] ), [], __( 'Switch on WebMCP under Royal MCP > Settings so AI agents in the browser can use the site\'s tools.', 'royal-mcp' ), __( 'Read from Royal MCP\'s own setting.', 'royal-mcp' ) );
+		$c['webMcp'] = self::check( 'webMcp', __( 'WebMCP for browser agents', 'royal-mcp' ), is_array( $settings ) && ! empty( $settings['webmcp_enabled'] ), [], __( 'Switch on WebMCP under Royal MCP → Safety → Advanced so AI agents in the browser can use the site\'s tools.', 'royal-mcp' ), __( 'Read from Royal MCP\'s own setting.', 'royal-mcp' ) );
 		$cat = self::fetch( '/.well-known/api-catalog' );
 		$cj  = $cat && 200 === $cat['code'] ? json_decode( $cat['body'], true ) : null;
 		$c['apiCatalog'] = self::check( 'apiCatalog', __( 'API catalog', 'royal-mcp' ), $cat && false !== strpos( $cat['type'], 'linkset+json' ) && is_array( $cj ) && ! empty( $cj['linkset'] ), $cat, __( 'A list of the site\'s APIs for agents. No Royal plugin publishes one yet; the MCP server card already covers the integration level.', 'royal-mcp' ) );

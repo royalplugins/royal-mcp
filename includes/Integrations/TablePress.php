@@ -761,7 +761,11 @@ class TablePress {
 			}
 			$value = $options[ $key ];
 			if ( 'bool' === $type ) {
-				$clean[ $key ] = (bool) $value;
+				$on = filter_var( $value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE );
+				if ( null === $on ) {
+					throw new \Exception( 'options.' . esc_html( $key ) . ' must be true or false.' );
+				}
+				$clean[ $key ] = $on;
 			} elseif ( 'int' === $type ) {
 				$clean[ $key ] = max( 0, (int) $value );
 			} elseif ( is_string( $value ) ) {

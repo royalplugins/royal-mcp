@@ -29,7 +29,7 @@ class Other_Notices {
 
 	public static function on_screen( $screen ) {
 		$id   = is_object( $screen ) ? (string) $screen->id : '';
-		$ours = 'toplevel_page_' . Menu_Layout::PARENT === $id || 0 === strpos( $id, Menu_Layout::PARENT . '_page_' ) || 'admin_page_' . Help_Page::SLUG === $id;
+		$ours = 'toplevel_page_' . Menu_Layout::PARENT === $id || 0 === strpos( $id, Menu_Layout::sub_page_prefix() ) || 'admin_page_' . Help_Page::SLUG === $id;
 		if ( ! $ours || self::handled_elsewhere() ) {
 			return;
 		}

@@ -20,19 +20,51 @@
 
     var originalFetch = window.fetch.bind( window );
 
+    // True only for this site's own origin with an mcp path segment. Relative
+    // URLs resolve against the page; any other origin is left alone.
+    function isOwnMcpUrl( url ) {
+        var parsed;
+        try {
+            parsed = new URL( url, window.location.href );
+        } catch ( e ) {
+            return false;
+        }
+        if ( parsed.origin !== window.location.origin ) {
+            return false;
+        }
+        var search = parsed.search;
+        try {
+            search = decodeURIComponent( search );
+        } catch ( e ) {
+            // Keep the raw query when it is not valid percent-encoding.
+        }
+        return /(?:^|\/)mcp(?:\/|\?|&|$)/.test( parsed.pathname ) || /(?:^|\/)mcp(?:\/|&|$)/.test( search );
+    }
+
     window.fetch = function ( input, init ) {
         var url = '';
+        var isRequest = typeof Request !== 'undefined' && input instanceof Request;
         if ( typeof input === 'string' ) {
             url = input;
-        } else if ( input && typeof input.url === 'string' ) {
+        } else if ( isRequest ) {
             url = input.url;
+        } else if ( input && typeof input.href === 'string' ) {
+            url = input.href;
         }
 
         // Only touch our /mcp endpoint. Anything else (theme fetches, other
         // plugins, third-party APIs) passes through untouched.
-        if ( url && /(?:^|\/)mcp(?:\/|\?|$)/.test( url ) ) {
-            init = init || {};
-            var headers = new Headers( init.headers || {} );
+        if ( url && isOwnMcpUrl( url ) ) {
+            // A copy, so the caller's own options object never carries the nonce elsewhere.
+            init = Object.assign( {}, init || {} );
+            // Headers given in init replace a Request's own headers, so start
+            // from the Request's headers and lay init's headers over them.
+            var headers = new Headers( isRequest ? input.headers : undefined );
+            if ( init.headers ) {
+                new Headers( init.headers ).forEach( function ( value, name ) {
+                    headers.set( name, value );
+                } );
+            }
             if ( ! headers.has( 'X-WP-Nonce' ) ) {
                 headers.set( 'X-WP-Nonce', nonce );
             }

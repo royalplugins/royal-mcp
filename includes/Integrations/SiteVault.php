@@ -200,8 +200,12 @@ class SiteVault {
 				return self::format_backup( $backup );
 
 			case 'sv_create_backup':
+				$sv_type = isset( $args['type'] ) && '' !== $args['type'] ? $args['type'] : 'full';
+				if ( ! is_string( $sv_type ) || ! in_array( $sv_type, [ 'full', 'database', 'files', 'plugins', 'themes', 'uploads' ], true ) ) {
+					throw new \Exception( 'type must be full, database, files, plugins, themes or uploads. No backup was started.' );
+				}
 				$backup_args = [
-					'type' => in_array( $args['type'] ?? 'full', [ 'full', 'database', 'files', 'plugins', 'themes', 'uploads' ] ) ? $args['type'] : 'full',
+					'type' => $sv_type,
 				];
 				if ( ! empty( $args['name'] ) ) {
 					$backup_args['name'] = sanitize_text_field( $args['name'] );

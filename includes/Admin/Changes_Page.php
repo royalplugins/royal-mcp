@@ -36,7 +36,7 @@ class Changes_Page {
 
     /** WordPress's own diff table styles. */
     public function enqueue( $hook_suffix ) {
-        if ( 'royal-mcp_page_' . self::MENU_SLUG === $hook_suffix ) {
+        if ( Menu_Layout::sub_page_prefix() . self::MENU_SLUG === $hook_suffix ) {
             wp_enqueue_style( 'revisions' );
         }
     }

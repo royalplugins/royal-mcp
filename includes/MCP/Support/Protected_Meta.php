@@ -401,7 +401,7 @@ final class Protected_Meta {
 			throw new Tool_Refusal( 'protected_meta_blocked', 'This protected meta key is always refused: WordPress, another plugin or Royal MCP depends on it, or a dedicated tool writes it.' );
 		}
 		if ( ! self::is_listed( $key ) ) {
-			throw new Tool_Refusal( 'protected_meta_not_listed', 'This is a protected meta key. An administrator can allow it under Royal MCP > Settings > Writable protected meta keys.' );
+			throw new Tool_Refusal( 'protected_meta_not_listed', 'This is a protected meta key. An administrator can allow it under Royal MCP → Safety → Extra write permissions → Writable protected meta keys.' );
 		}
 	}
 

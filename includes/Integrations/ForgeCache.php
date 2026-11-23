@@ -134,9 +134,16 @@ class ForgeCache {
 						throw new \Exception( 'You do not have permission to purge the cache for this post.' );
 					}
 					$cache = \ForgeCache_Cache::instance();
-					if ( method_exists( $cache, 'clear_post_cache' ) ) {
-						$cache->clear_post_cache( $post_id );
+					if ( ! method_exists( $cache, 'clear_post_cache' ) ) {
+						return [
+							'success' => false,
+							'url'     => $url,
+							'post_id' => $post_id,
+							'path'    => 'post_scoped',
+							'message' => 'This ForgeCache version has no per-post purge; nothing was purged. Use fc_clear_cache to clear the whole cache.',
+						];
 					}
+					$cache->clear_post_cache( $post_id );
 					return [
 						'success'    => true,
 						'url'        => $url,

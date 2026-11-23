@@ -116,7 +116,7 @@ class MaintenanceMode {
 			$try( 'litespeed', static function () { do_action( 'litespeed_purge_all' ); } );
 		}
 		if ( function_exists( 'w3tc_flush_all' ) ) {
-			$try( 'w3tc', static function () { w3tc_flush_all(); } );
+			$try( 'w3tc (requested; W3 Total Cache does not confirm)', static function () { w3tc_flush_all(); } );
 		}
 		if ( function_exists( 'rocket_clean_domain' ) ) {
 			$try( 'wp_rocket', static function () { rocket_clean_domain(); } );

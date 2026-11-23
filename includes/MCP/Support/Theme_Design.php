@@ -272,7 +272,7 @@ class Theme_Design {
 			throw new \Exception( 'You do not have permission to change the theme design (edit_theme_options).' );
 		}
 		if ( ! self::writes_allowed() ) {
-			throw new Tool_Refusal( 'theme_writes_disabled', 'Theme writes are disabled. Enable "Allow AI to modify theme appearance" under Royal MCP > Settings.' );
+			throw new Tool_Refusal( 'theme_writes_disabled', 'Theme writes are disabled. Enable "Allow AI to modify theme appearance" under Royal MCP → Safety → Extra write permissions.' );
 		}
 		$theme = self::theme();
 		if ( '' === $theme ) {
@@ -816,7 +816,7 @@ class Theme_Design {
 			throw new \Exception( 'edit_theme_options capability required to undo this operation.' );
 		}
 		if ( ! self::writes_allowed() ) {
-			throw new Tool_Refusal( 'theme_writes_disabled', 'Theme writes are disabled. Enable "Allow AI to modify theme appearance" under Royal MCP > Settings to undo this change.' );
+			throw new Tool_Refusal( 'theme_writes_disabled', 'Theme writes are disabled. Enable "Allow AI to modify theme appearance" under Royal MCP → Safety → Extra write permissions to undo this change.' );
 		}
 		$pre     = is_array( $snapshot['pre_op_state'] ?? null ) ? $snapshot['pre_op_state'] : [];
 		$theme   = (string) ( $snapshot['target']['theme'] ?? '' );

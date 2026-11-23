@@ -48,11 +48,12 @@ class WPForms {
 			],
 			[
 				'name'        => 'wpforms_get_form',
-				'description' => 'Read a single WPForms form\'s full schema: fields, settings, notifications, confirmations. Read-only.',
+				'description' => 'Read a single WPForms form\'s schema: fields, settings, notifications, confirmations. Notification recipients, reply-to and sender addresses come back masked with a count; confirmation redirect addresses show their host only; add-on connections (webhook addresses, keys, secrets, headers) are left out unless include_integrations is true. Read-only.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
-						'form_id' => [ 'type' => 'integer', 'description' => 'WPForms form ID from wpforms_list_forms.' ],
+						'form_id'              => [ 'type' => 'integer', 'description' => 'WPForms form ID from wpforms_list_forms.' ],
+						'include_integrations' => [ 'type' => 'boolean', 'description' => 'true includes add-on connection settings (webhook addresses, keys, secrets). Default false.' ],
 					],
 					'required'   => [ 'form_id' ],
 				],
@@ -72,7 +73,7 @@ class WPForms {
 			],
 			[
 				'name'        => 'wpforms_get_submission',
-				'description' => 'Read a single submission with all field values + metadata (submitter IP, timestamp, entry status). Requires WPForms Pro; Lite returns {state: \'unavailable\', reason: \'requires_pro\', tier: \'wpforms_pro\', message: ...}. Read-only.',
+				'description' => 'Read a single submission with all field values + metadata (timestamp, entry status; the submitter IP address is not returned). Requires WPForms Pro; Lite returns {state: \'unavailable\', reason: \'requires_pro\', tier: \'wpforms_pro\', message: ...}. Read-only.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -226,6 +227,8 @@ class WPForms {
 		$fields        = isset( $decoded['fields'] ) && is_array( $decoded['fields'] ) ? $decoded['fields'] : [];
 		$notifications = isset( $settings['notifications'] ) && is_array( $settings['notifications'] ) ? $settings['notifications'] : [];
 		$confirmations = isset( $settings['confirmations'] ) && is_array( $settings['confirmations'] ) ? $settings['confirmations'] : [];
+		unset( $settings['notifications'], $settings['confirmations'] );
+		$include = is_array( $args ) && array_key_exists( 'include_integrations', $args ) && true === $args['include_integrations'] && current_user_can( 'manage_options' );
 
 		$entry = self::format_form_entry( $post );
 
@@ -237,11 +240,78 @@ class WPForms {
 			'created_at_iso'  => $entry['created_at_iso'],
 			'modified_at'     => $entry['modified_at'],
 			'modified_at_iso' => $entry['modified_at_iso'],
-			'settings'        => $settings,
+			'settings'        => self::redact_settings( $settings, $include ),
 			'fields'          => array_map( [ self::class, 'format_field' ], array_values( $fields ) ),
-			'notifications'   => $notifications,
-			'confirmations'   => $confirmations,
+			'notifications'   => array_map( [ self::class, 'redact_notification' ], $notifications ),
+			'confirmations'   => array_map( [ self::class, 'redact_confirmation' ], $confirmations ),
+			'redacted'        => 'Notification addresses are masked and counted, redirect addresses show their host only' . ( $include ? '.' : ', and add-on connections (webhook addresses, keys, secrets, headers) are left out; pass include_integrations: true to see them.' ),
 		];
+	}
+
+	/** Settings keys that hold add-on connections: addresses, keys, secrets, headers. */
+	const SECRET_KEY_PATTERN = '/(secret|token|api[_-]?key|apikey|password|passwd|webhook|endpoint|header|auth|url$|_url|signature|credential|private)/i';
+
+	/** An address shown as its first letter and the domain's first letter: j***@e***.com. */
+	private static function mask_email( $address ) {
+		$address = trim( (string) $address );
+		if ( false === strpos( $address, '@' ) ) {
+			return $address;
+		}
+		list( $user, $domain ) = explode( '@', $address, 2 );
+		$dot = strrpos( $domain, '.' );
+		$tld = false !== $dot ? substr( $domain, $dot ) : '';
+		return mb_substr( $user, 0, 1 ) . '***@' . mb_substr( $domain, 0, 1 ) . '***' . $tld;
+	}
+
+	/** A recipients text (comma separated addresses and smart tags) as masked addresses, smart tags kept. */
+	private static function mask_recipients( $value ) {
+		$parts = array_filter( array_map( 'trim', explode( ',', is_scalar( $value ) ? (string) $value : '' ) ), 'strlen' );
+		$out   = [];
+		foreach ( $parts as $part ) {
+			$out[] = '{' === substr( $part, 0, 1 ) ? $part : self::mask_email( $part );
+		}
+		return [ 'count' => count( $out ), 'masked' => $out ];
+	}
+
+	/** One notification with its addresses masked; subject and message kept. */
+	private static function redact_notification( $n ) {
+		if ( ! is_array( $n ) ) {
+			return $n;
+		}
+		foreach ( [ 'email', 'carboncopy', 'replyto', 'sender_address' ] as $k ) {
+			if ( isset( $n[ $k ] ) && is_scalar( $n[ $k ] ) && '' !== (string) $n[ $k ] ) {
+				$n[ $k ] = self::mask_recipients( $n[ $k ] );
+			}
+		}
+		return $n;
+	}
+
+	/** One confirmation with a redirect address cut to its host. */
+	private static function redact_confirmation( $c ) {
+		if ( ! is_array( $c ) ) {
+			return $c;
+		}
+		if ( isset( $c['redirect'] ) && is_string( $c['redirect'] ) && '' !== $c['redirect'] ) {
+			$host          = wp_parse_url( $c['redirect'], PHP_URL_HOST );
+			$c['redirect'] = is_string( $host ) ? $host : '(address hidden)';
+		}
+		return $c;
+	}
+
+	/** Form settings without add-on connection details unless asked for, and with addresses masked. */
+	private static function redact_settings( array $settings, $include, $depth = 0 ) {
+		foreach ( $settings as $k => $v ) {
+			if ( ! $include && is_string( $k ) && ( 1 === preg_match( self::SECRET_KEY_PATTERN, $k ) || in_array( $k, [ 'providers', 'webhooks' ], true ) ) ) {
+				unset( $settings[ $k ] );
+				continue;
+			}
+			if ( is_array( $v ) && $depth < 8 ) {
+				$settings[ $k ] = self::redact_settings( $v, $include, $depth + 1 );
+			} elseif ( is_string( $v ) && is_email( trim( $v ) ) ) {
+				$settings[ $k ] = self::mask_email( $v );
+			}
+		}
+		return $settings;
 	}
 
 	/**
@@ -517,7 +587,10 @@ class WPForms {
 	 */
 	private static function resolve_form_id( $args ) {
 		$raw = $args['form_id'] ?? 0;
-		$form_id = absint( intval( $raw ) );
+		if ( ! is_int( $raw ) && ! ( is_string( $raw ) && ctype_digit( $raw ) ) ) {
+			throw new \Exception( 'form_id must be a whole number.' );
+		}
+		$form_id = absint( $raw );
 		if ( $form_id <= 0 ) {
 			throw new \Exception( 'form_id is required.' );
 		}
@@ -533,7 +606,10 @@ class WPForms {
 	 */
 	private static function resolve_submission_id( $args ) {
 		$raw = $args['submission_id'] ?? 0;
-		$submission_id = absint( intval( $raw ) );
+		if ( ! is_int( $raw ) && ! ( is_string( $raw ) && ctype_digit( $raw ) ) ) {
+			throw new \Exception( 'submission_id must be a whole number.' );
+		}
+		$submission_id = absint( $raw );
 		if ( $submission_id <= 0 ) {
 			throw new \Exception( 'submission_id is required.' );
 		}

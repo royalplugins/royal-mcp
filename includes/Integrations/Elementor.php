@@ -30,6 +30,32 @@ class Elementor {
 		return class_exists( '\Elementor\Plugin' );
 	}
 
+	/** Tools that change Elementor content; they follow Elementor's own role manager. */
+	const BUILDER_WRITE_TOOLS = [ 'elementor_clone_page', 'elementor_replace_text', 'elementor_replace_image', 'elementor_import_template', 'elementor_add_widget', 'elementor_apply_template_to_page', 'elementor_rebuild_post_content', 'elementor_rebuild_post_content_bulk' ];
+
+	/**
+	 * Whether Elementor keeps the current user out of its editor: their role is excluded in
+	 * Elementor's role manager, or (with a post) Elementor says they may not edit that post with it.
+	 */
+	public static function editor_locked_out( $post_id = 0 ) {
+		$excluded = get_option( 'elementor_exclude_user_roles', [] );
+		$user     = wp_get_current_user();
+		if ( is_array( $excluded ) && $excluded && array_intersect( (array) $user->roles, array_map( 'strval', $excluded ) ) ) {
+			return true;
+		}
+		if ( (int) $post_id > 0 && class_exists( '\Elementor\User' ) && is_callable( [ '\Elementor\User', 'is_current_user_can_edit' ] ) ) {
+			return ! \Elementor\User::is_current_user_can_edit( (int) $post_id );
+		}
+		return false;
+	}
+
+	/** Refuse a builder write on a post Elementor does not let the current user edit. */
+	private static function assert_builder_post( $post_id ) {
+		if ( self::editor_locked_out( $post_id ) ) {
+			throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'builder_not_allowed', sprintf( 'Elementor does not let you edit post %d with its editor (its role manager or post type settings), so its tools cannot change it for you either. Nothing was changed.', (int) $post_id ) );
+		}
+	}
+
 	/**
 	 * Get tool definitions for MCP tools/list response.
 	 */
@@ -227,7 +253,7 @@ class Elementor {
 			],
 			[
 				'name'        => 'elementor_list_widget_schemas',
-				'description' => 'Enumerate every widget type registered with Elementor on this site — core widgets, third-party plugin widgets, and Editor V4 atomic widgets. Returns an array of { widget_type, title, categories, keywords, icon, is_atomic } entries. Optional category filter narrows to a single category (e.g. "basic", "general", "theme-elements", "woocommerce"). Use before elementor_get_widget_schema to discover what widgets are available, or before elementor_add_widget to confirm a widget_type is registered.',
+				'description' => 'Enumerate every widget type registered with Elementor on this site — core widgets, third-party plugin widgets, and Editor V4 atomic widgets. Returns { total, widgets } with one { widget_type, title, categories, keywords, icon, is_atomic } entry per widget. Optional category filter narrows to a single category (e.g. "basic", "general", "theme-elements", "woocommerce"). Use before elementor_get_widget_schema to discover what widgets are available, or before elementor_add_widget to confirm a widget_type is registered.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -238,7 +264,7 @@ class Elementor {
 			],
 			[
 				'name'        => 'elementor_list_dynamic_tags',
-				'description' => 'Enumerate Elementor dynamic tags registered on this site. Dynamic tags let widget settings pull runtime values (post title, ACF field, user meta, WooCommerce price, etc.) instead of holding a static string. Returns an array of { name, title, group, categories } entries. May be empty on sites without Elementor Pro — most dynamic tags ship in Pro. Read-only, no cap check beyond edit_posts.',
+				'description' => 'Enumerate Elementor dynamic tags registered on this site. Dynamic tags let widget settings pull runtime values (post title, ACF field, user meta, WooCommerce price, etc.) instead of holding a static string. Returns { total, tags } with one { name, title, group, categories } entry per tag. May be empty on sites without Elementor Pro — most dynamic tags ship in Pro. Read-only, no cap check beyond edit_posts.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => new \stdClass(),
@@ -292,6 +318,9 @@ class Elementor {
 
 		if ( ! self::is_available() ) {
 			throw new \Exception( 'Elementor is not active' );
+		}
+		if ( in_array( (string) $name, self::BUILDER_WRITE_TOOLS, true ) && self::editor_locked_out() ) {
+			throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'builder_not_allowed', 'Elementor\'s role manager keeps your role out of the Elementor editor, so its tools cannot change Elementor content for you either. Nothing was changed.' );
 		}
 
 		switch ( $name ) {
@@ -616,6 +645,7 @@ class Elementor {
 		if ( ! current_user_can( 'edit_post', $target_post_id ) ) {
 			throw new \Exception( 'edit_post capability required on target post.' );
 		}
+		self::assert_builder_post( $target_post_id );
 		if ( ! \Royal_MCP\MCP\Support\Post_Access::can_read_content( $template_id ) ) {
 			throw new \Exception( 'read_post capability required on template.' );
 		}
@@ -840,6 +870,7 @@ class Elementor {
 		if ( ! current_user_can( 'edit_post', $post_id ) ) {
 			throw new \Exception( 'edit_post capability required on target post.' );
 		}
+		self::assert_builder_post( $post_id );
 		$post = get_post( $post_id );
 		if ( ! $post ) {
 			throw new \Exception( 'Post not found.' );
@@ -976,7 +1007,7 @@ class Elementor {
 		$last_scanned = $candidate_ids ? max( $candidate_ids ) : null;
 		// Only posts the caller could repair, in the preview and in the results.
 		$candidate_ids = array_values( array_filter( $candidate_ids, static function ( $pid ) {
-			return current_user_can( 'edit_post', $pid );
+			return current_user_can( 'edit_post', $pid ) && ! self::editor_locked_out( $pid );
 		} ) );
 
 		if ( $dry_run ) {
@@ -1006,6 +1037,10 @@ class Elementor {
 		foreach ( $candidate_ids as $pid ) {
 			if ( ! current_user_can( 'edit_post', $pid ) ) {
 				$skipped[] = [ 'post_id' => $pid, 'reason' => 'edit_post capability missing' ];
+				continue;
+			}
+			if ( self::editor_locked_out( $pid ) ) {
+				$skipped[] = [ 'post_id' => $pid, 'reason' => 'Elementor does not let you edit this post with its editor' ];
 				continue;
 			}
 			$post = get_post( $pid );
@@ -1446,6 +1481,7 @@ class Elementor {
 		if ( ! current_user_can( 'edit_post', $post_id ) ) {
 			throw new \Exception( 'edit_post capability required on target post.' );
 		}
+		self::assert_builder_post( $post_id );
 		$elementor_data = get_post_meta( $post_id, '_elementor_data', true );
 		if ( empty( $elementor_data ) ) {
 			throw new \Exception( 'Target post does not have Elementor data.' );
@@ -1831,6 +1867,7 @@ class Elementor {
 		if ( ! current_user_can( 'edit_post', $post_id ) ) {
 			throw new \Exception( 'edit_post capability required on target post.' );
 		}
+		self::assert_builder_post( $post_id );
 		$elementor_data = get_post_meta( $post_id, '_elementor_data', true );
 		if ( empty( $elementor_data ) ) {
 			throw new \Exception( 'Target post does not have Elementor data.' );
@@ -2447,6 +2484,7 @@ class Elementor {
 		if ( ! current_user_can( 'edit_post', $post_id ) ) {
 			throw new \Exception( 'edit_post capability required on target post.' );
 		}
+		self::assert_builder_post( $post_id );
 		$elementor_data = get_post_meta( $post_id, '_elementor_data', true );
 		if ( empty( $elementor_data ) ) {
 			throw new \Exception( 'Target post does not have Elementor data — was it edited with Elementor?' );

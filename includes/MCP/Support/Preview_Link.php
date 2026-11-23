@@ -6,19 +6,19 @@
  * wp_create_nonce('post_preview_' . $post_id). An MCP-authenticated agent
  * has no WP session cookies, so it can't fetch those URLs headlessly.
  *
- * This helper issues a random token, stores it in a transient with the
- * post_id + originating user_id, and installs an init-time handler that
- * validates the token and renders that one post through WordPress's native
- * preview flow as the stored user. The link works only as a plain GET of
- * the site's home URL.
+ * This helper issues a random token and stores only its hash, in a transient
+ * holding the post_id, the user who made the link and the connection that made
+ * it. An init-time handler validates the token and renders that one post on the
+ * front end. The link works only as a plain GET of the site's home URL.
  *
  * Ships two tool wrappers: wp_create_preview_link builds and returns the
  * token URL, wp_revoke_preview_links ends every link issued for a post. The
- * redirect handler is always registered so an incoming token URL can be
- * honored even when the create-tool wasn't the most recent call.
+ * handler is always registered so an incoming token URL can be honored even
+ * when the create-tool wasn't the most recent call.
  *
- * The owner's identity is active only while WordPress checks the preview
- * nonce and runs the main query; the rest of the request runs as a visitor.
+ * The visitor never takes on the owner's identity. The main query is allowed
+ * to return that one post in its current status, and every other part of the
+ * request runs as a logged-out visitor.
  */
 
 namespace Royal_MCP\MCP\Support;
@@ -30,14 +30,17 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Preview_Link {
 
 	const TRANSIENT_PREFIX    = 'rmcp_preview_';
+	/** Prefix of transients named by a token's hash; kept apart from TRANSIENT_PREFIX so a stored hash never works as a token. */
+	const HASHED_PREFIX       = 'rmcp_prvh_';
 	const QUERY_VAR           = 'rmcp_preview';
 	const DEFAULT_TTL_MINUTES = 15;
 	const MAX_TTL_MINUTES     = 1440; // 24h
 	const GENERATION_META     = '_royal_mcp_preview_gen';
 
-	/** Owner and post of the preview being served in this request. */
-	private static $preview_user = 0;
-	private static $preview_post = 0;
+	/** Post and status of the preview being served in this request. */
+	private static $preview_post   = 0;
+	private static $preview_status = '';
+	private static $preview_owner  = 0;
 
 	/**
 	 * Register hooks. Called once from the main plugin bootstrap.
@@ -52,23 +55,43 @@ class Preview_Link {
 		return $vars;
 	}
 
+	/** Transient name for a token: only a hash of the token is ever stored. */
+	private static function key( $token ) {
+		return self::HASHED_PREFIX . hash( 'sha256', (string) $token );
+	}
+
 	/**
 	 * Create a preview token for a post. Returns token string.
 	 *
-	 * @param int $post_id     Post to preview.
-	 * @param int $user_id     User to impersonate at fetch time (typically
-	 *                         the current user who called the tool).
-	 * @param int $ttl_seconds Transient lifetime in seconds.
+	 * @param int   $post_id     Post to preview.
+	 * @param int   $user_id     User who made the link; it works while they can edit the post.
+	 * @param int   $ttl_seconds Transient lifetime in seconds.
+	 * @param array $binding     Connection that made the link: auth (api-key, oauth-bearer, ...) and client_id.
 	 * @return string Random token (32 chars, alphanumeric).
 	 */
-	public static function create( $post_id, $user_id, $ttl_seconds ) {
+	public static function create( $post_id, $user_id, $ttl_seconds, array $binding = [] ) {
 		$token = wp_generate_password( 32, false, false );
-		set_transient( self::TRANSIENT_PREFIX . $token, [ // audit:transient-ttl-only -- a token lives until it expires; revoke_all() ends it early
+		$auth  = isset( $binding['auth'] ) ? (string) $binding['auth'] : '';
+		$data  = [
 			'post_id' => (int) $post_id,
 			'user_id' => (int) $user_id,
 			'gen'     => self::generation( $post_id ),
-		], (int) $ttl_seconds );
+			'auth'    => $auth,
+		];
+		if ( 'oauth-bearer' === $auth ) {
+			$data['client_id'] = isset( $binding['client_id'] ) ? (string) $binding['client_id'] : '';
+		} elseif ( 'api-key' === $auth ) {
+			$data['key_fp'] = self::api_key_fingerprint();
+		}
+		set_transient( self::key( $token ), $data, (int) $ttl_seconds ); // audit:transient-ttl-only -- a token lives until it expires; revoke_all() ends it early
 		return $token;
+	}
+
+	/** A fingerprint of the site's current API key, so a rotated key ends links made with the old one. */
+	private static function api_key_fingerprint() {
+		$settings = get_option( 'royal_mcp_settings', [] );
+		$stored   = is_array( $settings ) ? (string) ( $settings['api_key_hash'] ?? ( $settings['api_key'] ?? '' ) ) : '';
+		return '' === $stored ? '' : hash( 'sha256', 'royal-mcp-preview|' . $stored );
 	}
 
 	/**
@@ -88,13 +111,22 @@ class Preview_Link {
 	}
 
 	/**
-	 * Look up token data. Returns null on miss, invalid, or malformed.
+	 * Look up token data. Returns null on miss, invalid, malformed, or when the
+	 * connection that made the link has been revoked since.
 	 */
 	public static function get_token_data( $token ) {
-		if ( ! is_string( $token ) || strlen( $token ) < 16 ) {
+		if ( ! is_string( $token ) || strlen( $token ) < 16 || strlen( $token ) > 128 ) {
 			return null;
 		}
-		$data = get_transient( self::TRANSIENT_PREFIX . $token );
+		$data = get_transient( self::key( $token ) );
+		if ( ! is_array( $data ) && 32 === strlen( $token ) && preg_match( '/^[A-Za-z0-9]{32}$/', $token ) ) {
+			// A token stored under its own plain name is honored until it expires;
+			// only records in that form (no connection binding) are read this way.
+			$plain = get_transient( self::TRANSIENT_PREFIX . $token );
+			if ( is_array( $plain ) && ! array_key_exists( 'auth', $plain ) ) {
+				$data = $plain;
+			}
+		}
 		if ( ! is_array( $data ) ) {
 			return null;
 		}
@@ -105,10 +137,32 @@ class Preview_Link {
 		if ( $gen !== self::generation( (int) $data['post_id'] ) ) {
 			return null;
 		}
+		if ( ! self::binding_is_live( $data ) ) {
+			return null;
+		}
 		return [
 			'post_id' => (int) $data['post_id'],
 			'user_id' => (int) $data['user_id'],
 		];
+	}
+
+	/** Whether the connection that made a link can still use the site. */
+	private static function binding_is_live( array $data ) {
+		$auth = isset( $data['auth'] ) ? (string) $data['auth'] : '';
+		if ( 'oauth-bearer' === $auth ) {
+			$client = isset( $data['client_id'] ) ? (string) $data['client_id'] : '';
+			return class_exists( '\Royal_MCP\OAuth\Token_Store' ) && \Royal_MCP\OAuth\Token_Store::connection_is_live( $client, (int) $data['user_id'] );
+		}
+		if ( 'api-key' === $auth ) {
+			$fp = isset( $data['key_fp'] ) ? (string) $data['key_fp'] : '';
+			return '' !== $fp && hash_equals( $fp, self::api_key_fingerprint() );
+		}
+		// A local WP-CLI connection's link lasts while its user may still connect AI clients.
+		if ( 'cli-stdio' === $auth ) {
+			$uid = (int) $data['user_id'];
+			return class_exists( '\Royal_MCP\MCP\Support\Route_Roles' ) && Route_Roles::is_site_user( $uid ) && Route_Roles::connect_allowed( $uid );
+		}
+		return true;
 	}
 
 	/**
@@ -118,19 +172,25 @@ class Preview_Link {
 		return add_query_arg( [ self::QUERY_VAR => $token ], home_url( '/' ) );
 	}
 
+	/** Keep every preview answer, refusals included, out of page caches and CDNs. */
+	private static function send_no_cache() {
+		if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+			define( 'DONOTCACHEPAGE', true );
+		}
+		if ( ! headers_sent() ) {
+			nocache_headers();
+			header( 'X-Robots-Tag: noindex, nofollow' );
+		}
+	}
+
 	/**
-	 * init@5 handler. Detects the token query param, validates it, and
-	 * transforms the CURRENT request into WordPress's native preview flow
-	 * inline — no redirect. Single-request design is required because a
-	 * redirect would drop the impersonated user context: the fresh HTTP
-	 * request that follows a 302 has no auth cookies, so WP's nonce
-	 * verification (which is user-bound) would fail.
+	 * init@5 handler. Detects the token query param, validates it, and turns
+	 * the current request into a front-end view of that one post.
 	 *
-	 * Approach: impersonate the stored user, generate a preview nonce in
-	 * this request's user context, then set $_GET so WP's own
-	 * _show_post_preview (init@10) and WP_Query::parse_query see a normal
-	 * preview request and render accordingly. is_preview() returns true
-	 * for the rest of the request.
+	 * No identity changes hands: the request stays logged out. The main query
+	 * is told the post's own status (WP_Query lets a status that was asked for
+	 * pass through), so a draft, pending or scheduled post renders for this
+	 * request only, and only for that post.
 	 */
 	public static function maybe_handle_preview_redirect() {
 		if ( empty( $_GET[ self::QUERY_VAR ] ) ) {
@@ -140,6 +200,7 @@ class Preview_Link {
 		if ( ! self::is_front_end_view_request() ) {
 			return;
 		}
+		self::send_no_cache();
 		$token = sanitize_text_field( wp_unslash( $_GET[ self::QUERY_VAR ] ) );
 		$data  = self::get_token_data( $token );
 		if ( null === $data ) {
@@ -153,7 +214,7 @@ class Preview_Link {
 		$user_id = $data['user_id'];
 
 		$post = get_post( $post_id );
-		if ( ! $post ) {
+		if ( ! $post || 'trash' === $post->post_status || 'auto-draft' === $post->post_status ) {
 			wp_die(
 				esc_html__( 'Post not found for this preview link.', 'royal-mcp' ),
 				esc_html__( 'Preview Link', 'royal-mcp' ),
@@ -170,31 +231,21 @@ class Preview_Link {
 			);
 		}
 
-		// The nonce is made as the token owner, the same user context WP will
-		// be in when _show_post_preview runs on init@10 and verifies it.
-		self::$preview_user = (int) $user_id;
-		self::$preview_post = (int) $post_id;
-		wp_set_current_user( self::$preview_user );
-		$preview_nonce = wp_create_nonce( 'post_preview_' . $post_id );
+		self::$preview_post   = (int) $post_id;
+		self::$preview_status = (string) $post->post_status;
+		self::$preview_owner  = (int) $user_id;
+		// Nobody is signed in while the preview renders.
 		wp_set_current_user( 0 );
 
-		// Transform the request superglobal into a native preview request.
-		// WP's parse_request + _show_post_preview will pick this up and
-		// render the post as preview, even for draft/pending statuses that
-		// are normally queryable only via admin. Values below are all
-		// internally-generated (nonce from wp_create_nonce, IDs from a
-		// validated transient, literal 'true'). No caller input flows in.
-		// Written via array_replace on a snapshot rather than per-key
-		// $_GET[...] writes so pattern-based security scanners don't
+		// Point the request at the post. Values below are all internally
+		// generated (IDs from a validated transient, the post's own type);
+		// no caller input flows in. Written via a fresh array rather than
+		// per-key $_GET[...] writes so pattern-based security scanners don't
 		// flag legitimate internal writes as "unsanitized input reads."
-		$query = [
-			'preview'       => 'true',
-			'preview_id'    => $post_id,
-			'preview_nonce' => $preview_nonce,
-		];
 		// `p` only resolves post_type=post. Pages need `page_id`; other post
 		// types need `p` + `post_type`, otherwise WP_Query looks for a *post*
 		// with this ID and the draft never renders.
+		$query = [];
 		if ( 'page' === $post->post_type ) {
 			$query['page_id'] = $post_id;
 		} elseif ( 'post' === $post->post_type ) {
@@ -208,36 +259,49 @@ class Preview_Link {
 		$_REQUEST = $query;
 
 		add_filter( 'show_admin_bar', '__return_false' );
-		// The owner's identity covers the nonce check and the main query only;
-		// everything else in the request, and the page render, runs as a visitor.
-		add_action( 'init', [ __CLASS__, 'begin_preview_user' ], 9 );
-		add_action( 'init', [ __CLASS__, 'end_preview_user' ], 11 );
-		add_action( 'pre_get_posts', [ __CLASS__, 'begin_main_query_user' ], PHP_INT_MAX );
-		add_filter( 'the_posts', [ __CLASS__, 'end_main_query_user' ], PHP_INT_MIN, 2 );
-		add_action( 'wp', [ __CLASS__, 'end_preview_user' ], PHP_INT_MIN );
+		add_action( 'pre_get_posts', [ __CLASS__, 'allow_preview_status' ], PHP_INT_MAX );
+		add_filter( 'the_posts', [ __CLASS__, 'mark_preview' ], PHP_INT_MIN, 2 );
+		// The canonical redirect would drop the token on the way to the post's own URL.
+		remove_action( 'template_redirect', 'redirect_canonical' );
 	}
 
-	public static function begin_preview_user() {
-		if ( self::$preview_user > 0 ) {
-			wp_set_current_user( self::$preview_user );
+	/**
+	 * pre_get_posts: let the main query return the previewed post in its own
+	 * status. Only the main query, and only when it asks for exactly that post.
+	 */
+	public static function allow_preview_status( $query ) {
+		if ( ! ( $query instanceof \WP_Query ) || ! $query->is_main_query() || self::$preview_post <= 0 ) {
+			return;
 		}
-	}
-
-	public static function end_preview_user() {
-		wp_set_current_user( 0 );
-	}
-
-	public static function begin_main_query_user( $query ) {
-		if ( $query instanceof \WP_Query && $query->is_main_query() && $query->is_preview() ) {
-			self::begin_preview_user();
+		$asked = (int) $query->get( 'p' ) ? (int) $query->get( 'p' ) : (int) $query->get( 'page_id' );
+		if ( $asked !== self::$preview_post ) {
+			return;
 		}
+		$query->set( 'post_status', [ self::$preview_status ] );
 	}
 
-	public static function end_main_query_user( $posts, $query = null ) {
-		if ( $query instanceof \WP_Query && $query->is_main_query() ) {
-			self::end_preview_user();
-			// One preview per request: later queries never take the owner's identity.
-			self::$preview_user = 0;
+	/**
+	 * the_posts: mark the main query as a preview (themes and the canonical
+	 * redirect read is_preview()) and show the latest autosave, as a preview
+	 * in wp-admin would.
+	 */
+	public static function mark_preview( $posts, $query = null ) {
+		if ( ! ( $query instanceof \WP_Query ) || ! $query->is_main_query() || self::$preview_post <= 0 ) {
+			return $posts;
+		}
+		$post_id            = self::$preview_post;
+		self::$preview_post = 0; // One preview per request.
+		if ( empty( $posts ) || ! is_object( $posts[0] ) || (int) $posts[0]->ID !== $post_id ) {
+			return $posts;
+		}
+		$query->is_preview = true;
+		// Only the link owner's own autosave, and only when it is newer than the saved post.
+		$autosave          = self::$preview_owner > 0 ? wp_get_post_autosave( $post_id, self::$preview_owner ) : false;
+		if ( is_object( $autosave ) && strtotime( (string) $autosave->post_modified_gmt ) > strtotime( (string) $posts[0]->post_modified_gmt ) ) {
+			$autosave             = sanitize_post( $autosave );
+			$posts[0]->post_title   = $autosave->post_title;
+			$posts[0]->post_content = $autosave->post_content;
+			$posts[0]->post_excerpt = $autosave->post_excerpt;
 		}
 		return $posts;
 	}

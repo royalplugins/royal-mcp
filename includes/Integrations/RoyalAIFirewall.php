@@ -39,7 +39,7 @@ class RoyalAIFirewall {
 			],
 			[
 				'name'        => 'raif_get_recent_hits',
-				'description' => 'Get recent bot invocation log entries with optional filters (bot_id, source, since). Returns per-hit rows: timestamp, bot, category, source, request path, IP, policy decision, response status.',
+				'description' => 'Get recent bot invocation log entries with optional filters (bot_id, source, since). Returns per-hit rows: timestamp, bot, category, source, request path (without its query string), IP, policy decision, response status.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -62,7 +62,7 @@ class RoyalAIFirewall {
 			],
 			[
 				'name'        => 'raif_set_bot_policy',
-				'description' => 'Set a per-bot policy override (allow, block, log-only, rate-limit or paywall-redirect) or clear the override so the bot reverts to the site default policy. rate-limit needs rate_limit_per_min (or keeps the bot\'s current one); paywall-redirect sends the bot to paywall_url (or answers 402 when there is none). Pass null for rate_limit_per_min or paywall_url to clear it. Blocking, limiting or paywalling a search engine is refused (raif_search_engine_guard) unless that override is enabled in Royal AI Firewall. rate-limit and paywall-redirect need Royal AI Firewall 1.0.12 or later.',
+				'description' => 'Set a per-bot policy override (allow, block, log-only, rate-limit or paywall-redirect) or clear the override so the bot reverts to the site default policy. rate-limit needs rate_limit_per_min (or keeps the bot\'s current one); paywall-redirect sends the bot to paywall_url (or answers 402 when there is none). Pass null for rate_limit_per_min or paywall_url to clear it. Blocking, limiting or paywalling a search engine is refused (raif_search_engine_guard) unless that override is enabled in Royal AI Firewall. rate-limit and paywall-redirect need Royal AI Firewall 1.0.12 or later. Returns an undo token that puts the bot\'s earlier policy back.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -338,7 +338,7 @@ class RoyalAIFirewall {
 						'source'          => $r['source'],
 						'ability_id'      => $r['ability_id'],
 						'method'          => $r['request_method'],
-						'path'            => $r['request_uri'],
+						'path'            => \Royal_MCP\MCP\Support\Untrusted_Text::url_path( (string) $r['request_uri'] ),
 						'response_status' => (int) $r['response_status'],
 						'policy_action'   => $r['policy_action'],
 						'ip'              => $r['ip_text'],
@@ -443,18 +443,14 @@ class RoyalAIFirewall {
 			ARRAY_A
 		);
 		$previous_action = $previous_row['action'] ?? null;
+		$prior_row       = self::policy_row( $bot_id );
 
 		if ( 'default' === $policy ) {
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 			$wpdb->delete( $policy_table, [ 'bot_id' => $bot_id ], [ '%s' ] );
 			do_action( 'raif_policy_override_cleared', $bot_id );
 
-			return [
-				'updated'         => true,
-				'bot_id'          => $bot_id,
-				'policy'          => 'default',
-				'previous_policy' => $previous_action,
-			];
+			return self::single_policy_reply( $bot_id, 'default', $previous_action, $prior_row );
 		}
 
 		// The bot keeps its rate limit and paywall URL unless new ones are passed; null clears one.
@@ -478,12 +474,32 @@ class RoyalAIFirewall {
 			throw new \Exception( esc_html( $result->get_error_message() ) );
 		}
 
-		return [
+		return self::single_policy_reply( $bot_id, $policy, $previous_action, $prior_row );
+	}
+
+	/** Reply of raif_set_bot_policy, with an undo token that puts the bot's earlier policy back. */
+	private static function single_policy_reply( $bot_id, $policy, $previous_action, $prior_row ) {
+		$after_row = self::policy_row( $bot_id );
+		$struct    = [
 			'updated'         => true,
 			'bot_id'          => $bot_id,
 			'policy'          => $policy,
 			'previous_policy' => $previous_action,
 		];
+		$undo = null;
+		if ( $prior_row !== $after_row ) {
+			$undo = \Royal_MCP\MCP\Undo_Store::store( [
+				'op'           => 'raif_set_bot_policies',
+				'summary'      => sprintf( 'Restore the earlier policy of bot %s.', $bot_id ),
+				'target'       => [ 'bot_ids' => [ $bot_id ] ],
+				'pre_op_state' => [ 'items' => [ [ 'bot_id' => $bot_id, 'prior_row' => $prior_row, 'after_row' => $after_row ] ] ],
+			] );
+		}
+		if ( ! $undo ) {
+			$struct['undo']        = null;
+			$struct['undo_reason'] = $prior_row === $after_row ? 'nothing_changed' : 'not_stored';
+		}
+		return \Royal_MCP\MCP\Support\Envelope::success( sprintf( 'Bot %s now uses policy %s (was %s).', $bot_id, $policy, null === $previous_action ? 'the site default' : $previous_action ), $struct, $undo ?: null );
 	}
 
 	private static function get_daily_rollup( $args ) {

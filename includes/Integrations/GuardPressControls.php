@@ -192,6 +192,13 @@ class GuardPressControls {
 		}
 		$found = function_exists( 'gethostbynamel' ) ? gethostbynamel( $host ) : false;
 		$found = is_array( $found ) ? array_values( array_filter( $found, 'is_string' ) ) : [];
+		// IPv6 addresses of the same name (gethostbynamel returns IPv4 only).
+		$aaaa = function_exists( 'dns_get_record' ) && defined( 'DNS_AAAA' ) ? @dns_get_record( $host, DNS_AAAA ) : false; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- a failed lookup returns false
+		foreach ( is_array( $aaaa ) ? $aaaa : [] as $rec ) {
+			if ( isset( $rec['ipv6'] ) && is_string( $rec['ipv6'] ) && filter_var( $rec['ipv6'], FILTER_VALIDATE_IP, FILTER_FLAG_IPV6 ) ) {
+				$found[] = $rec['ipv6'];
+			}
+		}
 		set_transient( $key, $found, $found ? HOUR_IN_SECONDS : 5 * MINUTE_IN_SECONDS ); // audit:transient-ttl-only -- the site's own addresses, looked up again after an hour (five minutes when none were found)
 		return $found;
 	}
@@ -205,7 +212,8 @@ class GuardPressControls {
 		return 0 === stripos( $caller, '::ffff:' ) && filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 ) ? '::ffff:' . $ip : (string) $ip;
 	}
 
-	private static function same_ip( $a, $b ) {
+	/** Whether two spellings are the same address (an IPv4-mapped IPv6 form counts as its IPv4 address). */
+	public static function same_ip( $a, $b ) {
 		$pa = self::packed_ip( $a );
 		return false !== $pa && $pa === self::packed_ip( $b );
 	}
@@ -263,6 +271,53 @@ class GuardPressControls {
 		}
 	}
 
+	/**
+	 * Why an address must not be blocked by an AI client, whatever security plugin does the
+	 * blocking: [ code, message ], or null when it may be blocked. Covers this machine, the
+	 * server's own and published addresses, private and reserved ranges, and the proxies the
+	 * site trusts (royal_mcp_trusted_proxies).
+	 */
+	public static function address_refusal( $ip ) {
+		$ip = (string) $ip;
+		if ( false === self::packed_ip( $ip ) ) {
+			return [ 'invalid_args', 'This is not a valid IP address.' ];
+		}
+		$server = isset( $_SERVER['SERVER_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['SERVER_ADDR'] ) ) : '';
+		$own    = self::is_local_ip( $ip ) || ( '' !== $server && self::same_ip( $ip, $server ) );
+		foreach ( $own ? [] : self::site_addresses() as $site_ip ) {
+			$own = $own || self::same_ip( $ip, $site_ip );
+		}
+		if ( $own ) {
+			return [ 'own_address', 'This is the server\'s own address; blocking it would stop the site calling itself (scheduled tasks, health checks).' ];
+		}
+		foreach ( (array) apply_filters( 'royal_mcp_trusted_proxies', [] ) as $proxy ) {
+			if ( is_string( $proxy ) && self::same_ip( $ip, $proxy ) ) {
+				return [ 'trusted_proxy', 'This is one of the proxies the site trusts; blocking it would cut off every visitor who comes through it.' ];
+			}
+		}
+		if ( self::is_internal_ip( $ip ) ) {
+			return [ 'internal_address', 'This is a private or reserved address: a proxy, a load balancer or the server\'s own network, not a visitor. Blocking it could cut off every visitor behind it.' ];
+		}
+		return null;
+	}
+
+	/** One row in Royal MCP's activity log for a block or unblock done in another security plugin. */
+	public static function log_security_write( $action, array $data ) {
+		global $wpdb;
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Royal MCP's own activity log
+		$wpdb->insert(
+			$wpdb->prefix . 'royal_mcp_logs',
+			[
+				'mcp_server'    => 'MCP Server',
+				'action'        => 'security:' . sanitize_key( (string) $action ),
+				'request_data'  => (string) wp_json_encode( [ 'user_id' => get_current_user_id() ] ),
+				'response_data' => (string) wp_json_encode( $data ),
+				'status'        => 'success',
+			],
+			[ '%s', '%s', '%s', '%s', '%s' ]
+		);
+	}
+
 	// ==================== gp_block_ip ====================
 
 	public static function handle_block_ip( array $args ) {
@@ -282,16 +337,9 @@ class GuardPressControls {
 		if ( '' !== $caller && self::same_ip( $ip, $caller ) ) {
 			return Envelope::error( 'own_address', 'This is the address this request came from; blocking it would lock the caller out.', [ 'ip' => $ip ] );
 		}
-		$server = isset( $_SERVER['SERVER_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['SERVER_ADDR'] ) ) : '';
-		$own    = self::is_local_ip( $ip ) || ( '' !== $server && self::same_ip( $ip, $server ) );
-		foreach ( $own ? [] : self::site_addresses() as $site_ip ) {
-			$own = $own || self::same_ip( $ip, $site_ip );
-		}
-		if ( $own ) {
-			return Envelope::error( 'own_address', 'This is the server\'s own address; blocking it would stop the site calling itself (scheduled tasks, health checks).', [ 'ip' => $ip ] );
-		}
-		if ( self::is_internal_ip( $ip ) ) {
-			return Envelope::error( 'internal_address', 'This is a private or reserved address: a proxy, a load balancer or the server\'s own network, not a visitor. Blocking it could cut off every visitor behind it. If the site owner wants it blocked, they can do that in GuardPress.', [ 'ip' => $ip ] );
+		$guard = self::address_refusal( $ip );
+		if ( null !== $guard ) {
+			return Envelope::error( $guard[0], $guard[1] . ' If the site owner wants it blocked, they can do that in GuardPress.', [ 'ip' => $ip ] );
 		}
 		$ip = self::host_form( $ip );
 		$reason = isset( $args['reason'] ) && is_string( $args['reason'] ) ? sanitize_text_field( $args['reason'] ) : '';

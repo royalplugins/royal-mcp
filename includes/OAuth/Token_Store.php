@@ -545,6 +545,27 @@ class Token_Store {
         return $row ? $row : null;
     }
 
+    /**
+     * The client and user of an unused, unexpired authorization code, without using it.
+     *
+     * @param string $code Raw code.
+     * @return array{client_id:string,user_id:string}|null
+     */
+    public static function peek_auth_code( $code ) {
+        global $wpdb;
+        $table = self::auth_codes_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Table name from safe helper method.
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT client_id, user_id FROM `{$table}` WHERE code_hash = %s AND used = 0 AND expires_at > %s LIMIT 1",
+                hash( 'sha256', (string) $code ),
+                gmdate( 'Y-m-d H:i:s' )
+            ),
+            ARRAY_A
+        );
+        return $row ? $row : null;
+    }
+
     /** The client a stored token (of either kind) was issued to, or null. */
     public static function token_client( $raw_token ) {
         global $wpdb;
@@ -566,7 +587,7 @@ class Token_Store {
     /**
      * Soft-delete every unrevoked access + refresh token in one operation.
      *
-     * Powers the "Revoke all" button on the Connected Clients screen.
+     * Powers the "Revoke all" button under Connections → Connected Clients.
      * Uses soft-delete (revoked = 1) rather than hard truncate so future
      * audit-log surfaces can still inspect what was revoked. Does not touch
      * registered clients or in-flight authorization codes.
@@ -792,6 +813,24 @@ class Token_Store {
                 (int) $user_id
             )
         );
+    }
+
+    /**
+     * Whether a client still holds a usable token (access, or refresh that can
+     * still be exchanged) for a user. False once the connection is revoked.
+     *
+     * @param string $client_id Client identifier.
+     * @param int    $user_id   User the tokens act as.
+     * @return bool
+     */
+    public static function connection_is_live( $client_id, $user_id ) {
+        global $wpdb;
+        if ( '' === (string) $client_id || (int) $user_id <= 0 || ! self::tokens_table_exists() ) {
+            return false;
+        }
+        $table = self::tokens_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from a safe helper
+        return (bool) $wpdb->get_var( $wpdb->prepare( "SELECT 1 FROM `{$table}` WHERE client_id = %s AND user_id = %d AND revoked IN ( 0, 2 ) AND expires_at > %s LIMIT 1", (string) $client_id, (int) $user_id, gmdate( 'Y-m-d H:i:s' ) ) );
     }
 
     /**
@@ -1309,6 +1348,11 @@ class Token_Store {
         if ( null === $metadata ) {
             if ( '' === self::$cimd_failure ) {
                 self::$cimd_failure = 'fetch_failed';
+                // Only a document a user already approved counts, once its address passed the checks:
+                // a request can name any address, and what that address answers is up to its owner.
+                if ( self::$cimd_transport_error && self::is_cimd_known_good( $client_id ) ) {
+                    self::record_cimd_fetch_failure( $client_id );
+                }
             }
             return null;
         }
@@ -1357,6 +1401,7 @@ class Token_Store {
         if ( false !== $cached && is_array( $cached ) ) {
             return $cached;
         }
+        self::$cimd_transport_error = false;
 
         if ( 0 !== strncasecmp( $url, 'https://', 8 ) ) {
             return null;
@@ -1367,7 +1412,8 @@ class Token_Store {
         }
 
         // This runs before sign-in: cap how many documents one address can make the site fetch.
-        $ip    = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
+        // Same address resolution as every other limiter, so a trusted proxy does not merge all callers into one count.
+        $ip    = \Royal_MCP\MCP\Server::resolve_client_ip();
         $limit = (int) apply_filters( 'royal_mcp_cimd_fetches_per_ip', 20 );
         $rkey  = 'royal_mcp_cimd_rate_' . md5( $ip );
         $count = (int) get_transient( $rkey );
@@ -1392,8 +1438,11 @@ class Token_Store {
         for ( $hop = 0; $hop <= 3; $hop++ ) {
             $pin = self::cimd_check_url( $current );
             if ( null === $pin || self::cimd_goes_through_proxy( $current ) ) {
+                self::$cimd_transport_error = false;
                 return null;
             }
+            // From here on any failure (no answer, an error status, a challenge page) counts as the document not being reachable.
+            self::$cimd_transport_error = true;
             $response = self::cimd_pinned_get( $current, $pin[0], $pin[1] );
             if ( null === $response ) {
                 return null;
@@ -1423,8 +1472,105 @@ class Token_Store {
         }
 
         set_transient( $cache_key, $data, $ttl ); // audit:transient-ttl-only -- client metadata document, fetched again after the cache time
+        if ( self::is_cimd_known_good( $url ) ) {
+            self::clear_cimd_fetch_failure( $url );
+        }
 
         return $data;
+    }
+
+    /** Set when the last document fetch failed after its address passed every check and the connection was pinned. */
+    private static $cimd_transport_error = false;
+
+    /** Option holding failed metadata-document fetches: host => time, nothing else. */
+    const CIMD_FAILURE_OPTION = 'royal_mcp_cimd_fetch_failure';
+
+    /** Option holding the documents a signed-in user approved: sha256 of the address => time. */
+    const CIMD_KNOWN_GOOD_OPTION = 'royal_mcp_cimd_known_good';
+
+    /** Host part of a document address, reduced to host-name characters. */
+    private static function cimd_host( $url ) {
+        $host = strtolower( (string) wp_parse_url( (string) $url, PHP_URL_HOST ) );
+        return substr( (string) preg_replace( '/[^a-z0-9.\-]/', '', $host ), 0, 100 );
+    }
+
+    /**
+     * Remember a document whose client was signed in with (tokens were issued), keeping the newest 50.
+     *
+     * @param string $url Document address (the client_id).
+     */
+    public static function mark_cimd_known_good( $url ) {
+        $list = get_option( self::CIMD_KNOWN_GOOD_OPTION, [] );
+        $list = is_array( $list ) ? $list : [];
+        $key  = hash( 'sha256', (string) $url );
+        unset( $list[ $key ] );
+        $list[ $key ] = time();
+        update_option( self::CIMD_KNOWN_GOOD_OPTION, array_slice( $list, -50, null, true ), false );
+    }
+
+    /** Whether a signed-in user has used this document before. */
+    public static function is_cimd_known_good( $url ) {
+        $list = get_option( self::CIMD_KNOWN_GOOD_OPTION, [] );
+        return is_array( $list ) && isset( $list[ hash( 'sha256', (string) $url ) ] );
+    }
+
+    /**
+     * Remember that an approved document could not be reached, so the discovery documents stop
+     * advertising metadata-document support for a while and clients register instead.
+     *
+     * @param string $url Address of the document that could not be fetched.
+     */
+    public static function record_cimd_fetch_failure( $url ) {
+        $list = get_option( self::CIMD_FAILURE_OPTION, [] );
+        $list = is_array( $list ) && ! isset( $list['at'] ) ? $list : [];
+        $host = self::cimd_host( $url );
+        unset( $list[ $host ] );
+        $list[ $host ] = time();
+        update_option( self::CIMD_FAILURE_OPTION, array_slice( $list, -10, null, true ), false );
+    }
+
+    /**
+     * Forget the failed fetch of one host (a document there was fetched since).
+     *
+     * @param string $url Address of the document that was fetched.
+     */
+    public static function clear_cimd_fetch_failure( $url ) {
+        $list = get_option( self::CIMD_FAILURE_OPTION, false );
+        if ( ! is_array( $list ) ) {
+            return;
+        }
+        unset( $list[ self::cimd_host( $url ) ] );
+        if ( empty( $list ) || isset( $list['at'] ) ) {
+            delete_option( self::CIMD_FAILURE_OPTION );
+        } else {
+            update_option( self::CIMD_FAILURE_OPTION, $list, false );
+        }
+    }
+
+    /**
+     * The most recent failed fetch, or null.
+     *
+     * @return array{at: int, host: string, until: int}|null
+     */
+    public static function cimd_fetch_failure() {
+        $list = get_option( self::CIMD_FAILURE_OPTION, null );
+        if ( ! is_array( $list ) || empty( $list ) || isset( $list['at'] ) ) {
+            return null;
+        }
+        arsort( $list );
+        $at = (int) reset( $list );
+        return [ 'at' => $at, 'host' => (string) key( $list ), 'until' => $at + self::cimd_fallback_window() ];
+    }
+
+    /** Seconds metadata-document support stays un-advertised after a failed fetch. */
+    public static function cimd_fallback_window() {
+        return max( 0, (int) apply_filters( 'royal_mcp_cimd_fallback_window', HOUR_IN_SECONDS ) );
+    }
+
+    /** Whether a recent failed fetch keeps metadata-document support out of the discovery documents. */
+    public static function cimd_fallback_active() {
+        $f = self::cimd_fetch_failure();
+        return null !== $f && time() < $f['until'];
     }
 
     /**
@@ -1517,23 +1663,33 @@ class Token_Store {
         add_action( 'http_api_curl', $pin, 10, 3 );
         add_action( 'requests-curl.after_request', $after, 10, 2 );
         add_filter( 'use_streams_transport', '__return_false', PHP_INT_MAX );
+        $encoded = false;
         try {
-            $response = wp_safe_remote_get(
-                $url,
-                [
-                    'timeout'             => 5,
-                    'redirection'         => 0,
-                    'limit_response_size' => 64 * 1024 + 1,
-                    'user-agent'  => 'RoyalMCP/' . ROYAL_MCP_VERSION . ' (+https://royalplugins.com/support/royal-mcp/)',
-                    'headers'     => [ 'Accept' => 'application/json' ],
-                ]
+            // The document is asked for uncompressed; a reply sent compressed anyway is refused,
+            // and the guard keeps it from being decompressed a second time without a size limit.
+            $response = \Royal_MCP\MCP\Support\Http_Decode_Guard::run(
+                static function () use ( $url, &$encoded ) {
+                    $r = wp_safe_remote_get(
+                        $url,
+                        [
+                            'timeout'             => 5,
+                            'redirection'         => 0,
+                            'limit_response_size' => 64 * 1024 + 1,
+                            'user-agent'  => 'RoyalMCP/' . ROYAL_MCP_VERSION . ' (+https://royalplugins.com/support/royal-mcp/)',
+                            'headers'     => [ 'Accept' => 'application/json', 'Accept-Encoding' => 'identity' ],
+                        ]
+                    );
+                    $encoded = \Royal_MCP\MCP\Support\Http_Decode_Guard::saw_encoding() || ( ! is_wp_error( $r ) && '' !== trim( (string) wp_remote_retrieve_header( $r, 'content-encoding' ), " \t" ) && 'identity' !== strtolower( trim( (string) wp_remote_retrieve_header( $r, 'content-encoding' ) ) ) );
+                    return $r;
+                }
             );
         } finally {
             remove_action( 'http_api_curl', $pin, 10 );
             remove_action( 'requests-curl.after_request', $after, 10 );
             remove_filter( 'use_streams_transport', '__return_false', PHP_INT_MAX );
         }
-        if ( is_wp_error( $response ) || ! $pinned ) {
+        if ( is_wp_error( $response ) || ! $pinned || $encoded ) {
+            self::$cimd_transport_error = $pinned;
             return null;
         }
         // Where curl reports the address it connected to, it must be the checked one.

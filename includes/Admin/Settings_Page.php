@@ -16,6 +16,17 @@ class Settings_Page {
     const DISABLE_KEY_ACTION = 'royal_mcp_disable_api_key';
     const CLEAR_LOG_ACTION   = 'royal_mcp_clear_activity_log';
     const EXPORT_LOG_ACTION  = 'royal_mcp_export_activity_log';
+    /** admin-post action (and nonce action) that puts a cleared batch of Activity Log entries back. */
+    const RESTORE_LOG_ACTION = 'royal_mcp_restore_activity_log';
+    /** Seconds cleared Activity Log entries can be restored. */
+    const LOG_CLEAR_UNDO_SECONDS = DAY_IN_SECONDS;
+    /** Table (after the prefix) holding cleared Activity Log entries until they can no longer be restored. */
+    const LOG_CLEARED_TABLE = 'royal_mcp_logs_cleared';
+    /** Rows moved per query when clearing or restoring. */
+    const LOG_MOVE_BATCH = 5000;
+    /** Schema version of the cleared-entries table, and the option recording the one installed. */
+    const LOG_CLEARED_SCHEMA = '1';
+    const LOG_CLEARED_SCHEMA_OPTION = 'royal_mcp_logs_cleared_schema';
     /** admin-post action (and nonce action) that saves how long Activity Log entries are kept. */
     const LOG_RETENTION_ACTION = 'royal_mcp_set_log_retention';
     /** Most entries one export holds, newest first. */
@@ -100,6 +111,7 @@ class Settings_Page {
         add_action('admin_post_' . self::DISABLE_KEY_ACTION, [$this, 'handle_disable_api_key']);
         add_action('admin_post_' . self::CLEAR_LOG_ACTION, [$this, 'handle_clear_activity_log']);
         add_action('admin_post_' . self::EXPORT_LOG_ACTION, [$this, 'handle_export_activity_log']);
+        add_action('admin_post_' . self::RESTORE_LOG_ACTION, [$this, 'handle_restore_activity_log']);
         add_action('admin_post_' . self::LOG_RETENTION_ACTION, [$this, 'handle_set_log_retention']);
     }
 
@@ -309,6 +321,18 @@ class Settings_Page {
         $sanitized['allow_option_writes'] = isset($input['allow_option_writes']) ? (bool) $input['allow_option_writes'] : false;
         $sanitized['allow_theme_writes'] = isset($input['allow_theme_writes']) ? (bool) $input['allow_theme_writes'] : false;
         $sanitized['require_client_approval'] = isset($input['require_client_approval']) ? (bool) $input['require_client_approval'] : false;
+        $prior_groups = isset( $settings[ \Royal_MCP\MCP\Support\Tool_Groups::SETTING ] ) && is_array( $settings[ \Royal_MCP\MCP\Support\Tool_Groups::SETTING ] ) ? $settings[ \Royal_MCP\MCP\Support\Tool_Groups::SETTING ] : null;
+        $sanitized[ \Royal_MCP\MCP\Support\Tool_Groups::SETTING ] = \Royal_MCP\MCP\Support\Tool_Groups::sanitize( is_array( $input ) ? ( $input[ \Royal_MCP\MCP\Support\Tool_Groups::SETTING ] ?? null ) : null, $prior_groups, $from_form );
+        // Royal MCP Pro keeps its own group switches in the same option; a save here leaves them as stored.
+        if ( isset( $settings['pro_tool_groups'] ) && is_array( $settings['pro_tool_groups'] ) ) {
+            $sanitized['pro_tool_groups'] = $settings['pro_tool_groups'];
+        }
+        foreach ( $sanitized[ \Royal_MCP\MCP\Support\Tool_Groups::SETTING ] as $royal_mcp_group => $royal_mcp_on ) {
+            $royal_mcp_was = ! empty( $prior_groups[ $royal_mcp_group ] );
+            if ( null !== $prior_groups && $royal_mcp_was !== $royal_mcp_on ) {
+                $this->log_toggle_change( 'settings:tool_group:' . $royal_mcp_group, $royal_mcp_was, $royal_mcp_on );
+            }
+        }
 
         // Read-only mode — every tool that can change the site is refused,
         // for every client and every user. A change is logged for the audit
@@ -654,6 +678,11 @@ class Settings_Page {
             'restUrl' => rest_url('royal-mcp/v1/'),
             'strings' => [
                 'confirmRegenerate' => esc_html__('Are you sure? This will invalidate the current API key.', 'royal-mcp'),
+                'keyCopied'         => esc_html__('API key copied to clipboard!', 'royal-mcp'),
+                'copied'            => esc_html__('Copied to clipboard!', 'royal-mcp'),
+                'networkError'      => esc_html__('Network error while clearing field.', 'royal-mcp'),
+                'resetting'         => esc_html__('Resetting... (can take several minutes)', 'royal-mcp'),
+                'resetFailed'       => esc_html__('Reset request failed (network or server error)', 'royal-mcp'),
             ],
         ]);
     }
@@ -662,6 +691,8 @@ class Settings_Page {
         if (!current_user_can( self::admin_capability() )) { // audit:multisite-manage-options-safe -- capability from admin_capability(); reads per-site royal_mcp_settings only (per-site option, no network-scope state)
             return;
         }
+        // Sets the tool-group switches on first view, before the form takes its fingerprint of the settings.
+        \Royal_MCP\MCP\Support\Tool_Groups::states();
 
         $settings = get_option('royal_mcp_settings', [
             'enabled'         => false,
@@ -759,25 +790,78 @@ class Settings_Page {
     }
 
     /**
-     * Daily: delete Activity Log entries older than the retention period, in
-     * batches so a large table never holds one long delete.
+     * Most Activity Log entries kept. Sign-in request entries go first; other
+     * entries only when entries are not kept until they are cleared.
+     */
+    const LOG_MAX_ROWS = 100000;
+
+    /**
+     * Most Activity Log entries kept. Return 0 from the filter for no ceiling.
+     *
+     * @return int
+     */
+    public static function log_max_rows() {
+        /**
+         * Filter how many Activity Log entries are kept at most (oldest removed first). 0 = no ceiling.
+         *
+         * @param int $rows Entries.
+         */
+        return max( 0, (int) apply_filters( 'royal_mcp_log_max_rows', self::LOG_MAX_ROWS ) );
+    }
+
+    /**
+     * Daily: delete Activity Log entries older than the retention period, then,
+     * beyond the row ceiling, the oldest sign-in request entries and (unless
+     * entries are kept until cleared) the oldest of the rest, in batches so a
+     * large table never holds one long delete. Also sweeps idle rate counters.
      *
      * @return int Rows deleted.
      */
     public static function prune_activity_log() {
         global $wpdb;
-        $days = self::log_retention_days();
-        if ( $days <= 0 || ! self::log_table_exists() ) {
+        \Royal_MCP\OAuth\Rate_Limit::sweep();
+        self::purge_cleared_logs();
+        if ( ! self::log_table_exists() ) {
             return 0;
         }
+        $days    = self::log_retention_days();
         $table   = esc_sql( $wpdb->prefix . 'royal_mcp_logs' );
         $deleted = 0;
-        for ( $batch = 0; $batch < 20; $batch++ ) {
+        for ( $batch = 0; $days > 0 && $batch < 20; $batch++ ) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
             $n = (int) $wpdb->query( $wpdb->prepare( "DELETE FROM `{$table}` WHERE timestamp < DATE_SUB( NOW(), INTERVAL %d DAY ) LIMIT 5000", $days ) );
             $deleted += $n;
             if ( $n < 5000 ) {
                 break;
+            }
+        }
+        $max = self::log_max_rows();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
+        $excess = $max > 0 ? (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}`" ) - $max : 0;
+        // Over the ceiling, sign-in request entries (written by the OAuth endpoints,
+        // not by an administrator) go first, oldest first.
+        $admin_oauth = [ 'oauth:revoke_connection', 'oauth:set_client_access', 'oauth:revoke_all_sessions', 'oauth:reset' ];
+        for ( $batch = 0; $excess > 0 && $batch < 40; $batch++ ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
+            $n = (int) $wpdb->query( $wpdb->prepare( "DELETE FROM `{$table}` WHERE mcp_server = 'OAuth Server' AND action NOT IN ( %s, %s, %s, %s ) ORDER BY id LIMIT %d", $admin_oauth[0], $admin_oauth[1], $admin_oauth[2], $admin_oauth[3], min( 5000, $excess ) ) );
+            $deleted += $n;
+            $excess  -= $n;
+            if ( $n < 1 ) {
+                break;
+            }
+        }
+        // Tool calls and settings changes are only removed for the ceiling when
+        // entries are not kept until they are cleared.
+        if ( $excess > 0 && $days > 0 ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
+            $cut = (int) $wpdb->get_var( $wpdb->prepare( "SELECT id FROM `{$table}` ORDER BY id DESC LIMIT 1 OFFSET %d", $max ) );
+            for ( $batch = 0; $cut > 0 && $batch < 40; $batch++ ) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
+                $n = (int) $wpdb->query( $wpdb->prepare( "DELETE FROM `{$table}` WHERE id <= %d ORDER BY id LIMIT 5000", $cut ) );
+                $deleted += $n;
+                if ( $n < 5000 ) {
+                    break;
+                }
             }
         }
         return $deleted;
@@ -793,31 +877,28 @@ class Settings_Page {
             $value = substr( $value, 0, self::LOG_EXPORT_CELL_MAX ) . '...';
         }
         // Formula characters are looked for behind spaces and invisible characters too, in their full-width forms as well.
-        $lead = (string) preg_replace( '/^(?:\s|\xC2\xA0|\xE2\x80[\x8B-\x8F]|\xEF\xBB\xBF)+/', '', $value );
+        $lead = (string) preg_replace( '/^(?:\s|\xC2\xA0|\xE2\x80[\x8B-\x8F]|\xE3\x80\x80|\xEF\xBB\xBF)+/', '', $value );
         return preg_match( '/^(?:[=+\-@]|\xEF\xBC\x9D|\xEF\xBC\x8B|\xEF\xBC\x8D|\xEF\xBC\xA0)/', $lead ) ? "'" . $value : $value;
     }
 
     /**
-     * Write the Activity Log as CSV to an open stream, newest first. An entry holds the tool
-     * name, the names of its arguments and any error text, never argument values.
+     * Walk Activity Log entries newest first, in batches by id, and hand each one to $emit
+     * as a list of values in LOG_EXPORT_COLUMNS order.
      *
-     * @param resource $stream   Open, writable stream.
-     * @param int      $max_rows Most entries to write.
-     * @return int Entries written.
+     * @param callable $emit     Receives one entry's values.
+     * @param int      $max_rows Most entries.
+     * @param int      $upto     When above 0, only entries with an id up to this one.
+     * @return int Entries handed over.
      */
-    public static function write_activity_log_csv( $stream, $max_rows = self::LOG_EXPORT_MAX ) {
+    private static function each_export_row( callable $emit, $max_rows, $upto = 0 ) {
         global $wpdb;
-        // A byte-order mark so a spreadsheet reads the file as UTF-8. No escape character: a quote inside a
-        // cell is always doubled, which is the only form spreadsheets read, so a cell cannot end early.
-        fwrite( $stream, "\xEF\xBB\xBF" ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- the response body or a memory stream, not a file
-        fputcsv( $stream, self::LOG_EXPORT_COLUMNS, ',', '"', '' );
         $max_rows = max( 0, (int) $max_rows );
         if ( ! self::log_table_exists() ) {
             return 0;
         }
         $table   = esc_sql( $wpdb->prefix . 'royal_mcp_logs' );
         $written = 0;
-        $before  = PHP_INT_MAX;
+        $before  = (int) $upto > 0 ? (int) $upto + 1 : PHP_INT_MAX;
         while ( $written < $max_rows ) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above; read in batches by id
             $rows = $wpdb->get_results( $wpdb->prepare( "SELECT id, timestamp, mcp_server, action, request_data, response_data, status FROM `{$table}` WHERE id < %d ORDER BY id DESC LIMIT %d", $before, min( 1000, $max_rows - $written ) ), ARRAY_A );
@@ -832,7 +913,7 @@ class Settings_Page {
                 $action = (string) $row['action'];
                 $tool   = isset( $req['tool'] ) && is_scalar( $req['tool'] ) ? (string) $req['tool'] : ( 0 === strpos( $action, 'tools/call:' ) ? substr( $action, 11 ) : '' );
                 $keys   = isset( $req['arg_keys'] ) && is_array( $req['arg_keys'] ) ? implode( ' ', array_filter( $req['arg_keys'], 'is_scalar' ) ) : '';
-                fputcsv( $stream, array_map( [ __CLASS__, 'csv_cell' ], [
+                $emit( [
                     (int) $row['id'],
                     $row['timestamp'],
                     $row['mcp_server'],
@@ -847,12 +928,89 @@ class Settings_Page {
                     $keys,
                     $res['error'] ?? '',
                     $res['change_id'] ?? '',
-                ] ), ',', '"', '' );
+                ] );
                 $written++;
                 $before = (int) $row['id'];
             }
         }
         return $written;
+    }
+
+    /**
+     * Write the Activity Log as CSV to an open stream, newest first. An entry holds the tool
+     * name, the names of its arguments and any error text, never argument values.
+     *
+     * @param resource $stream   Open, writable stream.
+     * @param int      $max_rows Most entries to write.
+     * @param int      $upto     When above 0, only entries with an id up to this one.
+     * @param bool     $trailer  End with a line giving the number of entries written.
+     * @return int Entries written.
+     */
+    public static function write_activity_log_csv( $stream, $max_rows = self::LOG_EXPORT_MAX, $upto = 0, $trailer = false ) {
+        // A byte-order mark so a spreadsheet reads the file as UTF-8. No escape character: a quote inside a
+        // cell is always doubled, which is the only form spreadsheets read, so a cell cannot end early.
+        fwrite( $stream, "\xEF\xBB\xBF" ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- the response body or a memory stream, not a file
+        fputcsv( $stream, self::LOG_EXPORT_COLUMNS, ',', '"', '' );
+        $n = self::each_export_row( static function ( $values ) use ( $stream ) {
+            fputcsv( $stream, array_map( [ __CLASS__, 'csv_cell' ], $values ), ',', '"', '' );
+        }, $max_rows, $upto );
+        if ( $trailer ) {
+            // Last line: how many entries the file holds, so a cut-off download can be recognised.
+            fputcsv( $stream, array_pad( [ '#END', 'rows=' . (int) $n, 'complete' ], count( self::LOG_EXPORT_COLUMNS ), '' ), ',', '"', '' );
+        }
+        return $n;
+    }
+
+    /**
+     * Write the Activity Log as JSON to an open stream, newest first, one entry at a time:
+     * {"entries":[{...}],"rows":N,"complete":true}. Entries have the LOG_EXPORT_COLUMNS keys
+     * and the same content as the CSV export; rows and complete come last, so a cut-off
+     * download is not valid JSON and lacks them.
+     *
+     * @param resource $stream   Open, writable stream.
+     * @param int      $max_rows Most entries to write.
+     * @param int      $upto     When above 0, only entries with an id up to this one.
+     * @return int Entries written.
+     */
+    public static function write_activity_log_json( $stream, $max_rows = self::LOG_EXPORT_MAX, $upto = 0 ) {
+        $first   = true;
+        $written = 0;
+        fwrite( $stream, '{"entries":[' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- the response body or a memory stream, not a file
+        self::each_export_row( static function ( $values ) use ( $stream, &$first, &$written ) {
+            foreach ( $values as $i => $v ) {
+                if ( $i > 0 ) {
+                    $v            = is_scalar( $v ) ? (string) $v : '';
+                    $values[ $i ] = strlen( $v ) > self::LOG_EXPORT_CELL_MAX ? substr( $v, 0, self::LOG_EXPORT_CELL_MAX ) . '...' : $v;
+                }
+            }
+            $json = wp_json_encode( array_combine( self::LOG_EXPORT_COLUMNS, $values ), JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE );
+            if ( false === $json ) {
+                return;
+            }
+            fwrite( $stream, ( $first ? "\n" : ",\n" ) . $json ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- the response body or a memory stream, not a file
+            $first = false;
+            $written++;
+        }, $max_rows, $upto );
+        fwrite( $stream, "\n],\"rows\":" . (int) $written . ",\"complete\":true}\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- the response body or a memory stream, not a file
+        return $written;
+    }
+
+    /** Download file name: plugin, site host and today's date. */
+    public static function activity_log_export_filename( $format ) {
+        $host = (string) wp_parse_url( home_url(), PHP_URL_HOST );
+        $host = sanitize_file_name( '' !== $host ? $host : 'site' );
+        return 'royal-mcp-activity-log-' . $host . '-' . gmdate( 'Y-m-d' ) . ( 'json' === $format ? '.json' : '.csv' );
+    }
+
+    /** Highest Activity Log entry id now: what a Clear started from the screen removes up to. */
+    public static function activity_log_max_id() {
+        global $wpdb;
+        if ( ! self::log_table_exists() ) {
+            return 0;
+        }
+        $table = esc_sql( $wpdb->prefix . 'royal_mcp_logs' );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
+        return (int) $wpdb->get_var( "SELECT MAX(id) FROM `{$table}`" );
     }
 
     /** The Export button on the Activity Log page: record who exported, then send the CSV. */
@@ -862,6 +1020,16 @@ class Settings_Page {
         }
         check_admin_referer( self::EXPORT_LOG_ACTION );
 
+        $format = isset( $_POST['format'] ) && 'json' === sanitize_key( wp_unslash( $_POST['format'] ) ) ? 'json' : 'csv';
+        // Before a Clear: every entry the Clear will remove (ids up to the one the screen showed), with no row cap.
+        $upto = isset( $_POST['upto'] ) ? absint( wp_unslash( $_POST['upto'] ) ) : 0;
+        $upto = $upto > 0 ? min( $upto, self::activity_log_max_id() ) : 0;
+        // A long export is not cut short by the time limit or a closed tab while it can be helped.
+        if ( function_exists( 'set_time_limit' ) ) {
+            set_time_limit( 0 ); // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged -- streaming download of a large table
+        }
+        ignore_user_abort( true );
+
         global $wpdb;
         if ( self::log_table_exists() ) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- insert into our own log table
@@ -870,7 +1038,7 @@ class Settings_Page {
                 [
                     'mcp_server'    => 'MCP Server',
                     'action'        => 'settings:activity_log_exported',
-                    'request_data'  => wp_json_encode( [ 'source' => 'settings', 'by' => (int) get_current_user_id() ] ),
+                    'request_data'  => wp_json_encode( [ 'source' => 'settings', 'by' => (int) get_current_user_id(), 'format' => $format, 'before_clear' => $upto > 0 ] ),
                     'response_data' => wp_json_encode( [ 'status' => 'success' ] ),
                     'status'        => 'success',
                 ],
@@ -878,44 +1046,322 @@ class Settings_Page {
             );
         }
         nocache_headers();
-        header( 'Content-Type: text/csv; charset=utf-8' );
+        header( 'json' === $format ? 'Content-Type: application/json; charset=utf-8' : 'Content-Type: text/csv; charset=utf-8' );
         header( 'X-Content-Type-Options: nosniff' );
-        header( 'Content-Disposition: attachment; filename="royal-mcp-activity-log-' . gmdate( 'Y-m-d' ) . '.csv"' );
+        header( 'Content-Disposition: attachment; filename="' . self::activity_log_export_filename( $format ) . '"' );
         $out = fopen( 'php://output', 'w' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- the response body, not a file
         if ( $out ) {
-            self::write_activity_log_csv( $out );
+            $max = $upto > 0 ? PHP_INT_MAX : self::LOG_EXPORT_MAX;
+            if ( 'json' === $format ) {
+                self::write_activity_log_json( $out, $max, $upto );
+            } else {
+                self::write_activity_log_csv( $out, $max, $upto, true );
+            }
             fclose( $out ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- the response body, not a file
         }
         exit;
     }
 
-    /** The Clear button on the Activity Log page: delete every entry, then record who did it. */
+    /** Full name of the table holding cleared entries. */
+    public static function cleared_log_table() {
+        global $wpdb;
+        return $wpdb->prefix . self::LOG_CLEARED_TABLE;
+    }
+
+    /** Whether the cleared-entries table exists. */
+    private static function cleared_table_exists() {
+        global $wpdb;
+        $table = self::cleared_log_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- existence check of our own table
+        return $table === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) );
+    }
+
+    /** Create or update the cleared-entries table to the current schema. Returns whether it exists afterwards. */
+    private static function ensure_cleared_table() {
+        global $wpdb;
+        if ( self::LOG_CLEARED_SCHEMA === get_option( self::LOG_CLEARED_SCHEMA_OPTION ) && self::cleared_table_exists() ) {
+            return true;
+        }
+        $table   = self::cleared_log_table();
+        $charset = $wpdb->get_charset_collate();
+        $sql     = "CREATE TABLE {$table} (
+            id bigint(20) NOT NULL,
+            timestamp datetime NOT NULL,
+            mcp_server varchar(255) NOT NULL,
+            action varchar(100) NOT NULL,
+            request_data longtext,
+            response_data longtext,
+            status varchar(50) NOT NULL,
+            batch_id varchar(32) NOT NULL,
+            cleared_by bigint(20) NOT NULL DEFAULT 0,
+            expires_at datetime NOT NULL,
+            PRIMARY KEY  (batch_id,id),
+            KEY expires_at (expires_at)
+        ) {$charset};";
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+        dbDelta( $sql );
+        if ( ! self::cleared_table_exists() ) {
+            return false;
+        }
+        update_option( self::LOG_CLEARED_SCHEMA_OPTION, self::LOG_CLEARED_SCHEMA, false );
+        return true;
+    }
+
+    /**
+     * Move Activity Log entries with an id up to $upto into the cleared-entries table, where
+     * they can be restored for LOG_CLEAR_UNDO_SECONDS. A slice is deleted from the log only
+     * after its copy succeeded; when the delete fails, the slice's copy is taken back.
+     *
+     * @param int $upto    Highest entry id to clear; 0 = every entry there is now.
+     * @param int $user_id Who cleared.
+     * @return array{removed:int,batch_id:string,expires_at:string,error:string}
+     */
+    public static function clear_activity_log( $upto = 0, $user_id = 0 ) {
+        global $wpdb;
+        $out = [ 'removed' => 0, 'batch_id' => '', 'expires_at' => '', 'error' => '' ];
+        if ( ! self::log_table_exists() ) {
+            return $out;
+        }
+        $max_id = self::activity_log_max_id();
+        $upto   = (int) $upto > 0 ? min( (int) $upto, $max_id ) : $max_id;
+        if ( $upto < 1 ) {
+            return $out;
+        }
+        if ( ! self::ensure_cleared_table() ) {
+            $out['error'] = 'no_undo_store';
+            return $out;
+        }
+        $log     = esc_sql( $wpdb->prefix . 'royal_mcp_logs' );
+        $store   = esc_sql( self::cleared_log_table() );
+        $batch   = strtolower( wp_generate_password( 20, false, false ) );
+        $expires = gmdate( 'Y-m-d H:i:s', time() + self::LOG_CLEAR_UNDO_SECONDS );
+        $after   = 0;
+        while ( $after < $upto ) {
+            // The id that closes this slice of at most LOG_MOVE_BATCH entries.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
+            $end = (int) $wpdb->get_var( $wpdb->prepare( "SELECT id FROM `{$log}` WHERE id > %d AND id <= %d ORDER BY id LIMIT 1 OFFSET %d", $after, $upto, self::LOG_MOVE_BATCH - 1 ) );
+            $end = $end > 0 ? $end : $upto;
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own tables, names escaped above
+            $copied = $wpdb->query( $wpdb->prepare( "INSERT INTO `{$store}` ( id, timestamp, mcp_server, action, request_data, response_data, status, batch_id, cleared_by, expires_at ) SELECT id, timestamp, mcp_server, action, request_data, response_data, status, %s, %d, %s FROM `{$log}` WHERE id > %d AND id <= %d", $batch, (int) $user_id, $expires, $after, $end ) );
+            if ( false === $copied ) {
+                $out['error'] = 'copy_failed';
+                break;
+            }
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
+            $deleted = $wpdb->query( $wpdb->prepare( "DELETE FROM `{$log}` WHERE id > %d AND id <= %d", $after, $end ) );
+            if ( false === $deleted || (int) $deleted !== (int) $copied ) {
+                // Take back the copies of entries that are still in the log; entries the delete did
+                // remove stay restorable.
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own tables, names escaped above
+                $wpdb->query( $wpdb->prepare( "DELETE s FROM `{$store}` s INNER JOIN `{$log}` l ON l.id = s.id WHERE s.batch_id = %s AND s.id > %d AND s.id <= %d", $batch, $after, $end ) );
+                $out['removed'] += false === $deleted ? 0 : (int) $deleted;
+                $out['error']    = 'delete_failed';
+                break;
+            }
+            $out['removed'] += (int) $deleted;
+            $after           = $end;
+        }
+        if ( $out['removed'] > 0 ) {
+            $out['batch_id']   = $batch;
+            $out['expires_at'] = $expires;
+        }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- insert into our own log table
+        $wpdb->insert(
+            $wpdb->prefix . 'royal_mcp_logs',
+            [
+                'mcp_server'    => 'MCP Server',
+                'action'        => 'settings:activity_log_cleared',
+                'request_data'  => wp_json_encode( [ 'source' => 'settings', 'by' => (int) $user_id ] ),
+                'response_data' => wp_json_encode( [ 'status' => '' === $out['error'] ? 'success' : 'error', 'entries_removed' => $out['removed'], 'restorable_until' => $out['expires_at'] ] ),
+                'status'        => '' === $out['error'] ? 'success' : 'error',
+            ],
+            [ '%s', '%s', '%s', '%s', '%s' ]
+        );
+        return $out;
+    }
+
+    /**
+     * Cleared batches that can still be restored, newest first.
+     *
+     * @return array<int,array{batch_id:string,entries:int,expires_at:string}>
+     */
+    public static function restorable_log_batches() {
+        global $wpdb;
+        if ( ! self::cleared_table_exists() ) {
+            return [];
+        }
+        $store = esc_sql( self::cleared_log_table() );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
+        $rows = $wpdb->get_results( "SELECT batch_id, COUNT(*) AS entries, MAX(expires_at) AS expires_at FROM `{$store}` WHERE expires_at > UTC_TIMESTAMP() GROUP BY batch_id ORDER BY MAX(expires_at) DESC LIMIT 10", ARRAY_A );
+        $out  = [];
+        foreach ( (array) $rows as $row ) {
+            $out[] = [ 'batch_id' => (string) $row['batch_id'], 'entries' => (int) $row['entries'], 'expires_at' => (string) $row['expires_at'] ];
+        }
+        return $out;
+    }
+
+    /**
+     * Put a cleared batch back into the Activity Log, newest entries first, up to the row
+     * ceiling. An entry already back in the log (same id, time and action) counts as restored.
+     * An entry whose id another entry now holds is not written over: both are kept, it stays
+     * restorable, and it is counted under collisions. Entries that do not fit under the ceiling
+     * stay restorable until the batch expires.
+     *
+     * @param string $batch_id Batch to restore.
+     * @param int    $user_id  Who restored.
+     * @return array{restored:int,left:int,collisions:int,error:string}
+     */
+    public static function restore_activity_log( $batch_id, $user_id = 0 ) {
+        global $wpdb;
+        $out      = [ 'restored' => 0, 'left' => 0, 'collisions' => 0, 'error' => '' ];
+        $batch_id = strtolower( (string) preg_replace( '/[^A-Za-z0-9]/', '', (string) $batch_id ) );
+        if ( '' === $batch_id || ! self::cleared_table_exists() || ! self::log_table_exists() ) {
+            $out['error'] = 'not_found';
+            return $out;
+        }
+        $log   = esc_sql( $wpdb->prefix . 'royal_mcp_logs' );
+        $store = esc_sql( self::cleared_log_table() );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
+        $waiting = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$store}` WHERE batch_id = %s AND expires_at > UTC_TIMESTAMP()", $batch_id ) );
+        if ( $waiting < 1 ) {
+            $out['error'] = 'not_found';
+            return $out;
+        }
+        $max = self::log_max_rows();
+        // One place is kept for the entry that records the restore.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
+        $room   = $max > 0 ? max( 0, $max - (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$log}`" ) - 1 ) : PHP_INT_MAX;
+        $cursor = PHP_INT_MAX;
+        while ( true ) {
+            // The next slice, newest first, below the ids already handled.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
+            $ids = array_map( 'intval', $wpdb->get_col( $wpdb->prepare( "SELECT id FROM `{$store}` WHERE batch_id = %s AND id < %d ORDER BY id DESC LIMIT %d", $batch_id, $cursor, self::LOG_MOVE_BATCH ) ) );
+            if ( ! $ids ) {
+                break;
+            }
+            $low = (int) end( $ids );
+            // Entries already back in the log count as restored without taking room.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own tables, names escaped above
+            $same = $wpdb->query( $wpdb->prepare( "DELETE s FROM `{$store}` s INNER JOIN `{$log}` l ON l.id = s.id AND l.timestamp = s.timestamp AND l.action = s.action WHERE s.batch_id = %s AND s.id >= %d AND s.id < %d", $batch_id, $low, $cursor ) );
+            $out['restored'] += (int) $same;
+            // Entries whose id is held by a different entry stay where they are.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own tables, names escaped above
+            $out['collisions'] += (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$store}` s INNER JOIN `{$log}` l ON l.id = s.id WHERE s.batch_id = %s AND s.id >= %d AND s.id < %d", $batch_id, $low, $cursor ) );
+            if ( $room < 1 ) {
+                break;
+            }
+            // The newest free ids of the slice that fit, written back.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own tables, names escaped above
+            $free = array_map( 'intval', $wpdb->get_col( $wpdb->prepare( "SELECT s.id FROM `{$store}` s LEFT JOIN `{$log}` l ON l.id = s.id WHERE s.batch_id = %s AND s.id >= %d AND s.id < %d AND l.id IS NULL ORDER BY s.id DESC LIMIT %d", $batch_id, $low, $cursor, (int) min( self::LOG_MOVE_BATCH, $room ) ) ) );
+            if ( $free ) {
+                $free_low = (int) end( $free );
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own tables, names escaped above
+                $copied = $wpdb->query( $wpdb->prepare( "INSERT IGNORE INTO `{$log}` ( id, timestamp, mcp_server, action, request_data, response_data, status ) SELECT s.id, s.timestamp, s.mcp_server, s.action, s.request_data, s.response_data, s.status FROM `{$store}` s LEFT JOIN `{$log}` l ON l.id = s.id WHERE s.batch_id = %s AND s.id >= %d AND s.id < %d AND l.id IS NULL", $batch_id, $free_low, $cursor ) );
+                if ( false === $copied ) {
+                    $out['error'] = 'copy_failed';
+                    break;
+                }
+                // Only entries now in the log with the same id, time and action leave the undo store.
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own tables, names escaped above
+                $moved = (int) $wpdb->query( $wpdb->prepare( "DELETE s FROM `{$store}` s INNER JOIN `{$log}` l ON l.id = s.id AND l.timestamp = s.timestamp AND l.action = s.action WHERE s.batch_id = %s AND s.id >= %d AND s.id < %d", $batch_id, $free_low, $cursor ) );
+                $out['restored'] += $moved;
+                $room            -= $moved;
+            }
+            $cursor = $low;
+        }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
+        $out['left'] = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$store}` WHERE batch_id = %s", $batch_id ) );
+        if ( 0 === $out['restored'] && '' === $out['error'] ) {
+            $out['error'] = $out['collisions'] > 0 && $out['collisions'] >= $out['left'] ? 'collision' : 'full';
+        }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- insert into our own log table
+        $wpdb->insert(
+            $wpdb->prefix . 'royal_mcp_logs',
+            [
+                'mcp_server'    => 'MCP Server',
+                'action'        => 'settings:activity_log_restored',
+                'request_data'  => wp_json_encode( [ 'source' => 'settings', 'by' => (int) $user_id ] ),
+                'response_data' => wp_json_encode( [ 'status' => '' === $out['error'] ? 'success' : 'error', 'entries_restored' => $out['restored'], 'entries_left' => $out['left'], 'collisions' => $out['collisions'] ] ),
+                'status'        => '' === $out['error'] ? 'success' : 'error',
+            ],
+            [ '%s', '%s', '%s', '%s', '%s' ]
+        );
+        return $out;
+    }
+
+    /**
+     * Delete cleared entries whose restore window has passed. Runs with the daily clean-up.
+     *
+     * @return int Rows deleted.
+     */
+    public static function purge_cleared_logs() {
+        global $wpdb;
+        if ( ! self::cleared_table_exists() ) {
+            return 0;
+        }
+        $store   = esc_sql( self::cleared_log_table() );
+        $deleted = 0;
+        for ( $batch = 0; $batch < 200; $batch++ ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
+            $n        = (int) $wpdb->query( $wpdb->prepare( "DELETE FROM `{$store}` WHERE expires_at <= UTC_TIMESTAMP() LIMIT %d", self::LOG_MOVE_BATCH ) );
+            $deleted += $n;
+            if ( $n < self::LOG_MOVE_BATCH ) {
+                break;
+            }
+        }
+        return $deleted;
+    }
+
+    /** Whether this request was sent as a form post: Clear and Restore change data only on POST. */
+    private static function is_post_request() {
+        return isset( $_SERVER['REQUEST_METHOD'] ) && 'POST' === strtoupper( sanitize_key( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) );
+    }
+
+    /** The Clear button on the Activity Log page: move the entries shown up to now to the undo store, then record who did it. */
     public function handle_clear_activity_log() {
         if ( ! current_user_can( self::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from admin_capability(); clears the per-site wp_royal_mcp_logs table only
             wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
         }
         check_admin_referer( self::CLEAR_LOG_ACTION );
 
-        global $wpdb;
-        $removed = 0;
-        if ( ! empty( $_POST['royal_mcp_clear_confirm'] ) && self::log_table_exists() ) {
-            $table = esc_sql( $wpdb->prefix . 'royal_mcp_logs' );
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own table, name escaped above
-            $removed = (int) $wpdb->query( "DELETE FROM `{$table}`" );
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- insert into our own log table
-            $wpdb->insert(
-                $wpdb->prefix . 'royal_mcp_logs',
-                [
-                    'mcp_server'    => 'MCP Server',
-                    'action'        => 'settings:activity_log_cleared',
-                    'request_data'  => wp_json_encode( [ 'source' => 'settings', 'by' => (int) get_current_user_id() ] ),
-                    'response_data' => wp_json_encode( [ 'status' => 'success', 'entries_removed' => $removed ] ),
-                    'status'        => 'success',
-                ],
-                [ '%s', '%s', '%s', '%s', '%s' ]
-            );
+        $args = [ 'page' => 'royal-mcp-logs', 'royal_mcp_log_cleared' => '0' ];
+        if ( ! self::is_post_request() ) {
+            $args['royal_mcp_log_cleared'] = 'stale';
+        } elseif ( ! empty( $_POST['royal_mcp_clear_confirm'] ) ) {
+            // The cut-off id the screen showed is required, so a Clear never reaches past what was shown.
+            $upto = isset( $_POST['upto'] ) ? absint( wp_unslash( $_POST['upto'] ) ) : 0;
+            if ( $upto < 1 ) {
+                $args['royal_mcp_log_cleared'] = 'stale';
+            } else {
+                $result                        = self::clear_activity_log( $upto, (int) get_current_user_id() );
+                $args['royal_mcp_log_cleared'] = '' === $result['error'] ? '1' : 'error';
+                $args['royal_mcp_log_count']   = (int) $result['removed'];
+            }
         }
-        wp_safe_redirect( add_query_arg( [ 'page' => 'royal-mcp-logs', 'royal_mcp_log_cleared' => empty( $_POST['royal_mcp_clear_confirm'] ) ? '0' : '1' ], admin_url( 'admin.php' ) ) );
+        wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+        exit;
+    }
+
+    /** The Restore button next to a cleared batch: put its entries back. */
+    public function handle_restore_activity_log() {
+        if ( ! current_user_can( self::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from admin_capability(); restores into the per-site wp_royal_mcp_logs table only
+            wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ), '', [ 'response' => 403 ] );
+        }
+        check_admin_referer( self::RESTORE_LOG_ACTION );
+
+        if ( ! self::is_post_request() ) {
+            wp_safe_redirect( add_query_arg( [ 'page' => 'royal-mcp-logs' ], admin_url( 'admin.php' ) ) );
+            exit;
+        }
+        $batch  = isset( $_POST['batch_id'] ) ? sanitize_key( wp_unslash( $_POST['batch_id'] ) ) : '';
+        $result = self::restore_activity_log( $batch, (int) get_current_user_id() );
+        wp_safe_redirect( add_query_arg( [
+            'page'                    => 'royal-mcp-logs',
+            'royal_mcp_log_restored'  => '' === $result['error'] ? 'done' : sanitize_key( $result['error'] ),
+            'royal_mcp_log_count'     => (int) $result['restored'],
+            'royal_mcp_log_left'      => (int) $result['left'],
+            'royal_mcp_log_collision' => (int) $result['collisions'],
+        ], admin_url( 'admin.php' ) ) );
         exit;
     }
 

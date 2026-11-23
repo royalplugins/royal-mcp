@@ -445,7 +445,7 @@ class Plugin_Abilities {
 		if ( null !== self::$theme_refusal ) {
 			$what                = self::$theme_refusal;
 			self::$theme_refusal = null;
-			return new \WP_Error( 'theme_writes_off', sprintf( '%s tried to change %s. Theme writes are disabled; enable "Allow AI to modify theme appearance" under Royal MCP > Settings to allow it.', $ability->get_name(), $what ) );
+			return new \WP_Error( 'theme_writes_off', sprintf( '%s tried to change %s. Theme writes are disabled; enable "Allow AI to modify theme appearance" under Royal MCP → Safety → Extra write permissions to allow it.', $ability->get_name(), $what ) );
 		}
 		if ( is_wp_error( $out ) ) {
 			return new \WP_Error( $out->get_error_code(), sprintf( '%s: %s', $ability->get_name(), \Royal_MCP\MCP\Support\Secret_Scrubber::scrub_text( (string) $out->get_error_message(), 'strict' ) ) );

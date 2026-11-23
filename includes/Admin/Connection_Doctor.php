@@ -16,6 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 use Royal_MCP\Integrations\Coexistence_Check;
 use Royal_MCP\OAuth\Server as OAuth_Server;
+use Royal_MCP\OAuth\Token_Store;
 
 class Connection_Doctor {
 
@@ -31,12 +32,23 @@ class Connection_Doctor {
 
 	/** Whether a header value is the live one-time probe value. */
 	public static function is_probe_request_value( $sent ) {
+		static $used = [];
 		$sent = (string) $sent;
 		if ( ! preg_match( '/^[A-Za-z0-9]{32}$/', $sent ) ) {
 			return false;
 		}
-		$want = (string) get_transient( self::PROBE_KEY . '_' . md5( $sent ) );
-		return '' !== $want && hash_equals( $want, $sent );
+		// One request per value: the first match uses it up, later checks in the same request reuse the answer.
+		if ( isset( $used[ $sent ] ) ) {
+			return true;
+		}
+		$key  = self::PROBE_KEY . '_' . md5( $sent );
+		$want = (string) get_transient( $key );
+		if ( '' === $want || ! hash_equals( $want, $sent ) ) {
+			return false;
+		}
+		delete_transient( $key );
+		$used[ $sent ] = true;
+		return true;
 	}
 
 	public static function register() {
@@ -79,7 +91,7 @@ class Connection_Doctor {
 		$on       = is_array( $settings ) && ! empty( $settings['enabled'] );
 		$steps[]  = $on
 			? self::step( 'switched_on', __( 'Royal MCP is switched on', 'royal-mcp' ), 'ok' )
-			: self::step( 'switched_on', __( 'Royal MCP is switched off', 'royal-mcp' ), 'problem', __( 'AI clients are refused while Royal MCP is off.', 'royal-mcp' ), admin_url( 'admin.php?page=royal-mcp-settings' ), __( 'Switch it on in Settings', 'royal-mcp' ) );
+			: self::step( 'switched_on', __( 'Royal MCP is switched off', 'royal-mcp' ), 'problem', __( 'AI clients are refused while Royal MCP is off.', 'royal-mcp' ), admin_url( 'admin.php?page=' . Menu_Layout::CONNECTIONS ), __( 'Switch it on under Royal MCP → Connections → Connection settings', 'royal-mcp' ) );
 
 		$health  = ( new \ReflectionClass( Site_Health_Tests::class ) )->newInstanceWithoutConstructor();
 		$steps[] = self::from_health( 'permalinks', $health->test_permalinks() );
@@ -113,12 +125,21 @@ class Connection_Doctor {
 				}
 			}
 			$steps[] = self::registration_step( OAuth_Server::build_authorization_server_metadata( '' !== OAuth_Server::namespace_issuer() ) );
+			$steps[] = self::pkce_step();
 		} else {
 			$steps[] = self::step( 'discovery', __( 'Discovery and sign-in', 'royal-mcp' ), 'skipped', __( 'Not checked until the steps above are fixed.', 'royal-mcp' ) );
 		}
 
 		$steps[] = self::from_health( 'authorization_header', $health->test_authorization_header() );
 		$steps[] = self::from_health( 'sign_in_addresses', $health->test_sign_in_addresses() );
+		$restore = self::rule_restore_step();
+		if ( null !== $restore ) {
+			$steps[] = $restore;
+		}
+		$cimd = self::cimd_step();
+		if ( null !== $cimd ) {
+			$steps[] = $cimd;
+		}
 		$steps[] = self::activity_step();
 
 		$first = null;
@@ -154,6 +175,118 @@ class Connection_Doctor {
 		}
 		/* translators: %d: HTTP status code */
 		return self::step( 'registration', $label, 'problem', sprintf( __( 'The registration address answered HTTP %d without an OAuth error. A security plugin, a firewall rule or a cache may be answering it instead of Royal MCP; AI apps cannot register there.', 'royal-mcp' ), $code ) );
+	}
+
+	/**
+	 * The sign-in address receives code_challenge and code_challenge_method: a request with a
+	 * made-up client and the Doctor's one-time header, which the sign-in page answers only with
+	 * the PKCE parameters that reached it (nothing is stored, logged or counted).
+	 */
+	private static function pkce_step() {
+		$label     = __( 'Sign-in requests keep their PKCE parameters', 'royal-mcp' );
+		$challenge = wp_generate_password( 43, false );
+		$url       = add_query_arg(
+			[
+				'response_type'         => 'code',
+				'client_id'             => 'royal-mcp-doctor-probe',
+				'redirect_uri'          => rawurlencode( 'https://doctor-probe.invalid/callback' ),
+				'code_challenge'        => $challenge,
+				'code_challenge_method' => 'S256',
+				'state'                 => 'doctor-probe',
+			],
+			OAuth_Server::probe_authorize_url()
+		);
+		$probe     = wp_generate_password( 32, false );
+		$probe_key = self::PROBE_KEY . '_' . md5( $probe );
+		set_transient( $probe_key, $probe, MINUTE_IN_SECONDS );
+		$res = wp_remote_get( $url, [ 'timeout' => 5, 'redirection' => 0, 'sslverify' => false, 'headers' => [ self::PROBE_HEADER => $probe ] ] );
+		delete_transient( $probe_key );
+		if ( is_wp_error( $res ) ) {
+			return self::step( 'pkce', $label, 'warn', __( 'The site could not reach its own sign-in address to check this (loopback blocked or timed out). AI apps outside may still sign in.', 'royal-mcp' ) );
+		}
+		$code = (int) wp_remote_retrieve_response_code( $res );
+		$json = json_decode( (string) wp_remote_retrieve_body( $res ), true );
+		if ( ! is_array( $json ) || 'pkce' !== ( $json['royal_mcp_doctor'] ?? '' ) || ! is_array( $json['received'] ?? null ) ) {
+			/* translators: %d: HTTP status code */
+			return self::step( 'pkce', $label, 'warn', sprintf( __( 'The sign-in address answered HTTP %d without the check\'s reply, so this could not be checked. A security plugin, a firewall or a cache may be answering it.', 'royal-mcp' ), $code ) );
+		}
+		$missing = [];
+		if ( empty( $json['received']['code_challenge'] ) ) {
+			$missing[] = 'code_challenge';
+		}
+		if ( true !== ( $json['received']['code_challenge_method_s256'] ?? null ) ) {
+			$missing[] = 'code_challenge_method';
+		}
+		if ( ! $missing ) {
+			return self::step( 'pkce', $label, 'ok' );
+		}
+		return self::step(
+			'pkce',
+			$label,
+			'problem',
+			/* translators: %s: names of the missing query parameters */
+			sprintf( __( 'The host or a firewall removes %s from sign-in requests before they reach Royal MCP, so AI apps cannot sign in. Ask the host to let these query parameters through on this site.', 'royal-mcp' ), implode( ' and ', $missing ) ),
+			self::PKCE_SUPPORT_URL,
+			__( 'Read the support article', 'royal-mcp' )
+		);
+	}
+
+	/** Support article for sign-in requests that lose their PKCE parameters on the way in. */
+	const PKCE_SUPPORT_URL = Help_Page::SUPPORT_URLS['pkce_stripped'];
+
+	/** Shown when the sign-in address has had to be put back: how often, when, and the next try. */
+	private static function rule_restore_step() {
+		if ( ! class_exists( '\\Royal_MCP_Plugin' ) || ! method_exists( '\\Royal_MCP_Plugin', 'rule_restore_state' ) ) {
+			return null;
+		}
+		\Royal_MCP_Plugin::settle_rule_restore_state();
+		$s = \Royal_MCP_Plugin::rule_restore_state();
+		if ( $s['count'] < 1 ) {
+			return null;
+		}
+		$fmt   = trim( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ) );
+		$label = __( 'The sign-in addresses stay in place', 'royal-mcp' );
+		$wait  = $s['next'] > time() ? human_time_diff( time(), $s['next'] ) : __( 'on the next page load', 'royal-mcp' );
+		if ( $s['count'] < 2 ) {
+			/* translators: %s: date and time */
+			return self::step( 'rule_restore', $label, 'info', sprintf( __( 'The sign-in address was missing from the site\'s stored addresses and was put back on %s.', 'royal-mcp' ), wp_date( $fmt, $s['last'] ) ) );
+		}
+		return self::step(
+			'rule_restore',
+			$label,
+			'warn',
+			/* translators: 1: date and time, 2: time until the next try (e.g. "4 hours") */
+			sprintf( __( 'Something keeps removing the sign-in addresses; last restored %1$s, retrying in %2$s. Another plugin that rebuilds the site\'s addresses is the usual cause. Saving Settings → Permalinks puts them back now.', 'royal-mcp' ), wp_date( $fmt, $s['last'] ), $wait ),
+			admin_url( 'options-permalink.php' ),
+			__( 'Permalinks settings', 'royal-mcp' )
+		);
+	}
+
+	/** Shown after the site could not fetch an AI app's client information document. */
+	private static function cimd_step() {
+		if ( ! method_exists( Token_Store::class, 'cimd_fetch_failure' ) ) {
+			return null;
+		}
+		$f = Token_Store::cimd_fetch_failure();
+		if ( null === $f ) {
+			return null;
+		}
+		$fmt   = trim( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ) );
+		$label = __( 'AI app information documents can be fetched', 'royal-mcp' );
+		$host  = '' !== $f['host'] ? $f['host'] : '-';
+		if ( Token_Store::cimd_fallback_active() ) {
+			return self::step(
+				'cimd',
+				$label,
+				'warn',
+				/* translators: 1: date and time, 2: date and time, 3: host name as reported in the request */
+				sprintf( __( 'On %1$s a client\'s metadata document could not be fetched. Until %2$s the site asks AI apps to register instead. If sign-in keeps failing, the host may be blocking outgoing requests: use manual credentials (OAuth Client ID and Secret). Reported document host: %3$s', 'royal-mcp' ), wp_date( $fmt, $f['at'] ), wp_date( $fmt, $f['until'] ), $host ),
+				admin_url( 'admin.php?page=' . Menu_Layout::CONNECTIONS ),
+				__( 'Connection settings', 'royal-mcp' )
+			);
+		}
+		/* translators: 1: date and time, 2: host name as reported in the request */
+		return self::step( 'cimd', $label, 'info', sprintf( __( 'A client\'s metadata document last failed to fetch on %1$s. The site offers these documents to AI apps again; the next successful fetch clears this. Reported document host: %2$s', 'royal-mcp' ), wp_date( $fmt, $f['at'] ), $host ) );
 	}
 
 	/** What the Activity Log shows of real clients: the last sign-in and the last tool call. */

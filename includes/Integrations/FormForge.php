@@ -500,7 +500,97 @@ class FormForge {
 				return null;
 			}
 		}
+		return self::clean_setting_values( $over );
+	}
+
+	/**
+	 * Override values cleaned the way FormForge's own settings screen cleans them: message HTML
+	 * through wp_kses_post for every user, recipients and sender addresses
+	 * through sanitize_email (smart tags such as {admin_email} kept), web addresses through
+	 * esc_url_raw, other text as plain text.
+	 */
+	private static function clean_setting_values( array $over, $depth = 0 ) {
+		foreach ( $over as $key => $value ) {
+			if ( is_array( $value ) ) {
+				$over[ $key ] = $depth < 6 ? self::clean_setting_values( $value, $depth + 1 ) : [];
+				continue;
+			}
+			if ( ! is_string( $value ) ) {
+				continue;
+			}
+			$k = is_string( $key ) ? strtolower( $key ) : '';
+			if ( 'message' === $k || 'content' === $k || 'html' === $k ) {
+				$over[ $key ] = wp_kses_post( $value );
+			} elseif ( in_array( $k, [ 'email', 'to', 'cc', 'bcc', 'recipients' ], true ) ) {
+				$over[ $key ] = self::clean_recipients( $value );
+			} elseif ( 'from_email' === $k || 'reply_to' === $k || 'replyto' === $k ) {
+				$over[ $key ] = self::is_smart_tag( $value ) ? $value : ( false !== strpos( $value, '@' ) ? sanitize_email( $value ) : sanitize_text_field( $value ) );
+			} elseif ( 'url' === $k || '_url' === substr( $k, -4 ) || 'redirect' === $k ) {
+				$over[ $key ] = esc_url_raw( trim( $value ), [ 'http', 'https' ] );
+			} elseif ( false !== strpos( $k, 'message' ) ) {
+				$over[ $key ] = sanitize_textarea_field( $value );
+			} else {
+				$over[ $key ] = sanitize_text_field( $value );
+			}
+		}
 		return $over;
+	}
+
+	private static function is_smart_tag( $value ) {
+		return 1 === preg_match( '/^\{[a-z0-9_:\-="\' ]{1,60}\}$/i', trim( (string) $value ) );
+	}
+
+	/** A comma separated recipients text with only valid addresses and smart tags left. */
+	private static function clean_recipients( $value ) {
+		$out = [];
+		foreach ( explode( ',', (string) $value ) as $part ) {
+			$part = trim( $part );
+			if ( '' === $part ) {
+				continue;
+			}
+			if ( self::is_smart_tag( $part ) ) {
+				$out[] = $part;
+			} elseif ( is_email( $part ) ) {
+				$out[] = sanitize_email( $part );
+			}
+		}
+		return implode( ', ', $out );
+	}
+
+	/**
+	 * Settings with the overrides laid over them. Lists of entries that carry an id (webhooks) are
+	 * matched by id; any other list given is the whole new list, so nothing left over from the
+	 * original stays behind by position.
+	 */
+	private static function merge_settings( array $base, array $over, $depth = 0 ) {
+		foreach ( $over as $key => $value ) {
+			$old = $base[ $key ] ?? null;
+			if ( ! is_array( $value ) || ! is_array( $old ) || $depth > 6 ) {
+				$base[ $key ] = $value;
+				continue;
+			}
+			$old_list = array_keys( $old ) === range( 0, count( $old ) - 1 );
+			$new_list = ! $value || array_keys( $value ) === range( 0, count( $value ) - 1 );
+			if ( $old_list && $new_list ) {
+				$by_id = (bool) $old && ! array_filter( $old, static function ( $e ) { return ! is_array( $e ) || ! isset( $e['id'] ) || ! is_scalar( $e['id'] ); } );
+				if ( $by_id && ! array_filter( $value, static function ( $e ) { return ! is_array( $e ) || ! isset( $e['id'] ) || ! is_scalar( $e['id'] ); } ) ) {
+					foreach ( $value as $entry ) {
+						foreach ( $old as $i => $was ) {
+							if ( (string) $was['id'] === (string) $entry['id'] ) {
+								$old[ $i ] = self::merge_settings( $was, $entry, $depth + 1 );
+								continue 2;
+							}
+						}
+					}
+					$base[ $key ] = $old;
+				} else {
+					$base[ $key ] = $value;
+				}
+				continue;
+			}
+			$base[ $key ] = self::merge_settings( $old, $value, $depth + 1 );
+		}
+		return $base;
 	}
 
 	private static function duplicate( array $args ) {
@@ -530,7 +620,7 @@ class FormForge {
 			'title'       => $title,
 			'description' => is_string( $source['description'] ?? null ) ? $source['description'] : '',
 			'form_data'   => self::decoded( $source['form_data'] ?? null ),
-			'settings'    => array_replace_recursive( $settings, $over ),
+			'settings'    => self::merge_settings( $settings, $over ),
 			'status'      => $status,
 		], [ 'source' => 'duplicate', 'source_form_id' => $source_id ] );
 	}
@@ -567,7 +657,7 @@ class FormForge {
 			'title'       => $title,
 			'description' => is_string( $template['description'] ?? null ) ? $template['description'] : '',
 			'form_data'   => [ 'fields' => isset( $template['fields'] ) && is_array( $template['fields'] ) ? $template['fields'] : [] ],
-			'settings'    => array_replace_recursive( $settings, $over ),
+			'settings'    => self::merge_settings( $settings, $over ),
 			'status'      => $status,
 		], [ 'source' => 'template', 'template_slug' => $slug ] );
 	}
@@ -714,7 +804,7 @@ class FormForge {
 			],
 			'formforge_duplicate' => [
 				'name'        => 'formforge_duplicate',
-				'description' => 'Make a copy of a FormForge form: same fields, description and settings (notifications and integrations included, so a copy set to active sends the same emails as the original). The copy is inactive unless status_override says otherwise, and is titled "<title> (Copy)" unless title_override is given. setting_overrides changes the values of settings the source form already has, at any depth; it cannot add a setting or change what kind of value one holds. Entries are not copied. Returns created_form_id and an undo token; undo deletes the copy, with its view statistics, while it has no entries and has not been edited (force: true deletes it with its entries). Requires FormForge Pro and manage_options.',
+				'description' => 'Make a copy of a FormForge form: same fields, description and settings (notifications and integrations included, so a copy set to active sends the same emails as the original). The copy is inactive unless status_override says otherwise, and is titled "<title> (Copy)" unless title_override is given. setting_overrides changes the values of settings the source form already has, at any depth; it cannot add a setting or change what kind of value one holds. Values are cleaned as FormForge\'s settings screen cleans them (message HTML filtered, invalid recipient addresses dropped, web addresses checked); a list given (notifications) replaces the whole list, while webhooks are matched by id. Entries are not copied. Returns created_form_id and an undo token; undo deletes the copy, with its view statistics, while it has no entries and has not been edited (force: true deletes it with its entries). Requires FormForge Pro and manage_options.',
 				'inputSchema' => [
 					'type'                 => 'object',
 					'required'             => [ 'source_form_id' ],
@@ -729,7 +819,7 @@ class FormForge {
 			],
 			'formforge_create_from_template' => [
 				'name'        => 'formforge_create_from_template',
-				'description' => 'Make a new FormForge form from one of FormForge\'s own templates (template_slug, such as contact or newsletter; an unknown name returns the list). The form is inactive unless status says otherwise and takes the template\'s name unless title is given. setting_overrides changes the values of settings the template already has; it cannot add one. A template the site\'s FormForge licence does not include is refused. Returns created_form_id and an undo token; undo deletes the form while it has no entries and has not been edited (force: true deletes it with its entries). Requires FormForge Pro and manage_options.',
+				'description' => 'Make a new FormForge form from one of FormForge\'s own templates (template_slug, such as contact or newsletter; an unknown name returns the list). The form is inactive unless status says otherwise and takes the template\'s name unless title is given. setting_overrides changes the values of settings the template already has; it cannot add one. Values are cleaned as FormForge\'s settings screen cleans them, and a list given replaces the whole list. A template the site\'s FormForge licence does not include is refused. Returns created_form_id and an undo token; undo deletes the form while it has no entries and has not been edited (force: true deletes it with its entries). Requires FormForge Pro and manage_options.',
 				'inputSchema' => [
 					'type'                 => 'object',
 					'required'             => [ 'template_slug' ],

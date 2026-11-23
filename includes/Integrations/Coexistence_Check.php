@@ -813,7 +813,7 @@ class Coexistence_Check {
 						'plugin'          => $info['plugin'],
 						'abilities'       => [],
 						'royal_mcp_tools' => $info['royal_mcp_tools'],
-						'note'            => sprintf( '%s registers these abilities itself. A client connected through the WordPress MCP Adapter can list them next to Royal MCP\'s %s tools; they are separate tools, and each call runs only the tool the client picked. Royal MCP offers them as its own ext_ tools only when they are turned on in Plugin Abilities.', $info['plugin'], $info['royal_mcp_tools'] ),
+						'note'            => sprintf( '%s registers these abilities itself. A client connected through the WordPress MCP Adapter can list them next to Royal MCP\'s %s tools; they are separate tools, and each call runs only the tool the client picked. Royal MCP offers them as its own ext_ tools only when they are turned on in Royal MCP → Context → Plugin Abilities.', $info['plugin'], $info['royal_mcp_tools'] ),
 					];
 				}
 				$out[ $prefix ]['abilities'][] = (string) $name;

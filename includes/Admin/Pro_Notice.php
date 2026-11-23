@@ -44,7 +44,7 @@ class Pro_Notice {
     private static function on_own_screen() {
         $screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
         // Screens under this plugin's menu have ids that start with the menu's own prefix.
-        return $screen && ! empty( $screen->id ) && 0 === strpos( (string) $screen->id, 'royal-mcp_page_royal-mcp-' );
+        return $screen && ! empty( $screen->id ) && 0 === strpos( (string) $screen->id, Menu_Layout::sub_page_prefix() . 'royal-mcp-' );
     }
 
     /** The notice's link with its campaign tags. */

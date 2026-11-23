@@ -36,8 +36,8 @@ $royal_mcp_help_logs_url     = class_exists( '\\Royal_MCP_Pro\\Tool_Registry', f
 			<?php esc_html_e( 'The 5-second OAuth-discovery budget in the wizard is aggressive for shared hosting + Cloudflare-fronted sites. Timing out is normal, not broken. The wizard shows a full options screen you can complete manually.', 'royal-mcp' ); ?>
 		</div>
 
-		<h4><?php esc_html_e( 'Step 1 — Open Settings → Connectors → Add custom connector', 'royal-mcp' ); ?></h4>
-		<p><?php esc_html_e( 'claude.ai: profile menu (bottom-left) → Settings → Connectors → Add custom connector. Claude Desktop: Settings (gear) → Connectors → Add custom connector. Or click the + button in any chat window → Add connectors → Add custom connector.', 'royal-mcp' ); ?></p>
+		<h4><?php esc_html_e( 'Step 1 — Open Plugins → Add → Add custom connector', 'royal-mcp' ); ?></h4>
+		<p><?php esc_html_e( 'claude.ai and Claude Desktop: open Plugins → Add → Add custom connector. Connectors you already added are under Plugins → Connectors. Or click the + button in any chat window → Add connectors → Add custom connector. Claude moved connectors and skills under Plugins (earlier versions of Claude showed them under Settings → Connectors / Settings → Skills).', 'royal-mcp' ); ?></p>
 
 		<h4><?php esc_html_e( 'Step 2 — Name it, paste your MCP endpoint', 'royal-mcp' ); ?></h4>
 		<p><?php esc_html_e( 'Give it any name (e.g. "My Site MCP"). Paste this endpoint into the URL field:', 'royal-mcp' ); ?></p>
@@ -99,7 +99,7 @@ $royal_mcp_help_logs_url     = class_exists( '\\Royal_MCP_Pro\\Tool_Registry', f
 					__( 'Keep %s open in another browser tab while you connect. You will see live entries fire (oauth:register → oauth:authorize → oauth:token) during the handshake, then mcp:initialize + mcp:tools/list once the connection is live. If something fails, the log shows which step and why.', 'royal-mcp' ),
 					[ 'a' => [ 'href' => [] ] ]
 				),
-				'<a href="' . esc_url( $royal_mcp_help_logs_url ) . '">' . esc_html__( 'Royal MCP → Activity Log', 'royal-mcp' ) . '</a>'
+				'<a href="' . esc_url( $royal_mcp_help_logs_url ) . '">' . esc_html__( 'Royal MCP → Activity → Activity Log', 'royal-mcp' ) . '</a>'
 			);
 			?>
 		</div>

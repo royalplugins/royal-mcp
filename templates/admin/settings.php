@@ -148,7 +148,7 @@ $royal_mcp_view = isset( $royal_mcp_view ) && in_array( $royal_mcp_view, [ 'conn
                                     <span class="slider"></span>
                                 </label>
                                 <p class="description">
-                                    <?php esc_html_e('When on, a new AI client that registers itself waits under Royal MCP > Pending Clients until you approve it.', 'royal-mcp'); ?>
+                                    <?php esc_html_e('When on, a new AI client that registers itself waits under Royal MCP → Connections → Pending Clients until you approve it.', 'royal-mcp'); ?>
                                 </p>
                             </td>
                         </tr>
@@ -172,8 +172,8 @@ $royal_mcp_view = isset( $royal_mcp_view ) && in_array( $royal_mcp_view, [ 'conn
                                            value="<?php echo esc_attr($royal_mcp_settings['oauth_client_id'] ?? ''); ?>"
                                            class="regular-text code"
                                            placeholder="<?php esc_attr_e('Leave empty for Dynamic Client Registration', 'royal-mcp'); ?>">
-                                    <button type="button" class="button copy-btn" data-target="oauth_client_id">
-                                        <span class="dashicons dashicons-clipboard"></span>
+                                    <button type="button" class="button copy-btn" data-target="oauth_client_id" style="display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;" aria-label="<?php esc_attr_e( 'Copy', 'royal-mcp' ); ?>">
+                                        <svg style="width:14px;height:14px;flex-shrink:0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                                     </button>
                                     <?php if (empty($royal_mcp_settings['oauth_client_id'])) : ?>
                                         <button type="button" class="button generate-oauth" data-field="oauth_client_id">
@@ -202,11 +202,12 @@ $royal_mcp_view = isset( $royal_mcp_view ) && in_array( $royal_mcp_view, [ 'conn
                                            autocomplete="new-password"
                                            class="regular-text code"
                                            placeholder="<?php echo $royal_mcp_secret_set ? esc_attr__('A secret is set. Enter a new one to replace it.', 'royal-mcp') : esc_attr__('Leave empty for Dynamic Client Registration', 'royal-mcp'); ?>">
-                                    <button type="button" class="button toggle-password">
-                                        <span class="dashicons dashicons-visibility"></span>
+                                    <button type="button" class="button toggle-password" style="display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;" aria-label="<?php esc_attr_e( 'Show or hide', 'royal-mcp' ); ?>" aria-pressed="false">
+                                        <svg class="royal-mcp-eye-show" style="width:14px;height:14px;flex-shrink:0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                        <svg class="royal-mcp-eye-hide" style="width:14px;height:14px;flex-shrink:0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
                                     </button>
-                                    <button type="button" class="button copy-btn" data-target="oauth_client_secret">
-                                        <span class="dashicons dashicons-clipboard"></span>
+                                    <button type="button" class="button copy-btn" data-target="oauth_client_secret" style="display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1;" aria-label="<?php esc_attr_e( 'Copy', 'royal-mcp' ); ?>">
+                                        <svg style="width:14px;height:14px;flex-shrink:0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                                     </button>
                                     <?php if ( ! $royal_mcp_secret_set ) : ?>
                                         <button type="button" class="button generate-oauth" data-field="oauth_client_secret">
@@ -248,7 +249,7 @@ $royal_mcp_view = isset( $royal_mcp_view ) && in_array( $royal_mcp_view, [ 'conn
                     </div>
                     <div class="rmcp-group rmcp-group-limits">
                     <h3 class="rmcp-settings-group-title"><?php esc_html_e('What AI clients may do', 'royal-mcp'); ?></h3>
-                    <p class="rmcp-settings-group-intro"><?php esc_html_e('Applies to every connection. Each OAuth client can also get its own level on the Connected Clients screen.', 'royal-mcp'); ?></p>
+                    <p class="rmcp-settings-group-intro"><?php esc_html_e('Applies to every connection. Each OAuth client can also get its own level under Royal MCP → Connections → Connected Clients.', 'royal-mcp'); ?></p>
                     <table class="form-table">
                         <tr>
                             <th scope="row">
@@ -286,6 +287,29 @@ $royal_mcp_view = isset( $royal_mcp_view ) && in_array( $royal_mcp_view, [ 'conn
                                 </p>
                             </td>
                         </tr>
+                        <?php $royal_mcp_group_states = \Royal_MCP\MCP\Support\Tool_Groups::states(); ?>
+                        <?php foreach ( \Royal_MCP\MCP\Support\Tool_Groups::groups() as $royal_mcp_group_key => $royal_mcp_group ) : ?>
+                        <tr class="rmcp-tool-group">
+                            <th scope="row">
+                                <label for="rmcp_tool_group_<?php echo esc_attr( $royal_mcp_group_key ); ?>"><?php echo esc_html( $royal_mcp_group['label'] ); ?></label>
+                            </th>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox"
+                                           name="royal_mcp_settings[tool_groups][<?php echo esc_attr( $royal_mcp_group_key ); ?>]"
+                                           id="rmcp_tool_group_<?php echo esc_attr( $royal_mcp_group_key ); ?>"
+                                           value="1"
+                                           <?php checked( ! empty( $royal_mcp_group_states[ $royal_mcp_group_key ] ) ); ?>>
+                                    <span class="slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php echo esc_html( $royal_mcp_group['description'] ); ?>
+                                    <?php esc_html_e( 'Off: AI clients are refused these tools on every connection.', 'royal-mcp' ); ?>
+                                </p>
+                                <p class="description"><code><?php echo esc_html( implode( ', ', $royal_mcp_group['tools'] ) ); ?></code></p>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
                         <tr>
                             <th scope="row">
                                 <label for="other_routes_access"><?php esc_html_e('Access level: other MCP servers and browser agents', 'royal-mcp'); ?></label>
@@ -381,6 +405,7 @@ $royal_mcp_view = isset( $royal_mcp_view ) && in_array( $royal_mcp_view, [ 'conn
                                         form="rmcp-disable-key-form"
                                         class="button"
                                         id="rmcp-disable-key"
+                                        onclick="return window.confirm( <?php echo esc_attr( wp_json_encode( __( 'Turn off the API key? Every client that uses it stops working until you regenerate one.', 'royal-mcp' ) ) ); ?> );"
                                         style="<?php echo esc_attr( $royal_mcp_btn_style ); ?>">
                                     <svg style="<?php echo esc_attr( $royal_mcp_svg_style ); ?>" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                         <circle cx="12" cy="12" r="10"/>
@@ -435,7 +460,7 @@ $royal_mcp_view = isset( $royal_mcp_view ) && in_array( $royal_mcp_view, [ 'conn
                                     <?php endforeach; ?>
                                 </select>
                                 <p class="description">
-                                    <?php esc_html_e('What clients using the API key may do. Each OAuth client gets its own level on the Connected Clients screen.', 'royal-mcp'); ?>
+                                    <?php esc_html_e('What clients using the API key may do. Each OAuth client gets its own level under Royal MCP → Connections → Connected Clients.', 'royal-mcp'); ?>
                                 </p>
                             </td>
                         </tr>
@@ -863,14 +888,14 @@ $royal_mcp_view = isset( $royal_mcp_view ) && in_array( $royal_mcp_view, [ 'conn
                                 <span class="setup-guide-icon icon-claude">C</span>
                                 <span class="setup-guide-name">
                                     <?php esc_html_e('Claude.ai (web)', 'royal-mcp'); ?>
-                                    <small><?php esc_html_e('Connect via custom connector in Claude.ai Settings', 'royal-mcp'); ?></small>
+                                    <small><?php esc_html_e('Connect via custom connector in Claude.ai Plugins', 'royal-mcp'); ?></small>
                                 </span>
                                 <span class="dashicons dashicons-arrow-down-alt2 setup-guide-chevron"></span>
                             </button>
                             <div class="setup-guide-body">
                                 <ol>
-                                    <li><?php echo wp_kses(__('Go to <a href="https://claude.ai" target="_blank" rel="noopener noreferrer">claude.ai</a> and open <strong>Settings</strong>', 'royal-mcp'), ['a' => ['href' => [], 'target' => [], 'rel' => []], 'strong' => []]); ?></li>
-                                    <li><?php echo wp_kses(__('Click <strong>Connectors</strong> in the sidebar', 'royal-mcp'), ['strong' => []]); ?></li>
+                                    <li><?php echo wp_kses(__('Go to <a href="https://claude.ai" target="_blank" rel="noopener noreferrer">claude.ai</a> and open <strong>Plugins</strong> (earlier versions of Claude: Settings → Connectors)', 'royal-mcp'), ['a' => ['href' => [], 'target' => [], 'rel' => []], 'strong' => []]); ?></li>
+                                    <li><?php echo wp_kses(__('Click <strong>Add</strong>', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php echo wp_kses(__('Click <strong>Add custom connector</strong>', 'royal-mcp'), ['strong' => []]); ?></li>
                                     <li><?php esc_html_e('Enter a name (e.g., "My WordPress Site")', 'royal-mcp'); ?></li>
                                     <li><?php echo wp_kses(__('Paste the <strong>MCP Server URL</strong> from the Connection settings above', 'royal-mcp'), ['strong' => []]); ?></li>
@@ -994,14 +1019,14 @@ $royal_mcp_view = isset( $royal_mcp_view ) && in_array( $royal_mcp_view, [ 'conn
                         </p>
                         <ul>
                             <li><code>POST /royal-mcp/v1/mcp</code> - <?php esc_html_e('Primary MCP JSON-RPC endpoint (tools/list, tools/call, prompts/list, resources/list)', 'royal-mcp'); ?></li>
-                            <li><code>GET /royal-mcp/v1/sse</code> - <?php esc_html_e('Server-Sent Events stream for streaming MCP clients', 'royal-mcp'); ?></li>
-                            <li><code>POST /royal-mcp/v1/messages</code> - <?php esc_html_e('SSE session message channel', 'royal-mcp'); ?></li>
+                            <li><code>GET /royal-mcp/v1/sse</code> - <?php esc_html_e('Old streaming address, kept for older clients: it only answers with the address to use instead', 'royal-mcp'); ?></li>
+                            <li><code>POST /royal-mcp/v1/messages</code> - <?php esc_html_e('Old message address, kept for older clients: it is handled like the main endpoint', 'royal-mcp'); ?></li>
                         </ul>
                         <p class="description">
                             <?php
                             printf(
                                 /* translators: %s: example endpoint-profile URL fragment. */
-                                esc_html__('Endpoint profiles (Royal MCP Pro) trim the tools/list response to a whitelisted subset. Attach %s to any MCP URL to route calls through a specific profile.', 'royal-mcp'),
+                                esc_html__('Tool lists can be shortened: attach %s to the MCP URL (for example ?tools=core or ?tools=compact) to list only that set of tools.', 'royal-mcp'),
                                 '<code>?tools=&lt;profile-slug&gt;</code>'
                             );
                             ?>
@@ -1045,7 +1070,7 @@ $royal_mcp_view = isset( $royal_mcp_view ) && in_array( $royal_mcp_view, [ 'conn
                                 <?php esc_html_e('How long each access token lasts. A connected AI client renews it on its own, so it stays connected until you revoke it or it goes 30 days unused. Applies to new sessions; existing sessions keep their original length.', 'royal-mcp'); ?>
                             </p>
                             <p class="description">
-                                <a href="<?php echo esc_url( admin_url( 'admin.php?page=royal-mcp-connected-clients' ) ); ?>"><?php esc_html_e('See who is connected, and revoke one client or all of them, on the Connected Clients screen', 'royal-mcp'); ?></a>
+                                <a href="<?php echo esc_url( admin_url( 'admin.php?page=royal-mcp-connected-clients' ) ); ?>"><?php esc_html_e('See who is connected, and revoke one client or all of them, under Royal MCP → Connections → Connected Clients', 'royal-mcp'); ?></a>
                             </p>
                         </td>
                     </tr>

@@ -139,7 +139,7 @@ class Complianz {
 			],
 			[
 				'name'        => 'complianz_update_banner_text',
-				'description' => 'Change the texts on a Complianz cookie banner: title (header), messages (message_optin, message_optout), buttons (accept, accept_informational, dismiss, view_preferences, save_preferences, revoke) and category labels and descriptions. Pass only the fields to change; for title, deny button and category fields pass text, or {text, show} to also show or hide it. Colours, layout and custom CSS are not changed. Returns an undo token.',
+				'description' => 'Change the texts on a Complianz cookie banner: title (header), messages (message_optin, message_optout), buttons (accept, accept_informational, dismiss, view_preferences, save_preferences, revoke) and category labels and descriptions. Pass only the fields to change; for title, deny button and category fields pass text, or {text, show} to also show or hide it (the deny button cannot be hidden or left empty). Colours, layout and custom CSS are not changed. Returns an undo token.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => array_merge( [ 'banner_id' => $banner_id ], $text_props ),
@@ -415,8 +415,8 @@ class Complianz {
 	// ============ Writes ============
 
 	private static function update_banner_text( array $args ) {
-		$id     = self::banner_id( $args );
 		$fields = self::banner_fields( $args );
+		$id     = self::banner_id( $args );
 		if ( [] === $fields ) {
 			throw new \Exception( 'Pass at least one banner text field, for example accept or message_optin.' );
 		}
@@ -569,6 +569,11 @@ class Complianz {
 				];
 			} else {
 				$fields[ $f ] = self::short_text( $f, $v );
+			}
+			// Visitors must be able to refuse as easily as they accept: the Deny button stays visible and labelled.
+			$deny_text = is_array( $fields[ $f ] ) ? $fields[ $f ]['text'] : $fields[ $f ];
+			if ( 'dismiss' === $f && ( ( is_array( $fields[ $f ] ) && false === $fields[ $f ]['show'] ) || '' === trim( wp_strip_all_tags( (string) $deny_text ) ) ) ) {
+				throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'deny_button_required', 'The Deny button cannot be hidden or left without a label through Royal MCP: consent laws expect refusing to be as easy as accepting. Change its text instead, or change it in Complianz. Nothing was changed.' );
 			}
 		}
 		foreach ( self::BANNER_MESSAGE_FIELDS as $f ) {

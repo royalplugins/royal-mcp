@@ -131,6 +131,14 @@ class PluginsThemes {
 		return ( strlen( $slug ) <= 100 && preg_match( '/^[a-z0-9][a-z0-9-]*$/', $slug ) ) ? $slug : '';
 	}
 
+	const NETWORK_ONLY_MESSAGE      = 'This plugin can only be activated for the whole network; activate it from Network Admin. Nothing was changed.';
+	const THEME_NOT_ALLOWED_MESSAGE = 'This theme is not enabled for this site; a network administrator enables themes under Network Admin, Themes. Nothing was changed.';
+
+	/** Whether this is a network-only plugin on a multisite subsite, where WordPress only activates it network-wide. */
+	private static function network_only_on_site( $file ) {
+		return is_multisite() && ! is_network_admin() && function_exists( 'is_network_only_plugin' ) && is_network_only_plugin( $file );
+	}
+
 	/** Whether other active plugins list this plugin under "Requires Plugins". */
 	private static function has_active_dependents( $file ) {
 		if ( ! class_exists( 'WP_Plugin_Dependencies' ) || ! method_exists( 'WP_Plugin_Dependencies', 'has_active_dependents' ) ) {
@@ -370,6 +378,9 @@ class PluginsThemes {
 	 */
 	private static function activate_checked( $file ) {
 		$network = is_multisite() && is_network_admin();
+		if ( self::network_only_on_site( $file ) ) {
+			return [ 'activated' => false, 'activation_error' => self::NETWORK_ONLY_MESSAGE, 'rolled_back' => false ];
+		}
 		$before  = self::home_check();
 		$level   = ob_get_level();
 		try {
@@ -435,6 +446,9 @@ class PluginsThemes {
 
 	/** Switch theme, then load the home page; switch back when it stops loading. error is set when the switch did not hold. */
 	private static function switch_checked( $slug ) {
+		if ( ! wp_get_theme( $slug )->is_allowed() ) {
+			return [ 'switched' => false, 'rolled_back' => false, 'error' => self::THEME_NOT_ALLOWED_MESSAGE ];
+		}
 		$from   = get_stylesheet();
 		$before = self::home_check();
 		switch_theme( $slug );
@@ -734,6 +748,9 @@ class PluginsThemes {
 		if ( $facts['active'] ) {
 			return Envelope::success( sprintf( '%s is already active; nothing changed.', $facts['name'] ), array_merge( $facts, [ 'undo' => null, 'undo_reason' => 'nothing_changed' ] ) );
 		}
+		if ( self::network_only_on_site( $file ) ) {
+			return Envelope::error( 'network_only_plugin', self::NETWORK_ONLY_MESSAGE, $facts );
+		}
 		$valid = validate_plugin_requirements( $file );
 		if ( is_wp_error( $valid ) ) {
 			return Envelope::error( 'requirements_not_met', wp_strip_all_tags( $valid->get_error_message() ), $facts );
@@ -901,6 +918,9 @@ class PluginsThemes {
 		}
 		if ( null !== $facts['broken'] ) {
 			return Envelope::error( 'theme_broken', 'WordPress reports this theme as broken: ' . $facts['broken'], $facts );
+		}
+		if ( ! $theme->is_allowed() ) {
+			return Envelope::error( 'theme_not_allowed', self::THEME_NOT_ALLOWED_MESSAGE, $facts );
 		}
 		if ( ! $facts['php_ok'] || ! $facts['wp_ok'] ) {
 			return Envelope::error( 'requirements_not_met', sprintf( 'This theme needs PHP %s and WordPress %s.', $facts['requires_php'] ?? 'any', $facts['requires_wp'] ?? 'any' ), $facts );

@@ -68,7 +68,10 @@ class Divi {
 	];
 
 	/** Backup meta key stamped by divi_import_template. */
-	const BACKUP_META_KEY_PREFIX = '_royal_mcp_pro_divi_backup_';
+	const BACKUP_META_KEY_PREFIX = '_royal_mcp_divi_backup_';
+
+	/** Alternate backup key prefix, still recognised and removed. */
+	const LEGACY_BACKUP_META_KEY_PREFIX = '_royal_mcp_pro_divi_backup_';
 
 	/** Work left for the dynamic-token scan during one replace call; null outside one. */
 	private static $scan_budget = null;
@@ -501,7 +504,7 @@ class Divi {
 			],
 			[
 				'name'        => 'divi_replace_text',
-				'description' => 'Replace text on one Divi page, in module text settings and body text, for Divi 4 shortcodes and Divi 5 blocks. Dynamic-content tokens (@ET-DC@...@) are kept as they are. A page that mixes Divi 4 shortcodes and Divi 5 blocks is refused (mixed_format). On Divi 5 pages only flat text settings and body text are searched, not nested settings (such as content.desktop.value), and counts can be too high when the same text is in both a setting and the body. When nothing matches, the page is not written. A result that would break the Divi 4 shortcode structure is refused (post_write_would_corrupt). Refused while the page is open in an editor, unless force: true. Clears the Divi static CSS cache after writing. Returns counts per replacement and a total. Replace values with backslash escapes (JSON unicode escapes, embedded JSON-LD) can lose their backslashes; the response adds a warnings entry when it sees them, so check the rendered page.',
+				'description' => 'Replace text on one Divi page, in module text settings and body text, for Divi 4 shortcodes and Divi 5 blocks. Dynamic-content tokens (@ET-DC@...@) are kept as they are. A page that mixes Divi 4 shortcodes and Divi 5 blocks is refused (mixed_format). On Divi 5 pages the text of each module is searched where Divi keeps it (for example content.innerContent.desktop.value, for every device and state, and the text of buttons, titles and image alt text), outside HTML tags, scripts and styles; link addresses, class names, other settings and Code modules are left alone, and a find value holding < or > is refused, and the rest of the page is kept byte for byte. When nothing matches, the page is not written. Undo (for ' . \Royal_MCP\MCP\Undo_Store::window_label() . ') restores the earlier content exactly. A result that would break the Divi 4 shortcode structure is refused (post_write_would_corrupt). Refused while the page is open in an editor, unless force: true. Clears the Divi static CSS cache after writing. Returns counts per replacement and a total. Replace values with backslash escapes (JSON unicode escapes, embedded JSON-LD) can lose their backslashes; the response adds a warnings entry when it sees them, so check the rendered page.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -582,6 +585,35 @@ class Divi {
 			|| class_exists( 'ET_Builder_Element' );
 	}
 
+	/** Tools that change Divi content; they follow Divi's Role Editor. */
+	const BUILDER_WRITE_TOOLS = [ 'divi_replace_text', 'divi_clone_page', 'divi_replace_image', 'divi_import_template' ];
+
+	/**
+	 * Whether Divi's Role Editor keeps the current user away from the builder. Uses Divi's own
+	 * check when it is loaded, otherwise reads the Role Editor settings the same way: an
+	 * administrator is never locked out, any other role is when the builder is switched off for it.
+	 */
+	public static function builder_locked_out() {
+		if ( function_exists( 'et_pb_is_allowed' ) ) {
+			return ! et_pb_is_allowed( 'divi_builder_control' );
+		}
+		$user = wp_get_current_user();
+		$roles = array_map( 'strval', (array) $user->roles );
+		if ( in_array( 'administrator', $roles, true ) || ( is_multisite() && is_super_admin() ) ) {
+			return false;
+		}
+		$settings = get_option( 'et_pb_role_settings', [] );
+		if ( ! is_array( $settings ) ) {
+			return false;
+		}
+		foreach ( $roles as $role ) {
+			if ( isset( $settings[ $role ]['divi_builder_control'] ) && 'off' === $settings[ $role ]['divi_builder_control'] ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/**
 	 * Dispatch a divi_* tool call to its handler. Umbrella cap check runs
 	 * first so unprivileged callers can't fingerprint whether Divi is
@@ -609,6 +641,12 @@ class Divi {
 			return Envelope::error(
 				'divi_not_active',
 				'Divi is not active'
+			);
+		}
+		if ( in_array( (string) $name, self::BUILDER_WRITE_TOOLS, true ) && self::builder_locked_out() ) {
+			return Envelope::error(
+				'builder_not_allowed',
+				'Divi\'s Role Editor keeps your role away from the Divi Builder, so its tools cannot change Divi content for you either. Nothing was changed.'
 			);
 		}
 
@@ -1658,6 +1696,20 @@ class Divi {
 			);
 		}
 
+		// On Divi 5 only text outside tags is searched, so a find value with a tag character could
+		// never match as asked.
+		if ( 'divi_5_blocks' === $format ) {
+			foreach ( $pairs as $pair ) {
+				if ( false !== strpos( $pair['find'], '<' ) || false !== strpos( $pair['find'], '>' ) ) {
+					return Envelope::error(
+						'invalid_args',
+						sprintf( 'replacements[%d].find holds < or >. On a Divi 5 page only text is searched, not HTML tags. Nothing was changed. Search for the words alone, or change the markup in the Divi Builder.', (int) $pair['original_index'] ),
+						[ 'post_id' => $post_id, 'pair_index' => (int) $pair['original_index'] ]
+					);
+				}
+			}
+		}
+
 		// A replace value is text. One that holds builder markup or a dynamic-content token
 		// would change the structure of the page, not its words.
 		foreach ( $pairs as $pair ) {
@@ -1683,10 +1735,8 @@ class Divi {
 			if ( in_array( $format, [ 'divi_4_shortcodes', 'mixed' ], true ) ) {
 				$content = self::d4_walk_text( $content, $pair['find'], $pair['replace'], ! $case_sensitive, $counter );
 			}
-			if ( in_array( $format, [ 'divi_5_blocks', 'mixed' ], true ) ) {
-				$blocks  = parse_blocks( $content );
-				$blocks  = self::d5_walk_text( $blocks, $pair['find'], $pair['replace'], ! $case_sensitive, $counter );
-				$content = serialize_blocks( $blocks );
+			if ( 'divi_5_blocks' === $format ) {
+				$content = self::d5_raw_walk_text( $content, $pair['find'], $pair['replace'], ! $case_sensitive, $counter );
 			}
 			$per_pair[ $pair['find'] ] = ( isset( $per_pair[ $pair['find'] ] ) ? $per_pair[ $pair['find'] ] : 0 ) + $counter['count'];
 			$total += $counter['count'];
@@ -1721,7 +1771,7 @@ class Divi {
 			];
 			$summary = sprintf( 'No occurrence found on post %d (format=%s). Nothing was written.', $post_id, $format );
 			if ( 'divi_5_blocks' === $format ) {
-				$nothing['note'] = 'On a Divi 5 page only the top-level text settings of a module are searched. Text that a module keeps inside its content is not reached, so this tool cannot say the text is absent. Change it in the Divi Builder, or use wp_replace_in_page / wp_replace_in_post with dry_run first.';
+				$nothing['note'] = 'On a Divi 5 page the module text is searched outside HTML tags, scripts and styles; link addresses, image addresses, other settings and Code modules are not. To change one of those, use the Divi Builder, or wp_replace_in_page / wp_replace_in_post with dry_run first.';
 				$summary        .= ' ' . $nothing['note'];
 			}
 			return Envelope::success( $summary, $nothing );
@@ -1756,9 +1806,17 @@ class Divi {
 			}
 		}
 
+		$snapshot = self::snapshot_post_content( $post_id );
 		wp_update_post( [ 'ID' => $post_id, 'post_content' => wp_slash( $content ) ] );
 		self::assert_divi_meta_flags( $post_id, $format );
 		self::purge_divi_static_css( $post_id );
+
+		$undo_envelope = Undo_Store::store( [
+			'op'           => 'divi_replace_text',
+			'target'       => [ 'post_id' => $post_id ],
+			'pre_op_state' => array_merge( (array) $snapshot, [ 'written_sha256' => hash( 'sha256', self::stored_content( $post_id ) ) ] ),
+			'summary'      => sprintf( 'Restore prior content of post %d (before divi_replace_text).', $post_id ),
+		] );
 
 		// Warn (don't refuse) on \u or \\ in replace values when the stored content differs from what was written.
 		$warnings = [];
@@ -1797,12 +1855,12 @@ class Divi {
 			$structured['warnings'] = $warnings;
 		}
 
-		return Envelope::success( $summary, $structured );
+		return Envelope::success( $summary, $structured, $undo_envelope );
 	}
 
 	// ----------------------------------------------------------------------
 	// Text-substitution walkers: d4_walk_text, d4_walk_attrs_text,
-	// d5_walk_text, str_replace_counted
+	// d5_raw_walk_text, str_replace_counted
 	// ----------------------------------------------------------------------
 
 	/**
@@ -1968,48 +2026,270 @@ class Divi {
 		);
 	}
 
+	/** A block delimiter, read the way the block parser reads it. */
+	const D5_DELIMITER = '/<!--\s+(?P<closer>\/)?wp:(?P<namespace>[a-z][a-z0-9_-]*\/)?(?P<name>[a-z][a-z0-9_-]*)\s+(?P<attrs>{(?:(?:[^}]+|}+(?=})|(?!}\s+\/?-->).)*+)?}\s+)?(?P<void>\/)?-->/s';
+
+	/** Top-level text settings of a Divi 5 block. */
+	const D5_FLAT_TEXT_KEYS = [ 'title', 'text', 'content', 'buttonText', 'body', 'header', 'subtitle', 'caption', 'alt', 'title_text', 'description', 'placeholder' ];
+
+	/** Divi 5 modules whose content is code: left as they are by the text replace. */
+	const D5_CODE_BLOCKS = [ 'code', 'fullwidth-code' ];
+
 	/**
-	 * Walk Divi 5 block tree substituting text in text-bearing block attrs
-	 * plus innerHTML / innerContent for body-text blocks (e.g. divi/text).
-	 * Recurses into innerBlocks.
+	 * Parts of an HTML text that are not text: script and style elements with their bodies,
+	 * comments, and tags (a quoted attribute value may hold a >).
 	 */
-	private static function d5_walk_text( array $blocks, $find, $replace, $case_insensitive, array &$counter ) {
-		$text_keys = [ 'title', 'text', 'content', 'buttonText', 'body', 'header', 'subtitle', 'caption', 'alt', 'title_text', 'description', 'placeholder' ];
-		$out = [];
-		foreach ( $blocks as $block ) {
-			if ( ! is_array( $block ) ) {
-				$out[] = $block;
+	const HTML_NON_TEXT = '/(<(?:script|style)\b(?:[^>"\']|"[^"]*"|\'[^\']*\')*>.*?<\/(?:script|style)\s*>|<!--.*?-->|<[a-zA-Z\/!](?:[^>"\']|"[^"]*"|\'[^\']*\')*>)/is';
+
+	/** Keys inside an innerContent value object that hold visible text. */
+	const D5_TEXT_SUBKEYS = [ 'text', 'title', 'titleText', 'alt', 'caption', 'label', 'content', 'buttonText', 'description', 'placeholder', 'heading', 'subtitle', 'subheading', 'quote', 'author', 'question', 'answer' ];
+
+	/**
+	 * Replace text on a Divi 5 page without parsing and re-serialising the blocks: the text between
+	 * block delimiters is searched outside HTML tags, and inside each Divi block's settings only
+	 * the string values that hold text are changed. Everything else keeps its exact bytes.
+	 */
+	private static function d5_raw_walk_text( $content, $find, $replace, $case_insensitive, array &$counter ) {
+		if ( '' === $find || '' === $content ) {
+			return $content;
+		}
+		if ( ! preg_match_all( self::D5_DELIMITER, $content, $matches, PREG_OFFSET_CAPTURE | PREG_SET_ORDER ) ) {
+			return self::replace_html_text( $find, $replace, $content, $case_insensitive, $counter );
+		}
+		$out     = '';
+		$at      = 0;
+		$in_code = 0;
+		foreach ( $matches as $m ) {
+			$start = (int) $m[0][1];
+			$delim = (string) $m[0][0];
+			$raw   = substr( $content, $at, $start - $at );
+			// The content of a Code module is code, not text: it is never changed.
+			$out  .= $in_code > 0 ? $raw : self::replace_html_text( $find, $replace, $raw, $case_insensitive, $counter );
+			$closer    = isset( $m['closer'] ) && '' !== $m['closer'][0];
+			$namespace = isset( $m['namespace'] ) ? (string) $m['namespace'][0] : '';
+			$is_code   = 'divi/' === $namespace && isset( $m['name'] ) && in_array( (string) $m['name'][0], self::D5_CODE_BLOCKS, true );
+			$is_void   = isset( $m['void'] ) && '' !== $m['void'][0];
+			if ( $is_code ) {
+				if ( $closer ) {
+					$in_code = max( 0, $in_code - 1 );
+				} elseif ( ! $is_void ) {
+					$in_code++;
+				}
+			}
+			if ( ! $closer && ! $is_code && 0 === $in_code && 'divi/' === $namespace && isset( $m['attrs'] ) && '' !== $m['attrs'][0] && $m['attrs'][1] >= 0 ) {
+				$json     = rtrim( (string) $m['attrs'][0] );
+				$offset   = (int) $m['attrs'][1] - $start;
+				$new_json = self::d5_replace_in_attrs( $json, $find, $replace, $case_insensitive, $counter );
+				if ( $new_json !== $json ) {
+					$delim = substr( $delim, 0, $offset ) . $new_json . substr( $delim, $offset + strlen( $json ) );
+				}
+			}
+			$out .= $delim;
+			$at   = $start + strlen( (string) $m[0][0] );
+		}
+		return $out . ( $in_code > 0 ? substr( $content, $at ) : self::replace_html_text( $find, $replace, substr( $content, $at ), $case_insensitive, $counter ) );
+	}
+
+	/**
+	 * Replace text inside one block's settings JSON. Only string values on a text path change;
+	 * each changed value is written back in the escaping style its old value used, and the
+	 * characters that could end the block comment stay escaped.
+	 */
+	private static function d5_replace_in_attrs( $json, $find, $replace, $case_insensitive, array &$counter ) {
+		$strings = self::d5_json_string_values( $json );
+		if ( null === $strings ) {
+			return $json;
+		}
+		$edits = [];
+		foreach ( $strings as $s ) {
+			if ( ! self::d5_is_text_path( $s[2] ) ) {
 				continue;
 			}
-			if ( isset( $block['blockName'] )
-				&& is_string( $block['blockName'] )
-				&& strpos( $block['blockName'], 'divi/' ) === 0
-				&& isset( $block['attrs'] ) && is_array( $block['attrs'] ) ) {
-				foreach ( $text_keys as $k ) {
-					if ( isset( $block['attrs'][ $k ] ) && is_string( $block['attrs'][ $k ] ) ) {
-						$block['attrs'][ $k ] = self::replace_keeping_tokens( $find, $replace, $block['attrs'][ $k ], $case_insensitive, $counter );
-					}
-				}
+			$literal = substr( $json, $s[0], $s[1] - $s[0] );
+			$value   = json_decode( $literal );
+			if ( ! is_string( $value ) || '' === $value ) {
+				continue;
 			}
-			if ( isset( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) ) {
-				$block['innerBlocks'] = self::d5_walk_text( $block['innerBlocks'], $find, $replace, $case_insensitive, $counter );
+			$before  = $counter['count'];
+			$changed = self::replace_html_text( $find, $replace, $value, $case_insensitive, $counter );
+			if ( $changed === $value ) {
+				continue;
 			}
-			if ( isset( $block['innerHTML'] ) && is_string( $block['innerHTML'] ) ) {
-				// innerHTML mirrors innerContent (which is what gets saved): kept in step, not counted twice.
-				$mirror             = [ 'count' => 0 ];
-				$block['innerHTML'] = self::replace_keeping_tokens( $find, $replace, $block['innerHTML'], $case_insensitive, $mirror );
-				if ( ! empty( $mirror['too_complex'] ) ) {
-					$counter['too_complex'] = true;
-				}
+			$encoded = self::d5_encode_like( $changed, $literal );
+			if ( null === $encoded ) {
+				$counter['count'] = $before;
+				continue;
 			}
-			if ( isset( $block['innerContent'] ) && is_array( $block['innerContent'] ) ) {
-				$block['innerContent'] = array_map( static function ( $ic ) use ( $find, $replace, $case_insensitive, &$counter ) {
-					return is_string( $ic ) ? self::replace_keeping_tokens( $find, $replace, $ic, $case_insensitive, $counter ) : $ic;
-				}, $block['innerContent'] );
-			}
-			$out[] = $block;
+			$edits[] = [ $s[0], $s[1], $encoded ];
 		}
-		return $out;
+		foreach ( array_reverse( $edits ) as $e ) {
+			$json = substr( $json, 0, $e[0] ) . $e[2] . substr( $json, $e[1] );
+		}
+		return $json;
+	}
+
+	/**
+	 * Every string value of a JSON text with its position and path, in order. Object keys are
+	 * not values. Null when the text is not JSON this reader can follow.
+	 *
+	 * @return array<int, array{0:int, 1:int, 2:array}>|null [start, end, path]
+	 */
+	private static function d5_json_string_values( $json ) {
+		$len   = strlen( $json );
+		$stack = [];
+		$out   = [];
+		$i     = 0;
+		while ( $i < $len ) {
+			$c = $json[ $i ];
+			if ( '{' === $c || '[' === $c ) {
+				$stack[] = [ 'obj' => '{' === $c, 'key' => null, 'idx' => 0, 'want_key' => '{' === $c ];
+				$i++;
+				continue;
+			}
+			if ( '}' === $c || ']' === $c ) {
+				if ( ! $stack ) {
+					return null;
+				}
+				array_pop( $stack );
+				$i++;
+				continue;
+			}
+			if ( ',' === $c || ':' === $c ) {
+				if ( ! $stack ) {
+					return null;
+				}
+				$top = count( $stack ) - 1;
+				if ( ',' === $c ) {
+					if ( $stack[ $top ]['obj'] ) {
+						$stack[ $top ]['want_key'] = true;
+					} else {
+						$stack[ $top ]['idx']++;
+					}
+				} else {
+					$stack[ $top ]['want_key'] = false;
+				}
+				$i++;
+				continue;
+			}
+			if ( '"' === $c ) {
+				if ( ! preg_match( '/"(?:[^"\\\\]++|\\\\.)*+"/As', $json, $mm, 0, $i ) ) {
+					return null;
+				}
+				$end = $i + strlen( $mm[0] );
+				$top = count( $stack ) - 1;
+				if ( $top >= 0 && $stack[ $top ]['obj'] && $stack[ $top ]['want_key'] ) {
+					$key = json_decode( $mm[0] );
+					if ( ! is_string( $key ) ) {
+						return null;
+					}
+					$stack[ $top ]['key'] = $key;
+				} else {
+					$path = [];
+					foreach ( $stack as $frame ) {
+						$path[] = $frame['obj'] ? (string) $frame['key'] : (int) $frame['idx'];
+					}
+					$out[] = [ $i, $end, $path ];
+				}
+				$i = $end;
+				continue;
+			}
+			$i++;
+		}
+		return $stack ? null : $out;
+	}
+
+	/**
+	 * Whether a settings path holds visible text: a top-level text setting, the value of an
+	 * innerContent setting for a device and state, or a text key inside such a value. Paths
+	 * through link, image, class or id settings never count.
+	 */
+	private static function d5_is_text_path( array $path ) {
+		if ( 1 === count( $path ) ) {
+			return is_string( $path[0] ) && in_array( $path[0], self::D5_FLAT_TEXT_KEYS, true );
+		}
+		$ic = array_search( 'innerContent', $path, true );
+		if ( false === $ic ) {
+			return false;
+		}
+		$rest = array_slice( $path, $ic + 1 );
+		foreach ( $rest as $seg ) {
+			if ( is_string( $seg ) && 1 === preg_match( '/url|link|href|src|class|icon|rel$|target|^id$/i', $seg ) ) {
+				return false;
+			}
+		}
+		if ( 2 === count( $rest ) ) {
+			return is_string( $rest[0] ) && is_string( $rest[1] );
+		}
+		$last = end( $rest );
+		return count( $rest ) >= 3 && is_string( $last ) && in_array( $last, self::D5_TEXT_SUBKEYS, true );
+	}
+
+	/**
+	 * A string as a JSON literal in the escaping style of an earlier literal: escaped slashes and
+	 * escaped non-ASCII characters only when the old one used them, and the block editor's escapes
+	 * for < > & and quotes unless the old literal held those characters raw. A double hyphen is
+	 * always escaped so the block comment cannot be ended early. Null when it cannot be encoded.
+	 */
+	private static function d5_encode_like( $value, $old_literal ) {
+		$flags = 0;
+		if ( false === strpos( $old_literal, '\\/' ) ) {
+			$flags |= JSON_UNESCAPED_SLASHES;
+		}
+		if ( 1 !== preg_match( '/\\\\u(?!00[0-7])[0-9a-fA-F]{4}/', $old_literal ) ) {
+			$flags |= JSON_UNESCAPED_UNICODE;
+		}
+		$encoded = wp_json_encode( (string) $value, $flags );
+		if ( ! is_string( $encoded ) || strlen( $encoded ) < 2 ) {
+			return null;
+		}
+		$inner  = substr( $encoded, 1, -1 );
+		$editor = 1 === preg_match( '/\\\\u00(?:3[cCeE]|26|22)/', $old_literal ) || 1 !== preg_match( '/[<>&]/', $old_literal );
+		if ( $editor ) {
+			$inner = (string) preg_replace_callback(
+				'/\\\\(.)/s',
+				static function ( $m ) {
+					return '"' === $m[1] ? '\\u0022' : $m[0];
+				},
+				$inner
+			);
+			$inner = str_replace( [ '<', '>', '&' ], [ '\\u003c', '\\u003e', '\\u0026' ], $inner );
+		}
+		$inner = str_replace( '--', '\\u002d\\u002d', $inner );
+		return '"' . $inner . '"';
+	}
+
+	/**
+	 * Replace text outside HTML tags, keeping dynamic-content tokens. A find value that holds
+	 * a tag character, or a token that holds one, is matched across the whole text instead.
+	 */
+	private static function replace_html_text( $find, $replace, $text, $case_insensitive, array &$counter ) {
+		$text = (string) $text;
+		if ( '' === $text || false === strpos( $text, '<' ) || false !== strpos( $find, '<' ) || false !== strpos( $find, '>' ) ) {
+			return self::replace_keeping_tokens( $find, $replace, $text, $case_insensitive, $counter );
+		}
+		if ( false !== strpos( $text, '@ET-DC@' ) || false !== strpos( $text, '$variable(' ) ) {
+			$spans = self::token_spans( $text );
+			if ( null === $spans ) {
+				$counter['too_complex'] = true;
+				return $text;
+			}
+			foreach ( $spans as $span ) {
+				$token = substr( $text, $span[0], $span[1] - $span[0] );
+				if ( false !== strpos( $token, '<' ) || false !== strpos( $token, '>' ) ) {
+					return self::replace_keeping_tokens( $find, $replace, $text, $case_insensitive, $counter );
+				}
+			}
+		}
+		$parts = preg_split( self::HTML_NON_TEXT, $text, -1, PREG_SPLIT_DELIM_CAPTURE );
+		if ( ! is_array( $parts ) ) {
+			return self::replace_keeping_tokens( $find, $replace, $text, $case_insensitive, $counter );
+		}
+		foreach ( $parts as $i => $part ) {
+			if ( 0 === $i % 2 && '' !== $part ) {
+				$parts[ $i ] = self::replace_keeping_tokens( $find, $replace, $part, $case_insensitive, $counter );
+			}
+		}
+		return implode( '', $parts );
 	}
 
 	/**
@@ -2042,8 +2322,7 @@ class Divi {
 	}
 
 	private static function d5_snippet_from_attrs( $attrs ) {
-		// Text-carrying keys — matches the set walked by Pro's d5_walk_text
-		// so snippet extraction and substitution stay aligned.
+		// Top-level text-carrying keys, close to the flat set the text replace reads.
 		$candidates = [ 'title', 'text', 'content', 'buttonText', 'body', 'header', 'subtitle', 'caption', 'admin_label' ];
 		foreach ( $candidates as $key ) {
 			if ( isset( $attrs[ $key ] ) && is_string( $attrs[ $key ] ) && '' !== trim( $attrs[ $key ] ) ) {

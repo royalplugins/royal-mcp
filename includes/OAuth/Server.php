@@ -68,6 +68,21 @@ class Server {
     }
 
     /**
+     * The shared sign-in page without the issuer's mark, as the Connection Doctor requests it:
+     * the routed address when the site stores its rule, else the query-variable address.
+     *
+     * @return string
+     */
+    public static function probe_authorize_url() {
+        $paths = class_exists( '\\Royal_MCP_Plugin' ) ? \Royal_MCP_Plugin::get_oauth_rewrite_paths() : [];
+        $slug  = isset( $paths['authorize'] ) ? trim( trim( (string) $paths['authorize'] ), '/' ) : '';
+        $slug  = '' === $slug ? 'authorize' : $slug;
+        return class_exists( '\\Royal_MCP_Plugin' ) && ! \Royal_MCP_Plugin::has_oauth_rewrite_rule( 'authorize' )
+            ? add_query_arg( 'royal_mcp_oauth', 'authorize', home_url( '/' ) )
+            : home_url( '/' . $slug );
+    }
+
+    /**
      * The shared sign-in page carrying the namespace issuer's mark. Used while the
      * namespace issuer's own page is not routed; when the shared page's rule is not
      * stored either, the page is reached by its query variable, which needs no rule.
@@ -114,6 +129,8 @@ class Server {
             header( 'X-Frame-Options: DENY' );
             header( "Content-Security-Policy: frame-ancestors 'none'" );
         }
+
+        $this->admit( $action );
 
         switch ( $action ) {
             case 'protected_resource':
@@ -176,6 +193,69 @@ class Server {
                 status_header( 404 );
                 exit;
         }
+    }
+
+    /**
+     * Per-request budget check that runs before an endpoint does any work.
+     * Discovery documents count per address; sign-in pages per signed-in user,
+     * or per address before sign-in. The token and revocation endpoints count
+     * their outcomes instead (see token(), revoke() and json_error()), and
+     * registration keeps its own counter.
+     *
+     * @param string $action Endpoint being served.
+     */
+    private function admit( $action ) {
+        if ( in_array( $action, [ 'token', 'revoke', 'register' ], true ) ) {
+            return;
+        }
+        $ip = $this->limit_ip();
+        if ( 'authorize' === $action ) {
+            $uid = (int) get_current_user_id();
+            $hit = Rate_Limit::hit( $uid > 0 ? 'oauth-authorize-user:' . $uid : 'oauth-authorize:' . $ip, 'authorize' );
+        } else {
+            $hit = Rate_Limit::hit( 'oauth-discovery:' . $ip, 'discovery' );
+        }
+        if ( ! $hit['allowed'] ) {
+            $this->rate_limited( $hit['retry_after'] );
+        }
+    }
+
+    /**
+     * Refuse a request that is over its budget: HTTP 429 with Retry-After.
+     * The sign-in page answers with a page, every other endpoint with an OAuth error.
+     *
+     * @param int $retry_after Seconds until the budget opens again.
+     */
+    private function rate_limited( $retry_after ) {
+        $retry_after = max( 1, (int) $retry_after );
+        if ( ! headers_sent() ) {
+            header( 'Retry-After: ' . $retry_after );
+        }
+        /* translators: %d: seconds */
+        $message = sprintf( __( 'Too many requests. Try again in %d seconds.', 'royal-mcp' ), $retry_after );
+        if ( 'authorize' === $this->current_action ) {
+            $this->log_event( 'rate_limit', 'Too many sign-in page requests.', 429 );
+            wp_die( esc_html( $message ), esc_html__( 'Too Many Requests', 'royal-mcp' ), [ 'response' => 429 ] );
+        }
+        $this->limit_counted = true;
+        $this->json_error( 'rate_limit', $message, 429 );
+    }
+
+    /** Set once this request's failure has been counted, so it is counted once. */
+    private $limit_counted = false;
+
+    /**
+     * Count a refused token or revocation request against the address's
+     * failure budget. Returns the seconds to wait when the budget is used up,
+     * else 0.
+     */
+    private function count_failure() {
+        if ( $this->limit_counted || ! in_array( $this->current_action, [ 'token', 'revoke' ], true ) ) {
+            return 0;
+        }
+        $this->limit_counted = true;
+        $hit = Rate_Limit::hit( 'oauth-fail:' . $this->limit_ip(), 'failure' );
+        return $hit['allowed'] ? 0 : (int) $hit['retry_after'];
     }
 
     /**
@@ -551,8 +631,9 @@ class Server {
             // Clients whose client_id is the URL of a JSON metadata document are
             // treated as registered when the document validates. Filterable off
             // via royal_mcp_cimd_enabled for site owners who want to lock to
-            // dynamic-registration only.
-            'client_id_metadata_document_supported' => (bool) apply_filters( 'royal_mcp_cimd_enabled', true ),
+            // dynamic-registration only. Not advertised for a while after the
+            // site could not fetch such a document, so clients register instead.
+            'client_id_metadata_document_supported' => (bool) apply_filters( 'royal_mcp_cimd_enabled', true ) && ! Token_Store::cimd_fallback_active(),
             // Every /authorize response names its issuer in `iss`.
             'authorization_response_iss_parameter_supported' => true,
         ];
@@ -650,8 +731,14 @@ class Server {
             $this->json_error( 'invalid_request', 'POST method required.', 405 );
         }
 
+        // The Connection Doctor's probe only checks that this address answers as an OAuth server:
+        // it is refused before the body is read, so no client is ever created under it.
+        if ( \Royal_MCP\Admin\Connection_Doctor::is_probe_request() ) {
+            $this->json_error( 'invalid_request', 'Connection check: nothing is registered.', 400 );
+        }
+
         // Rate-limit registrations by IP.
-        $ip            = $this->get_client_ip();
+        $ip            = $this->limit_ip();
         $transient_key = 'royal_mcp_reg_rate_' . md5( $ip );
         $count         = (int) get_transient( $transient_key );
         if ( $count >= 10 ) {
@@ -796,7 +883,7 @@ class Server {
         switch ( $reason ) {
             case 'fetch_failed':
                 /* translators: %s: address of the application's client information document */
-                return sprintf( __( 'This site could not fetch the application\'s client information document (%s), so the application cannot sign in. Try again in a few minutes. If it keeps failing, the site\'s host may be blocking outgoing requests, or that address is down. The site owner can connect with manual credentials instead: Royal MCP > Settings > Advanced (manual OAuth credentials), generate a Client ID and Secret, save, then enter both in the application\'s connector settings.', 'royal-mcp' ), $address );
+                return sprintf( __( 'This site could not fetch the application\'s client information document (%s), so the application cannot sign in. Try again in a few minutes. If it keeps failing, the site\'s host may be blocking outgoing requests, or that address is down. The site owner can connect with manual credentials instead: Royal MCP → Connections → Connection settings (OAuth Client ID and Secret), generate a Client ID and Secret, save, then enter both in the application\'s connector settings.', 'royal-mcp' ), $address );
             case 'rate_limited':
                 return __( 'Too many sign-in attempts from your network in the last few minutes. Wait 10 minutes and try again.', 'royal-mcp' );
             case 'invalid_document':
@@ -819,7 +906,21 @@ class Server {
     private function authorize_get() {
         // OAuth authorize endpoint — params come from external MCP client, no WP nonce possible.
         // phpcs:disable WordPress.Security.NonceVerification.Recommended
-        $response_type         = isset( $_GET['response_type'] ) ? sanitize_text_field( wp_unslash( $_GET['response_type'] ) ) : '';
+        // The Connection Doctor's probe only learns which PKCE parameters reached the plugin.
+        if ( \Royal_MCP\Admin\Connection_Doctor::is_probe_request() ) {
+            $this->json_response(
+                [
+                    'royal_mcp_doctor' => 'pkce',
+                    'received'         => [
+                        'code_challenge'        => isset( $_GET['code_challenge'] ) && is_string( $_GET['code_challenge'] ) && '' !== $_GET['code_challenge'],
+                        'code_challenge_method_s256' => isset( $_GET['code_challenge_method'] ) && is_string( $_GET['code_challenge_method'] ) && 'S256' === $_GET['code_challenge_method'],
+                    ],
+                ],
+                200,
+                [ 'Cache-Control' => 'no-store' ]
+            );
+        }
+        $response_type        = isset( $_GET['response_type'] ) ? sanitize_text_field( wp_unslash( $_GET['response_type'] ) ) : '';
         $client_id             = isset( $_GET['client_id'] ) ? sanitize_text_field( wp_unslash( $_GET['client_id'] ) ) : '';
         $this->authorize_client_id = $client_id;
         $redirect_uri          = isset( $_GET['redirect_uri'] ) && is_string( $_GET['redirect_uri'] ) ? Token_Store::sanitize_redirect_uri( wp_unslash( $_GET['redirect_uri'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitize_redirect_uri() is the sanitizer registration stores with
@@ -877,6 +978,9 @@ class Server {
 
         // PKCE is required.
         if ( empty( $code_challenge ) || 'S256' !== $code_challenge_method ) {
+            if ( '' === $code_challenge || '' === $code_challenge_method ) {
+                $this->note_pkce_missing( '' === $code_challenge, '' === $code_challenge_method );
+            }
             $this->authorize_error( $redirect_uri, $state, 'invalid_request', 'PKCE with code_challenge_method=S256 is required.' );
         }
 
@@ -1109,6 +1213,36 @@ class Server {
         // Parse form-encoded body (standard OAuth).
         $grant_type = isset( $_POST['grant_type'] ) ? sanitize_text_field( wp_unslash( $_POST['grant_type'] ) ) : '';
 
+        // A registered client is checked against its own issuance budget only, so
+        // refused requests from other callers at the same address never hold up
+        // its code exchange or refresh. A request naming no registered client is
+        // refused early once the address has used up its failure budget.
+        // The issuance budgets are checked before a code or refresh token is used,
+        // so a 429 never uses one up: one per client and user (so one user cannot
+        // use up another's), and a larger one per client.
+        $limit_client = isset( $_POST['client_id'] ) && is_string( $_POST['client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['client_id'] ) ) : '';
+        $known_client = '' !== $limit_client && Token_Store::get_client( $limit_client );
+        if ( $known_client ) {
+            $grant_row = null;
+            if ( 'authorization_code' === $grant_type && isset( $_POST['code'] ) && is_string( $_POST['code'] ) ) {
+                $grant_row = Token_Store::peek_auth_code( sanitize_text_field( wp_unslash( $_POST['code'] ) ) );
+            } elseif ( 'refresh_token' === $grant_type && isset( $_POST['refresh_token'] ) && is_string( $_POST['refresh_token'] ) ) {
+                $grant_row = Token_Store::peek_refresh_token( sanitize_text_field( wp_unslash( $_POST['refresh_token'] ) ) );
+            }
+            $wait = 0;
+            if ( is_array( $grant_row ) && hash_equals( (string) $grant_row['client_id'], $limit_client ) ) {
+                $wait = max(
+                    Rate_Limit::blocked_for( self::issuance_bucket( $limit_client, (int) $grant_row['user_id'] ), 'token_ok' ),
+                    Rate_Limit::blocked_for( 'oauth-token-client:' . $limit_client, 'token_client' )
+                );
+            }
+        } else {
+            $wait = Rate_Limit::blocked_for( 'oauth-fail:' . $this->limit_ip(), 'failure' );
+        }
+        if ( $wait > 0 ) {
+            $this->rate_limited( $wait );
+        }
+
         switch ( $grant_type ) {
             case 'authorization_code':
                 $this->token_authorization_code();
@@ -1197,6 +1331,11 @@ class Server {
         }
 
         $this->log_event( 'token_issued', 'Access + refresh tokens issued via authorization_code grant.', 200, 'success' );
+        $this->count_issuance( $client_id, (int) $code_data['user_id'] );
+        // A metadata document a signed-in user approved: its later fetch failures may change what the site advertises.
+        if ( Token_Store::is_cimd_client( $client_id ) ) {
+            Token_Store::mark_cimd_known_good( $client_id );
+        }
 
         $this->json_response( $tokens, 200, [ 'Cache-Control' => 'no-store', 'Pragma' => 'no-cache' ] );
     }
@@ -1279,6 +1418,7 @@ class Server {
         }
 
         $this->log_event( 'token_refreshed', 'Access + refresh tokens rotated via refresh_token grant.', 200, 'success' );
+        $this->count_issuance( $client_id, (int) $token_data['user_id'] );
 
         $this->json_response( $tokens, 200, [ 'Cache-Control' => 'no-store', 'Pragma' => 'no-cache' ] );
         // phpcs:enable WordPress.Security.NonceVerification.Missing
@@ -1335,6 +1475,11 @@ class Server {
         if ( $revoked > 0 ) {
             $this->log_event( 'token_revoked', 'Access and refresh tokens revoked at the client\'s request.', 200, 'success' );
         } else {
+            // A request that matches nothing counts against the address's failure budget.
+            $wait = $this->count_failure();
+            if ( $wait > 0 ) {
+                $this->rate_limited( $wait );
+            }
             $this->log_event( 'revoke_no_match', 'Revocation request did not match a live token for this client.', 200, 'success' );
         }
 
@@ -1376,6 +1521,14 @@ class Server {
      * Send an OAuth error response and exit.
      */
     private function json_error( $error, $description, $status = 400 ) {
+        // Refused token and revocation requests share one budget per address;
+        // once it is used up, further refusals answer 429 instead.
+        if ( (int) $status >= 400 && 429 !== (int) $status ) {
+            $wait = $this->count_failure();
+            if ( $wait > 0 ) {
+                $this->rate_limited( $wait );
+            }
+        }
         $this->log_event( $error, $description, $status );
 
         $this->json_response(
@@ -1392,8 +1545,8 @@ class Server {
      *
      * STRICT SAFELIST: this method only logs values that are already public
      * (client_id is in URLs, grant_type is a fixed enum, our code strings
-     * are hardcoded) plus the request metadata WP already exposes (IP, UA,
-     * REQUEST_URI). If a future change needs more context, expand this
+     * are hardcoded) plus request metadata: the IP, a trimmed UA, and the
+     * request path with public query keys only (loggable_uri()). If a future change needs more context, expand this
      * safelist deliberately — DO NOT add the raw POST body, authorization
      * code, code_verifier, client_secret, refresh_token, or access_token
      * here under any circumstance. These are credentials in flight and
@@ -1419,22 +1572,54 @@ class Server {
         $grant_type    = $this->log_pick_param( 'grant_type' );
         $response_type = $this->log_pick_param( 'response_type' );
 
-        $uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
-        // These endpoints take their parameters in the request body, so a
-        // query string is not part of a valid request and is not logged
-        // (nor for a GET to one of them, which is answered as not allowed).
-        if ( in_array( $this->current_action, [ 'token', 'revoke', 'register', 'method_not_allowed' ], true ) ) {
-            $uri = (string) strtok( $uri, '?' );
+        $ip     = $this->get_client_ip();
+        $status = 'success' === $log_status ? 'success' : 'error';
+        $table  = $wpdb->prefix . 'royal_mcp_logs';
+
+        // Errors, and the anonymous discovery notes, are written once per address,
+        // endpoint, code and registered client in each window; repeats raise the
+        // entry's count. A client id that is not registered, and every 429, do not
+        // start an entry of their own. Past a site-wide number of new entries per
+        // window, repeats from every address share one entry per endpoint and code.
+        $collapse = 'error' === $status || in_array( $code, [ 'prm_served', 'resource_indicator', 'revoke_no_match' ], true );
+        $overflow = false;
+        if ( $collapse ) {
+            $group    = ( 'rate_limit' !== $code && '' !== $client_id && Token_Store::get_client( $client_id ) ) ? $client_id : '';
+            $seen_key = 'royal_mcp_oauth_logged_' . md5( Rate_Limit::address( $ip ) . '|' . $this->current_action . '|' . $code . '|' . $group );
+            $seen     = get_transient( $seen_key );
+            if ( ! is_array( $seen ) ) {
+                list( $new_rows ) = Rate_Limit::increment( 'oauth-log-rows', self::LOG_COLLAPSE_WINDOW );
+                if ( $new_rows > self::LOG_NEW_ROWS_MAX ) {
+                    $overflow = true;
+                    $seen_key = 'royal_mcp_oauth_logged_' . md5( 'overflow|' . $this->current_action . '|' . $code );
+                    $seen     = get_transient( $seen_key );
+                }
+            }
+            if ( is_array( $seen ) && ! empty( $seen['id'] ) ) {
+                $seen['count'] = (int) ( $seen['count'] ?? 1 ) + 1;
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- our own logs table
+                $row = $wpdb->get_var( $wpdb->prepare( "SELECT response_data FROM `{$table}` WHERE id = %d", (int) $seen['id'] ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from $wpdb->prefix
+                if ( null !== $row ) {
+                    $meta           = json_decode( (string) $row, true );
+                    $meta           = is_array( $meta ) ? $meta : [];
+                    $meta['repeat'] = $seen['count'];
+                    // The entry's time moves to the latest repeat, on the database clock the table's default uses.
+                    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- our own logs table, name from $wpdb->prefix
+                    $wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET response_data = %s, timestamp = NOW() WHERE id = %d", wp_json_encode( $meta ), (int) $seen['id'] ) );
+                    set_transient( $seen_key, $seen, self::LOG_COLLAPSE_WINDOW ); // audit:transient-ttl-only -- log collapse window
+                    return;
+                }
+            }
         }
 
         $request_meta = [
             'method'        => isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '',
-            'uri'           => $uri,
-            'ip'            => $this->get_client_ip(),
-            'user_agent'    => isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '',
-            'client_id'     => $client_id,
-            'grant_type'    => $grant_type,
-            'response_type' => $response_type,
+            'uri'           => self::loggable_uri( isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : '' ), // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- loggable_uri() keeps only the path and allowed keys, sanitized
+            'ip'            => $overflow ? 'many' : $ip,
+            'user_agent'    => isset( $_SERVER['HTTP_USER_AGENT'] ) ? substr( sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ), 0, self::LOG_UA_MAX ) : '',
+            'client_id'     => substr( $client_id, 0, 255 ),
+            'grant_type'    => substr( $grant_type, 0, 40 ),
+            'response_type' => substr( $response_type, 0, 40 ),
         ];
 
         $response_meta = [
@@ -1445,16 +1630,67 @@ class Server {
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Direct insert is intentional; this is the logs table.
         $wpdb->insert(
-            $wpdb->prefix . 'royal_mcp_logs',
+            $table,
             [
                 'mcp_server'    => 'OAuth Server',
                 'action'        => 'oauth:' . $this->current_action,
                 'request_data'  => wp_json_encode( $request_meta ),
                 'response_data' => wp_json_encode( $response_meta ),
-                'status'        => 'success' === $log_status ? 'success' : 'error',
+                'status'        => $status,
             ],
             [ '%s', '%s', '%s', '%s', '%s' ]
         );
+        if ( $collapse && $wpdb->insert_id ) {
+            set_transient( $seen_key, [ 'id' => (int) $wpdb->insert_id, 'count' => 1 ], self::LOG_COLLAPSE_WINDOW ); // audit:transient-ttl-only -- log collapse window
+        }
+    }
+
+    /** Seconds during which a repeated OAuth error raises the count of its first entry. */
+    const LOG_COLLAPSE_WINDOW = 600;
+
+    /** New collapsed OAuth entries the whole site may start per collapse window. */
+    const LOG_NEW_ROWS_MAX = 200;
+
+    /** Longest user agent kept in an Activity Log entry. */
+    const LOG_UA_MAX = 200;
+
+    /** Query keys whose values are public identifiers and may be kept in a log entry. */
+    const LOG_QUERY_KEYS = [ 'response_type', 'client_id', 'scope', 'code_challenge_method', 'resource', 'token_type_hint', 'royal_mcp_oauth' ];
+
+    /**
+     * The request address as logged: the path, the values of public query keys
+     * only, and the names (never values) of any other keys.
+     *
+     * @param string $raw Raw REQUEST_URI.
+     * @return string
+     */
+    public static function loggable_uri( $raw ) {
+        $raw  = is_string( $raw ) ? $raw : '';
+        $path = (string) wp_parse_url( $raw, PHP_URL_PATH );
+        $path = substr( sanitize_text_field( $path ), 0, 255 );
+        $qs   = (string) wp_parse_url( $raw, PHP_URL_QUERY );
+        if ( '' === $qs ) {
+            return $path;
+        }
+        $args = [];
+        wp_parse_str( $qs, $args );
+        $kept    = [];
+        $omitted = [];
+        foreach ( $args as $k => $v ) {
+            $k = (string) $k;
+            if ( in_array( $k, self::LOG_QUERY_KEYS, true ) && is_string( $v ) ) {
+                $kept[ $k ] = substr( sanitize_text_field( $v ), 0, 255 );
+            } else {
+                $name = sanitize_key( $k );
+                if ( '' !== $name && count( $omitted ) < 20 ) {
+                    $omitted[] = $name;
+                }
+            }
+        }
+        foreach ( $omitted as $name ) {
+            $kept[ $name ] = '-';
+        }
+        return $path . ( $kept ? '?' . http_build_query( $kept, '', '&', PHP_QUERY_RFC3986 ) : '' );
     }
 
     /**
@@ -1472,6 +1708,34 @@ class Server {
         }
         // phpcs:enable WordPress.Security.NonceVerification.Missing,WordPress.Security.NonceVerification.Recommended
         return '';
+    }
+
+    /** Transient prefix (plus md5 of the client) that holds back a second "PKCE parameters missing" entry for that client within the window. */
+    const PKCE_MISSING_NOTE_KEY = 'royal_mcp_pkce_missing_noted_';
+
+    /** Most "PKCE parameters missing" entries the whole site writes per window. */
+    const PKCE_MISSING_NOTES_MAX = 20;
+
+    /**
+     * Write one Activity Log entry per client per window (at most 20 site-wide) when a registered client's sign-in request
+     * arrives without its PKCE parameters, pointing the site owner to the Connection Doctor.
+     *
+     * @param bool $no_challenge Whether code_challenge was missing.
+     * @param bool $no_method    Whether code_challenge_method was missing.
+     */
+    private function note_pkce_missing( $no_challenge, $no_method ) {
+        $key = self::PKCE_MISSING_NOTE_KEY . md5( (string) $this->authorize_client_id );
+        if ( false !== get_transient( $key ) ) {
+            return;
+        }
+        $window = max( 60, (int) apply_filters( 'royal_mcp_pkce_missing_log_window', 6 * HOUR_IN_SECONDS ) );
+        list( $written ) = Rate_Limit::increment( 'pkce-missing-notes', $window );
+        if ( $written > self::PKCE_MISSING_NOTES_MAX ) {
+            return;
+        }
+        set_transient( $key, time(), $window ); // audit:transient-ttl-only -- one entry per client per window
+        $missing = implode( ' and ', array_filter( [ $no_challenge ? 'code_challenge' : '', $no_method ? 'code_challenge_method' : '' ] ) );
+        $this->log_event( 'pkce_params_missing', 'Sign-in request arrived without ' . $missing . '. If the AI app sends them, the host or a firewall may be removing them: run the Connection Doctor on the Royal MCP dashboard.', 302 );
     }
 
     /**
@@ -1584,8 +1848,25 @@ class Server {
      * Get the client IP address. Delegates to the MCP-side resolver so both
      * OAuth-side and /mcp-side rate limits key off the same IP-resolution
      * policy — trusted-proxy allowlist for X-Forwarded-For, CF-Ray gate for
-     * CF-Connecting-IP, REMOTE_ADDR fallback.
+     * CF-Connecting-IP, REMOTE_ADDR fallback. This is the address rate
+     * budgets count (limit_ip()); IPv6 addresses count by their /64.
      */
+    private function limit_ip() {
+        return Rate_Limit::address( $this->get_client_ip() );
+    }
+
+    /** Budget bucket of one user's tokens from one client. */
+    private static function issuance_bucket( $client_id, $user_id ) {
+        return 'oauth-token-ok:' . md5( (string) $client_id ) . ':' . (int) $user_id;
+    }
+
+    /** Count an issued token pair against the client-and-user and the client budgets. */
+    private function count_issuance( $client_id, $user_id ) {
+        Rate_Limit::hit( self::issuance_bucket( $client_id, $user_id ), 'token_ok' );
+        Rate_Limit::hit( 'oauth-token-client:' . $client_id, 'token_client' );
+    }
+
+    /** The real client IP, as logged (see Server::resolve_client_ip()). */
     private function get_client_ip() {
         return \Royal_MCP\MCP\Server::resolve_client_ip();
     }

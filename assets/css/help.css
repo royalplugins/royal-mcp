@@ -675,3 +675,63 @@
 		grid-row: auto;
 	}
 }
+
+/* ==========================================================================
+   "Where things are" map
+   ========================================================================== */
+
+.royal-mcp-help-map-table {
+	margin: 0 0 16px;
+	border-radius: 4px;
+}
+
+.royal-mcp-help-map-table th,
+.royal-mcp-help-map-table td {
+	padding: 8px 12px;
+	vertical-align: top;
+	line-height: 1.5;
+}
+
+.royal-mcp-help-map-table tbody + tbody {
+	border-top: 1px solid #dcdcde;
+}
+
+.royal-mcp-help-map-table tbody th {
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.royal-mcp-help-map-table .royal-mcp-help-map-tab {
+	white-space: nowrap;
+}
+
+.royal-mcp-help-section h4 {
+	margin: 16px 0 8px;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.royal-mcp-help-map-old {
+	display: grid;
+	grid-template-columns: max-content 1fr;
+	gap: 4px 16px;
+	margin: 0;
+}
+
+.royal-mcp-help-map-old dt {
+	font-weight: 600;
+}
+
+.royal-mcp-help-map-old dd {
+	margin: 0;
+}
+
+@media screen and (max-width: 600px) {
+	.royal-mcp-help-map-old {
+		grid-template-columns: 1fr;
+	}
+
+	.royal-mcp-help-map-old dd {
+		margin-bottom: 8px;
+	}
+}

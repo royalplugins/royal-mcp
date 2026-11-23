@@ -157,6 +157,11 @@ class Composers {
 		$post_id = wp_insert_post( wp_slash( $insert ), true );
 		if ( is_wp_error( $post_id ) ) {
 			$steps[] = [ 'name' => 'create_post', 'status' => 'error', 'message' => $post_id->get_error_message() ];
+			// The image was downloaded for this post only: without the post it would be left unused.
+			if ( $attachment_id > 0 ) {
+				wp_delete_attachment( $attachment_id, true );
+				$steps[] = [ 'name' => 'remove_featured_image', 'status' => 'ok', 'message' => sprintf( 'Media item %d downloaded for the post was deleted again.', $attachment_id ) ];
+			}
 			return Envelope::error(
 				'post_create_failed',
 				$post_id->get_error_message(),
@@ -169,6 +174,10 @@ class Composers {
 		// Step 3: set featured image (only if step 1 succeeded)
 		if ( $attachment_id > 0 ) {
 			set_post_thumbnail( $post_id, $attachment_id );
+			// Attached to the post, so the library shows where the image is used.
+			if ( 0 === (int) get_post_field( 'post_parent', $attachment_id ) ) {
+				wp_update_post( [ 'ID' => $attachment_id, 'post_parent' => $post_id ] );
+			}
 			$steps[] = [ 'name' => 'set_featured_image', 'status' => 'ok' ];
 		}
 

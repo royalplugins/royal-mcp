@@ -42,7 +42,7 @@ class GuardPress {
 			],
 			[
 				'name'        => 'gp_run_vulnerability_scan',
-				'description' => 'Run a vulnerability scan checking for outdated plugins, themes, and security misconfigurations',
+				'description' => 'Run a vulnerability scan checking for outdated plugins, themes, and security misconfigurations. It replaces the stored scan results; no undo.',
 				'inputSchema' => [ 'type' => 'object', 'properties' => new \stdClass() ],
 			],
 			[
@@ -62,7 +62,7 @@ class GuardPress {
 			],
 			[
 				'name'        => 'gp_get_blocked_ips',
-				'description' => 'Get list of currently blocked IP addresses',
+				'description' => 'Get the currently blocked IP addresses: GuardPress lockouts and the permanent block list (where gp_block_ip puts permanent blocks). source tells which: lockout, block_list or block_list_range.',
 				'inputSchema' => [ 'type' => 'object', 'properties' => new \stdClass() ],
 			],
 			[
@@ -126,6 +126,7 @@ class GuardPress {
 					'message'        => 'Vulnerability scan completed',
 					'vulnerabilities_found' => is_array( $results ) ? count( $results ) : 0,
 					'statistics'     => $stats,
+					'undo'           => 'none',
 				];
 
 			case 'gp_get_vulnerability_results':
@@ -156,14 +157,32 @@ class GuardPress {
 					throw new \Exception( 'Brute force module not available' );
 				}
 				$blocked = $brute_force->get_blocked_ips();
-				return array_map( function( $ip ) {
+				$out     = array_map( function( $ip ) {
 					return [
 						'ip_address'  => $ip->ip_address,
 						'blocked_at'  => self::site_time_to_iso( $ip->blocked_at ),
 						'reason'      => $ip->reason ?? 'brute_force',
 						'is_permanent' => ! empty( $ip->is_permanent ),
+						'source'      => 'lockout',
 					];
-				}, $blocked );
+				}, (array) $blocked );
+				// Permanent blocks live on GuardPress's block list (where gp_block_ip puts them), not among the lockouts.
+				$seen = array_flip( array_map( 'strval', array_column( $out, 'ip_address' ) ) );
+				foreach ( method_exists( 'GuardPress_Settings', 'get_ip_blacklist' ) ? (array) \GuardPress_Settings::get_ip_blacklist() : [] as $entry ) {
+					$entry = trim( (string) $entry );
+					if ( '' === $entry || isset( $seen[ $entry ] ) ) {
+						continue;
+					}
+					$seen[ $entry ] = true;
+					$out[]          = [
+						'ip_address'   => $entry,
+						'blocked_at'   => null,
+						'reason'       => 'block_list',
+						'is_permanent' => true,
+						'source'       => false !== strpos( $entry, '/' ) || false !== strpos( $entry, '*' ) || false !== strpos( $entry, '-' ) ? 'block_list_range' : 'block_list',
+					];
+				}
+				return $out;
 
 			case 'gp_get_audit_log':
 				if ( ! method_exists( 'GuardPress_Logger', 'get_audit_logs' ) ) {

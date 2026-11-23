@@ -64,6 +64,18 @@ class Form_Entry_Privacy {
 		'zip', 'postal', 'postcode', 'plz', 'country',
 		'dob', 'birth', 'birthday', 'age', 'gender', 'sex',
 		'ssn', 'passport', 'iban', 'bic', 'swift', 'cvc', 'cvv', 'card', 'ip', 'signature', 'linkedin', 'twitter', 'instagram', 'facebook',
+		// Health, money and official numbers.
+		'health', 'medical', 'medication', 'medications', 'medicine', 'diagnosis', 'symptoms', 'allergy', 'allergies', 'disability', 'illness', 'pregnant', 'pregnancy', 'treatment', 'doctor', 'patient',
+		'insurance', 'insurer', 'insured', 'policyholder',
+		'income', 'salary', 'wage', 'wages', 'earnings', 'payslip',
+		'tax', 'taxid', 'tin', 'ein', 'nino', 'sin', 'vat',
+		'bank', 'banking', 'routing', 'sortcode', 'birthdate', 'dateofbirth',
+		'santé', 'sante', 'médical', 'maladie', 'traitement', 'assurance', 'mutuelle', 'revenu', 'revenus', 'salaire', 'impôt', 'impot', 'fiscal', 'banque', 'bancaire', 'rib', 'naissance', 'passeport',
+		'salud', 'médico', 'medico', 'enfermedad', 'tratamiento', 'seguro', 'ingresos', 'sueldo', 'salario', 'impuesto', 'nif', 'dni', 'nie', 'banco', 'bancaria', 'cuenta', 'nacimiento', 'pasaporte',
+		'gesundheit', 'medizinisch', 'krankheit', 'diagnose', 'versicherung', 'krankenkasse', 'einkommen', 'gehalt', 'lohn', 'steuer', 'steuernummer', 'konto', 'kontonummer', 'geburtsdatum', 'reisepass',
+		'nome', 'cognome', 'indirizzo', 'salute', 'malattia', 'assicurazione', 'reddito', 'stipendio', 'nascita', 'passaporto',
+		'sobrenome', 'endereço', 'endereco', 'telefone', 'saúde', 'saude', 'doença', 'doenca', 'renda', 'salário', 'cpf', 'nascimento', 'passaporte',
+		'naam', 'voornaam', 'achternaam', 'adres', 'telefoon', 'gezondheid', 'medisch', 'ziekte', 'verzekering', 'inkomen', 'salaris', 'bsn', 'geboortedatum', 'paspoort',
 	];
 
 	/** Word stems that mark personal data anywhere in a field's name or label once separators are removed. */
@@ -72,6 +84,13 @@ class Form_Entry_Privacy {
 		'middlename', 'maidenname', 'yourname', 'contactname', 'customername', 'username', 'birth', 'geburt', 'passport',
 		'signature', 'postcode', 'postalcode', 'zipcode', 'socialsecurity', 'nationalid', 'creditcard', 'cardnumber',
 		'vorname', 'nachname', 'apellido', 'nombre', 'telefon', 'linkedin', 'ipaddress',
+		'medical', 'medicat', 'diagnos', 'health', 'allerg', 'disabilit', 'insurance', 'salary', 'income', 'taxid', 'taxnumber', 'taxcode',
+		'bankaccount', 'accountnumber', 'routingnumber', 'sortcode', 'iban', 'dateofbirth', 'birthdate',
+		'versicherung', 'gesundheit', 'krankenkasse', 'steuernummer', 'kontonummer', 'geburtsdatum', 'reisepass',
+		'naissance', 'assurance', 'mutuelle', 'salaire', 'passeport', 'pasaporte', 'nacimiento', 'enfermedad', 'impuesto',
+		'medica', 'médica', 'médico', 'medicament', 'médicament', 'maladie', 'alerg', 'diagn', 'krankheit', 'impôt', 'impot',
+		'codicefiscale', 'assicurazion', 'indirizzo', 'passaport', 'endereco', 'endereço', 'sobrenome', 'telefone', 'telefoon',
+		'verzekering', 'medisch', 'achternaam', 'voornaam', 'geboortedatum',
 	];
 
 	/**
@@ -233,7 +252,42 @@ class Form_Entry_Privacy {
 				return true;
 			}
 		}
+		// A field with no label to go by (Contact Form 7 keeps none) is judged by what it holds.
+		if ( '' === trim( (string) $label ) && self::value_looks_personal( $value ) ) {
+			return true;
+		}
 		return false;
+	}
+
+	/**
+	 * Whether a value is shaped like personal data: an email address, a phone number, or a long
+	 * run of digits (card, account, tax or ID numbers), also inside a list of values.
+	 */
+	public static function value_looks_personal( $value ) {
+		if ( is_array( $value ) ) {
+			foreach ( $value as $v ) {
+				if ( self::value_looks_personal( $v ) ) {
+					return true;
+				}
+			}
+			return false;
+		}
+		if ( ! is_scalar( $value ) || is_bool( $value ) ) {
+			return false;
+		}
+		$text = (string) $value;
+		if ( '' === trim( $text ) ) {
+			return false;
+		}
+		if ( self::hide_emails( $text ) !== $text ) {
+			return true;
+		}
+		// Seven or more digits once spaces, dashes, dots and slashes are removed: card, IBAN, account, tax and ID numbers.
+		$digits = (string) preg_replace( '/\b(?:\d{4}[\-.\/]\d{1,2}[\-.\/]\d{1,2}|\d{1,2}[\-.\/]\d{1,2}[\-.\/]\d{2,4})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?\b/', ' ', $text );
+		if ( 1 === preg_match( '/\d(?:[\s.\-\/]?\d){6,}/', $digits ) ) {
+			return true;
+		}
+		return self::free_text( $text, [] ) !== $text;
 	}
 
 	/**

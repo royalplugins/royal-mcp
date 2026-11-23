@@ -29,7 +29,19 @@ class RoyalAffiliateWrites {
 		'rafp_scan_fraud'             => 'scan_fraud',
 	];
 
-	const MAX_REFERRALS = 100;
+	const MAX_REFERRALS = 25;
+
+	/** Highest percentage a new campaign gets without allow_high_rate. */
+	const CAMPAIGN_RATE_CAP = 50;
+
+	/** Highest flat commission per referral (campaign rate or challenge reward) without allow_high_rate. */
+	const FLAT_RATE_CAP = 100;
+
+	/** Lowest challenge goal accepted without allow_low_goal. */
+	const CHALLENGE_MIN_GOAL = 2;
+
+	/** Largest flat_bonus a challenge grants; the royal_mcp_rafp_max_flat_bonus filter may raise it. */
+	const FLAT_BONUS_CAP = 1000;
 
 	/** Statuses this tool sets. "paid" is set by Royal Affiliate when a payout is paid, never from here. */
 	const REFERRAL_TARGETS = [ 'pending', 'approved', 'rejected' ];
@@ -94,6 +106,14 @@ class RoyalAffiliateWrites {
 			return true;
 		}
 		return in_array( $v, [ false, 0, '0', 'false', '' ], true ) ? false : null;
+	}
+
+	/** A switch that must be a real boolean: $default when absent, null for anything but true or false. */
+	private static function strict_bool( array $args, $key, $default ) {
+		if ( ! array_key_exists( $key, $args ) || null === $args[ $key ] ) {
+			return $default;
+		}
+		return is_bool( $args[ $key ] ) ? $args[ $key ] : null;
 	}
 
 	/** A name: plain text of 1 to $max characters, or null. */
@@ -275,9 +295,10 @@ class RoyalAffiliateWrites {
 	private static function update_referral_status( array $args ) {
 		$dry = self::flag( $args, 'dry_run' );
 		$new = self::choice( $args, 'new_status', self::REFERRAL_TARGETS, null );
-		$raw = $args['referral_ids'] ?? null;
-		if ( null === $dry || null === $new || ! is_array( $raw ) || ! $raw || count( $raw ) > self::MAX_REFERRALS || array_keys( $raw ) !== range( 0, count( $raw ) - 1 ) ) {
-			return Envelope::error( 'invalid_args', sprintf( 'referral_ids must be a list of 1 to %d referral IDs, new_status one of %s (paid is set by Royal Affiliate when a payout is paid), and dry_run true or false.', self::MAX_REFERRALS, implode( ', ', self::REFERRAL_TARGETS ) ) );
+		$raw    = $args['referral_ids'] ?? null;
+		$reopen = self::strict_bool( $args, 'reopen_rejected', false );
+		if ( null === $dry || null === $new || null === $reopen || ! is_array( $raw ) || ! $raw || count( $raw ) > self::MAX_REFERRALS || array_keys( $raw ) !== range( 0, count( $raw ) - 1 ) ) {
+			return Envelope::error( 'invalid_args', sprintf( 'referral_ids must be a list of 1 to %d referral IDs, new_status one of %s (paid is set by Royal Affiliate when a payout is paid), and dry_run and reopen_rejected true or false.', self::MAX_REFERRALS, implode( ', ', self::REFERRAL_TARGETS ) ) );
 		}
 		$ids = [];
 		foreach ( $raw as $one ) {
@@ -296,6 +317,10 @@ class RoyalAffiliateWrites {
 		foreach ( $ids as $id ) {
 			$row = self::referral_row( $id );
 			$why = null === $row ? 'not_found' : self::lock_reason( $row );
+			// A rejected referral moves again only when the caller says so in so many words.
+			if ( null === $why && ! $reopen && 'rejected' === strtolower( trim( (string) $row['status'] ) ) && 'rejected' !== $new ) {
+				$why = 'rejected_needs_reopen_rejected';
+			}
 			$kin = null === $why ? self::tier_referrals( $id ) : [];
 			// Royal Affiliate gives a referral's upline commissions the same status. One of those being paid or on a payout locks the whole set.
 			foreach ( $kin as $k ) {
@@ -549,14 +574,24 @@ class RoyalAffiliateWrites {
 		$name   = self::name_arg( $args, 100 );
 		$desc   = self::description_arg( $args );
 		$type   = self::choice( $args, 'commission_type', self::COMMISSION_TYPES, 'percentage' );
-		$status = self::choice( $args, 'status', self::ENTITY_STATUSES, 'active' );
+		$status = self::choice( $args, 'status', self::ENTITY_STATUSES, 'inactive' );
 		$start  = self::moment( $args, 'start_date', false );
 		$end    = self::moment( $args, 'end_date', true );
+		$high   = self::strict_bool( $args, 'allow_high_rate', false );
 		$rate   = null;
+		if ( null === $high ) {
+			return Envelope::error( 'invalid_args', 'allow_high_rate must be true or false.' );
+		}
 		if ( isset( $args['commission_rate'] ) && '' !== $args['commission_rate'] ) {
 			$rate = null === $type ? null : self::amount( $args['commission_rate'], 'percentage' === $type ? 100 : 999.99 );
 			if ( null === $rate ) {
 				return Envelope::error( 'invalid_args', 'commission_rate must be a number from 0 to 100 for a percentage, or from 0 to 999.99 for a flat amount (the most Royal Affiliate stores for a campaign), with at most 2 decimals.' );
+			}
+			if ( 'percentage' === $type && $rate > self::CAMPAIGN_RATE_CAP && ! $high ) {
+				return Envelope::error( 'rate_above_cap', sprintf( 'A percentage commission above %d%% needs allow_high_rate: true. Nothing was created.', self::CAMPAIGN_RATE_CAP ) );
+			}
+			if ( 'flat' === $type && $rate > self::FLAT_RATE_CAP && ! $high ) {
+				return Envelope::error( 'rate_above_cap', sprintf( 'A flat commission above %d per referral needs allow_high_rate: true. Nothing was created.', self::FLAT_RATE_CAP ) );
 			}
 		}
 		$slug = '';
@@ -641,20 +676,31 @@ class RoyalAffiliateWrites {
 		if ( ! class_exists( 'Royal_Affiliate_Challenge' ) ) {
 			return Envelope::error( 'not_supported', 'This Royal Affiliate version has no challenges.' );
 		}
-		$dry    = self::flag( $args, 'dry_run' );
-		$rec    = self::flag( $args, 'recurring' );
+		// A challenge grants money by itself, so the call previews unless dry_run is false.
+		$dry    = array_key_exists( 'dry_run', $args ) && null !== $args['dry_run'] ? self::flag( $args, 'dry_run' ) : true;
+		$rec    = self::strict_bool( $args, 'recurring', false );
+		$low    = self::strict_bool( $args, 'allow_low_goal', false );
+		$high_rate = self::strict_bool( $args, 'allow_high_rate', false );
+		if ( null === $high_rate ) {
+			return Envelope::error( 'invalid_args', 'allow_high_rate must be true or false.' );
+		}
 		$name   = self::name_arg( $args, 200 );
 		$desc   = self::description_arg( $args );
 		$metric = self::choice( $args, 'metric', self::METRICS, 'referral_count' );
 		$reward = self::choice( $args, 'reward_type', self::REWARD_TYPES, 'custom' );
 		$scope  = self::choice( $args, 'scope', self::SCOPES, 'all' );
-		$status = self::choice( $args, 'status', self::ENTITY_STATUSES, 'active' );
+		$status = self::choice( $args, 'status', self::ENTITY_STATUSES, 'inactive' );
 		$start  = self::moment( $args, 'start_date', false );
 		$end    = self::moment( $args, 'end_date', true );
 		$goal   = isset( $args['goal'] ) ? self::amount( $args['goal'], 1000000000 ) : null;
-		if ( null === $dry || null === $rec || null === $name || null === $desc || null === $metric || null === $reward || null === $scope || null === $status || false === $start || false === $end || ( '' !== $start && '' !== $end && $start > $end ) || null === $goal || $goal < 0.01 || ( 'referral_count' === $metric && floor( $goal ) !== $goal ) ) {
-			return Envelope::error( 'invalid_args', 'name (1 to 200 characters) and goal are required; goal is at least 0.01 with at most 2 decimals, and a whole number for referral_count; metric is one of ' . implode( ', ', self::METRICS ) . '; reward_type one of ' . implode( ', ', self::REWARD_TYPES ) . '; scope all or tag; status active, inactive or ended; start_date and end_date in site time, start not after end; recurring and dry_run true or false.' );
+		if ( null === $dry || null === $rec || null === $low || null === $name || null === $desc || null === $metric || null === $reward || null === $scope || null === $status || false === $start || false === $end || ( '' !== $start && '' !== $end && $start > $end ) || null === $goal || $goal < 0.01 || ( 'referral_count' === $metric && floor( $goal ) !== $goal ) ) {
+			return Envelope::error( 'invalid_args', 'name (1 to 200 characters) and goal are required; goal is at least 0.01 with at most 2 decimals, and a whole number for referral_count; metric is one of ' . implode( ', ', self::METRICS ) . '; reward_type one of ' . implode( ', ', self::REWARD_TYPES ) . '; scope all or tag; status active, inactive or ended; start_date and end_date in site time, start not after end; dry_run true or false; recurring and allow_low_goal true or false (booleans, not text).' );
 		}
+		if ( $goal < self::CHALLENGE_MIN_GOAL && ! $low ) {
+			return Envelope::error( 'goal_too_low', sprintf( 'A goal below %d is met almost at once; pass allow_low_goal: true to create it anyway. Nothing was created.', self::CHALLENGE_MIN_GOAL ) );
+		}
+		$bonus_cap = (float) apply_filters( 'royal_mcp_rafp_max_flat_bonus', self::FLAT_BONUS_CAP );
+		$bonus_cap = is_finite( $bonus_cap ) && $bonus_cap > 0 ? min( $bonus_cap, 100000 ) : self::FLAT_BONUS_CAP;
 		// Only the values Royal Affiliate reads for that kind of reward, each of the kind it expects.
 		$rv  = isset( $args['reward_value'] ) ? json_decode( (string) wp_json_encode( $args['reward_value'] ), true ) : [];
 		$num = static function ( $v, $max ) {
@@ -669,7 +715,7 @@ class RoyalAffiliateWrites {
 			$bad  = null === $rate || array_diff( array_keys( $rv ), [ 'rate', 'type' ] );
 			$out  = [ 'rate' => $rate, 'type' => $kind ];
 		} elseif ( ! $bad && 'flat_bonus' === $reward ) {
-			$amount = $num( $rv['amount'] ?? null, 100000 );
+			$amount = $num( $rv['amount'] ?? null, $bonus_cap );
 			$bad    = null === $amount || array_diff( array_keys( $rv ), [ 'amount' ] );
 			$out    = [ 'amount' => $amount ];
 		} elseif ( ! $bad && 'tier_upgrade' === $reward ) {
@@ -681,8 +727,14 @@ class RoyalAffiliateWrites {
 			$bad  = ! is_string( $text ) || mb_strlen( $text ) > 500 || array_diff( array_keys( $rv ), [ 'text' ] );
 			$out  = '' !== trim( (string) $text ) ? [ 'text' => sanitize_text_field( (string) $text ) ] : [];
 		}
+		if ( ! $bad && isset( $out['rate'], $out['type'] ) && ! $high_rate ) {
+			$cap = 'percentage' === $out['type'] ? self::CAMPAIGN_RATE_CAP : self::FLAT_RATE_CAP;
+			if ( $out['rate'] > $cap ) {
+				return Envelope::error( 'rate_above_cap', sprintf( 'A %s reward rate above %s needs allow_high_rate: true. Nothing was created.', $out['type'], 'percentage' === $out['type'] ? $cap . '%' : (string) $cap ) );
+			}
+		}
 		if ( $bad ) {
-			return Envelope::error( 'invalid_args', 'reward_value must fit reward_type: commission_rate and commission_bonus take {"rate": number above 0, "type": "percentage" (up to 100) or "flat" (up to 999.99)}; flat_bonus takes {"amount": number above 0, up to 100000}; tier_upgrade takes {"tier_id": an existing tier}; custom takes {"text": up to 500 characters} or nothing. Numbers must be numbers, not text.' );
+			return Envelope::error( 'invalid_args', 'reward_value must fit reward_type: commission_rate and commission_bonus take {"rate": number above 0, "type": "percentage" (up to 100) or "flat" (up to 999.99)}; flat_bonus takes {"amount": number above 0, up to ' . rtrim( rtrim( number_format( $bonus_cap, 2, '.', '' ), '0' ), '.' ) . '}; tier_upgrade takes {"tier_id": an existing tier}; custom takes {"text": up to 500 characters} or nothing. Numbers must be numbers, not text.' );
 		}
 		$value       = $out ? (string) wp_json_encode( $out ) : '{}';
 		$scope_value = null;
@@ -705,7 +757,7 @@ class RoyalAffiliateWrites {
 		$show = [ 'reward_value' => json_decode( $value, true ) ?: new \stdClass(), 'recurring' => (bool) $rec, 'scope_tag' => $scope_note ] + $data;
 		$warn = 'active' === $status ? ' It is active: Royal Affiliate counts approvals toward it from now on and grants the reward by itself when an affiliate reaches the goal.' : '';
 		if ( $dry ) {
-			return Envelope::success( sprintf( 'Preview: challenge "%s" would be created (%s, goal %s, reward %s, status %s). Nothing was changed.%s', $name, $metric, rtrim( rtrim( number_format( $goal, 4, '.', '' ), '0' ), '.' ), $reward, $status, $warn ), [ 'dry_run' => true, 'challenge' => $show, 'timezone' => wp_timezone_string() ] );
+			return Envelope::success( sprintf( 'Preview: challenge "%s" would be created (%s, goal %s, reward %s, status %s). Nothing was changed; pass dry_run: false to create it.%s', $name, $metric, rtrim( rtrim( number_format( $goal, 4, '.', '' ), '0' ), '.' ), $reward, $status, $warn ), [ 'dry_run' => true, 'challenge' => $show, 'timezone' => wp_timezone_string() ] );
 		}
 		$id  = (int) \Royal_Affiliate_Challenge::create( $data );
 		$row = $id > 0 ? \Royal_Affiliate_Challenge::get( $id ) : null;
@@ -752,10 +804,18 @@ class RoyalAffiliateWrites {
 		if ( 'active' !== strtolower( (string) ( $affiliate->status ?? '' ) ) ) {
 			$warnings[] = 'The affiliate is not active (' . sanitize_key( (string) ( $affiliate->status ?? '' ) ) . '), so Royal Affiliate ignores this page until they are.';
 		}
-		$special = [ 'the site\'s front page' => (int) get_option( 'page_on_front' ), 'the posts page' => (int) get_option( 'page_for_posts' ) ];
-		foreach ( [ 'shop' => 'the shop page', 'cart' => 'the cart page', 'checkout' => 'the checkout page', 'myaccount' => 'the customer account page' ] as $wc => $label ) {
-			$special[ $label ] = function_exists( 'wc_get_page_id' ) ? (int) wc_get_page_id( $wc ) : 0;
+		// Checkout, cart and account pages are where every buyer passes: crediting them to one affiliate is refused outright.
+		foreach ( [ 'cart' => 'the cart page', 'checkout' => 'the checkout page', 'myaccount' => 'the customer account page' ] as $wc => $label ) {
+			$wc_id = function_exists( 'wc_get_page_id' ) ? (int) wc_get_page_id( $wc ) : 0;
+			if ( $wc_id > 0 && $wc_id === $page_id ) {
+				return Envelope::error( 'page_not_allowed', 'This is ' . $label . ': every buyer passes through it, so it cannot be an affiliate landing page. Nothing was changed.' );
+			}
 		}
+		$body = (string) $page->post_content;
+		if ( ( function_exists( 'has_block' ) && ( has_block( 'woocommerce/checkout', $body ) || has_block( 'woocommerce/cart', $body ) ) ) || false !== strpos( $body, '[woocommerce_checkout' ) || false !== strpos( $body, '[woocommerce_cart' ) || false !== strpos( $body, '[woocommerce_my_account' ) ) {
+			return Envelope::error( 'page_not_allowed', 'This page holds the store checkout, cart or account area, so it cannot be an affiliate landing page. Nothing was changed.' );
+		}
+		$special = [ 'the site\'s front page' => (int) get_option( 'page_on_front' ), 'the posts page' => (int) get_option( 'page_for_posts' ), 'the shop page' => function_exists( 'wc_get_page_id' ) ? (int) wc_get_page_id( 'shop' ) : 0 ];
 		foreach ( $special as $label => $special_id ) {
 			if ( $special_id > 0 && $special_id === $page_id ) {
 				$warnings[] = 'This is ' . $label . ': every visitor who lands on it would be credited to this one affiliate.';
@@ -929,10 +989,10 @@ class RoyalAffiliateWrites {
 			return [ 'name' => $name, 'description' => $description . ' Requires Royal Affiliate Pro and manage_options.', 'inputSchema' => [ 'type' => 'object', 'required' => $required, 'properties' => $props, 'additionalProperties' => false ] ];
 		};
 		$out  = [
-			$tool( 'rafp_update_referral_status', 'Set up to 100 referrals to pending, approved or rejected. Referrals that are paid or already on a payout, and IDs that do not exist, are left alone and listed in skipped; paid cannot be set here (Royal Affiliate sets it when a payout is paid). Upline (multi-tier) referrals get the same status and are listed as tier_referral_ids; a referral is skipped when one of them is paid or on a payout. Approving can email the affiliate (emails_sent) and counts toward challenges, which can grant a reward (challenge_rewards_granted). dry_run true shows what would change. Returns an undo token; undo puts each referral and its upline referrals back to their earlier status and removes the added challenge progress. Undo is refused with edited_since_write when a referral changed again since, and with reward_granted when the change completed a challenge, unless forced; it recalls neither emails nor rewards.', [ 'referral_ids' => [ 'type' => 'array', 'minItems' => 1, 'maxItems' => self::MAX_REFERRALS, 'items' => [ 'type' => 'integer', 'minimum' => 1 ] ], 'new_status' => [ 'type' => 'string', 'enum' => self::REFERRAL_TARGETS ], 'dry_run' => $dry ], [ 'referral_ids', 'new_status' ] ),
-			$tool( 'rafp_create_campaign', 'Create a Royal Affiliate campaign: name (up to 100 characters), optional slug (Royal Affiliate adds a number when it is taken), description, commission_type (percentage, default, or flat), commission_rate (up to 100 percent or 999.99 flat, 2 decimals), status (active by default, inactive or ended), start_date and end_date. dry_run true shows what would be created. Returns campaign_id and an undo token; undo deletes the campaign while it has no referrals, visits or creatives and has not been edited (force: true deletes it anyway and leaves those records without a campaign).', [ 'name' => [ 'type' => 'string', 'minLength' => 1, 'maxLength' => 100 ], 'slug' => [ 'type' => 'string', 'maxLength' => 100 ], 'description' => [ 'type' => 'string', 'maxLength' => 2000 ], 'commission_type' => [ 'type' => 'string', 'enum' => self::COMMISSION_TYPES ], 'commission_rate' => [ 'type' => 'number', 'minimum' => 0 ], 'status' => [ 'type' => 'string', 'enum' => self::ENTITY_STATUSES ], 'start_date' => $when( 'First moment' ), 'end_date' => $when( 'Last moment' ), 'dry_run' => $dry ], [ 'name' ] ),
-			$tool( 'rafp_create_challenge', 'Create a Royal Affiliate challenge: name, goal (at least 0.01; a whole number for referral_count) of a metric (referral_count by default, earnings or revenue), reward_type with the reward_value it needs (custom, the default: {"text": ...} or nothing; commission_rate or commission_bonus: {"rate": number, "type": "percentage" or "flat"}; flat_bonus: {"amount": number}; tier_upgrade: {"tier_id": existing tier}), scope (all by default, or tag with scope_value the tag ID), recurring, status, start_date and end_date. An active challenge counts from the moment it exists and grants its reward by itself when an affiliate reaches the goal; create it inactive to review it first. dry_run true shows what would be created. Returns challenge_id and an undo token; undo deletes the challenge while no affiliate has progress on it and it is unedited (force: true deletes it with that progress; rewards already granted stay).', [ 'name' => [ 'type' => 'string', 'minLength' => 1, 'maxLength' => 200 ], 'goal' => [ 'type' => 'number', 'exclusiveMinimum' => 0 ], 'description' => [ 'type' => 'string', 'maxLength' => 2000 ], 'metric' => [ 'type' => 'string', 'enum' => self::METRICS ], 'reward_type' => [ 'type' => 'string', 'enum' => self::REWARD_TYPES ], 'reward_value' => [ 'type' => 'object' ], 'scope' => [ 'type' => 'string', 'enum' => self::SCOPES ], 'scope_value' => $id( 'Tag ID, with scope tag.' ), 'recurring' => [ 'type' => 'boolean' ], 'status' => [ 'type' => 'string', 'enum' => self::ENTITY_STATUSES ], 'start_date' => $when( 'First moment' ), 'end_date' => $when( 'Last moment' ), 'dry_run' => $dry ], [ 'name', 'goal' ] ),
-			$tool( 'rafp_assign_landing_page', 'Make a WordPress page the landing page of an affiliate, so visits to it count for that affiliate. A page has one affiliate: assigning it moves it away from the affiliate it had. The page must be a page you can edit. Every visit to it is then credited to that affiliate: the reply carries warnings when the page is the front page, a shop or checkout page, not public, or the affiliate is not active. dry_run true shows what would change. Returns an undo token; undo gives the page back to its earlier affiliate, or to no one, and is refused with edited_since_write when the page was reassigned since unless forced.', [ 'page_id' => $id( 'The page.' ), 'affiliate_id' => $id( 'The affiliate.' ), 'dry_run' => $dry ], [ 'page_id', 'affiliate_id' ] ),
+			$tool( 'rafp_update_referral_status', 'Set up to 25 referrals to pending, approved or rejected (paid is set by Royal Affiliate when a payout is paid). Paid referrals, ones on a payout and unknown IDs are left alone and listed in skipped; a rejected referral moves only with reopen_rejected: true. Upline (multi-tier) referrals get the same status (tier_referral_ids); one of them being paid or on a payout skips the referral. Approving can email the affiliate (emails_sent) and count toward challenges, which can grant a reward (challenge_rewards_granted). dry_run true shows what would change. Returns an undo token that puts each referral and its upline back and removes the added challenge progress; refused with edited_since_write after a later change, and with reward_granted when a challenge was completed, unless forced. It recalls neither emails nor rewards.', [ 'referral_ids' => [ 'type' => 'array', 'minItems' => 1, 'maxItems' => self::MAX_REFERRALS, 'items' => [ 'type' => 'integer', 'minimum' => 1 ] ], 'new_status' => [ 'type' => 'string', 'enum' => self::REFERRAL_TARGETS ], 'reopen_rejected' => [ 'type' => 'boolean', 'description' => 'true lets rejected referrals move to pending or approved. Default false.' ], 'dry_run' => $dry ], [ 'referral_ids', 'new_status' ] ),
+			$tool( 'rafp_create_campaign', 'Create a Royal Affiliate campaign: name (up to 100 characters), optional slug (Royal Affiliate adds a number when it is taken), description, commission_type (percentage, default, or flat), commission_rate (percentage up to 50, flat up to 100; with allow_high_rate true up to 100 percent or 999.99 flat; 2 decimals), status (inactive by default, active or ended), start_date and end_date. dry_run true shows what would be created. Returns campaign_id and an undo token; undo deletes the campaign while it has no referrals, visits or creatives and has not been edited (force: true deletes it anyway and leaves those records without a campaign).', [ 'name' => [ 'type' => 'string', 'minLength' => 1, 'maxLength' => 100 ], 'slug' => [ 'type' => 'string', 'maxLength' => 100 ], 'description' => [ 'type' => 'string', 'maxLength' => 2000 ], 'commission_type' => [ 'type' => 'string', 'enum' => self::COMMISSION_TYPES ], 'commission_rate' => [ 'type' => 'number', 'minimum' => 0 ], 'allow_high_rate' => [ 'type' => 'boolean', 'description' => 'true allows a percentage above 50 or a flat amount above 100. Default false.' ], 'status' => [ 'type' => 'string', 'enum' => self::ENTITY_STATUSES ], 'start_date' => $when( 'First moment' ), 'end_date' => $when( 'Last moment' ), 'dry_run' => $dry ], [ 'name' ] ),
+			$tool( 'rafp_create_challenge', 'Create a Royal Affiliate challenge: name, goal (at least 2, or 0.01 with allow_low_goal: true; whole for referral_count) of a metric (referral_count by default, earnings or revenue), reward_type with its reward_value (custom, the default: {"text": ...} or nothing; commission_rate or commission_bonus: {"rate": number, "type": "percentage" or "flat"}; flat_bonus: {"amount": up to 1000 by default}; tier_upgrade: {"tier_id": existing tier}), scope (all, or tag with scope_value the tag ID), recurring (boolean), status (inactive by default), start_date and end_date. An active challenge grants its reward by itself when an affiliate reaches the goal. Previews and creates nothing unless dry_run is false. Returns challenge_id and an undo token that deletes it while no affiliate has progress and it is unedited (force: true deletes it with that progress; granted rewards stay).', [ 'name' => [ 'type' => 'string', 'minLength' => 1, 'maxLength' => 200 ], 'goal' => [ 'type' => 'number', 'exclusiveMinimum' => 0 ], 'description' => [ 'type' => 'string', 'maxLength' => 2000 ], 'metric' => [ 'type' => 'string', 'enum' => self::METRICS ], 'reward_type' => [ 'type' => 'string', 'enum' => self::REWARD_TYPES ], 'reward_value' => [ 'type' => 'object' ], 'scope' => [ 'type' => 'string', 'enum' => self::SCOPES ], 'scope_value' => $id( 'Tag ID, with scope tag.' ), 'recurring' => [ 'type' => 'boolean' ], 'allow_low_goal' => [ 'type' => 'boolean', 'description' => 'true allows a goal below 2. Default false.' ], 'allow_high_rate' => [ 'type' => 'boolean', 'description' => 'commission_rate and commission_bonus rewards are capped at 50 percent or 100 flat; true allows up to 100 percent or 999.99 flat. Default false.' ], 'status' => [ 'type' => 'string', 'enum' => self::ENTITY_STATUSES ], 'start_date' => $when( 'First moment' ), 'end_date' => $when( 'Last moment' ), 'dry_run' => [ 'type' => 'boolean', 'description' => 'false creates the challenge. Default true (preview only).' ] ], [ 'name', 'goal' ] ),
+			$tool( 'rafp_assign_landing_page', 'Make a WordPress page the landing page of an affiliate, so visits to it count for that affiliate. A page has one affiliate: assigning it moves it away from the affiliate it had. The page must be a page you can edit. Every visit to it is then credited to that affiliate: the cart, checkout and customer account pages (and pages holding those) are refused; the reply carries warnings when the page is the front page, the shop page, not public, or the affiliate is not active. dry_run true shows what would change. Returns an undo token; undo gives the page back to its earlier affiliate, or to no one, and is refused with edited_since_write when the page was reassigned since unless forced.', [ 'page_id' => $id( 'The page.' ), 'affiliate_id' => $id( 'The affiliate.' ), 'dry_run' => $dry ], [ 'page_id', 'affiliate_id' ] ),
 			$tool( 'rafp_scan_fraud', 'Run Royal Affiliate\'s fraud checks over past visits and referrals (days_back, 30 by default, up to 365; the newest batch_size rows of each kind, 500 by default, up to 2000) and log what they find as fraud incidents. Royal Affiliate emails the site administrator when a scan logs high-severity incidents, and sends its fraud webhooks when any are set up. dry_run true runs the checks on the newest 25 rows of each kind and writes nothing. A run that would flag more than half of at least 20 rows is refused as mass_flag_refused unless acknowledge_mass_flag is true. Log entries stay until removed in Royal Affiliate: there is no undo. Not available in read-only mode. Needs Royal Affiliate Pro 2.6.20 or later.', [ 'days_back' => [ 'type' => 'integer', 'minimum' => 1, 'maximum' => 365 ], 'batch_size' => [ 'type' => 'integer', 'minimum' => 1, 'maximum' => 2000 ], 'scan_types' => [ 'type' => 'array', 'items' => [ 'type' => 'string', 'enum' => [ 'visits', 'referrals' ] ] ], 'acknowledge_mass_flag' => [ 'type' => 'boolean' ], 'dry_run' => $dry ], [] ),
 		];
 		$out[4]['inputSchema'] = array_diff_key( $out[4]['inputSchema'], [ 'required' => 1 ] );

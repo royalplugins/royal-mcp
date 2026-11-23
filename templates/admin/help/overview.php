@@ -10,6 +10,8 @@ $royal_mcp_help_endpoint     = preg_replace( '/^http:/', 'https:', $royal_mcp_he
 ?>
 <div class="royal-mcp-help-tab-content royal-mcp-help-tab-overview">
 
+	<?php \Royal_MCP\Admin\Help_Page::render_map(); ?>
+
 	<div class="royal-mcp-help-hero">
 		<h2>
 			<svg class="royal-mcp-help-hero-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -39,7 +41,7 @@ $royal_mcp_help_endpoint     = preg_replace( '/^http:/', 'https:', $royal_mcp_he
 						__( 'Open %s and toggle Royal MCP on. Generate an API key or leave OAuth enabled depending on which client you\'ll connect.', 'royal-mcp' ),
 						[ 'a' => [ 'href' => [] ] ]
 					),
-					'<a href="' . esc_url( $royal_mcp_help_settings_url ) . '">' . esc_html__( 'Royal MCP → Settings', 'royal-mcp' ) . '</a>'
+					'<a href="' . esc_url( $royal_mcp_help_settings_url ) . '">' . esc_html__( 'Royal MCP → Connections → Connection settings', 'royal-mcp' ) . '</a>'
 				);
 				?>
 			</li>

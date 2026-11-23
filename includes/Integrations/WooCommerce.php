@@ -99,7 +99,7 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_update_product',
-				'description' => 'Update one WooCommerce product by id: name, prices, description, short_description, sku, status or stock_quantity; pass at least one. Saved fields are read back and checked. Requires edit_product on it, and publish_products to publish. Returns an undo token that restores the earlier values.',
+				'description' => 'Update one WooCommerce product by id: name, prices, description, short_description, sku, status or stock_quantity; pass at least one. Saved fields are read back and checked. Requires edit_product on it, and publish_products to publish. A price of 0, or one more than 90% below the regular price, needs allow_large_drop: true. Returns an undo token that restores the earlier values.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -112,6 +112,7 @@ class WooCommerce {
 						'sku'           => [ 'type' => 'string' ],
 						'status'        => [ 'type' => 'string' ],
 						'stock_quantity' => [ 'type' => 'integer' ],
+						'allow_large_drop' => [ 'type' => 'boolean', 'description' => 'true allows a price of 0 or a cut of more than 90% from the regular price, once the user confirmed it. Default false.' ],
 					],
 					'required'   => [ 'id' ],
 				],
@@ -143,7 +144,7 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_update_order_status',
-				'description' => 'Update WooCommerce order status. Optional note may contain safe HTML — displayed in the WC admin order timeline. WooCommerce sends its usual customer and admin emails for the new status, and stock notifications when the change moves stock; pass send_emails=false to send none of these for this change (its undo sends none either).',
+				'description' => 'Update WooCommerce order status. Optional note may contain safe HTML — displayed in the WC admin order timeline. WooCommerce sends its usual customer and admin emails for the new status, and stock notifications when the change moves stock; pass send_emails=false to send none of these for this change (its undo sends none either). Moving an unpaid order to processing or completed needs allow_unpaid: true.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -151,13 +152,14 @@ class WooCommerce {
 						'status'      => [ 'type' => 'string', 'description' => 'New status (pending, processing, completed, on-hold, cancelled, failed). Refunds are made in WooCommerce, not here.' ],
 						'note'        => [ 'type' => 'string', 'description' => 'Optional order note. May contain safe HTML (links, formatting).' ],
 						'send_emails' => [ 'type' => 'boolean', 'description' => 'Default true: WooCommerce sends its usual emails for this status change. false: no WooCommerce emails for this change only (customer and admin order emails, stock notifications).' ],
+						'allow_unpaid' => [ 'type' => 'boolean', 'description' => 'true allows moving an unpaid order to processing or completed (stock is reduced and it ships). Only when payment was taken another way. Default false.' ],
 					],
 					'required'   => [ 'id', 'status' ],
 				],
 			],
 			[
 				'name'        => 'wc_create_order',
-				'description' => 'Create a WooCommerce order programmatically. Use for B2B, wholesale, phone orders, manual invoicing. Stock is decremented only when status transitions into processing/completed — create as pending, then update status to processing to trigger stock reduction. Order emails are NOT auto-fired; pass send_emails=true to trigger the New Order email.',
+				'description' => 'Create a WooCommerce order programmatically. Use for B2B, wholesale, phone orders, manual invoicing. Stock is decremented only when status transitions into processing/completed — create as pending, then update status to processing to trigger stock reduction. Order emails are NOT auto-fired; pass send_emails=true to trigger the New Order email. A new order is unpaid: status processing or completed needs allow_unpaid: true.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -216,21 +218,24 @@ class WooCommerce {
 						],
 						'customer_note'  => [ 'type' => 'string', 'description' => 'Customer-facing note attached to the order.' ],
 						'send_emails'    => [ 'type' => 'boolean', 'description' => 'If true, fire the WC New Order email after creation. Default false.' ],
+						'allow_unpaid' => [ 'type' => 'boolean', 'description' => 'true allows moving an unpaid order to processing or completed (stock is reduced and it ships). Only when payment was taken another way. Default false.' ],
 					],
 					'required'   => [ 'line_items' ],
 				],
 			],
 			[
 				'name'        => 'wc_update_order',
-				'description' => 'Update an existing WooCommerce order. All fields except order_id are optional. line_items with an id update or remove (quantity 0) existing items; line_items without an id add new items. Recalculates totals after mutation.',
+				'description' => 'Update an existing WooCommerce order. All fields except order_id are optional. line_items with an id update or remove (quantity 0) existing items; line_items without an id add new items. Totals and tax are recalculated only when line_items change, and product stock follows the item changes as on the order screen. Orders WooCommerce does not let you edit (paid, processing, completed) refuse line_items with order_not_editable unless allow_paid_order_edit is true. Every check runs before anything is saved. Address, note and status changes return an undo token; line_items and meta_data changes have no undo. Moving an unpaid order to processing or completed needs allow_unpaid: true.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
 						'order_id'      => [ 'type' => 'integer', 'description' => 'Order ID to update.' ],
+						'allow_paid_order_edit' => [ 'type' => 'boolean', 'description' => 'true allows line_items changes on an order WooCommerce does not let you edit (paid or completed). Default false.' ],
 						'billing'       => [ 'type' => 'object', 'additionalProperties' => true, 'description' => 'Partial billing address — only provided keys are updated.' ],
 						'shipping'      => [ 'type' => 'object', 'additionalProperties' => true, 'description' => 'Partial shipping address — only provided keys are updated.' ],
 						'customer_note' => [ 'type' => 'string', 'description' => 'Replace customer-facing order note.' ],
 						'status'        => [ 'type' => 'string', 'description' => 'New order status.' ],
+						'allow_unpaid' => [ 'type' => 'boolean', 'description' => 'true allows moving an unpaid order to processing or completed (stock is reduced and it ships). Only when payment was taken another way. Default false.' ],
 						'meta_data'     => [
 							'type'        => 'array',
 							'description' => 'Array of {key, value} to add/replace on the order meta.',
@@ -477,7 +482,7 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_set_product_attributes',
-				'description' => 'Set which attributes a variable product uses — required before creating variations. For global attributes supply the attribute id (from wc_get_product_attributes) and options as term slugs or names. For custom (non-global) attributes use id 0 and supply a name.',
+				'description' => 'Set which attributes a variable product uses — required before creating variations. For global attributes supply the attribute id (from wc_get_product_attributes) and options as term slugs or names. For custom (non-global) attributes use id 0 and supply a name. Replaces the whole attribute set; a malformed entry or an option with no matching term refuses the call and changes nothing.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -535,7 +540,7 @@ class WooCommerce {
 			],
 			[
 				'name'        => 'wc_create_coupon',
-				'description' => 'Create a new WooCommerce coupon. Description may contain safe HTML.',
+				'description' => 'Create a new WooCommerce coupon. Description may contain safe HTML. A high-liability coupon (at least 90% off, a fixed discount of 500 or more, free shipping, or 50% or more off with unlimited or 1,000+ uses) is not saved on the first call: it returns confirm_token; show the user what the coupon does, then call again with the same arguments plus confirm_token within 10 minutes.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -557,13 +562,14 @@ class WooCommerce {
 						'product_categories'          => [ 'type' => 'array', 'items' => [ 'type' => 'integer' ], 'description' => 'Category IDs the coupon applies to' ],
 						'excluded_product_categories' => [ 'type' => 'array', 'items' => [ 'type' => 'integer' ], 'description' => 'Category IDs excluded from the coupon' ],
 						'email_restrictions'          => [ 'type' => 'array', 'items' => [ 'type' => 'string' ], 'description' => 'Restrict coupon to these email addresses' ],
+						'confirm_token' => [ 'type' => 'string', 'description' => 'The token a first call returned for a high-liability coupon; the other arguments must be the same.' ],
 					],
 					'required' => [ 'code' ],
 				],
 			],
 			[
 				'name'        => 'wc_update_coupon',
-				'description' => 'Update an existing WooCommerce coupon; only supplied fields are changed. Description may contain safe HTML.',
+				'description' => 'Update an existing WooCommerce coupon; only supplied fields are changed. Description may contain safe HTML. A change to the type, amount, free shipping or usage limit that leaves the coupon high-liability (at least 90% off, a fixed discount of 500 or more, free shipping, or 50% or more off with unlimited or 1,000+ uses) saves nothing on the first call: it returns confirm_token; show the user what the coupon does, then call again with the same arguments plus confirm_token within 10 minutes.',
 				'inputSchema' => [
 					'type'       => 'object',
 					'properties' => [
@@ -586,6 +592,7 @@ class WooCommerce {
 						'product_categories'          => [ 'type' => 'array', 'items' => [ 'type' => 'integer' ] ],
 						'excluded_product_categories' => [ 'type' => 'array', 'items' => [ 'type' => 'integer' ] ],
 						'email_restrictions'          => [ 'type' => 'array', 'items' => [ 'type' => 'string' ] ],
+						'confirm_token' => [ 'type' => 'string', 'description' => 'The token a first call returned for a high-liability coupon; the other arguments must be the same.' ],
 					],
 					'required' => [ 'id' ],
 				],
@@ -1001,6 +1008,10 @@ class WooCommerce {
 				if ( '' !== $price_error ) {
 					return Envelope::error( 'invalid_args', $price_error, [ 'id' => $up_product_id ] );
 				}
+				$up_drop = self::large_price_drop_refusal( $up_product, $args );
+				if ( null !== $up_drop ) {
+					return $up_drop;
+				}
 				if ( isset( $args['regular_price'] ) )     $up_requested['regular_price']     = self::clean_price( $args['regular_price'] );
 				if ( isset( $args['sale_price'] ) )        $up_requested['sale_price']        = self::clean_price( $args['sale_price'] );
 				if ( isset( $args['stock_quantity'] ) )    $up_requested['stock_quantity']    = self::clean_stock( $args['stock_quantity'] );
@@ -1167,6 +1178,10 @@ class WooCommerce {
 				if ( ! in_array( $os_new, $os_allowed, true ) ) {
 					return Envelope::error( 'invalid_args', sprintf( 'Invalid order status "%s". Allowed: %s. Refunds are made in WooCommerce so the payment gateway is refunded.', $os_new, implode( ', ', $os_allowed ) ), [ 'received' => $os_new, 'allowed' => $os_allowed ] );
 				}
+				$os_unpaid = self::unpaid_order_refusal( $os_order, $os_new, $args );
+				if ( null !== $os_unpaid ) {
+					return $os_unpaid;
+				}
 				// WC status column is stored as 'wc-<status>'; get_status() strips
 				// the prefix so both prior and new values compare cleanly.
 				$os_prior = $os_order->get_status( 'edit' );
@@ -1274,6 +1289,12 @@ class WooCommerce {
 				}
 				// Refuse protected meta keys before the order exists, so a refusal leaves nothing behind.
 				\Royal_MCP\MCP\Support\Protected_Meta::assert_order_meta_args( $args['meta_data'] ?? [] );
+				// A new order is unpaid: starting it as paid is refused before the order exists.
+				$co_status = ! empty( $args['status'] ) && is_scalar( $args['status'] ) ? sanitize_text_field( (string) $args['status'] ) : 'pending';
+				$co_unpaid = self::unpaid_order_refusal( null, $co_status, $args );
+				if ( null !== $co_unpaid ) {
+					return $co_unpaid;
+				}
 				$new_order = wc_create_order();
 				if ( is_wp_error( $new_order ) ) {
 					throw new \Exception( 'wc_create_order failed: ' . esc_html( $new_order->get_error_message() ) );
@@ -1400,6 +1421,16 @@ class WooCommerce {
 					throw new \Exception( 'edit_shop_order capability required on this order.' );
 				}
 				\Royal_MCP\MCP\Support\Protected_Meta::assert_order_meta_args( $args['meta_data'] ?? [] );
+				if ( isset( $args['line_items'] ) && ! is_array( $args['line_items'] ) ) {
+					return Envelope::error( 'invalid_args', 'line_items must be a list of objects. Nothing was changed.', [ 'field' => 'line_items' ] );
+				}
+				$uo_items_change = ! empty( $args['line_items'] );
+				// Paid and completed orders are not editable in WooCommerce: their items change only on an explicit request.
+				if ( $uo_items_change && ! $uo_order->is_editable() ) {
+					if ( ! array_key_exists( 'allow_paid_order_edit', $args ) || true !== $args['allow_paid_order_edit'] ) {
+						return Envelope::error( 'order_not_editable', sprintf( 'Order %d is %s, which WooCommerce does not let you edit: its items, totals and tax were charged as they are. Pass allow_paid_order_edit: true only when the customer agreed to the change; it has no undo and refunds or extra charges are made in WooCommerce. Nothing was changed.', $uo_order_id, sanitize_key( (string) $uo_order->get_status() ) ), [ 'order_id' => $uo_order_id, 'status' => $uo_order->get_status() ] );
+					}
+				}
 				// Every line item id must belong to this order. Validated up front so a refusal writes nothing.
 				if ( ! empty( $args['line_items'] ) && is_array( $args['line_items'] ) ) {
 					foreach ( $args['line_items'] as $uo_check_item ) {
@@ -1433,10 +1464,10 @@ class WooCommerce {
 				// is lost). Same precedent as the 1MB-cap → no-undo path.
 				$uo_untrackable_reasons = [];
 				if ( ! empty( $args['meta_data'] ) && is_array( $args['meta_data'] ) ) {
-					$uo_untrackable_reasons[] = 'meta_data writes are one-way (undo would require per-key prior-value snapshots not yet implemented for this tool)';
+					$uo_untrackable_reasons[] = 'meta_data changes have no undo';
 				}
 				if ( ! empty( $args['line_items'] ) && is_array( $args['line_items'] ) ) {
-					$uo_untrackable_reasons[] = 'line_items writes are one-way (added items get new IDs on undo re-add; removed items lose their original line_item_id + tax context)';
+					$uo_untrackable_reasons[] = 'line_items changes have no undo: put items back with another wc_update_order call';
 				}
 
 				// Snapshot BEFORE for reversible fields, only when the caller
@@ -1479,6 +1510,10 @@ class WooCommerce {
 					$uo_allowed    = self::ORDER_STATUS_TARGETS;
 					if ( ! in_array( $uo_new_status, $uo_allowed, true ) ) {
 						return Envelope::error( 'invalid_args', sprintf( 'Invalid order status "%s". Allowed: %s. Refunds are made in WooCommerce so the payment gateway is refunded.', $uo_new_status, implode( ', ', $uo_allowed ) ), [ 'received' => $uo_new_status, 'allowed' => $uo_allowed ] );
+					}
+					$uo_unpaid = self::unpaid_order_refusal( $uo_order, $uo_new_status, $args );
+					if ( null !== $uo_unpaid ) {
+						return $uo_unpaid;
 					}
 					$uo_requested['status'] = $uo_new_status;
 					$uo_before['status']    = $uo_order->get_status( 'edit' );
@@ -1541,6 +1576,14 @@ class WooCommerce {
 						}
 					}
 				}
+				// Stock follows item changes only where the order screen moves it: orders that are processing,
+				// completed or on hold, whose stock was already taken. A pending order's stock is taken at payment.
+				$uo_stock_status = in_array( (string) $uo_order->get_status( 'edit' ), [ 'processing', 'completed', 'on-hold' ], true );
+				if ( $uo_items_change && $uo_stock_status && ! function_exists( 'wc_maybe_adjust_line_item_product_stock' ) && defined( 'WC_ABSPATH' ) && is_readable( WC_ABSPATH . 'includes/admin/wc-admin-functions.php' ) ) {
+					require_once WC_ABSPATH . 'includes/admin/wc-admin-functions.php';
+				}
+				$uo_adjust_stock = $uo_stock_status && function_exists( 'wc_maybe_adjust_line_item_product_stock' );
+				$uo_stock_items  = [];
 				if ( ! empty( $args['line_items'] ) && is_array( $args['line_items'] ) ) {
 					foreach ( $args['line_items'] as $item ) {
 						$item_id      = isset( $item['id'] ) ? (int) $item['id'] : 0;
@@ -1549,12 +1592,17 @@ class WooCommerce {
 						$has_quantity = isset( $item['quantity'] );
 						$quantity     = $has_quantity ? (int) $item['quantity'] : 1;
 						if ( $item_id > 0 && $has_quantity && $quantity === 0 ) {
+							$removed = $uo_order->get_item( $item_id );
+							if ( $removed && $uo_adjust_stock ) {
+								wc_maybe_adjust_line_item_product_stock( $removed, 0 );
+							}
 							$uo_order->remove_item( $item_id );
 							continue;
 						}
 						if ( $item_id > 0 ) {
-							// Without a quantity the line keeps the one it has.
-							$existing = $uo_order->get_item( $item_id );
+							// Without a quantity the line keeps the one it has. The order's own copy of the line is
+							// changed, so it is saved with the order and not on its own.
+							$existing = $uo_order->get_item( $item_id, false );
 							if ( $existing && $has_quantity ) {
 								// The line's amounts follow the quantity, at the price the line already has.
 								$old_quantity = (int) $existing->get_quantity();
@@ -1564,7 +1612,7 @@ class WooCommerce {
 									$existing->set_total( (float) $existing->get_total() / $old_quantity * $new_quantity );
 								}
 								$existing->set_quantity( $new_quantity );
-								$existing->save();
+								$uo_stock_items[] = $item_id;
 							}
 							continue;
 						}
@@ -1578,14 +1626,29 @@ class WooCommerce {
 						if ( $variation_id > 0 && (int) $product->get_parent_id() !== $product_id ) {
 							throw new \Exception( 'variation_id ' . esc_html( (string) $variation_id ) . ' does not belong to product_id ' . esc_html( (string) $product_id ) . '.' );
 						}
-						$uo_order->add_product( $product, max( 1, $quantity ) );
+						$new_item_id = (int) $uo_order->add_product( $product, max( 1, $quantity ) );
+						if ( $new_item_id > 0 ) {
+							$uo_stock_items[] = $new_item_id;
+						}
 					}
 				}
 				if ( array_key_exists( 'status', $uo_requested ) ) {
 					$uo_order->set_status( $uo_requested['status'] );
 				}
-				$uo_order->calculate_totals();
+				// Tax and totals are worked out again only when the items change; an address, note or status edit leaves the charged amounts as they are.
+				if ( $uo_items_change ) {
+					$uo_order->calculate_totals();
+				}
 				$uo_order->save();
+				$uo_stock_changes = 0;
+				if ( $uo_adjust_stock ) {
+					foreach ( array_unique( $uo_stock_items ) as $stock_item_id ) {
+						$stock_item = $uo_order->get_item( $stock_item_id );
+						if ( $stock_item && false !== wc_maybe_adjust_line_item_product_stock( $stock_item ) ) {
+							$uo_stock_changes++;
+						}
+					}
+				}
 
 				// Re-read AFTER for the reversible fields.
 				$uo_fresh   = wc_get_order( $uo_order_id );
@@ -1635,6 +1698,8 @@ class WooCommerce {
 						'updated'  => true,
 						'total'    => $uo_fresh->get_total(),
 						'status'   => $uo_fresh->get_status(),
+						'totals_recalculated' => $uo_items_change,
+						'stock_adjusted_items' => $uo_stock_changes,
 					],
 					\Royal_MCP\MCP\Support\WriteVerifier::response_partial( $uo_diff )
 				);
@@ -1650,8 +1715,8 @@ class WooCommerce {
 					$uo_order_id,
 					count( $uo_diff['applied'] ) + count( $uo_diff['silent_modifies'] ),
 					! empty( $uo_diff['silent_modifies'] ) ? ', WP modified value' : '',
-					! empty( $uo_untrackable_reasons ) ? sprintf( ', %d untrackable path(s) — undo disabled', count( $uo_untrackable_reasons ) ) : '',
-					$uo_undo_envelope !== null ? ', undo available' : ' (no undo)'
+					! empty( $uo_untrackable_reasons ) ? ', items or meta changed' : '',
+					$uo_undo_envelope !== null ? ', undo available' : '; no undo'
 				);
 				return \Royal_MCP\MCP\Support\Envelope::success(
 					$uo_summary,
@@ -2374,6 +2439,20 @@ class WooCommerce {
 				// Execute — same logic as before, restructured for envelope wrap.
 				$spa_new_attrs = [];
 				$spa_auto_pos  = 0;
+				if ( $args['attributes'] && array_keys( $args['attributes'] ) !== range( 0, count( $args['attributes'] ) - 1 ) ) {
+					return Envelope::error( 'invalid_args', 'attributes must be a list of attribute objects. Nothing was changed.' );
+				}
+				// The call replaces the whole attribute set, so every entry is checked before anything is built.
+				foreach ( $args['attributes'] as $spa_i => $attr_data ) {
+					$spa_opts = is_array( $attr_data ) ? ( $attr_data['options'] ?? [] ) : null;
+					$spa_bad  = ! is_array( $attr_data ) || ! is_array( $spa_opts ) || array_filter( $spa_opts, static function ( $o ) { return ! is_scalar( $o ) || '' === trim( (string) $o ); } );
+					if ( ! $spa_bad && intval( $attr_data['id'] ?? 0 ) <= 0 ) {
+						$spa_bad = ! isset( $attr_data['name'] ) || ! is_string( $attr_data['name'] ) || '' === trim( sanitize_text_field( $attr_data['name'] ) );
+					}
+					if ( $spa_bad ) {
+						return Envelope::error( 'invalid_args', sprintf( 'attributes[%d] is not usable: each entry is an object with id (a global attribute) or a name (a custom attribute), and options as a list of non-empty texts. Nothing was changed.', (int) $spa_i ) );
+					}
+				}
 				foreach ( $args['attributes'] as $attr_data ) {
 					$attribute = new \WC_Product_Attribute();
 					$attr_id   = intval( $attr_data['id'] ?? 0 );
@@ -2388,15 +2467,21 @@ class WooCommerce {
 						}
 						$taxonomy = $global_attr->slug;
 						$attribute->set_name( $taxonomy );
-						$term_ids = [];
+						$term_ids  = [];
+						$unmatched = [];
 						foreach ( $attr_data['options'] ?? [] as $option ) {
-							$term = get_term_by( 'slug', sanitize_title( $option ), $taxonomy );
+							$term = get_term_by( 'slug', sanitize_title( (string) $option ), $taxonomy );
 							if ( ! $term ) {
-								$term = get_term_by( 'name', sanitize_text_field( $option ), $taxonomy );
+								$term = get_term_by( 'name', sanitize_text_field( (string) $option ), $taxonomy );
 							}
 							if ( $term ) {
 								$term_ids[] = $term->term_id;
+							} else {
+								$unmatched[] = mb_substr( sanitize_text_field( (string) $option ), 0, 100 );
 							}
+						}
+						if ( $unmatched ) {
+							return Envelope::error( 'unknown_terms', sprintf( 'Attribute %s has no term for: %s. Check the names with wc_get_attribute_terms, add missing terms in WooCommerce, or leave them out. Nothing was changed.', $taxonomy, implode( ', ', array_slice( $unmatched, 0, 20 ) ) ), [ 'attribute_id' => $attr_id, 'unmatched_options' => array_slice( $unmatched, 0, 20 ) ] );
 						}
 						$attribute->set_options( $term_ids );
 					} else {
@@ -2533,6 +2618,14 @@ class WooCommerce {
 				if ( $cc_existing ) {
 					return Envelope::error( 'conflict', sprintf( 'A coupon with code "%s" already exists (id %d).', $cc_code, $cc_existing ), [ 'code' => $cc_code, 'existing_id' => (int) $cc_existing ] );
 				}
+				$cc_gate = self::coupon_confirm_gate(
+					'wc_create_coupon',
+					$args,
+					self::coupon_liability( (string) ( $args['discount_type'] ?? 'fixed_cart' ), is_scalar( $args['amount'] ?? null ) ? (string) $args['amount'] : '0', ! empty( $args['free_shipping'] ), (int) ( $args['usage_limit'] ?? 0 ) )
+				);
+				if ( null !== $cc_gate ) {
+					return $cc_gate;
+				}
 				$cc_coupon = new \WC_Coupon();
 				$cc_coupon->set_code( $cc_code );
 				$cc_coupon->set_discount_type( 'fixed_cart' ); // explicit default; WC default matches but we make it clear
@@ -2622,6 +2715,22 @@ class WooCommerce {
 
 				if ( empty( $uc_requested ) ) {
 					throw new \Exception( 'No update fields provided.' );
+				}
+				// Only a change to what the coupon gives away needs the round trip, judged on the coupon as it will be.
+				if ( array_intersect( array_keys( $uc_requested ), [ 'discount_type', 'amount', 'free_shipping', 'usage_limit' ] ) ) {
+					$uc_gate = self::coupon_confirm_gate(
+						'wc_update_coupon',
+						$args,
+						self::coupon_liability(
+							(string) ( $uc_requested['discount_type'] ?? $uc_coupon->get_discount_type( 'edit' ) ),
+							(string) ( $uc_requested['amount'] ?? $uc_coupon->get_amount( 'edit' ) ),
+							(bool) ( $uc_requested['free_shipping'] ?? $uc_coupon->get_free_shipping( 'edit' ) ),
+							(int) ( $uc_requested['usage_limit'] ?? $uc_coupon->get_usage_limit( 'edit' ) )
+						)
+					);
+					if ( null !== $uc_gate ) {
+						return $uc_gate;
+					}
 				}
 
 				// Uniqueness pre-check for code (matches legacy handler).
@@ -3358,6 +3467,135 @@ class WooCommerce {
 		return null;
 	}
 
+	/** Statuses that treat an order as paid: stock is reduced and the order is fulfilled. */
+	const PAID_TARGET_STATUSES = [ 'processing', 'completed' ];
+
+	/**
+	 * Refuse moving an unpaid order (or creating one) straight into a paid status unless the
+	 * caller passed allow_unpaid as the boolean true.
+	 *
+	 * @param \WC_Order|null $order      Order, or null for an order being created.
+	 * @param string         $new_status Requested status.
+	 * @param array          $args       Tool arguments.
+	 * @return array|null Error envelope.
+	 */
+	public static function unpaid_order_refusal( $order, $new_status, array $args ) {
+		if ( ! in_array( (string) $new_status, self::PAID_TARGET_STATUSES, true ) ) {
+			return null;
+		}
+		if ( $order instanceof \WC_Order && ( $order->is_paid() || $order->get_date_paid( 'edit' ) ) ) {
+			return null;
+		}
+		if ( array_key_exists( 'allow_unpaid', $args ) && true === $args['allow_unpaid'] ) {
+			return null;
+		}
+		$which = $order instanceof \WC_Order ? sprintf( 'Order %d has not been paid', (int) $order->get_id() ) : 'A new order has not been paid';
+		return Envelope::error( 'order_unpaid', sprintf( '%s. Setting it to %s treats it as paid: stock is reduced and it is fulfilled. Pass allow_unpaid: true only when payment was taken another way. Nothing was changed.', $which, $new_status ), [ 'status' => (string) $new_status, 'field' => 'allow_unpaid' ] );
+	}
+
+	/**
+	 * Refuse a product price of 0, or a cut of more than 90% from the current regular price,
+	 * unless the caller passed allow_large_drop as the boolean true.
+	 *
+	 * @param \WC_Product $product Product.
+	 * @param array       $args    Tool arguments.
+	 * @return array|null Error envelope.
+	 */
+	public static function large_price_drop_refusal( $product, array $args ) {
+		if ( array_key_exists( 'allow_large_drop', $args ) && true === $args['allow_large_drop'] ) {
+			return null;
+		}
+		$old_regular = (float) $product->get_regular_price( 'edit' );
+		$new_regular = isset( $args['regular_price'] ) ? self::clean_price( $args['regular_price'] ) : null;
+		$base        = ( null !== $new_regular && '' !== $new_regular ) ? (float) $new_regular : $old_regular;
+		$checks      = [];
+		if ( null !== $new_regular && '' !== $new_regular ) {
+			$checks['regular_price'] = [ (float) $new_regular, $old_regular ];
+		}
+		$new_sale = isset( $args['sale_price'] ) ? self::clean_price( $args['sale_price'] ) : null;
+		if ( null !== $new_sale && '' !== $new_sale ) {
+			$checks['sale_price'] = [ (float) $new_sale, $base ];
+		}
+		foreach ( $checks as $field => $pair ) {
+			list( $new, $ref ) = $pair;
+			if ( $new <= 0 || ( $ref > 0 && $new < $ref * 0.1 ) ) {
+				return Envelope::error( 'large_price_drop', sprintf( '%s %s is %s the regular price (%s). Pass allow_large_drop: true only when the user confirmed this price. Nothing was changed.', $field, wc_format_decimal( $new ), $new <= 0 ? 'zero, far below' : 'more than 90% below', wc_format_decimal( $ref ) ), [ 'field' => $field, 'price' => (string) wc_format_decimal( $new ), 'regular_price' => (string) wc_format_decimal( $ref ) ] );
+			}
+		}
+		return null;
+	}
+
+	/** Seconds a coupon confirm token stays valid. */
+	const COUPON_CONFIRM_TTL = 600;
+
+	/**
+	 * Why a coupon's settings carry a high liability: at least 90% off, a fixed discount of 500
+	 * or more, free shipping, or 50% or more off with unlimited or 1,000+ uses. Empty when none.
+	 *
+	 * @return string[]
+	 */
+	public static function coupon_liability( $type, $amount, $free_shipping, $usage_limit ) {
+		$amount  = (float) $amount;
+		$limit   = (int) $usage_limit;
+		$reasons = [];
+		if ( 'percent' === $type && $amount >= 90 ) {
+			$reasons[] = 'at least 90% off';
+		}
+		if ( in_array( $type, [ 'fixed_cart', 'fixed_product' ], true ) && $amount >= 500 ) {
+			$reasons[] = 'a fixed discount of 500 or more';
+		}
+		if ( $free_shipping ) {
+			$reasons[] = 'free shipping';
+		}
+		if ( 'percent' === $type && $amount >= 50 && ( $limit <= 0 || $limit >= 1000 ) ) {
+			$reasons[] = '50% or more off with ' . ( $limit <= 0 ? 'unlimited uses' : 'at least 1,000 uses' );
+		}
+		return $reasons;
+	}
+
+	/** Arguments in one canonical order, without the token itself. */
+	private static function confirm_canonical( $value ) {
+		if ( ! is_array( $value ) ) {
+			return $value;
+		}
+		unset( $value['confirm_token'] );
+		if ( array_keys( $value ) !== range( 0, count( $value ) - 1 ) ) {
+			ksort( $value );
+		}
+		return array_map( [ __CLASS__, 'confirm_canonical' ], $value );
+	}
+
+	/** The confirm token for these exact arguments, this tool and this user. */
+	public static function coupon_confirm_token( $tool, array $args ) {
+		return hash_hmac( 'sha256', (string) $tool . '|' . (int) get_current_user_id() . '|' . wp_json_encode( self::confirm_canonical( $args ) ), wp_salt( 'auth' ) );
+	}
+
+	/**
+	 * A high-liability coupon write needs a round trip: the first call returns a token for the
+	 * exact arguments and changes nothing; the same arguments with that token, within the time
+	 * limit and once, go ahead.
+	 *
+	 * @return array|null Error envelope, or null to go ahead.
+	 */
+	private static function coupon_confirm_gate( $tool, array $args, array $reasons ) {
+		if ( ! $reasons ) {
+			return null;
+		}
+		$want = self::coupon_confirm_token( $tool, $args );
+		$key  = 'royal_mcp_wc_confirm_' . md5( $want );
+		$sent = isset( $args['confirm_token'] ) && is_string( $args['confirm_token'] ) ? $args['confirm_token'] : '';
+		if ( '' !== $sent && hash_equals( $want, $sent ) && false !== get_transient( $key ) ) {
+			delete_transient( $key );
+			return null;
+		}
+		set_transient( $key, 1, self::COUPON_CONFIRM_TTL ); // audit:transient-ttl-only -- one confirm round trip
+		return Envelope::error(
+			'confirm_required',
+			sprintf( 'This coupon carries a high liability (%s). Show the user exactly what it does, then call again with the same arguments plus confirm_token within %d minutes. Nothing was changed.', implode( '; ', $reasons ), (int) ( self::COUPON_CONFIRM_TTL / 60 ) ),
+			[ 'confirm_token' => $want, 'reasons' => $reasons, 'expires_in' => self::COUPON_CONFIRM_TTL ]
+		);
+	}
+
 	/**
 	 * Return the order's current billing or shipping address as an associative array —
 	 * used by wc_update_order to merge partial address updates with existing values.
@@ -3504,18 +3742,47 @@ class WooCommerce {
 		];
 		$after = gmdate( 'Y-m-d', strtotime( $periods[ $period ] ?? $periods['month'] ) );
 
-		$orders = wc_get_orders( [
-			'limit'      => -1,
-			'status'     => [ 'completed', 'processing' ],
-			'type'       => 'shop_order',
-			'date_after' => $after,
-			'return'     => 'objects',
-		] );
-
+		// Orders are read in batches, so a large store does not hold every order in memory at once.
 		$revenue     = 0;
-		$order_count = count( $orders );
-		foreach ( $orders as $order ) {
-			$revenue += (float) $order->get_total();
+		$order_count = 0;
+		$batch       = 500;
+		$max_batches = 400;
+		$partial     = false;
+		$started     = microtime( true );
+		$time_limit  = (int) apply_filters( 'royal_mcp_store_stats_seconds', 20 );
+		global $wpdb;
+		$hpos = class_exists( '\Automattic\WooCommerce\Utilities\OrderUtil' ) && \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled();
+		for ( $page = 1; ; $page++ ) {
+			if ( $page > $max_batches || ( microtime( true ) - $started ) > $time_limit ) {
+				$partial = true;
+				break;
+			}
+			// Ids only; the totals come from one query per batch, not from loading each order.
+			$ids = array_map( 'intval', (array) wc_get_orders( [
+				'limit'      => $batch,
+				'page'       => $page,
+				'orderby'    => 'ID',
+				'order'      => 'ASC',
+				'status'     => [ 'completed', 'processing' ],
+				'type'       => 'shop_order',
+				'date_after' => $after,
+				'return'     => 'ids',
+			] ) );
+			if ( $ids ) {
+				$in = implode( ',', $ids );
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- integer ids only
+				$totals = $hpos ? $wpdb->get_col( "SELECT total_amount FROM {$wpdb->prefix}wc_orders WHERE id IN ({$in})" ) : $wpdb->get_col( "SELECT meta_value FROM {$wpdb->postmeta} WHERE meta_key = '_order_total' AND post_id IN ({$in})" );
+				foreach ( (array) $totals as $total ) {
+					$revenue += (float) $total;
+				}
+				$order_count += count( $ids );
+			}
+			if ( function_exists( 'wp_cache_flush_runtime' ) ) {
+				wp_cache_flush_runtime();
+			}
+			if ( count( $ids ) < $batch ) {
+				break;
+			}
 		}
 
 		$product_count = wp_count_posts( 'product' );
@@ -3527,7 +3794,7 @@ class WooCommerce {
 			'average_order'  => $order_count > 0 ? round( $revenue / $order_count, 2 ) : 0,
 			'total_products' => (int) $product_count->publish,
 			'currency'       => get_woocommerce_currency(),
-		];
+		] + ( $partial ? [ 'partial' => true, 'note' => sprintf( 'Only the first %d orders of the period were added up, to stay within the time limit.', $order_count ) ] : [] );
 	}
 
 	private static function format_variation( $variation ) {

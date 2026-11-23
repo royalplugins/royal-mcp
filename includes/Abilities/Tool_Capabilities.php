@@ -263,6 +263,11 @@ class Tool_Capabilities {
 		if ( strpos( $tool_name, 'rsssl_' ) === 0 ) return 'manage_options';
 		if ( strpos( $tool_name, 'wpo_' ) === 0 ) return 'edit_posts';
 		if ( strpos( $tool_name, 'wpmailsmtp_' ) === 0 ) return 'manage_options';
+		// JetEngine field values on a post: anyone who can edit posts (each call checks that post); everything else is configuration.
+		if ( 'jetengine_get_post_fields' === $tool_name || 'jetengine_update_post_fields' === $tool_name ) return 'edit_posts';
+		if ( strpos( $tool_name, 'jetengine_' ) === 0 ) return 'manage_options';
+		if ( strpos( $tool_name, 'fluentsmtp_' ) === 0 ) return 'manage_options';
+		if ( strpos( $tool_name, 'mc4wp_' ) === 0 ) return 'manage_options';
 		if ( strpos( $tool_name, 'akismet_' ) === 0 ) return 'moderate_comments';
 		if ( strpos( $tool_name, 'snippets_' ) === 0 ) {
 			if ( function_exists( '\Code_Snippets\code_snippets' ) ) {

@@ -91,7 +91,7 @@ class ContactForm7 {
 		$limit   = min( max( intval( $args['limit']  ?? 50 ), 1 ), 200 );
 		$offset  = max( intval( $args['offset'] ?? 0 ), 0 );
 		$orderby = in_array( $args['orderby'] ?? 'ID', [ 'ID', 'title', 'date' ], true ) ? ( $args['orderby'] ?? 'ID' ) : 'ID';
-		$order   = strtoupper( $args['order'] ?? 'ASC' ) === 'DESC' ? 'DESC' : 'ASC';
+		$order   = ( isset( $args['order'] ) && is_string( $args['order'] ) && 'DESC' === strtoupper( $args['order'] ) ) ? 'DESC' : 'ASC';
 
 		$forms = \WPCF7_ContactForm::find( [
 			'posts_per_page' => $limit,

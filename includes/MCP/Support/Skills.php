@@ -111,15 +111,19 @@ class Skills {
 			ob_end_clean();
 		}
 		$out  = $empty;
+		// Skill files may be saved with Windows line endings; the texts always use plain newlines.
+		$lf = static function ( $s ) {
+			return str_replace( [ "\r\n", "\r" ], "\n", (string) $s );
+		};
 		if ( is_array( $data ) && isset( $data['core'] ) && is_string( $data['core'] ) ) {
-			$out['core']    = $data['core'];
+			$out['core']    = $lf( $data['core'] );
 			$out['version'] = isset( $data['version'] ) && is_string( $data['version'] ) ? $data['version'] : '';
 			foreach ( isset( $data['sections'] ) && is_array( $data['sections'] ) ? $data['sections'] : [] as $slug => $section ) {
 				if ( is_array( $section ) && isset( $section['text'] ) && is_string( $section['text'] ) && '' !== $section['text'] ) {
 					$out['sections'][ (string) $slug ] = [
-						'title'   => isset( $section['title'] ) && is_string( $section['title'] ) ? $section['title'] : (string) $slug,
-						'summary' => isset( $section['summary'] ) && is_string( $section['summary'] ) ? $section['summary'] : '',
-						'text'    => $section['text'],
+						'title'   => $lf( isset( $section['title'] ) && is_string( $section['title'] ) ? $section['title'] : (string) $slug ),
+						'summary' => $lf( isset( $section['summary'] ) && is_string( $section['summary'] ) ? $section['summary'] : '' ),
+						'text'    => $lf( $section['text'] ),
 					];
 				}
 			}

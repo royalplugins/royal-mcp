@@ -141,14 +141,14 @@ class RoyalLinks {
 				if ( ! empty( $args['redirect_type'] ) ) {
 					$create_args['redirect_type'] = sanitize_text_field( $args['redirect_type'] );
 				}
-				if ( isset( $args['nofollow'] ) ) {
-					$create_args['nofollow'] = (bool) $args['nofollow'];
-				}
-				if ( isset( $args['sponsored'] ) ) {
-					$create_args['sponsored'] = (bool) $args['sponsored'];
-				}
-				if ( isset( $args['new_tab'] ) ) {
-					$create_args['new_tab'] = (bool) $args['new_tab'];
+				foreach ( [ 'nofollow', 'sponsored', 'new_tab' ] as $flag ) {
+					if ( isset( $args[ $flag ] ) ) {
+						$on = filter_var( $args[ $flag ], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE );
+						if ( null === $on ) {
+							throw new \Exception( esc_html( $flag ) . ' must be true or false.' );
+						}
+						$create_args[ $flag ] = $on;
+					}
 				}
 				$result = \Royal_Links_Post_Type::create_link( $create_args );
 				if ( is_wp_error( $result ) ) {

@@ -763,7 +763,7 @@ class Core {
 			'connection'    => array(
 				'type'       => 'object',
 				'properties' => array(
-					'type'      => array( 'type' => 'string', 'enum' => array( 'oauth-client', 'api-key', 'other-mcp-server', 'browser-agent', 'none', 'unknown' ) ),
+					'type'      => array( 'type' => 'string', 'enum' => array( 'oauth-client', 'api-key', 'local-cli', 'other-mcp-server', 'browser-agent', 'none', 'unknown' ) ),
 					'label'     => array( 'type' => 'string' ),
 					'client_id' => array( 'type' => 'string' ),
 				),
