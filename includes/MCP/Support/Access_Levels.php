@@ -37,6 +37,30 @@ class Access_Levels {
 		return in_array( $level, self::LEVELS, true ) ? $level : '';
 	}
 
+	/** How a connection's refusal wording starts while Royally manages the site. */
+	const ROYALLY_WHO = 'This site is managed by Royally';
+
+	/**
+	 * Refusal text for a write from a read-only connection, as Royal MCP Pro words it. $who names
+	 * the connection ("The API key connection is"); wording that starts with ROYALLY_WHO means
+	 * Royally manages the site, and ROYALLY_WHO . ', and ' followed by the connection's own
+	 * wording means the connection is read-only on its own as well, so both reasons are named.
+	 *
+	 * @param string $who Connection wording.
+	 * @return string
+	 */
+	public static function read_only_refusal( $who ) {
+		$who  = (string) $who;
+		$both = self::ROYALLY_WHO . ', and ';
+		if ( 0 === strpos( $who, $both ) && strlen( $who ) > strlen( $both ) ) {
+			return ucfirst( substr( $who, strlen( $both ) ) ) . ' limited to read-only access in Royal MCP Pro, and this site is managed by Royally, which limits connections to read-only: tools that change the site are switched off for it. To allow changes from this connection, an administrator has to change its access level in Royal MCP Pro and turn off Managed by Royally on the Royal MCP Pro → Safety → Royally page, or make the change through Royally.';
+		}
+		$how = 0 === strpos( $who, self::ROYALLY_WHO )
+			? ' To allow changes from this connection, turn off Managed by Royally on the Royal MCP Pro → Safety → Royally page, or make the change through Royally.'
+			: ' An administrator can change the access level of this connection in Royal MCP Pro.';
+		return $who . ' limited to read-only access in Royal MCP Pro: tools that change the site are switched off for it.' . $how;
+	}
+
 	/** Display label for a level. */
 	public static function label( $level ) {
 		$labels = [
