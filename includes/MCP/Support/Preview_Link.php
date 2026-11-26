@@ -67,6 +67,8 @@ class Preview_Link {
 	 * @param int   $user_id     User who made the link; it works while they can edit the post.
 	 * @param int   $ttl_seconds Transient lifetime in seconds.
 	 * @param array $binding     Connection that made the link: auth (api-key, oauth-bearer, ...) and client_id.
+	 *                           An Application Password that signed in the request is bound as well.
+	 *                           An Application Password that signed in the request is bound as well.
 	 * @return string Random token (32 chars, alphanumeric).
 	 */
 	public static function create( $post_id, $user_id, $ttl_seconds, array $binding = [] ) {
@@ -82,6 +84,11 @@ class Preview_Link {
 			$data['client_id'] = isset( $binding['client_id'] ) ? (string) $binding['client_id'] : '';
 		} elseif ( 'api-key' === $auth ) {
 			$data['key_fp'] = self::api_key_fingerprint();
+		}
+		// A link made through an Application Password ends when that password is deleted or blocked.
+		$app_password = App_Password_Connections::current_uuid();
+		if ( '' !== $app_password ) {
+			$data['app_password'] = $app_password;
 		}
 		set_transient( self::key( $token ), $data, (int) $ttl_seconds ); // audit:transient-ttl-only -- a token lives until it expires; revoke_all() ends it early
 		return $token;
@@ -148,6 +155,9 @@ class Preview_Link {
 
 	/** Whether the connection that made a link can still use the site. */
 	private static function binding_is_live( array $data ) {
+		if ( isset( $data['app_password'] ) && ! self::app_password_is_live( (int) $data['user_id'], (string) $data['app_password'] ) ) {
+			return false;
+		}
 		$auth = isset( $data['auth'] ) ? (string) $data['auth'] : '';
 		if ( 'oauth-bearer' === $auth ) {
 			$client = isset( $data['client_id'] ) ? (string) $data['client_id'] : '';
@@ -163,6 +173,14 @@ class Preview_Link {
 			return class_exists( '\Royal_MCP\MCP\Support\Route_Roles' ) && Route_Roles::is_site_user( $uid ) && Route_Roles::connect_allowed( $uid );
 		}
 		return true;
+	}
+
+	/** Whether the user still has this Application Password and it is not blocked from Royal MCP. */
+	private static function app_password_is_live( $user_id, $uuid ) {
+		if ( '' === $uuid || ! class_exists( '\WP_Application_Passwords' ) || ! \WP_Application_Passwords::get_user_application_password( (int) $user_id, $uuid ) ) {
+			return false;
+		}
+		return ! App_Password_Connections::is_blocked( (int) $user_id, $uuid );
 	}
 
 	/**

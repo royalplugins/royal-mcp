@@ -362,7 +362,7 @@ class MC4WP {
 		}
 		$had_meta          = metadata_exists( 'post', $form_id, '_mc4wp_settings' );
 		$settings['lists'] = $want;
-		update_post_meta( $form_id, '_mc4wp_settings', $settings );
+		update_post_meta( $form_id, '_mc4wp_settings', wp_slash( $settings ) );
 		$after = array_values( array_map( 'strval', self::form_settings( $form_id )['lists'] ) );
 		if ( $after !== $want ) {
 			throw new Tool_Refusal( 'not_saved', sprintf( 'The audiences of form %d did not save. Nothing was changed.', (int) $form_id ) );
@@ -411,7 +411,7 @@ class MC4WP {
 			delete_post_meta( $form_id, '_mc4wp_settings' );
 		} else {
 			$settings['lists'] = $prior;
-			update_post_meta( $form_id, '_mc4wp_settings', $settings );
+			update_post_meta( $form_id, '_mc4wp_settings', wp_slash( $settings ) );
 		}
 		do_action( 'mc4wp_save_form', $form_id );
 		return Envelope::success( sprintf( 'Restored the audiences of Mailchimp for WP form %d.', $form_id ), [ 'undone' => true, 'op' => 'mc4wp_update_form_lists', 'target' => [ 'form_id' => $form_id ], 'restored' => true, 'list_ids' => $prior ] );

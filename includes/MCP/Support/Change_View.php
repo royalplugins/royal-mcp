@@ -272,9 +272,12 @@ class Change_View {
 			return [ 'type' => 'browser-agent', 'label' => __( 'Browser agent (signed-in WordPress session)', 'royal-mcp' ) ];
 		}
 		if ( 'oauth-bearer' === $auth ) {
-			$client_id = (string) ( $via['client_id'] ?? '' );
-			$client    = '' !== $client_id ? \Royal_MCP\OAuth\Token_Store::get_client( $client_id ) : null;
-			$name      = is_array( $client ) && ! empty( $client['client_name'] ) ? (string) $client['client_name'] : $client_id;
+			$client_id = is_scalar( $via['client_id'] ?? '' ) ? (string) ( $via['client_id'] ?? '' ) : '';
+			// The name the client had when the change was made; a change recorded without one shows the client id.
+			$name = isset( $via['client_name'] ) && is_scalar( $via['client_name'] ) ? self::clean_label( $via['client_name'] ) : '';
+			if ( '' === $name ) {
+				$name = self::clean_label( $client_id, 120 );
+			}
 			return [ 'type' => 'oauth-client', 'label' => '' !== $name ? $name : __( 'OAuth client', 'royal-mcp' ), 'client_id' => $client_id ];
 		}
 		if ( 'api-key' === $auth ) {
@@ -394,8 +397,8 @@ class Change_View {
 			'change_id'     => (string) ( $change['change_id'] ?? '' ),
 			'time'          => gmdate( 'c', (int) ( $change['created_at'] ?? 0 ) ),
 			'tool'          => self::tool_name( $change ),
-			'target_label'  => self::target_label( (array) ( $change['target'] ?? [] ) ),
-			'undo_summary'  => (string) ( $change['summary'] ?? '' ),
+			'target_label'  => self::target_label( (array) ( $change['target'] ?? [] ), isset( $change['labels'] ) && is_array( $change['labels'] ) ? $change['labels'] : [] ),
+			'undo_summary'  => self::clean_label( (string) ( $change['summary'] ?? '' ), self::SUMMARY_MAX ),
 			'target'        => (array) ( $change['target'] ?? [] ),
 			'connection'    => self::connection( (array) ( $change['via'] ?? [] ) ),
 			'status'        => $status,
@@ -435,7 +438,7 @@ class Change_View {
 			return $out;
 		}
 		$op       = (string) ( $change['op'] ?? '' );
-		$resolved = self::resolve( $op, (array) ( $change['target'] ?? [] ), (array) ( $change['pre_op_state'] ?? [] ) );
+		$resolved = self::resolve( $op, (array) ( $change['target'] ?? [] ), (array) ( $change['pre_op_state'] ?? [] ), isset( $change['labels'] ) && is_array( $change['labels'] ) ? $change['labels'] : [] );
 
 		$changed_since = false;
 		$fields        = [];
@@ -452,7 +455,7 @@ class Change_View {
 			$item = [ 'field' => (string) $row['field'] ];
 			foreach ( [ 'before', 'after', 'current' ] as $part ) {
 				if ( array_key_exists( $part, $row ) ) {
-					$item[ $part ] = self::clip( $redact( $row[ $part ], $hint ), $truncated );
+					$item[ $part ] = self::clip( self::visible_text( $redact( $row[ $part ], $hint ) ), $truncated );
 					if ( $truncated ) {
 						$item['truncated'] = true;
 					}
@@ -480,8 +483,8 @@ class Change_View {
 
 		$diffs = [];
 		foreach ( $resolved['texts'] as $field => $pair ) {
-			$before  = (string) $redact( (string) $pair[0], $field );
-			$current = (string) $redact( (string) $pair[1], $field );
+			$before  = (string) self::visible_text( (string) $redact( (string) $pair[0], $field ) );
+			$current = (string) self::visible_text( (string) $redact( (string) $pair[1], $field ) );
 			if ( $before === $current ) {
 				continue;
 			}
@@ -522,7 +525,7 @@ class Change_View {
 	 *
 	 * @return array{rows: array, texts: array<string, array{0: string, 1: string}>, note: string}
 	 */
-	private static function resolve( $op, array $t, array $pre ) {
+	private static function resolve( $op, array $t, array $pre, array $labels = [] ) {
 		$rows  = [];
 		$texts = [];
 		$note  = '';
@@ -781,9 +784,12 @@ class Change_View {
 
 			case 'wp_create_comment':
 			case 'wc_add_order_note':
-				$cid     = $int( 'wp_create_comment' === $op ? 'comment_id' : 'note_id' );
+				$ckey    = 'wp_create_comment' === $op ? 'comment_id' : 'note_id';
+				$cid     = $int( $ckey );
 				$comment = get_comment( $cid );
-				$rows[]  = self::created_row( $comment ? sprintf( 'comment %d: %s', $cid, wp_trim_words( (string) $comment->comment_content, 20 ) ) : null );
+				// The text recorded when the comment was made, not what it says now.
+				$ctext   = isset( $labels[ $ckey ] ) ? self::clean_label( $labels[ $ckey ], 160 ) : '';
+				$rows[]  = self::created_row( $comment ? ( '' !== $ctext ? sprintf( 'comment %d: %s', $cid, $ctext ) : sprintf( 'comment %d', $cid ) ) : null );
 				break;
 
 			case 'wc_create_product':
@@ -794,8 +800,10 @@ class Change_View {
 			case 'divi_clone_page':
 				$keys = [ 'wc_create_product' => 'product_id', 'wc_create_variation' => 'variation_id', 'wc_create_coupon' => 'coupon_id', 'divi_clone_page' => 'created_post_id' ];
 				$pid  = isset( $keys[ $op ] ) ? $int( $keys[ $op ] ) : (int) ( $pre['created_post_id'] ?? 0 );
-				$post = $pid > 0 ? get_post( $pid ) : null;
-				$rows[] = self::created_row( $post ? sprintf( '%s %d "%s" (%s)', $post->post_type, $post->ID, $post->post_title, $post->post_status ) : null );
+				$post  = $pid > 0 ? get_post( $pid ) : null;
+				$lkey  = $keys[ $op ] ?? 'created_post_id';
+				$title = isset( $labels[ $lkey ] ) ? self::clean_label( $labels[ $lkey ] ) : '';
+				$rows[] = self::created_row( $post ? ( '' !== $title ? sprintf( '%s %d "%s" (%s)', $post->post_type, $post->ID, $title, $post->post_status ) : sprintf( '%s %d (%s)', $post->post_type, $post->ID, $post->post_status ) ) : null );
 				break;
 
 			case 'wc_create_order':
@@ -805,7 +813,8 @@ class Change_View {
 
 			case 'wc_create_product_attribute':
 				$attr   = function_exists( 'wc_get_attribute' ) ? wc_get_attribute( $int( 'attribute_id' ) ) : null;
-				$rows[] = self::created_row( $attr ? sprintf( 'attribute %d "%s"', $int( 'attribute_id' ), $attr->name ) : null );
+				$aname  = isset( $labels['attribute_id'] ) ? self::clean_label( $labels['attribute_id'] ) : '';
+				$rows[] = self::created_row( $attr ? ( '' !== $aname ? sprintf( 'attribute %d "%s"', $int( 'attribute_id' ), $aname ) : sprintf( 'attribute %d', $int( 'attribute_id' ) ) ) : null );
 				break;
 
 			case 'wp_reorder_menu_items':
@@ -975,19 +984,124 @@ class Change_View {
 		'cct_type' => 'JetEngine content type', 'item_id' => 'item', 'form_id' => 'Mailchimp for WP form',
 	];
 
-	/** Short name of what a change touched, for example: post 12 "Hello", meta key price. */
-	public static function target_label( array $t ) {
+	/** Target keys whose item gets its title recorded when the change is written. */
+	const TITLED_NOUNS = [ 'post', 'product', 'template', 'variation', 'coupon', 'media item' ];
+
+	/** Longest recorded title or name, in characters. */
+	const LABEL_MAX = 80;
+
+	/** Longest undo summary shown, in characters. */
+	const SUMMARY_MAX = 500;
+
+	/**
+	 * A name or title as one short plain line: no tags, no control or direction-override
+	 * characters, single spaces, at most $max characters.
+	 *
+	 * @param mixed $text Text written by a site user or another plugin.
+	 * @param int   $max  Longest result in characters.
+	 */
+	public static function clean_label( $text, $max = self::LABEL_MAX ) {
+		if ( ! is_scalar( $text ) ) {
+			return '';
+		}
+		$text = wp_strip_all_tags( (string) $text );
+		$text = (string) wp_check_invalid_utf8( $text, true );
+		$text = (string) preg_replace( '/[\p{Cc}\p{Cf}\x{2028}\x{2029}\x{115F}\x{1160}\x{3164}\x{FFA0}\x{FE00}-\x{FE0F}\x{E0100}-\x{E01EF}]+/u', ' ', $text );
+		$text = (string) preg_replace( '/(\p{M}{3})\p{M}+/u', '$1', $text );
+		$text = trim( (string) preg_replace( '/\s+/u', ' ', $text ) );
+		$max  = max( 1, (int) $max );
+		if ( function_exists( 'mb_strlen' ) ? mb_strlen( $text, 'UTF-8' ) > $max : strlen( $text ) > $max ) {
+			$text = rtrim( function_exists( 'mb_substr' ) ? mb_substr( $text, 0, $max - 1, 'UTF-8' ) : substr( $text, 0, $max - 1 ) ) . '…';
+		}
+		return $text;
+	}
+
+	/**
+	 * A value read from the site (often what it says now) with control, invisible and
+	 * direction-override characters removed from every string in it; line breaks and tabs
+	 * stay, so text diffs still line up. Markup is kept: it is the value being compared.
+	 *
+	 * @param mixed $value Value from the site.
+	 * @return mixed
+	 */
+	public static function visible_text( $value ) {
+		if ( is_array( $value ) ) {
+			foreach ( $value as $k => $v ) {
+				$value[ $k ] = self::visible_text( $v );
+			}
+			return $value;
+		}
+		if ( ! is_string( $value ) ) {
+			return $value;
+		}
+		$value = (string) wp_check_invalid_utf8( $value, true );
+		return (string) preg_replace( '/(?![\n\t])[\p{Cc}\p{Cf}\x{2028}\x{2029}\x{115F}\x{1160}\x{3164}\x{FFA0}\x{FE00}-\x{FE0F}\x{E0100}-\x{E01EF}]/u', '', $value );
+	}
+
+	/**
+	 * Titles of the items a change touched, as they are when the change is written, so the
+	 * change list keeps showing them however the items are renamed later.
+	 *
+	 * @param array $t   The change's target.
+	 * @param array $pre The change's earlier state.
+	 * @return array<string, string> target key => cleaned title
+	 */
+	public static function labels_at_write( array $t, array $pre = [] ) {
+		$labels = [];
+		foreach ( self::TARGET_NOUNS as $key => $noun ) {
+			if ( ! in_array( $noun, self::TITLED_NOUNS, true ) || ! isset( $t[ $key ] ) || ! is_scalar( $t[ $key ] ) || (int) $t[ $key ] < 1 ) {
+				continue;
+			}
+			$post = get_post( (int) $t[ $key ] );
+			if ( $post && '' !== $post->post_title ) {
+				$labels[ $key ] = self::clean_label( $post->post_title );
+			}
+		}
+		if ( isset( $pre['created_post_id'] ) && is_scalar( $pre['created_post_id'] ) && (int) $pre['created_post_id'] > 0 && ! isset( $labels['created_post_id'] ) ) {
+			$post = get_post( (int) $pre['created_post_id'] );
+			if ( $post && '' !== $post->post_title ) {
+				$labels['created_post_id'] = self::clean_label( $post->post_title );
+			}
+		}
+		foreach ( [ 'comment_id', 'note_id' ] as $key ) {
+			if ( isset( $t[ $key ] ) && is_scalar( $t[ $key ] ) && (int) $t[ $key ] > 0 ) {
+				$comment = get_comment( (int) $t[ $key ] );
+				if ( $comment ) {
+					$labels[ $key ] = self::clean_label( wp_trim_words( (string) $comment->comment_content, 20 ) );
+				}
+			}
+		}
+		if ( isset( $t['attribute_id'] ) && is_scalar( $t['attribute_id'] ) && function_exists( 'wc_get_attribute' ) ) {
+			$attr = wc_get_attribute( (int) $t['attribute_id'] );
+			if ( $attr && isset( $attr->name ) ) {
+				$labels['attribute_id'] = self::clean_label( $attr->name );
+			}
+		}
+		return $labels;
+	}
+
+	/**
+	 * Short name of what a change touched, for example: post 12 "Hello", meta key price.
+	 * Titles are the ones recorded when the change was written; a change recorded without
+	 * them names the item by its id only.
+	 *
+	 * @param array $t      The change's target.
+	 * @param array $labels Titles recorded with the change (labels_at_write()).
+	 */
+	public static function target_label( array $t, array $labels = [] ) {
 		$parts = [];
 		foreach ( self::TARGET_NOUNS as $key => $noun ) {
 			if ( ! isset( $t[ $key ] ) || '' === (string) $t[ $key ] || is_array( $t[ $key ] ) ) {
 				continue;
 			}
-			$part = $noun . ' ' . $t[ $key ];
-			if ( 'post' === $noun || 'product' === $noun || 'template' === $noun ) {
-				$post = get_post( (int) $t[ $key ] );
-				if ( $post && current_user_can( 'read_post', $post->ID ) && '' !== $post->post_title ) {
-					$part .= ' "' . $post->post_title . '"';
-				}
+			$part  = $noun . ' ' . self::clean_label( $t[ $key ], 120 );
+			$title = isset( $labels[ $key ] ) && is_scalar( $labels[ $key ] ) ? self::clean_label( $labels[ $key ] ) : '';
+			// The title shows only to someone who may still read the item.
+			if ( '' !== $title && in_array( $noun, self::TITLED_NOUNS, true ) && get_post( (int) $t[ $key ] ) && ! current_user_can( 'read_post', (int) $t[ $key ] ) ) {
+				$title = '';
+			}
+			if ( '' !== $title ) {
+				$part .= ' "' . $title . '"';
 			}
 			$parts[] = $part;
 		}

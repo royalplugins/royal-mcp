@@ -11,6 +11,16 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 return [
 	'version'  => '1.2.0',
+	'frontmatter' => <<<'ROYAL_MCP_SKILL_TEXT'
+name: divi
+description: Safe ways to work on Divi pages through Royal MCP - clone and retarget a page, apply a Divi Library item, review the library, get ready for the Divi 5 migration, and write Divi 5 content. Covers Divi 4 shortcode pages, Divi 5 block pages and mixed sites.
+compatibility: Royal MCP 2.0 or later, plus the Divi theme or the Divi Builder plugin (4.x or 5.x)
+metadata:
+  author: Royal Plugins
+  version: "1.2.0"
+  last_updated: "2026-11-14"
+ROYAL_MCP_SKILL_TEXT
+	,
 	'core'     => <<<'ROYAL_MCP_SKILL_TEXT'
 # Divi pages with Royal MCP
 
@@ -72,14 +82,14 @@ Do these before the first change.
 The site owner can limit a connection, or the whole site, to read-only or to drafts only. You cannot change this; it is set in Royal MCP's settings in WordPress.
 
 - **Read-only.** Every write is refused, undo included. The refusal says the site is in read-only mode, or that this connection is limited to read-only access. Do the reading part of the job, describe the change you would make, and tell the user that the site owner has to allow writes for this connection before you can make it.
-- **Drafts only.** You can create drafts and change drafts and pending posts. A write to a published page is refused with a message that says to clone it first. Do that: `divi_clone_page` with the default draft status, make the changes on the copy, and tell the user the copy is ready for them to review and publish. Undo works there for content changes on a post that is still a draft (`divi_replace_image`, `divi_import_template`, `wp_update_post`, a restored revision). The undo token of `divi_clone_page` is refused there; to remove a draft copy, use `wp_delete_page`, or `wp_delete_post` when the copy is not a page (both take `id`). Keep the undo tokens from the write replies: `mcp_list_recent_changes` leaves tokens out in this mode.
+- **Drafts only.** You can create drafts and change drafts and pending posts. A write to a published page is refused with a message that says to clone it first. Do that: `divi_clone_page` with the default draft status, make the changes on the copy, and tell the user the copy is ready for them to review and publish. Undo works there for content changes on a post that is still a draft (`divi_replace_text`, `divi_replace_image`, `divi_import_template`, `wp_update_post`, a restored revision). The undo token of `divi_clone_page` is refused there; to remove a draft copy, use `wp_delete_page`, or `wp_delete_post` when the copy is not a page (both take `id`). Keep the undo tokens from the write replies: `mcp_list_recent_changes` leaves tokens out in this mode.
 
 ### Ways back
 
-- **Undo token.** `divi_clone_page`, `divi_replace_image` and `divi_import_template` put a line `Undo token: ...` in the reply text. Pass the token to `mcp_undo_last_operation`. A token works once and lasts 72 hours unless the site owner changed that; the reply states the window. Undo needs the same rights as the write.
+- **Undo token.** `divi_clone_page`, `divi_replace_image`, `divi_import_template` and `divi_replace_text` put a line `Undo token: ...` in the reply text when they write. Pass the token to `mcp_undo_last_operation`. A token works once and lasts 72 hours unless the site owner changed that; the reply states the window. Undo needs the same rights as the write.
 - **Lost the token?** `mcp_list_recent_changes` lists your tracked writes, with their tokens only when your access is `full` and the site is in neither limited mode. `mcp_get_change` shows one change before and after.
-- **Edited since.** Undo of `divi_replace_image` or `divi_import_template` is refused with `edited_since_write` when the page changed after your write. The token stays valid. Tell the user that undoing would also remove the later edits, and pass `force: true` only if they agree.
-- **`divi_replace_text` returns no undo token.** Its way back is the page's revisions: `wp_get_post_revisions` to list them, then `wp_restore_revision` with the revision dated before your write (the newest revision is usually the page as it is now). That restore has its own undo token. This needs revisions to be on for the site. If `wp_get_post_revisions` returns none for a page, clone the page first and tell the user why.
+- **Edited since.** Undo of `divi_replace_image`, `divi_import_template` or `divi_replace_text` is refused with `edited_since_write` when the page changed after your write. The token stays valid. Tell the user that undoing would also remove the later edits, and pass `force: true` only if they agree.
+- **`divi_replace_text` returns an undo token** when it writes. A call that matches nothing writes nothing and returns `written: false`, with no token. The page's revisions (`wp_get_post_revisions`, then `wp_restore_revision`) are a second way back.
 - **Whole site.** Before work that touches many pages, suggest a backup. If a backup plugin's tools are in your list, for example `sv_create_backup` or `updraftplus_trigger_backup`, offer to start one.
 
 ## Workflows
@@ -119,7 +129,7 @@ Write for someone who uses Divi through its visual builder.
 
 4. **What text replace reaches.** Divi 4: text between module tags and common text settings such as titles, button labels, captions and alt text. Divi 5: simple text settings and plain block content only. Most text of a Divi 5 module is kept inside its content and is not searched; when nothing matches, the page is not written and the reply's `note` says the module content was not searched. Counts can also come out high on Divi 5 when the same text sits in two places of one block. On `mixed` pages it is refused with `mixed_format` and nothing is written. Read the page again after a replace.
 
-5. **Text replace leaves dynamic content alone.** `divi_replace_text` never rewrites a dynamic-content value: Divi 4 tokens (`@ET-DC@...@`) and Divi 5 dynamic values (`$variable(...)$`) come back exactly as they were, in body text, in Divi 4 text settings and in Divi 5 content. A dynamic value itself is changed in the builder. The tool has no dry run and no undo token, so read the stored content first (`wp_get_page`) and check the result after the write (`wp_get_post_revisions`, then `wp_diff_revisions`).
+5. **Text replace leaves dynamic content alone.** `divi_replace_text` never rewrites a dynamic-content value: Divi 4 tokens (`@ET-DC@...@`) and Divi 5 dynamic values (`$variable(...)$`) come back exactly as they were, in body text, in Divi 4 text settings and in Divi 5 content. A dynamic value itself is changed in the builder. The tool has no dry run, so read the stored content first (`wp_get_page`) and check the result after the write; keep the undo token it returns.
 
 6. **Refused to protect the page.** `post_write_would_corrupt` means the result of a text or image replace did not have valid Divi 4 structure (balanced module tags, whole dynamic-content tokens), and nothing was written. On Divi 4 and Divi 5 pages alike, a replace value that holds module markup, a block comment or a dynamic-content token is refused with `invalid_args` before anything is written, and so are replacements that together would add or remove one. `content_too_complex` means the page text holds so many unfinished dynamic-content openers that it cannot be searched safely; the change has to be made in the Divi Builder. `source_content_invalid`, `template_content_invalid` and `merged_content_invalid` mean the same for clone and import. Run `divi_validate_layout` on the page or item, report the errors, and do not try to force it.
 
@@ -188,13 +198,13 @@ ROYAL_MCP_SKILL_TEXT
    - When nothing matches, the page is not written and the reply says `written: false`. On a Divi 5 page that does not mean the text is absent: most module text is kept inside the module's content, which this tool does not search. The reply's `note` says so.
    - Dynamic content is never rewritten: Divi 4 tokens (`@ET-DC@...@`) and Divi 5 dynamic values (`$variable(...)$`) come back exactly as they were. A dynamic value itself is changed in the builder.
    - A `mixed` page is refused with `mixed_format` and nothing is written. Tell the user the text is best changed in the Divi Builder. With their go-ahead, use `wp_replace_in_page` (`wp_replace_in_post` when the copy is not a page) with `dry_run: true` first and an exact string.
-   - `divi_replace_text` has no dry run and no undo token, so read the stored content first and check the result after; its way back is `wp_get_post_revisions` then `wp_restore_revision`. `wp_replace_in_page` / `wp_replace_in_post` have both a dry run and an undo token.
-8. For images, upload the new image first if it is not on the site (`wp_upload_media_from_url`), then `divi_replace_image` with `post_id`, `find_url` and `replace_url`. It replaces a setting only when the whole value equals `find_url`, so copy the URL exactly as stored. Images placed inside a text module's body are not covered. On Divi 5 pages only a module's top-level URL settings are compared, so a URL stored deeper is not seen, and a link setting equal to `find_url` is swapped too. `replacements: 0` means nothing was swapped, not that the URL is absent; the page is still saved and an undo token still comes back. Keep the undo token.
+   - `divi_replace_text` has no dry run, so read the stored content first and check the result after; it returns an undo token for `mcp_undo_last_operation`. `wp_replace_in_page` / `wp_replace_in_post` have both a dry run and an undo token.
+8. For images, upload the new image first if it is not on the site (`wp_upload_media_from_url`), then `divi_replace_image` with `post_id`, `find_url` and `replace_url`. It replaces a setting only when the whole value equals `find_url`, so copy the URL exactly as stored. Images placed inside a text module's body are not covered. On Divi 5 pages only a module's top-level URL settings are compared, so a URL stored deeper is not seen, and a link setting equal to `find_url` is swapped too. `replacements: 0` means nothing was swapped, not that the URL is absent; nothing is written (`written: false`) and no undo token comes back. When it does write, keep the undo token.
 9. Change image alt text only after the image itself is swapped. Alt text describes what is in the picture.
 
 **Check**
 
-10. Read the copy again and search for the old strings. To see exactly what a write changed, call `wp_get_post_revisions`, then `wp_diff_revisions` with `post_id` and `from_revision_id` set to the revision saved before that write. On Divi 5 pages `divi_replace_text` reaches only simple text settings; text stored deeper in a module's settings is left as it was. If old strings remain there, tell the user which ones, and offer `wp_replace_in_page` (`wp_replace_in_post` when the copy is not a page; a copy keeps its source's post type) with `dry_run: true` first to count matches in the stored content (literal, case-sensitive, no undo token; the way back is a revision).
+10. Read the copy again and search for the old strings. To see exactly what a write changed, call `wp_get_post_revisions`, then `wp_diff_revisions` with `post_id` and `from_revision_id` set to the revision saved before that write. On Divi 5 pages `divi_replace_text` reaches only simple text settings; text stored deeper in a module's settings is left as it was. If old strings remain there, tell the user which ones, and offer `wp_replace_in_page` (`wp_replace_in_post` when the copy is not a page; a copy keeps its source's post type) with `dry_run: true` first to count matches in the stored content (literal, case-sensitive; a write returns an undo token, and a revision is a second way back).
 11. Leave the copy as a draft. Give the user `edit_url`. Publish only when they say so.
 ROYAL_MCP_SKILL_TEXT
 			,

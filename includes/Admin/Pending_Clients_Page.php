@@ -109,16 +109,7 @@ class Pending_Clients_Page {
                         </tr>
                     </thead>
                     <tbody>
-                    <?php foreach ( $rows as $row ) :
-                        $approve_url = wp_nonce_url(
-                            admin_url( 'admin-post.php?action=' . self::APPROVE_ACTION . '&client_id=' . rawurlencode( $row['client_id'] ) ),
-                            self::APPROVE_NONCE
-                        );
-                        $reject_url = wp_nonce_url(
-                            admin_url( 'admin-post.php?action=' . self::REJECT_ACTION . '&client_id=' . rawurlencode( $row['client_id'] ) ),
-                            self::REJECT_NONCE
-                        );
-                        ?>
+                    <?php foreach ( $rows as $row ) : ?>
                         <tr>
                             <td>
                                 <strong><?php echo esc_html( $row['client_name'] ); ?></strong><br>
@@ -133,8 +124,10 @@ class Pending_Clients_Page {
                             <td style="max-width:280px;word-break:break-word;"><?php echo esc_html( $row['user_agent'] ); ?></td>
                             <td><?php echo esc_html( $row['created_at'] ); ?></td>
                             <td>
-                                <a href="<?php echo esc_url( $approve_url ); ?>" class="button button-primary"><?php esc_html_e( 'Approve', 'royal-mcp' ); ?></a>
-                                <a href="<?php echo esc_url( $reject_url ); ?>" class="button" style="color:#b32d2e;"><?php esc_html_e( 'Reject', 'royal-mcp' ); ?></a>
+                                <?php
+                                self::action_form( 'approve', (string) $row['client_id'], __( 'Approve', 'royal-mcp' ), 'button button-primary' );
+                                self::action_form( 'reject', (string) $row['client_id'], __( 'Reject', 'royal-mcp' ), 'button', 'color:#b32d2e;' );
+                                ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -145,29 +138,63 @@ class Pending_Clients_Page {
         <?php
     }
 
-    public function handle_approve() {
+    /**
+     * The nonce action for approving or rejecting one client: a nonce for one client cannot be
+     * used on another.
+     *
+     * @param string $kind      approve | reject.
+     * @param string $client_id Client id.
+     */
+    public static function nonce_action( $kind, $client_id ) {
+        return ( 'approve' === $kind ? self::APPROVE_NONCE : self::REJECT_NONCE ) . '|' . (string) $client_id;
+    }
+
+    /**
+     * An Approve or Reject button as a small POST form (a link would act on a plain GET).
+     *
+     * @param string $kind      approve | reject.
+     * @param string $client_id Client id.
+     * @param string $label     Button text.
+     * @param string $class     Button classes.
+     * @param string $style     Optional inline style for the button.
+     */
+    public static function action_form( $kind, $client_id, $label, $class, $style = '' ) {
+        $action = 'approve' === $kind ? self::APPROVE_ACTION : self::REJECT_ACTION;
+        ?>
+        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline;margin:0;">
+            <input type="hidden" name="action" value="<?php echo esc_attr( $action ); ?>">
+            <input type="hidden" name="client_id" value="<?php echo esc_attr( $client_id ); ?>">
+            <?php wp_nonce_field( self::nonce_action( $kind, $client_id ) ); ?>
+            <button type="submit" class="<?php echo esc_attr( $class ); ?>"<?php echo '' !== $style ? ' style="' . esc_attr( $style ) . '"' : ''; ?>><?php echo esc_html( $label ); ?></button>
+        </form>
+        <?php
+    }
+
+    /** The client id of a POSTed approve / reject form, after the capability and its own nonce are checked. */
+    private static function posted_client( $kind ) {
         if ( ! current_user_can( Settings_Page::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from Settings_Page::admin_capability(); per-site OAuth clients only (wp_royal_mcp_oauth_clients is per-site-prefixed); sub-site admins can manage their own site's clients
             wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ) );
         }
-        check_admin_referer( self::APPROVE_NONCE );
-        $client_id = isset( $_GET['client_id'] ) ? sanitize_text_field( wp_unslash( $_GET['client_id'] ) ) : '';
+        if ( 'POST' !== strtoupper( (string) ( $_SERVER['REQUEST_METHOD'] ?? '' ) ) ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- compared only
+            wp_die( esc_html__( 'Use the Approve or Reject button on the Pending clients screen.', 'royal-mcp' ), '', [ 'response' => 405 ] );
+        }
+        $client_id = isset( $_POST['client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['client_id'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- nonce checked next, bound to this client id
         if ( '' === $client_id ) {
             wp_die( esc_html__( 'client_id required.', 'royal-mcp' ) );
         }
+        check_admin_referer( self::nonce_action( $kind, $client_id ) );
+        return $client_id;
+    }
+
+    public function handle_approve() {
+        $client_id = self::posted_client( 'approve' );
         Token_Store::approve_client( $client_id );
         wp_safe_redirect( admin_url( 'admin.php?page=' . self::MENU_SLUG . '&approved=1' ) );
         exit;
     }
 
     public function handle_reject() {
-        if ( ! current_user_can( Settings_Page::admin_capability() ) ) { // audit:multisite-manage-options-safe -- capability from Settings_Page::admin_capability(); per-site OAuth clients only (wp_royal_mcp_oauth_clients is per-site-prefixed); sub-site admins can manage their own site's clients
-            wp_die( esc_html__( 'You do not have permission.', 'royal-mcp' ) );
-        }
-        check_admin_referer( self::REJECT_NONCE );
-        $client_id = isset( $_GET['client_id'] ) ? sanitize_text_field( wp_unslash( $_GET['client_id'] ) ) : '';
-        if ( '' === $client_id ) {
-            wp_die( esc_html__( 'client_id required.', 'royal-mcp' ) );
-        }
+        $client_id = self::posted_client( 'reject' );
         Token_Store::reject_client( $client_id );
         wp_safe_redirect( admin_url( 'admin.php?page=' . self::MENU_SLUG . '&rejected=1' ) );
         exit;

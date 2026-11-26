@@ -548,12 +548,60 @@ class Post_Access {
 	public static function status_change_refusal( \WP_Post $post, $status ) {
 		// WordPress lowercases a status when it saves it, so compare the same way.
 		$status = sanitize_key( (string) $status );
-		if ( $status === (string) $post->post_status || ! in_array( $status, self::PUBLISHING_STATUSES, true ) ) {
+		if ( $status === (string) $post->post_status ) {
+			return '';
+		}
+		if ( ! self::is_settable_status( $status ) ) {
+			return 'Unknown post status: ' . ( '' === $status ? '(empty)' : $status ) . '. Use a registered status such as draft, pending, publish, private, future or trash.';
+		}
+		if ( 'trash' === $status && ! current_user_can( 'delete_post', $post->ID ) ) {
+			return 'You do not have permission to move this ' . $post->post_type . ' to the trash.';
+		}
+		if ( ! in_array( $status, self::PUBLISHING_STATUSES, true ) ) {
 			return '';
 		}
 		$type = get_post_type_object( $post->post_type );
 		if ( ! $type || ! current_user_can( $type->cap->publish_posts ) ) {
 			return 'You do not have permission to change this ' . $post->post_type . ' to status ' . $status . '.';
+		}
+		return '';
+	}
+
+	/**
+	 * Whether a tool may store this status on a post: a status WordPress has
+	 * registered, other than the ones it only uses internally (auto-draft,
+	 * inherit). The trash status is settable; moving a post there is checked
+	 * against delete_post separately.
+	 *
+	 * @param string $status Sanitized status.
+	 * @return bool
+	 */
+	public static function is_settable_status( $status ) {
+		$status = (string) $status;
+		if ( '' === $status || in_array( $status, [ 'auto-draft', 'inherit' ], true ) ) {
+			return false;
+		}
+		return in_array( $status, get_post_stati(), true );
+	}
+
+	/**
+	 * Why the current user may not set or change the password on a post of
+	 * this type, or '' when they may. Password protection decides who can
+	 * read a post, so it needs the type's publish_posts capability, the same
+	 * as the WordPress editor's visibility setting.
+	 *
+	 * @param string $post_type Post type name.
+	 * @param string $password  Requested password ('' removes it).
+	 * @param string $current   The post's current password ('' for a new post).
+	 * @return string Refusal message, or ''.
+	 */
+	public static function password_refusal( $post_type, $password, $current = '' ) {
+		if ( (string) $password === (string) $current ) {
+			return '';
+		}
+		$type = get_post_type_object( (string) $post_type );
+		if ( ! $type || ! current_user_can( $type->cap->publish_posts ) ) {
+			return 'You do not have permission to set or change the password on this ' . sanitize_key( (string) $post_type ) . '.';
 		}
 		return '';
 	}

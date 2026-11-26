@@ -842,7 +842,7 @@ class JetEngine {
 					delete_post_meta( $post->ID, $name );
 				}
 			} else {
-				update_post_meta( $post->ID, $name, $step['value'] );
+				update_post_meta( $post->ID, $name, wp_slash( $step['value'] ) );
 			}
 			if ( self::meta_print( $post->ID, $name ) !== $before ) {
 				$changed[] = $name;
@@ -1291,7 +1291,7 @@ class JetEngine {
 		foreach ( $names as $n ) {
 			$p = is_array( $prior[ $n ] ) ? $prior[ $n ] : [];
 			if ( ! empty( $p['exists'] ) ) {
-				update_post_meta( $pid, $n, $p['value'] ?? '' );
+				update_post_meta( $pid, $n, wp_slash( $p['value'] ?? '' ) );
 			} else {
 				delete_post_meta( $pid, $n );
 			}

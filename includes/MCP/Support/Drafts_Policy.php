@@ -261,7 +261,8 @@ class Drafts_Policy {
 
 	/**
 	 * Undo runs only when it reverts a content change on a post that is still a
-	 * draft, and would not put a published status back.
+	 * draft and would not put a published status back, takes back an upload
+	 * without force, or restores an email draft.
 	 *
 	 * @param array $args Undo arguments.
 	 * @return string|null
@@ -278,9 +279,12 @@ class Drafts_Policy {
 		if ( in_array( $op, [ 'tablepress_create_table', 'tablepress_copy_table', 'elementor_import_template' ], true ) ) {
 			return null;
 		}
-		// Uploading is allowed in drafts-only, so taking one's own upload back is too
-		// (the undo refuses once the item is changed or used anywhere).
+		// Uploading is allowed in drafts-only, so taking one's own upload back is too: the undo
+		// refuses once the item is changed or used anywhere. force would delete it while in use.
 		if ( in_array( $op, [ 'wp_upload_media', 'wp_upload_media_from_url' ], true ) ) {
+			if ( filter_var( $args['force'] ?? false, FILTER_VALIDATE_BOOLEAN ) ) {
+				return 'force would delete a media item that is in use or changed since, so it is not allowed while drafts-only applies. Undo without force, or ask a person to undo it.';
+			}
 			return null;
 		}
 		// An email draft's undo restores or removes the draft and refuses once it is no longer a draft.

@@ -62,7 +62,9 @@ class Redirection {
 						'group_id'    => array( 'type' => 'integer', 'description' => 'Group to file this redirect under. Defaults to the first enabled Redirection group; the reply says which.' ),
 						'regex'       => array( 'type' => 'boolean', 'description' => 'Treat source_url as a regex pattern. Default false. Regex sources are limited to 250 characters, may not nest repeats such as (a+)+, and may not name wp-admin, wp-login, xmlrpc, wp-json or wp-cron.' ),
 						'title'       => array( 'type' => 'string', 'description' => 'Optional human-readable title for admin display.' ),
-						'allow_protected_source' => array( 'type' => 'boolean', 'description' => 'Allow a source that matches the home page, wp-login.php, wp-admin, the REST API, xmlrpc.php or wp-cron.php. Redirecting those can lock everyone out of the site. Default false.' ),
+						'allow_protected_source' => array( 'type' => 'boolean', 'description' => 'Allow a source that matches the home page, wp-login.php, wp-admin, the REST API, xmlrpc.php or wp-cron.php. Redirecting those can lock everyone out of the site. Only counts together with confirm_protected_source: true. Default false.' ),
+						'confirm_protected_source' => array( 'type' => 'boolean', 'description' => 'Second switch for allow_protected_source; both must be true. Default false.' ),
+						'allow_external_destination' => array( 'type' => 'boolean', 'description' => 'Allow a target on another site (a full URL with another host). Default false.' ),
 						'confirm'     => array( 'type' => 'boolean', 'description' => 'Required as true for a regex source that can match more than one address (anything but ^/one/literal/path$), after the user agreed to the pattern.' ),
 						'dry_run'     => array( 'type' => 'boolean', 'description' => 'Check the redirect and report what would be created, without creating it. Default false.' ),
 					),
@@ -79,7 +81,9 @@ class Redirection {
 						'target_url'  => array( 'type' => 'string', 'description' => 'New destination path or full URL' ),
 						'status_code' => array( 'type' => 'integer', 'enum' => array( 301, 302, 307 ) ),
 						'enabled'     => array( 'type' => 'boolean', 'description' => 'Enable (true) or disable (false) the redirect' ),
-						'allow_protected_source' => array( 'type' => 'boolean', 'description' => 'Allow a source that matches the home page, wp-login.php, wp-admin, the REST API, xmlrpc.php or wp-cron.php. Redirecting those can lock everyone out of the site. Default false.' ),
+						'allow_protected_source' => array( 'type' => 'boolean', 'description' => 'Allow a source that matches the home page, wp-login.php, wp-admin, the REST API, xmlrpc.php or wp-cron.php. Redirecting those can lock everyone out of the site. Only counts together with confirm_protected_source: true. Default false.' ),
+						'confirm_protected_source' => array( 'type' => 'boolean', 'description' => 'Second switch for allow_protected_source; both must be true. Default false.' ),
+						'allow_external_destination' => array( 'type' => 'boolean', 'description' => 'Allow a target on another site (a full URL with another host). Default false.' ),
 						'confirm'     => array( 'type' => 'boolean', 'description' => 'Required as true for a regex source that can match more than one address (anything but ^/one/literal/path$), after the user agreed to the pattern.' ),
 						'dry_run'     => array( 'type' => 'boolean', 'description' => 'Report what would change, without changing it. Default false.' ),
 					),
@@ -192,6 +196,46 @@ class Redirection {
 		return $clean;
 	}
 
+	/**
+	 * Refuse a plain redirect whose destination is its own source on this site: visitors
+	 * would loop. Paths are compared decoded, lower-case, without query or trailing slash.
+	 *
+	 * @param string $source   Source as stored.
+	 * @param bool   $is_regex Whether the source is a regex.
+	 * @param string $target   Destination as stored.
+	 */
+	public static function refuse_self_target( $source, $is_regex, $target ) {
+		if ( $is_regex ) {
+			return;
+		}
+		$normal = static function ( $path ) {
+			// The query is left out: with Redirection's "ignore query" matching the same path still loops.
+			$path = strtolower( rawurldecode( (string) strtok( (string) $path, '?#' ) ) );
+			$path = '/' . ltrim( (string) preg_replace( '#/+#', '/', $path ), '/' );
+			$path = rtrim( $path, '/' );
+			return '' === $path ? '/' : $path;
+		};
+		$t = trim( (string) $target );
+		if ( '' === $t || ( 0 === strpos( $t, '//' ) ) ) {
+			return;
+		}
+		if ( '/' !== $t[0] ) {
+			$host = strtolower( (string) wp_parse_url( $t, PHP_URL_HOST ) );
+			$home = strtolower( (string) wp_parse_url( home_url( '/' ), PHP_URL_HOST ) );
+			if ( '' === $host || ! ( $host === $home || 'www.' . $host === $home || 'www.' . $home === $host ) ) {
+				return;
+			}
+			$t = (string) wp_parse_url( $t, PHP_URL_PATH );
+		}
+		$s = trim( (string) $source );
+		if ( '/' !== substr( $s, 0, 1 ) && '' !== (string) wp_parse_url( $s, PHP_URL_HOST ) ) {
+			$s = (string) wp_parse_url( $s, PHP_URL_PATH );
+		}
+		if ( $normal( $s ) === $normal( $t ) ) {
+			throw new \Exception( 'target_url is the same address as source_url, so visitors would loop. Nothing was changed.' );
+		}
+	}
+
 	private static function create_redirect( $args ) {
 		if ( empty( $args['source_url'] ) || empty( $args['target_url'] ) || ! is_string( $args['source_url'] ) || ! is_string( $args['target_url'] ) ) {
 			throw new \Exception( 'source_url and target_url are required strings' );
@@ -234,6 +278,9 @@ class Redirection {
 			'regex'       => $is_regex,
 			'title'       => isset( $args['title'] ) && is_scalar( $args['title'] ) ? sanitize_text_field( (string) $args['title'] ) : '',
 		);
+
+		self::refuse_external_target( $data['action_data']['url'], $args );
+		self::refuse_self_target( $source, $is_regex, $data['action_data']['url'] );
 
 		$struct = array(
 			'source_url'  => $data['url'],
@@ -300,6 +347,7 @@ class Redirection {
 				throw new \Exception( 'target_url must be a non-empty string.' );
 			}
 			$changes['target_url'] = self::checked_target( $args['target_url'] );
+			self::refuse_external_target( $changes['target_url'], $args );
 		}
 		if ( isset( $args['status_code'] ) ) {
 			$changes['status_code'] = self::status_code_arg( $args['status_code'] );
@@ -325,6 +373,9 @@ class Redirection {
 			throw new \Exception( 'Redirect not found: ' . intval( $id ) );
 		}
 		$json = $item->to_json();
+		if ( isset( $changes['target_url'] ) ) {
+			self::refuse_self_target( (string) $json['url'], ! empty( $json['regex'] ), $changes['target_url'] );
+		}
 
 		// The full current redirect with the requested changes applied:
 		// Redirection validates every field on update, not only the changed ones.
@@ -824,15 +875,47 @@ class Redirection {
 	}
 
 	/**
+	 * Whether a redirect target points at another site: a full address whose host is not
+	 * this site's (with or without www.). A path on this site is not external.
+	 */
+	public static function target_is_external( $target ) {
+		$t = str_replace( chr( 92 ), '/', trim( (string) $target ) );
+		if ( 0 === strpos( $t, '//' ) ) {
+			$t = 'https:' . $t;
+		}
+		if ( 0 === strpos( $t, '/' ) ) {
+			return false;
+		}
+		$host = strtolower( (string) wp_parse_url( $t, PHP_URL_HOST ) );
+		if ( '' === $host ) {
+			return true;
+		}
+		$home = strtolower( (string) wp_parse_url( home_url( '/' ), PHP_URL_HOST ) );
+		return ! ( $host === $home || 'www.' . $host === $home || 'www.' . $home === $host );
+	}
+
+	/** Refuse a target on another site unless allow_external_destination is a real true. */
+	private static function refuse_external_target( $target, array $args ) {
+		// A target built from a regex capture ($1, ${1}) decides its host at request time ("/$1" can become "//evil.example"),
+		// so it counts as another site unless it starts with a fixed path segment on this site.
+		$fixed    = is_string( $target ) && strlen( $target ) > 1 && '/' === $target[0] && ! in_array( $target[1], [ '/', chr( 92 ), '$' ], true ) && ! ctype_space( $target[1] );
+		$captured = is_string( $target ) && 1 === preg_match( '/\$\{?\d/', $target ) && ! $fixed;
+		if ( true !== ( $args['allow_external_destination'] ?? false ) && ( $captured || self::target_is_external( $target ) ) ) {
+			throw new \Exception( 'Refused: target_url is on another site. Pass allow_external_destination: true only if the site owner asked to send visitors there. Nothing was changed.' );
+		}
+	}
+
+	/**
 	 * Refuse a redirect source that matches a protected path, unless the call
-	 * passes allow_protected_source: true. Protected paths sit under the root
+	 * passes allow_protected_source: true and confirm_protected_source: true. Protected paths sit under the root
 	 * and under the site and WordPress address paths. Plain sources are
 	 * compared after decoding, lower-casing and dropping the host, query and
 	 * duplicate slashes. Regex sources are refused when their text names a
 	 * WordPress system path or when they match any probe request.
 	 */
 	public static function refuse_protected_source( $source, $is_regex, array $args ) {
-		if ( ! empty( $args['allow_protected_source'] ) && true === $args['allow_protected_source'] ) {
+		// Both switches, as real booleans, lift the guard; either one alone does not.
+		if ( true === ( $args['allow_protected_source'] ?? false ) && true === ( $args['confirm_protected_source'] ?? false ) ) {
 			return;
 		}
 		$hit    = '';
@@ -889,7 +972,7 @@ class Redirection {
 			}
 		}
 		if ( '' !== $hit ) {
-			throw new \Exception( sprintf( 'Refused: this source matches %s, and redirecting it can lock everyone out of the site. Pass allow_protected_source: true only if the site owner asked for exactly this.', $hit ) );
+			throw new \Exception( sprintf( 'Refused: this source matches %s, and redirecting it can lock everyone out of the site. Pass allow_protected_source: true and confirm_protected_source: true only if the site owner asked for exactly this.', $hit ) );
 		}
 	}
 

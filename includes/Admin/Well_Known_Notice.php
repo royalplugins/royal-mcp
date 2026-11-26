@@ -29,6 +29,7 @@ class Well_Known_Notice {
     const PLAIN_PERMALINKS_DISMISS_KEY     = 'royal_mcp_plain_permalinks_dismissed';
     const PAGE_SHADOW_DISMISS_KEY          = 'royal_mcp_oauth_page_shadow_dismissed';
     const MISSING_ENDPOINTS_TRANSIENT      = 'royal_mcp_missing_endpoints_list';
+    const STATIC_NAMES_ISSUER_TRANSIENT    = 'royal_mcp_static_names_issuer';
     const MISSING_ENDPOINTS_DISMISS_KEY    = 'royal_mcp_well_known_missing_endpoints_dismissed';
     const RECHECK_ACTION                   = 'royal_mcp_recheck_well_known';
     const RECHECK_NONCE                    = 'royal_mcp_recheck_well_known_nonce';
@@ -333,6 +334,14 @@ class Well_Known_Notice {
             $issuer  = $scoped ? rtrim( \Royal_MCP\OAuth\Server::namespace_issuer(), '/' ) : rtrim( home_url(), '/' );
             $status  = self::classify_response( $code, $body, $headers, $issuer, $scoped );
             $ttl     = self::determine_ttl( $headers );
+            // A host that answers the RFC 8414 address itself can still let the OpenID
+            // Connect addresses through to WordPress, and clients read those next.
+            if ( 'blocked' === $status
+                && class_exists( '\\Royal_MCP\\Integrations\\Coexistence_Check' )
+                && '' !== \Royal_MCP\Integrations\Coexistence_Check::openid_fallback_url( $issuer, $issuer )
+            ) {
+                $status = 'ok';
+            }
         }
 
         set_transient( $cache_key, $status, $ttl ); // audit:transient-ttl-only -- both possible keys are cleared in invalidate_check()
@@ -494,6 +503,8 @@ class Well_Known_Notice {
                 [ $expected_issuer, set_url_scheme( $expected_issuer, 'https' ) ],
                 true
             );
+            // Read by the notices below: a static file that names this site is kept, not deleted.
+            set_transient( self::STATIC_NAMES_ISSUER_TRANSIENT, $issuer_ok ? 1 : 0, self::TRANSIENT_TTL );
 
             // Stale-static detection: earlier layouts advertised REST-namespace
             // OAuth endpoints (/wp-json/royal-mcp/v1/authorize). Current code serves
@@ -869,6 +880,7 @@ class Well_Known_Notice {
         delete_transient( self::SCOPED_TRANSIENT_KEY );
         delete_transient( self::REGISTER_301_TRANSIENT );
         delete_transient( self::MISSING_ENDPOINTS_TRANSIENT );
+        delete_transient( self::STATIC_NAMES_ISSUER_TRANSIENT );
     }
 
     /**
@@ -1210,6 +1222,12 @@ class Well_Known_Notice {
                 );
                 ?>
             </p>
+            <?php if ( get_transient( self::STATIC_NAMES_ISSUER_TRANSIENT ) ) : ?>
+            <p>
+                <?php esc_html_e( 'The file names this site correctly, so keep it: some hosts answer /.well-known/ addresses themselves and serve nothing there without it. Update the endpoint URLs in it to the ones below instead (substitute your domain):', 'royal-mcp' ); ?>
+            </p>
+            <?php $this->render_static_template(); ?>
+            <?php else : ?>
             <p>
                 <?php esc_html_e( 'These files were likely placed by a host-support workaround for an earlier version. Delete them and Royal MCP will serve fresh metadata from PHP automatically.', 'royal-mcp' ); ?>
             </p>
@@ -1217,6 +1235,7 @@ class Well_Known_Notice {
                 <strong><?php esc_html_e( 'SSH/SFTP fix:', 'royal-mcp' ); ?></strong>
                 <code>rm /path/to/your/webroot/.well-known/oauth-authorization-server /path/to/your/webroot/.well-known/oauth-protected-resource</code>
             </p>
+            <?php endif; ?>
             <p>
                 <a href="<?php echo esc_url( self::STALE_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
                     <?php esc_html_e( 'See the full fix', 'royal-mcp' ); ?>
@@ -1243,7 +1262,7 @@ class Well_Known_Notice {
             function ( $k ) { return '<code>' . esc_html( $k ) . '</code>'; },
             $missing
         ) );
-        $issuer = rtrim( (string) home_url(), '/' );
+        $keep = (bool) get_transient( self::STATIC_NAMES_ISSUER_TRANSIENT );
 
         ?>
         <div class="notice notice-error royal-mcp-missing-endpoints-notice">
@@ -1263,6 +1282,11 @@ class Well_Known_Notice {
                 );
                 ?>
             </p>
+            <?php if ( $keep ) : ?>
+            <p>
+                <?php esc_html_e( 'The file names this site correctly, so keep it and add the missing fields: some hosts answer /.well-known/ addresses themselves and serve nothing there without it. Use this template (substitute your domain):', 'royal-mcp' ); ?>
+            </p>
+            <?php else : ?>
             <p>
                 <strong><?php esc_html_e( 'Preferred fix — delete the static file so Royal MCP serves fresh, complete metadata from PHP automatically:', 'royal-mcp' ); ?></strong><br>
                 <code>rm /path/to/your/webroot/.well-known/oauth-authorization-server</code>
@@ -1270,18 +1294,8 @@ class Well_Known_Notice {
             <p>
                 <?php esc_html_e( 'If your host reserves the .well-known/ path prefix and you must keep the file static, it must include all three required endpoint URLs. Use this template (substitute your domain):', 'royal-mcp' ); ?>
             </p>
-            <pre><code><?php
-                $template_json = [
-                    'issuer'                 => $issuer,
-                    'authorization_endpoint' => $issuer . '/authorize',
-                    'token_endpoint'         => $issuer . '/token',
-                    'registration_endpoint'  => $issuer . '/register',
-                    'response_types_supported' => [ 'code' ],
-                    'grant_types_supported'    => [ 'authorization_code', 'refresh_token' ],
-                    'code_challenge_methods_supported' => [ 'S256' ],
-                ];
-                echo esc_html( wp_json_encode( $template_json, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
-            ?></code></pre>
+            <?php endif; ?>
+            <?php $this->render_static_template(); ?>
             <p>
                 <a href="<?php echo esc_url( self::MISSING_ENDPOINTS_SUPPORT_URL ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
                     <?php esc_html_e( 'See the full fix', 'royal-mcp' ); ?>
@@ -1293,6 +1307,21 @@ class Well_Known_Notice {
             </p>
         </div>
         <?php
+    }
+
+    /** A static root discovery file that lists every endpoint Royal MCP serves. */
+    private function render_static_template() {
+        $issuer        = rtrim( (string) home_url(), '/' );
+        $template_json = [
+            'issuer'                 => $issuer,
+            'authorization_endpoint' => $issuer . '/authorize',
+            'token_endpoint'         => $issuer . '/token',
+            'registration_endpoint'  => $issuer . '/register',
+            'response_types_supported' => [ 'code' ],
+            'grant_types_supported'    => [ 'authorization_code', 'refresh_token' ],
+            'code_challenge_methods_supported' => [ 'S256' ],
+        ];
+        echo '<pre><code>' . esc_html( wp_json_encode( $template_json, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) ) . '</code></pre>';
     }
 
     private function render_html_body_notice() {

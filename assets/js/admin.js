@@ -154,9 +154,15 @@ jQuery(document).ready(function($) {
 
     function generateRandomString(length) {
         const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        // Cryptographically random, without bias: values past the last whole multiple of the alphabet are drawn again.
+        const limit = 256 - (256 % chars.length);
+        const buf = new Uint8Array(1);
         let result = '';
-        for (let i = 0; i < length; i++) {
-            result += chars.charAt(Math.floor(Math.random() * chars.length));
+        while (result.length < length) {
+            window.crypto.getRandomValues(buf);
+            if (buf[0] < limit) {
+                result += chars.charAt(buf[0] % chars.length);
+            }
         }
         return result;
     }

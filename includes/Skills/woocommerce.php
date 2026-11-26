@@ -11,6 +11,16 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 return [
 	'version'  => '1.1.0',
+	'frontmatter' => <<<'ROYAL_MCP_SKILL_TEXT'
+name: woocommerce
+description: Run a WooCommerce store through Royal MCP. Safe steps for price and stock changes, products with variations, order status changes, manual orders and coupons, each checked after writing, most with an undo token. Use for any request about products, orders, coupons or stock.
+compatibility: Royal MCP 2.0 or later, plus WooCommerce
+metadata:
+  author: Royal Plugins
+  version: "1.1.0"
+  last_updated: "2026-11-14"
+ROYAL_MCP_SKILL_TEXT
+	,
 	'core'     => <<<'ROYAL_MCP_SKILL_TEXT'
 # WooCommerce store operations
 

@@ -1235,6 +1235,9 @@ class Server {
                     Rate_Limit::blocked_for( self::issuance_bucket( $limit_client, (int) $grant_row['user_id'] ), 'token_ok' ),
                     Rate_Limit::blocked_for( 'oauth-token-client:' . $limit_client, 'token_client' )
                 );
+            } else {
+                // No live code or refresh token of this client: guesses wait once the address's failure budget is spent.
+                $wait = Rate_Limit::blocked_for( 'oauth-fail:' . $this->limit_ip(), 'failure' );
             }
         } else {
             $wait = Rate_Limit::blocked_for( 'oauth-fail:' . $this->limit_ip(), 'failure' );
@@ -1441,6 +1444,12 @@ class Server {
         if ( 'POST' !== $request_method ) {
             header( 'Allow: POST, OPTIONS' );
             $this->json_error( 'invalid_request', 'POST method required.', 405 );
+        }
+
+        // An address that has used up its failure budget waits before any token or secret is checked.
+        $blocked = Rate_Limit::blocked_for( 'oauth-fail:' . $this->limit_ip(), 'failure' );
+        if ( $blocked > 0 ) {
+            $this->rate_limited( $blocked );
         }
 
         $token     = isset( $_POST['token'] ) ? sanitize_text_field( wp_unslash( $_POST['token'] ) ) : '';

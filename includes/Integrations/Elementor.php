@@ -480,7 +480,7 @@ class Elementor {
 
 		$cp_undo_envelope = \Royal_MCP\MCP\Undo_Store::store( [
 			'op'      => 'elementor_clone_page',
-			'summary' => sprintf( 'Delete cloned %s %d ("%s")', $source->post_type, (int) $new_id, $new_title ),
+			'summary' => sprintf( 'Delete cloned %s %d ("%s")', $source->post_type, (int) $new_id, \Royal_MCP\MCP\Support\Change_View::clean_label( $new_title ) ),
 			'target'  => [ 'new_post_id' => (int) $new_id, 'post_type' => $source->post_type ],
 			'pre_op_state' => [
 				'created_post_id'     => (int) $new_id,
@@ -2436,7 +2436,7 @@ class Elementor {
 
 		$it_undo_envelope = \Royal_MCP\MCP\Undo_Store::store( [
 			'op'      => 'elementor_import_template',
-			'summary' => sprintf( 'Delete imported template %d ("%s")', (int) $new_id, $title ),
+			'summary' => sprintf( 'Delete imported template %d ("%s")', (int) $new_id, \Royal_MCP\MCP\Support\Change_View::clean_label( (string) $title ) ),
 			'target'  => [ 'template_id' => (int) $new_id ],
 			'pre_op_state' => [
 				'created_post_id'     => (int) $new_id,

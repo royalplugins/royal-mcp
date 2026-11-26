@@ -11,6 +11,16 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 return [
 	'version'  => '2.1.0',
+	'frontmatter' => <<<'ROYAL_MCP_SKILL_TEXT'
+name: elementor
+description: Elementor page editing through Royal MCP. Clone and retarget pages, find and replace text or images, add widgets, apply library templates, repair search text and publish. Use when the user asks to edit, copy or build Elementor pages on a connected WordPress site.
+compatibility: Royal MCP 2.0 or later, plus Elementor (free or Pro)
+metadata:
+  author: Royal Plugins
+  version: "2.1.0"
+  last_updated: "2026-11-14"
+ROYAL_MCP_SKILL_TEXT
+	,
 	'core'     => <<<'ROYAL_MCP_SKILL_TEXT'
 # Elementor with Royal MCP
 

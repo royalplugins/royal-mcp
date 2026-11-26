@@ -110,7 +110,9 @@ class Connection_Doctor {
 					continue;
 				}
 				$by = (string) ( $s['answered_by'] ?? '' );
-				if ( in_array( $by, [ 'royal_mcp', 'redirects' ], true ) ) {
+				if ( in_array( $by, [ 'royal_mcp', 'redirects' ], true ) && ! empty( $s['via'] ) ) {
+					$steps[] = self::step( $key, $names[ $key ], 'warn', self::openid_fallback_detail( $s ) );
+				} elseif ( in_array( $by, [ 'royal_mcp', 'redirects' ], true ) ) {
 					$steps[] = self::step( $key, $names[ $key ], 'ok', (string) ( $s['url'] ?? '' ) );
 				} elseif ( 'unknown' === $by ) {
 					$steps[] = self::step( $key, $names[ $key ], 'warn', __( 'The site could not reach its own address to check this (a loopback request was blocked or timed out). Clients outside may still connect; if they cannot, ask the host whether the server can call itself.', 'royal-mcp' ) );
@@ -150,6 +152,23 @@ class Connection_Doctor {
 			}
 		}
 		return [ 'ok' => null === $first, 'checked_at' => time(), 'first_problem' => $first, 'steps' => $steps ];
+	}
+
+	/**
+	 * Detail for an authorization-server step that passed only at an OpenID Connect
+	 * address: clients sign in, and nothing on the server needs removing.
+	 *
+	 * @param array $s Discovery chain step.
+	 * @return string
+	 */
+	private static function openid_fallback_detail( array $s ) {
+		return sprintf(
+			/* translators: 1: OpenID Connect discovery URL, 2: standard discovery URL, 3: HTTP status code */
+			__( 'AI clients find this document at the OpenID Connect address %1$s, so they can sign in. The standard address %2$s answers HTTP %3$d before WordPress sees it (the host answers it); keep any discovery files the host serves in /.well-known/, they are not the cause.', 'royal-mcp' ),
+			(string) ( $s['url'] ?? '' ),
+			(string) ( $s['rfc8414_url'] ?? '' ),
+			(int) ( $s['rfc8414_status'] ?? 0 )
+		);
 	}
 
 	/** Client registration answers as an OAuth server should (an empty request is refused with a JSON error; nothing is created). */

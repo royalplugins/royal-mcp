@@ -34,8 +34,14 @@ class PluginsThemes {
 		'wp_set_theme_auto_update'   => [ 'handle_theme_auto_update', 'undo_auto_update', 'update_themes' ],
 	];
 
-	/** Royal MCP's own plugin folder: it does not update, deactivate or delete itself while answering. */
-	const SELF_SLUGS = [ 'royal-mcp' ];
+	/** Usual plugin folders of Royal MCP: it does not update, deactivate or delete itself while answering. */
+	const SELF_SLUGS = [ 'royal-mcp', 'royal-mcp-pro' ];
+
+	/** Main plugin files of Royal MCP, whatever folder they were installed in. */
+	const SELF_MAIN_FILES = [ 'royal-mcp.php', 'royal-mcp-pro.php' ];
+
+	/** Text domains a genuine Royal MCP plugin header declares. */
+	const SELF_TEXT_DOMAINS = [ 'royal-mcp', 'royal-mcp-pro' ];
 
 	/** Plugin folders treated as security plugins: touching the active one needs force. */
 	const SECURITY_FOLDERS = [ 'guardpress', 'guardpress-lite', 'wordfence', 'better-wp-security', 'ithemes-security-pro', 'sucuri-scanner', 'all-in-one-wp-security-and-firewall', 'wp-cerber', 'ninjafirewall', 'defender-security', 'wp-defender', 'wp-simple-firewall', 'malcare-security', 'bulletproof-security', 'jetpack-protect', 'security-ninja', 'wp-security-audit-log', 'royal-ai-firewall' ];
@@ -149,9 +155,43 @@ class PluginsThemes {
 		return \WP_Plugin_Dependencies::has_active_dependents( $file );
 	}
 
-	/** Whether a plugin file belongs to Royal MCP itself. */
+	/**
+	 * Whether a plugin file (as get_plugins() keys it) is Royal MCP itself: this running copy
+	 * (its main file or its folder, whatever the folder is called), or an installed plugin in
+	 * one of the usual folders or with a Royal MCP main file name whose header is Royal MCP's
+	 * too. A file name or folder name alone is not enough.
+	 *
+	 * @param string $file Plugin file relative to the plugins folder.
+	 * @return bool
+	 */
 	private static function is_self( $file ) {
-		return in_array( strtok( (string) $file, '/' ), self::SELF_SLUGS, true );
+		$file = str_replace( chr( 92 ), '/', trim( (string) $file ) );
+		if ( '' === $file ) {
+			return false;
+		}
+		$folder = false !== strpos( $file, '/' ) ? strtolower( (string) strtok( $file, '/' ) ) : '';
+		if ( defined( 'ROYAL_MCP_PLUGIN_BASENAME' ) ) {
+			$own        = str_replace( chr( 92 ), '/', (string) ROYAL_MCP_PLUGIN_BASENAME );
+			$own_folder = false !== strpos( $own, '/' ) ? strtolower( (string) strtok( $own, '/' ) ) : '';
+			if ( strtolower( $file ) === strtolower( $own ) || ( '' !== $own_folder && $own_folder === $folder ) ) {
+				return true;
+			}
+		}
+		$named_like_self = ( '' !== $folder && in_array( $folder, self::SELF_SLUGS, true ) ) || in_array( strtolower( basename( $file ) ), self::SELF_MAIN_FILES, true );
+		return $named_like_self && self::has_self_header( $file );
+	}
+
+	/** Whether the installed plugin $file carries Royal MCP's own plugin header. */
+	private static function has_self_header( $file ) {
+		self::admin_includes();
+		$plugins = (array) get_plugins();
+		$header  = $plugins[ $file ] ?? null;
+		if ( ! is_array( $header ) ) {
+			return false;
+		}
+		$name   = trim( (string) ( $header['Name'] ?? '' ) );
+		$domain = strtolower( trim( (string) ( $header['TextDomain'] ?? '' ) ) );
+		return 0 === strpos( $name, 'Royal MCP' ) && in_array( $domain, self::SELF_TEXT_DOMAINS, true );
 	}
 
 	private static function plugin_facts( $file ) {
@@ -1243,7 +1283,7 @@ class PluginsThemes {
 		if ( '' === $file || ! isset( $all[ $file ] ) ) {
 			return self::error( 'plugin_not_found', 'No installed plugin with that file. Use the file as wp_get_plugins lists it.' );
 		}
-		if ( in_array( dirname( $file ), self::SELF_SLUGS, true ) ) {
+		if ( self::is_self( $file ) ) {
 			return self::error( 'cannot_update_self', 'Royal MCP cannot update itself while answering the request. Update it from wp-admin.' );
 		}
 		if ( is_plugin_active( $file ) && self::is_security_plugin( $file ) && ! filter_var( $args['force'] ?? false, FILTER_VALIDATE_BOOLEAN ) ) {

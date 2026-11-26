@@ -260,8 +260,25 @@ class Plugin_Abilities {
 	}
 
 	public static function namespace_label( $ns ) {
-		$known = [ 'rank-math' => 'Rank Math', 'core' => 'WordPress', 'elementor' => 'Elementor', 'woocommerce' => 'WooCommerce', 'yoast' => 'Yoast SEO', 'angie' => 'Angie' ];
+		$known = [ 'rank-math' => 'Rank Math', 'core' => 'WordPress', 'elementor' => 'Elementor', 'woocommerce' => 'WooCommerce', 'yoast' => 'Yoast SEO', 'angie' => 'Angie', 'wpbakery' => 'WPBakery' ];
 		return $known[ $ns ] ?? ucwords( str_replace( '-', ' ', $ns ) );
+	}
+
+	/**
+	 * A short note added to the description of every tool in a namespace, or ''.
+	 * WPBakery answers direct calls only on local and staging sites; its tools stay
+	 * listed so the client can explain why a call is refused.
+	 */
+	private static function namespace_note( $ns ) {
+		if ( 'wpbakery' !== $ns || ! class_exists( 'Wpbai_Direct_Access' ) || ! is_callable( [ 'Wpbai_Direct_Access', 'allowed' ] ) ) {
+			return '';
+		}
+		try {
+			$allowed = (bool) call_user_func( [ 'Wpbai_Direct_Access', 'allowed' ] );
+		} catch ( \Throwable $e ) {
+			return '';
+		}
+		return $allowed ? '' : ' Works on local and staging sites; on a public site WPBakery requires its own Cloud connection.';
 	}
 
 	/**
@@ -368,6 +385,7 @@ class Plugin_Abilities {
 		$taken = array_flip( array_filter( array_column( $tools, 'name' ), 'is_string' ) );
 		foreach ( self::bridged() as $tool => $ability ) {
 			list( $schema ) = self::input_schema( $ability );
+			$schema         = self::with_confirm_token( $schema );
 			// A name another tool already has, or a schema that cannot be sent as JSON, is left out: one would hide the other, the second would break the whole list.
 			if ( isset( $taken[ $tool ] ) || false === wp_json_encode( $schema ) ) {
 				continue;
@@ -379,11 +397,12 @@ class Plugin_Abilities {
 			$tools[] = [
 				'name'        => $tool,
 				'description' => sprintf(
-					'[Third-party: %1$s ability %2$s] %3$s Runs %1$s\'s own code with the connected user\'s WordPress permissions. Royal MCP logs the call but has no undo for it.%4$s',
+					'[Third-party: %1$s ability %2$s] %3$s Runs %1$s\'s own code with the connected user\'s WordPress permissions. Royal MCP logs the call but has no undo for it.%4$s%5$s',
 					$label,
 					$name,
 					self::clip( trim( wp_strip_all_tags( (string) $ability->get_description() ) ), self::MAX_DESCRIPTION_CHARS ),
-					'' !== $own ? sprintf( ' Royal MCP\'s own %1$s tools cover %2$s with undo and the read-only and drafts-only checks: use those first, and this one only for what they do not do.', $own, $label ) : ''
+					'' !== $own ? sprintf( ' Royal MCP\'s own %1$s tools cover %2$s with undo and the read-only and drafts-only checks: use those first, and this one only for what they do not do.', $own, $label ) : '',
+					self::namespace_note( $ns )
 				),
 				'inputSchema' => $schema,
 				'annotations' => self::annotations( $ability ),
@@ -414,6 +433,13 @@ class Plugin_Abilities {
 		}
 		$ability = $map[ $name ];
 		$args    = is_array( $args ) ? $args : [];
+		self::$issued = null;
+		// Roles or capabilities that can run the site need a confirm step and an email to the site admin.
+		$grant_reply = self::power_grant_confirm( (string) $name, $args );
+		if ( null !== $grant_reply ) {
+			return $grant_reply;
+		}
+		$args = self::without_confirm_token( $ability, $args );
 		list( , $mode ) = self::input_schema( $ability );
 		if ( 'none' === $mode && $args ) {
 			return new \WP_Error( 'invalid_args', sprintf( '%s takes no input.', $ability->get_name() ) );
@@ -429,6 +455,10 @@ class Plugin_Abilities {
 		}
 		try {
 			$out = $ability->execute( $input );
+			if ( is_wp_error( $out ) && 'ability_invalid_permissions' === $out->get_error_code() ) {
+				$refusal = self::permission_refusal( $ability, $input );
+				$out     = null !== $refusal ? $refusal : $out;
+			}
 		} catch ( \Throwable $e ) {
 			if ( null === self::$theme_refusal ) {
 				throw $e;
@@ -451,6 +481,276 @@ class Plugin_Abilities {
 			return new \WP_Error( $out->get_error_code(), sprintf( '%s: %s', $ability->get_name(), \Royal_MCP\MCP\Support\Secret_Scrubber::scrub_text( (string) $out->get_error_message(), 'strict' ) ) );
 		}
 		return self::finish_result( (string) $ability->get_name(), is_array( $out ) ? $out : [ 'result' => $out ] );
+	}
+
+	/**
+	 * The ability's own refusal for this input, or null when its permission check passes.
+	 * execute() answers every refusal with one generic message; after such a refusal this
+	 * asks the check again so the client gets the plugin's own reason (for example where
+	 * the call is allowed). Allowed calls never come here, so the check runs once for them.
+	 * The input is prepared the way execute() prepares it; input that does not pass is
+	 * left to execute(), which reports why.
+	 *
+	 * @param object $ability The ability.
+	 * @param mixed  $input   Input as passed to execute().
+	 * @return \WP_Error|null
+	 */
+	private static function permission_refusal( $ability, $input ) {
+		if ( ! method_exists( $ability, 'check_permissions' ) ) {
+			return null;
+		}
+		$prepared = $input;
+		if ( method_exists( $ability, 'prepare_input' ) ) {
+			$prepared = $ability->prepare_input( $input );
+		} elseif ( method_exists( $ability, 'normalize_input' ) ) {
+			$prepared = $ability->normalize_input( $input );
+			if ( ! is_wp_error( $prepared ) && method_exists( $ability, 'validate_input' ) && is_wp_error( $ability->validate_input( $prepared ) ) ) {
+				return null;
+			}
+		}
+		if ( is_wp_error( $prepared ) ) {
+			return null;
+		}
+		$allowed = $ability->check_permissions( $prepared );
+		if ( true === $allowed ) {
+			return null;
+		}
+		if ( is_wp_error( $allowed ) ) {
+			return $allowed;
+		}
+		return new \WP_Error( 'ability_invalid_permissions', 'The plugin does not allow this call for the connected user.' );
+	}
+
+	/** Names of the confirm step's token: confirm_token, and commit_token, its older name. */
+	const CONFIRM_TOKEN_ARGS = [ 'confirm_token', 'commit_token' ];
+
+	/**
+	 * Capabilities that let an account run the site; a bridged call that gives a role or
+	 * capability holding any of them needs a confirm step. unfiltered_html is left out:
+	 * editors hold it on single sites, and it changes what a post may contain, not who runs the site.
+	 */
+	const POWER_CAPS = [ 'manage_options', 'promote_users', 'edit_users', 'create_users', 'delete_users', 'remove_users', 'activate_plugins', 'install_plugins', 'edit_plugins', 'delete_plugins', 'update_plugins', 'install_themes', 'edit_themes', 'switch_themes', 'delete_themes', 'update_themes', 'edit_files', 'unfiltered_upload', 'import', 'export', 'manage_woocommerce', 'manage_network', 'manage_network_options', 'update_core' ];
+
+	/** The tool and confirm token this request's confirm step issued, or null. */
+	private static $issued = null;
+
+	/**
+	 * Whether a reply is the confirm step this request issued for that tool: the reply's own
+	 * confirm_token is the one generated here, so the server may pass it on unmasked.
+	 *
+	 * @param string $tool   Tool name.
+	 * @param mixed  $result The reply.
+	 */
+	public static function is_issued_confirm_reply( $tool, $result ) {
+		if ( ! is_array( self::$issued ) || (string) $tool !== self::$issued[0] || ! is_array( $result ) || array_key_exists( 'confirm_token', $result ) ) {
+			return false;
+		}
+		$sent = $result['structuredContent']['confirm_token'] ?? null;
+		return is_string( $sent ) && hash_equals( self::$issued[1], $sent ) && 'confirm_required' === ( $result['structuredContent']['error'] ?? '' );
+	}
+
+	/** Transient prefix for the confirm step of a powerful role or capability grant. */
+	const GRANT_PREFIX = 'royal_mcp_grant_';
+
+	/** Seconds a confirm token stays valid. */
+	const GRANT_TTL = 600;
+
+	/**
+	 * The tool schema with the confirm step's token listed, so clients that send only listed
+	 * arguments can finish a call that sets roles or capabilities able to run the site.
+	 */
+	private static function with_confirm_token( array $schema ) {
+		$props = isset( $schema['properties'] ) ? (array) $schema['properties'] : [];
+		$add   = [
+			'confirm_token' => [ 'type' => 'string', 'description' => 'Only when a previous call to this tool answered with a confirm_token: send it back with the same arguments to go ahead.' ],
+			'commit_token'  => [ 'type' => 'string', 'description' => 'Older name for confirm_token, still accepted.' ],
+		];
+		foreach ( $add as $key => $def ) {
+			if ( ! array_key_exists( $key, $props ) ) {
+				$props[ $key ] = $def;
+			}
+		}
+		$schema['properties'] = $props;
+		return $schema;
+	}
+
+	/** The arguments without the confirm step's token, unless the ability's own schema takes an argument of that name. */
+	private static function without_confirm_token( $ability, array $args ) {
+		$own   = method_exists( $ability, 'get_input_schema' ) ? $ability->get_input_schema() : [];
+		$props = is_array( $own ) && isset( $own['properties'] ) ? (array) $own['properties'] : [];
+		foreach ( self::CONFIRM_TOKEN_ARGS as $key ) {
+			if ( ! array_key_exists( $key, $props ) ) {
+				unset( $args[ $key ] );
+			}
+		}
+		return $args;
+	}
+
+	/**
+	 * The confirm step for a bridged ability call whose arguments set roles or capabilities
+	 * that can run the site. Every bridged ability is checked, including one that calls itself
+	 * read-only: the label is the other plugin's own claim, and the arguments decide what it is
+	 * asked to grant. Returns the reply to send (a new confirm_token, or a refusal for a token
+	 * that does not match), or null when the call may go ahead. A confirmed call has the token
+	 * taken out of its arguments, and the site admin email is told.
+	 *
+	 * @param string $name Tool name.
+	 * @param array  $args Tool arguments (the confirm token is removed once spent).
+	 * @return array|null
+	 */
+	private static function power_grant_confirm( $name, array &$args ) {
+		$tokens = array_fill_keys( self::CONFIRM_TOKEN_ARGS, true );
+		$names  = [];
+		self::collect_role_grants( array_diff_key( $args, $tokens ), $names, 0 );
+		$powerful = [];
+		foreach ( array_unique( $names ) as $grant ) {
+			if ( in_array( $grant, self::POWER_CAPS, true ) || self::is_powerful_role( $grant ) ) {
+				$powerful[] = $grant;
+			}
+		}
+		if ( [] === $powerful ) {
+			return null;
+		}
+		$facts = [ 'tool' => $name, 'grants' => $powerful ];
+		$given = $args['confirm_token'] ?? ( $args['commit_token'] ?? null );
+		// The token is bound to this account, this tool and these exact arguments.
+		$bind = hash( 'sha256', $name . '|' . get_current_user_id() . '|' . hash( 'sha256', (string) wp_json_encode( array_diff_key( $args, $tokens ) ) ) );
+		if ( null === $given || '' === $given ) {
+			$token        = bin2hex( random_bytes( 32 ) );
+			self::$issued = [ $name, $token ];
+			set_transient( self::GRANT_PREFIX . hash( 'sha256', $token ), [ 'bind' => $bind, 'user_id' => get_current_user_id() ], self::GRANT_TTL ); // audit:transient-ttl-only -- one-use confirm token, deleted when used
+			// The token is in the text too, for clients that show the model only the text.
+			return \Royal_MCP\MCP\Support\Envelope::error(
+				'confirm_required',
+				sprintf( 'This call (%1$s) sets roles or capabilities that can run the site (settings, plugins, users): %2$s. Nothing was changed. If the site owner asked for it, call %1$s again with the same arguments and confirm_token %3$s within %4$d minutes.', $name, implode( ', ', $powerful ), $token, (int) ( self::GRANT_TTL / 60 ) ),
+				array_merge( $facts, [ 'requires_confirmation' => true, 'confirm_token' => $token, 'confirm_expires_in' => self::GRANT_TTL ] )
+			);
+		}
+		if ( ! is_string( $given ) || 1 !== preg_match( '/^[a-f0-9]{64}$/', $given ) ) {
+			return \Royal_MCP\MCP\Support\Envelope::error( 'confirm_token_invalid', 'confirm_token is not one this site issued. Call again without it to get a new one.', $facts );
+		}
+		$key  = self::GRANT_PREFIX . hash( 'sha256', $given );
+		$data = get_transient( $key );
+		if ( ! is_array( $data ) || (int) ( $data['user_id'] ?? -1 ) !== get_current_user_id() || ! hash_equals( (string) ( $data['bind'] ?? '' ), $bind ) ) {
+			return \Royal_MCP\MCP\Support\Envelope::error( 'confirm_token_invalid', 'confirm_token has expired, was used, or was issued for another account, tool or set of arguments. Call again without it to get a new one.', $facts );
+		}
+		if ( ! delete_transient( $key ) ) {
+			return \Royal_MCP\MCP\Support\Envelope::error( 'confirm_token_invalid', 'confirm_token was already used. Call again without it to get a new one.', $facts );
+		}
+		$args = array_diff_key( $args, $tokens );
+		self::notify_power_grant_call( $name, $powerful );
+		return null;
+	}
+
+	/**
+	 * Role and capability names a request sets: the values under keys named role, roles, new_role,
+	 * user_roles, caps, capabilities and the like, at any depth.
+	 */
+	private static function collect_role_grants( $value, array &$out, $depth ) {
+		if ( $depth > 16 || ! is_array( $value ) ) {
+			return;
+		}
+		foreach ( $value as $key => $item ) {
+			if ( is_string( $key ) && 1 === preg_match( '/(?:^|[_.\-])(?:roles?|caps?|capabilit(?:y|ies))$/', strtolower( $key ) ) ) {
+				self::role_grant_names( $item, $out, 0 );
+			}
+			if ( is_array( $item ) ) {
+				self::collect_role_grants( $item, $out, $depth + 1 );
+			}
+		}
+	}
+
+	/**
+	 * The names in one role or capability value: a name, a comma or space separated list, a list
+	 * of names, or a map of name => true.
+	 */
+	private static function role_grant_names( $value, array &$out, $depth ) {
+		if ( $depth > 8 ) {
+			return;
+		}
+		if ( is_string( $value ) ) {
+			foreach ( (array) preg_split( '/[\s,]+/', strtolower( trim( $value ) ) ) as $part ) {
+				if ( '' !== $part ) {
+					$out[] = $part;
+				}
+			}
+			return;
+		}
+		if ( ! is_array( $value ) ) {
+			return;
+		}
+		foreach ( $value as $k => $v ) {
+			if ( is_string( $k ) && ! is_array( $v ) ) {
+				if ( ! empty( $v ) ) {
+					$out[] = strtolower( trim( $k ) );
+				}
+				continue;
+			}
+			if ( is_string( $k ) ) {
+				$out[] = strtolower( trim( $k ) );
+			}
+			self::role_grant_names( $v, $out, $depth + 1 );
+		}
+	}
+
+	/**
+	 * Whether a role can run the site (any of POWER_CAPS), counting capabilities a plugin
+	 * grants to that role at check time through the user_has_cap filter.
+	 */
+	private static function is_powerful_role( $role ) {
+		$r = get_role( (string) $role );
+		if ( ! $r ) {
+			return false;
+		}
+		$caps = (array) $r->capabilities;
+		foreach ( self::POWER_CAPS as $cap ) {
+			if ( ! empty( $caps[ $cap ] ) ) {
+				return true;
+			}
+		}
+		// A stand-in account that holds only this role and is never saved.
+		try {
+			$probe          = new \WP_User();
+			$probe->roles   = [ (string) $role ];
+			$probe->caps    = [ (string) $role => true ];
+			$probe->allcaps = $caps;
+			foreach ( self::POWER_CAPS as $cap ) {
+				$granted = apply_filters( 'user_has_cap', $caps, [ $cap ], [ $cap, 0 ], $probe );
+				if ( is_array( $granted ) && ! empty( $granted[ $cap ] ) ) {
+					return true;
+				}
+			}
+		} catch ( \Throwable $e ) {
+			// A filter that cannot handle the stand-in account leaves the stored capabilities as the answer.
+			return false;
+		}
+		return false;
+	}
+
+	/**
+	 * Tell the site's admin email that an AI connection confirmed a bridged ability call
+	 * that gives roles or capabilities able to run the site.
+	 *
+	 * @param string   $tool  Tool name.
+	 * @param string[] $names The roles and capabilities the call sets.
+	 */
+	private static function notify_power_grant_call( $tool, array $names ) {
+		$to = (string) get_option( 'admin_email' );
+		if ( ! is_email( $to ) ) {
+			return false;
+		}
+		$user = wp_get_current_user();
+		$who  = $user && $user->exists() ? $user->user_login : 'an unknown account';
+		$site = wp_specialchars_decode( (string) get_option( 'blogname' ), ENT_QUOTES );
+		$body = sprintf(
+			"An AI connection signed in as %s confirmed a call on %s through Royal MCP (%s) that sets these roles or capabilities: %s.\n\nThey can change settings, plugins and users. If you did not ask for this, check the accounts under Users in wp-admin, turn the ability off under Royal MCP's Plugin Abilities page, and review Royal MCP's Activity Log.\n\n%s",
+			$who,
+			home_url( '/' ),
+			substr( (string) $tool, 0, 200 ),
+			implode( ', ', array_slice( array_map( 'strval', $names ), 0, 20 ) ),
+			admin_url( 'users.php' )
+		);
+		return (bool) wp_mail( $to, sprintf( '[%s] An AI connection gave roles that can run the site', $site ), $body );
 	}
 
 	/** What a refused theme write tried to change, while a bridged ability runs; null otherwise. */

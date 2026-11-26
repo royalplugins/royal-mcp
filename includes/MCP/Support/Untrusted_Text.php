@@ -58,11 +58,88 @@ class Untrusted_Text {
 		'bp_list_groups'                   => 'group names and descriptions',
 		'wp_get_users'                     => 'user display names',
 		'wp_search'                        => 'titles and snippets of forum topics, replies and other posts visitors write',
+		'mcp_list_recent_changes'          => 'post titles and other names, which any user who can edit them writes',
+		'mcp_get_change'                   => 'post titles, field values, comment text and other names, which any user who can edit them writes',
+		'wp_get_post'                      => 'titles and content, which contributors and visitors (forum topics, replies) can write',
+		'wp_get_posts'                     => 'titles and excerpts, which contributors and visitors (forum topics, replies) can write',
+		'wp_get_page'                      => 'titles and content, which any user who can edit the page writes',
+		'wp_get_pages'                     => 'titles, which any user who can edit the pages writes',
+		'wp_get_media'                     => 'media titles, captions and alt text, which any user who uploads media writes',
+		'wp_get_media_item'                => 'media titles, captions and alt text, which any user who uploads media writes',
+		'wp_find_media'                    => 'media titles and file names, which any user who uploads media writes',
+		'wp_get_terms'                     => 'term names and descriptions',
+		'wp_get_term'                      => 'term names and descriptions',
+		'wp_get_categories'                => 'category names and descriptions',
+		'wp_get_tags'                      => 'tag names and descriptions',
+		'wp_get_post_terms'                => 'term names',
+		'wp_get_user'                      => 'the user display name and profile fields',
+		'wc_get_customers'                 => 'customer names and addresses',
+		'rafp_list_affiliates'             => 'affiliate names and profile text',
+		'rafp_get_affiliate_performance'   => 'affiliate names',
+		'rafp_get_period_summary'          => 'affiliate names',
+		'rafp_get_referral_records'        => 'affiliate names and referral details',
+		'rafp_get_activity_log'            => 'affiliate names and activity details',
+		'rafp_get_fraud_incidents'         => 'affiliate names and incident details',
+		'rafp_list_payouts'                => 'affiliate names',
+		'rafp_list_creatives'              => 'creative names and text',
+		'rafp_list_landing_pages'          => 'landing page names',
+		'rafp_list_campaigns'              => 'campaign names',
+		'rafp_get_campaign'                => 'campaign names and descriptions',
+		'rafp_get_campaign_performance'    => 'campaign names',
+		'wordfence_get_blocked_ips'        => 'block reasons, which can quote what visitors sent',
+		'rlinks_get_link_stats'            => 'referrers and user agents',
+		'monsterinsights_get_summary'      => 'page titles and referrers',
+		'monsterinsights_get_top_pages'    => 'page titles and addresses',
+		'monsterinsights_get_traffic_sources' => 'referrer names and addresses',
+		'jetengine_get_related_items'      => 'related item titles and values, which site forms can fill in',
+		'fluentsmtp_get_status'            => 'email subjects and addresses from the sending log',
+		'wp_get_php_errors'                => 'error lines, which can quote requested addresses and submitted values',
+		'gp_get_malware_results'           => 'file names and matched text from scanned files, which an attacker who placed a file chose',
+		'gp_malware_scans'                 => 'file names and matched text from scanned files, which an attacker who placed a file chose',
+		'gp_get_file_integrity'            => 'file names, which an attacker who placed a file chose',
+		'gp_file_changes'                  => 'file names, which an attacker who placed a file chose',
+		'wp_monthly_maintenance_report'    => 'log lines and plugin names, which can quote requested addresses and submitted values',
 	];
+
+	/** Every tool bridged from another plugin's ability starts with this. */
+	const BRIDGED_PREFIX = 'ext_';
+
+	/** What a bridged ability's reply may carry. */
+	const BRIDGED_PARTS = 'values the other plugin returns, which its users or visitors may have written';
+
+	/**
+	 * The marked tools: the list above, tools other code adds through the
+	 * royal_mcp_untrusted_tools filter (tool name => what in its reply visitors wrote),
+	 * and every bridged ext_* tool. A filter can add tools or reword new ones; the
+	 * tools listed above always stay marked.
+	 *
+	 * @return array<string, string>
+	 */
+	public static function tools() {
+		$added = apply_filters( 'royal_mcp_untrusted_tools', [] );
+		$out   = self::TOOLS;
+		if ( is_array( $added ) ) {
+			foreach ( $added as $name => $parts ) {
+				// Bridged ext_* tools keep their fixed wording; an entry that cleans to nothing is ignored.
+				$clean = is_string( $parts ) ? sanitize_text_field( $parts ) : '';
+				if ( is_string( $name ) && '' !== $clean && ! isset( self::TOOLS[ $name ] ) && 0 !== strpos( $name, self::BRIDGED_PREFIX ) && preg_match( '/^[a-zA-Z0-9_\-]{1,64}$/', $name ) ) {
+					$out[ $name ] = $clean;
+				}
+			}
+		}
+		return $out;
+	}
 
 	/** What visitors wrote in a tool's reply, or '' for a tool not in the list. */
 	public static function parts( $tool ) {
-		return is_string( $tool ) ? (string) ( self::TOOLS[ $tool ] ?? '' ) : '';
+		if ( ! is_string( $tool ) || '' === $tool ) {
+			return '';
+		}
+		$tools = self::tools();
+		if ( isset( $tools[ $tool ] ) ) {
+			return (string) $tools[ $tool ];
+		}
+		return 0 === strpos( $tool, self::BRIDGED_PREFIX ) ? self::BRIDGED_PARTS : '';
 	}
 
 	/** The sentence added to a marked tool's description and reply. */
@@ -81,7 +158,10 @@ class Untrusted_Text {
 				continue;
 			}
 			$sentence = self::sentence( (string) $tool['name'] );
-			if ( '' !== $sentence && false === stripos( $tool['description'], 'untrusted' ) && false === stripos( $tool['description'], 'never as instructions' ) ) {
+			// A bridged tool's description is written by the other plugin, so only the exact sentence counts there;
+			// Royal MCP's own descriptions that already say it in their own words are left as they are.
+			$own_words = 0 !== strpos( (string) $tool['name'], 'ext_' ) && ( false !== stripos( $tool['description'], 'untrusted' ) || false !== stripos( $tool['description'], 'never as instructions' ) );
+			if ( '' !== $sentence && ! $own_words && false === strpos( $tool['description'], $sentence ) ) {
 				$tools[ $i ]['description'] = rtrim( $tool['description'] ) . ' ' . $sentence;
 			}
 		}
