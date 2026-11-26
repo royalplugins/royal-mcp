@@ -232,6 +232,71 @@ class Server {
         if ( ! has_filter( 'royal_mcp_tools', [ 'Royal_MCP\MCP\Support\Untrusted_Text', 'stamp_descriptions' ] ) ) {
             add_filter( 'royal_mcp_tools', [ 'Royal_MCP\MCP\Support\Untrusted_Text', 'stamp_descriptions' ], PHP_INT_MAX - 1 );
         }
+        // The REST server sends the CORS header lists itself, so the MCP session
+        // headers are added to those lists for the MCP routes.
+        if ( ! has_filter( 'rest_allowed_cors_headers', [ __CLASS__, 'cors_allowed_headers' ] ) ) {
+            add_filter( 'rest_allowed_cors_headers', [ __CLASS__, 'cors_allowed_headers' ], 10, 2 );
+        }
+        if ( ! has_filter( 'rest_exposed_cors_headers', [ __CLASS__, 'cors_exposed_headers' ] ) ) {
+            add_filter( 'rest_exposed_cors_headers', [ __CLASS__, 'cors_exposed_headers' ], 10, 2 );
+        }
+    }
+
+    /** REST routes that speak the MCP transport. */
+    const MCP_ROUTES = [ '/royal-mcp/v1/mcp', '/royal-mcp/v1', '/royal-mcp/v1/messages' ];
+
+    /**
+     * Whether a REST request is for one of the MCP routes.
+     *
+     * @param mixed $request The request the CORS filters pass.
+     */
+    private static function is_mcp_route_request( $request ) {
+        if ( $request instanceof \WP_REST_Request ) {
+            $route = (string) $request->get_route();
+        } elseif ( isset( $GLOBALS['wp'] ) && is_object( $GLOBALS['wp'] ) && ! empty( $GLOBALS['wp']->query_vars['rest_route'] ) ) {
+            // Older WordPress passes no request to these filters; the route being served is used instead.
+            $route = (string) $GLOBALS['wp']->query_vars['rest_route'];
+        } else {
+            return false;
+        }
+        // REST routing ignores case, so the match does too.
+        return in_array( strtolower( untrailingslashit( $route ) ), self::MCP_ROUTES, true );
+    }
+
+    /**
+     * Request headers a browser may send to the MCP routes: the session and protocol version headers.
+     *
+     * @param string[] $headers Allowed headers.
+     * @param mixed    $request The request.
+     * @return string[]
+     */
+    public static function cors_allowed_headers( $headers, $request = null ) {
+        if ( ! is_array( $headers ) || ! self::is_mcp_route_request( $request ) ) {
+            return $headers;
+        }
+        foreach ( [ 'Mcp-Session-Id', 'Mcp-Protocol-Version' ] as $header ) {
+            if ( ! in_array( strtolower( $header ), array_map( 'strtolower', $headers ), true ) ) {
+                $headers[] = $header;
+            }
+        }
+        return $headers;
+    }
+
+    /**
+     * Response headers a browser may read from the MCP routes: the session id.
+     *
+     * @param string[] $headers Exposed headers.
+     * @param mixed    $request The request.
+     * @return string[]
+     */
+    public static function cors_exposed_headers( $headers, $request = null ) {
+        if ( ! is_array( $headers ) || ! self::is_mcp_route_request( $request ) ) {
+            return $headers;
+        }
+        if ( ! in_array( 'mcp-session-id', array_map( 'strtolower', $headers ), true ) ) {
+            $headers[] = 'Mcp-Session-Id';
+        }
+        return $headers;
     }
 
     /** Leading verbs that only read. Matched against the verb word only, never anywhere in the name. */
@@ -372,6 +437,12 @@ class Server {
 
     /** Add the post's content_hash to a tool result (structured part and text). */
     private static function with_content_hash( $result, $post_id ) {
+        // The hash covers the stored source, so it goes only to callers who get
+        // that source back: users who may edit the post (and so can use the hash
+        // as expected_hash). Readers see the rendered page or nothing.
+        if ( ! current_user_can( 'edit_post', (int) $post_id ) || ! \Royal_MCP\MCP\Support\Post_Access::can_read_content( (int) $post_id ) ) {
+            return $result;
+        }
         $hash = self::content_hash( $post_id );
         if ( '' === $hash || ! is_array( $result ) ) {
             return $result;
@@ -938,6 +1009,9 @@ class Server {
         $this->register_method_handler('prompts/list',              [ $this, 'handle_prompts_list' ]);
         $this->register_method_handler('prompts/get',               [ $this, 'handle_prompts_get' ]);
         $this->register_method_handler('server/discover',           [ $this, 'handle_server_discover' ]);
+        // Skills extension: each loaded skill as SKILL.md plus workflow files, read through resources/read.
+        $this->register_method_handler('skills/list',               [ '\\Royal_MCP\\MCP\\Support\\Skill_Files', 'handle_list' ]);
+        $this->register_method_handler('skills/get',                [ '\\Royal_MCP\\MCP\\Support\\Skill_Files', 'handle_get' ]);
     }
 
     /**
@@ -1420,23 +1494,26 @@ class Server {
         // it's still empty here the request runs as the anonymous WP visitor
         // and per-capability checks downstream reject it, which is the safer
         // failure mode than silently attributing to a fixed administrator.
-        if (!is_user_logged_in()) {
-            $bound_uid = isset($settings['api_key_user_id']) ? (int) $settings['api_key_user_id'] : 0;
-            // A key bound to an account works only while that account exists and may connect AI clients.
-            if ($bound_uid > 0 && (!\Royal_MCP\MCP\Support\Route_Roles::is_site_user($bound_uid) || !\Royal_MCP\MCP\Support\Route_Roles::connect_allowed($bound_uid))) {
-                $response = new \WP_REST_Response([
-                    'jsonrpc' => '2.0',
-                    'error' => [
-                        'code' => -32600,
-                        'message' => 'The account this API key belongs to is not allowed to connect AI clients to this site. An administrator can create a new key under Royal MCP → Connections → Connection settings.',
-                    ],
-                ], 403);
-                $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-                return $response;
-            }
-            if ($bound_uid > 0) {
-                wp_set_current_user($bound_uid);
-            }
+        // The key always acts as its bound account, also when the request carries a signed-in
+        // browser session, so the account checks below cannot be skipped by sending a cookie.
+        $bound_uid = isset($settings['api_key_user_id']) ? (int) $settings['api_key_user_id'] : 0;
+        // A key bound to an account works only while that account exists and may connect AI clients.
+        if ($bound_uid > 0 && (!\Royal_MCP\MCP\Support\Route_Roles::is_site_user($bound_uid) || !\Royal_MCP\MCP\Support\Route_Roles::connect_allowed($bound_uid))) {
+            $response = new \WP_REST_Response([
+                'jsonrpc' => '2.0',
+                'error' => [
+                    'code' => -32600,
+                    'message' => 'The account this API key belongs to is not allowed to connect AI clients to this site. An administrator can create a new key under Royal MCP → Connections → Connection settings.',
+                ],
+            ], 403);
+            $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+            return $response;
+        }
+        if ($bound_uid > 0) {
+            wp_set_current_user($bound_uid);
+        } elseif (is_user_logged_in()) {
+            // A key saved before keys were bound runs as the anonymous visitor, never as whoever is signed in.
+            wp_set_current_user(0);
         }
 
         // API keys don't rotate, so hashing the raw key gives a stable session fingerprint.
@@ -2424,6 +2501,7 @@ class Server {
         $target = isset( $snapshot['target'] ) && is_array( $snapshot['target'] ) ? $snapshot['target'] : [];
         $pre    = isset( $snapshot['pre_op_state'] ) && is_array( $snapshot['pre_op_state'] ) ? $snapshot['pre_op_state'] : [];
         switch ( $op ) {
+            case 'wp_publish_and_launch':
             case 'wp_create_post_trash':
             case 'elementor_clone_page':
             case 'elementor_import_template':
@@ -3691,15 +3769,10 @@ class Server {
     }
 
     /**
-     * Handle CORS preflight
+     * Handle CORS preflight. The REST server sends the CORS headers (see cors_allowed_headers()).
      */
     private function cors_response() {
-        $response = new \WP_REST_Response(null, 204);
-        $response->header('Access-Control-Allow-Origin', '*');
-        $response->header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-        $response->header('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization, Mcp-Session-Id');
-        $response->header('Access-Control-Max-Age', '86400');
-        return $response;
+        return new \WP_REST_Response(null, 204);
     }
 
     /**
@@ -3899,6 +3972,9 @@ class Server {
         if ( 'resources/read' === $method && is_array( $params ) && isset( $params['uri'] ) && is_string( $params['uri'] ) ) {
             $request_meta['resource_uri'] = substr( sanitize_text_field( $params['uri'] ), 0, 200 );
         }
+        if ( 'skills/get' === $method && is_array( $params ) && isset( $params['uri'] ) && is_string( $params['uri'] ) ) {
+            $request_meta['resource_uri'] = substr( sanitize_text_field( $params['uri'] ), 0, 200 );
+        }
         if ( 'prompts/get' === $method && is_array( $params ) && isset( $params['name'] ) && is_string( $params['name'] ) ) {
             $request_meta['prompt_name'] = substr( sanitize_text_field( $params['name'] ), 0, 200 );
         }
@@ -3987,9 +4063,7 @@ class Server {
         $this->delete_session($session_id);
 
         // Return success
-        $response = new \WP_REST_Response(null, 200);
-        $response->header('Access-Control-Allow-Origin', '*');
-        return $response;
+        return new \WP_REST_Response(null, 200);
     }
 
     /**
@@ -4023,8 +4097,6 @@ class Server {
         $response->header('Content-Type', 'application/json');
         $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, private');
         $response->header('Pragma', 'no-cache');
-        $response->header('Access-Control-Allow-Origin', '*');
-        $response->header('Access-Control-Expose-Headers', 'Mcp-Session-Id');
         return $response;
     }
 
@@ -4079,9 +4151,10 @@ class Server {
             'protocolVersion' => $negotiated,
             'serverInfo' => $this->build_server_info_with_icons(),
             'capabilities' => [
-                'tools'     => new \stdClass(),
-                'resources' => new \stdClass(),
-                'prompts'   => new \stdClass(),
+                'tools'      => new \stdClass(),
+                'resources'  => new \stdClass(),
+                'prompts'    => new \stdClass(),
+                'extensions' => \Royal_MCP\MCP\Support\Skill_Files::capability(),
             ],
         ];
         // What the site owner wrote for AI clients, for any signed-in connection.
@@ -4323,9 +4396,10 @@ class Server {
                 'resultType'        => 'complete',
                 'supportedVersions' => $supported_desc,
                 'capabilities'      => [
-                    'tools'     => new \stdClass(),
-                    'resources' => new \stdClass(),
-                    'prompts'   => new \stdClass(),
+                    'tools'      => new \stdClass(),
+                    'resources'  => new \stdClass(),
+                    'prompts'    => new \stdClass(),
+                    'extensions' => \Royal_MCP\MCP\Support\Skill_Files::capability(),
                 ],
                 '_meta' => [
                     'io.modelcontextprotocol/serverInfo' => $this->build_server_info_with_icons(),
@@ -4846,6 +4920,11 @@ class Server {
             ];
         }
 
+        // Skill files (skills extension) carry their own reply shape; an unknown one is invalid params.
+        if ( \Royal_MCP\MCP\Support\Skill_Files::is_skill_uri( $uri ) ) {
+            return \Royal_MCP\MCP\Support\Skill_Files::read_reply( $uri, $id );
+        }
+
         // A resource the caller may not read is answered the same way as one
         // that does not exist.
         $data = current_user_can( 'read' ) ? $this->read_resource( $uri ) : null;
@@ -5295,7 +5374,7 @@ class Server {
          * @param string[] $tools Tool names.
          */
         $tools = apply_filters( 'royal_mcp_unscrubbed_tools', [
-            'wp_create_preview_link', 'wp_create_login_link', 'wc_create_order',
+            'wp_create_preview_link',
             // Royal MCP's own tool metadata and connection details.
             'get_tool_info', 'discover_tools', 'royal_mcp_connection_health',
             // A skill is a fixed text that ships with the plugin.
@@ -6840,6 +6919,17 @@ class Server {
                         throw new \Exception(esc_html($up_status_refusal));
                     }
                 }
+                // Setting, changing or removing the password changes who can
+                // read the post, so it needs the type's publish capability.
+                if (array_key_exists('password', $args)) {
+                    if (null !== $args['password'] && !is_scalar($args['password'])) {
+                        throw new \Exception('password must be a string.');
+                    }
+                    $up_password_refusal = \Royal_MCP\MCP\Support\Post_Access::password_refusal((string) $up_existing_post->post_type, (string) $args['password'], (string) $up_existing_post->post_password);
+                    if ('' !== $up_password_refusal) {
+                        throw new \Exception(esc_html($up_password_refusal));
+                    }
+                }
                 // Pre-validate featured_media before mutating the post.
                 if (isset($args['featured_media']) && intval($args['featured_media']) > 0) {
                     $fm = get_post(intval($args['featured_media']));
@@ -7247,6 +7337,17 @@ class Server {
                     $upg_status_refusal = \Royal_MCP\MCP\Support\Post_Access::status_change_refusal($existing_page, sanitize_key((string) $args['status']));
                     if ('' !== $upg_status_refusal) {
                         throw new \Exception(esc_html($upg_status_refusal));
+                    }
+                }
+                // Setting, changing or removing the password changes who can
+                // read the post, so it needs the type's publish capability.
+                if (array_key_exists('password', $args)) {
+                    if (null !== $args['password'] && !is_scalar($args['password'])) {
+                        throw new \Exception('password must be a string.');
+                    }
+                    $upg_password_refusal = \Royal_MCP\MCP\Support\Post_Access::password_refusal((string) $existing_page->post_type, (string) $args['password'], (string) $existing_page->post_password);
+                    if ('' !== $upg_password_refusal) {
+                        throw new \Exception(esc_html($upg_password_refusal));
                     }
                 }
                 // pre-validate post_author; crediting another user needs
@@ -8083,7 +8184,7 @@ class Server {
                     $dt_undo_envelope = \Royal_MCP\MCP\Undo_Store::store([
                         'op'      => 'wp_delete_term',
                         'summary' => sprintf( 'Recreate deleted term "%s" (slug: %s) in taxonomy %s with a new term_id (original %d) and link %d object(s) to it again%s.',
-                            $dt_full['name'], $dt_full['slug'], $dt_tax, $dt_tid, count( $dt_relink_ids ),
+                            \Royal_MCP\MCP\Support\Change_View::clean_label( $dt_full['name'] ), \Royal_MCP\MCP\Support\Change_View::clean_label( $dt_full['slug'] ), $dt_tax, $dt_tid, count( $dt_relink_ids ),
                             $dt_relink_partial ? sprintf( ' (only the first %d of %d)', count( $dt_relink_ids ), $dt_object_count ) : '' ),
                         'target'  => [ 'original_term_id' => $dt_tid, 'taxonomy' => $dt_tax ],
                         'pre_op_state' => [
@@ -9790,6 +9891,10 @@ class Server {
                 if (!current_user_can('manage_options')) {
                     throw new \Exception('You do not have permission to read the error log.');
                 }
+                // On a network the log holds every site's lines, so only a network administrator reads it.
+                if (is_multisite() && !is_super_admin() && !current_user_can('manage_network_options')) {
+                    throw new \Exception('On a multisite network the error log is shared by every site, so only a network administrator can read it.');
+                }
                 $lines = isset($args['lines']) ? max(1, min(intval($args['lines']), 1000)) : 100;
                 $filter = isset($args['filter']) ? (string) $args['filter'] : '';
 
@@ -9940,6 +10045,9 @@ class Server {
                 if (!current_user_can('read')) {
                     throw new \Exception('You do not have permission to search.');
                 }
+                if (!isset($args['query']) || !is_scalar($args['query'])) {
+                    throw new \Exception('query is required.');
+                }
                 $query = \Royal_MCP\MCP\Support\SafeText::field($args['query']);
                 $per_page = isset($args['per_page']) ? max(1, min(intval($args['per_page']), 100)) : 20;
                 $sr_window = $this->list_window($args, $per_page);
@@ -9994,6 +10102,9 @@ class Server {
             case 'wp_get_option':
                 if (!current_user_can('manage_options')) {
                     throw new \Exception('You do not have permission to read site options.');
+                }
+                if (!isset($args['name']) || !is_scalar($args['name'])) {
+                    throw new \Exception('name is required.');
                 }
                 $name = \Royal_MCP\MCP\Support\SafeText::field($args['name']);
                 // Licence records stay unreadable even when a filter puts them on the readable list.
@@ -10671,7 +10782,7 @@ class Server {
                 }
                 $dm_undo = $dm_fits ? \Royal_MCP\MCP\Undo_Store::store([
                     'op'           => 'wp_delete_menu',
-                    'summary'      => sprintf('Recreate menu "%s" with its %d item(s) and theme location(s).', (string) $dm_menu->name, count($dm_items)),
+                    'summary'      => sprintf('Recreate menu "%s" with its %d item(s) and theme location(s).', \Royal_MCP\MCP\Support\Change_View::clean_label((string) $dm_menu->name), count($dm_items)),
                     'target'       => ['menu_id' => $dm_id],
                     'pre_op_state' => $dm_state,
                 ]) : null;
@@ -10722,7 +10833,7 @@ class Server {
                 $dmi_undo_envelope = \Royal_MCP\MCP\Undo_Store::store([
                     'op'      => 'wp_delete_menu_item',
                     'summary' => sprintf( 'Recreate menu item "%s" in menu %d. Note: new item_id (auto-increment) — child items pointing at the old parent_id will not re-link.',
-                        $dmi_full['title'], $dmi_menu_id ),
+                        \Royal_MCP\MCP\Support\Change_View::clean_label( (string) $dmi_full['title'] ), $dmi_menu_id ),
                     'target'  => [ 'original_menu_item_id' => $dmi_iid, 'menu_id' => $dmi_menu_id ],
                     'pre_op_state' => [
                         'row' => $dmi_full,
@@ -10829,8 +10940,8 @@ class Server {
                 // Persist the snapshot and build the undo envelope.
                 $undo_envelope = \Royal_MCP\MCP\Undo_Store::store([
                     'op'      => 'wp_reorder_menu_items',
-                    'summary' => sprintf('Restore menu "%s" (%d items) to prior order', $menu_obj->name, count($pre_op_state)),
-                    'target'  => ['menu_id' => $menu_id, 'menu_name' => $menu_obj->name],
+                    'summary' => sprintf('Restore menu "%s" (%d items) to prior order', \Royal_MCP\MCP\Support\Change_View::clean_label((string) $menu_obj->name), count($pre_op_state)),
+                    'target'  => ['menu_id' => $menu_id, 'menu_name' => \Royal_MCP\MCP\Support\Change_View::clean_label((string) $menu_obj->name)],
                     'pre_op_state' => $pre_op_state,
                     'applied_state' => $applied_state,
                 ]);
@@ -11129,8 +11240,12 @@ class Server {
                         $lrc_owner = (int) ($lrc_change['user_id'] ?? 0);
                         $lrc_row   = \Royal_MCP\MCP\Support\Change_View::summary($lrc_change, $lrc_token && (!$lrc_all || $lrc_owner === $lrc_user));
                         if ($lrc_all) {
-                            $lrc_who = $lrc_owner > 0 ? get_userdata($lrc_owner) : false;
-                            $lrc_row['user'] = ['id' => $lrc_owner, 'login' => $lrc_who ? (string) $lrc_who->user_login : ''];
+                            // The login recorded with the change; a change recorded without one names the user by id.
+                            $lrc_login = isset($lrc_change['via']['user_login']) && is_scalar($lrc_change['via']['user_login']) ? \Royal_MCP\MCP\Support\Change_View::clean_label((string) $lrc_change['via']['user_login'], 60) : '';
+                            if ($lrc_login === '' && $lrc_owner > 0) {
+                                $lrc_login = 'user ' . $lrc_owner;
+                            }
+                            $lrc_row['user'] = ['id' => $lrc_owner, 'login' => $lrc_login];
                         }
                         $lrc_rows[] = $lrc_row;
                     }
@@ -18002,6 +18117,10 @@ class Server {
         if ( ! $ours ) {
             $opts['own_fields'] = [];
             $opts['own_meta']   = false;
+            // The confirm step Royal MCP adds in front of a bridged ability keeps the one token it issued for this call.
+            if ( method_exists( '\Royal_MCP\Abilities\Plugin_Abilities', 'is_issued_confirm_reply' ) && \Royal_MCP\Abilities\Plugin_Abilities::is_issued_confirm_reply( (string) $name, $result ) ) {
+                $opts['own_fields'] = [ 'confirm_token' ];
+            }
         }
         $filtered = $ours ? apply_filters( 'royal_mcp_scrub_tool_opts', $opts, (string) $name ) : null;
         if ( is_array( $filtered ) ) {

@@ -87,11 +87,11 @@ class Skills {
 	/**
 	 * A bundled skill's parts.
 	 *
-	 * @return array{version:string, core:string, sections:array<string, array{title:string, summary:string, text:string}>}
+	 * @return array{version:string, frontmatter:string, core:string, sections:array<string, array{title:string, summary:string, text:string}>}
 	 */
 	public static function parts( $id ) {
 		static $cache = [];
-		$empty = [ 'version' => '', 'core' => '', 'sections' => [] ];
+		$empty = [ 'version' => '', 'frontmatter' => '', 'core' => '', 'sections' => [] ];
 		if ( ! self::is_bundled( $id ) ) {
 			return $empty;
 		}
@@ -118,6 +118,8 @@ class Skills {
 		if ( is_array( $data ) && isset( $data['core'] ) && is_string( $data['core'] ) ) {
 			$out['core']    = $lf( $data['core'] );
 			$out['version'] = isset( $data['version'] ) && is_string( $data['version'] ) ? $data['version'] : '';
+			// The skill's YAML frontmatter, served verbatim at the top of its SKILL.md.
+			$out['frontmatter'] = isset( $data['frontmatter'] ) && is_string( $data['frontmatter'] ) ? trim( $lf( $data['frontmatter'] ), "\n" ) : '';
 			foreach ( isset( $data['sections'] ) && is_array( $data['sections'] ) ? $data['sections'] : [] as $slug => $section ) {
 				if ( is_array( $section ) && isset( $section['text'] ) && is_string( $section['text'] ) && '' !== $section['text'] ) {
 					$out['sections'][ (string) $slug ] = [

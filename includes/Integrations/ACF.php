@@ -220,7 +220,9 @@ class ACF {
 				if ( in_array( (string) ( $acf_field['type'] ?? '' ), [ 'url', 'link' ], true ) ) {
 					$acf_addr = is_array( $acf_value ) ? ( $acf_value['url'] ?? '' ) : $acf_value;
 					if ( is_string( $acf_addr ) && '' !== trim( $acf_addr ) ) {
-						$acf_scheme = 1 === preg_match( '/^([a-z][a-z0-9+.\-]*):/i', trim( $acf_addr ), $acf_m ) ? strtolower( $acf_m[1] ) : '';
+						// Browsers drop whitespace and control characters inside a scheme, so they are ignored here too.
+						$acf_bare   = (string) preg_replace( '/[\x00-\x20\x7f]+/', '', $acf_addr );
+						$acf_scheme = 1 === preg_match( '/^([a-z][a-z0-9+.\-]*):/i', $acf_bare, $acf_m ) ? strtolower( $acf_m[1] ) : '';
 						if ( '' !== $acf_scheme && ! in_array( $acf_scheme, wp_allowed_protocols(), true ) ) {
 							throw new \Royal_MCP\MCP\Support\Tool_Refusal( 'invalid_url', sprintf( 'The %s field only takes web addresses; "%s:" links are not allowed. Nothing was changed.', esc_html( (string) ( $acf_field['type'] ?? 'url' ) ), esc_html( $acf_scheme ) ) );
 						}

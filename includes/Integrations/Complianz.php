@@ -478,7 +478,7 @@ class Complianz {
 		}
 		$undo = Undo_Store::store( [
 			'op'           => 'complianz_update_cookie_description',
-			'summary'      => sprintf( 'Restore the description of cookie %d (%s)', $id, $row['name'] ),
+			'summary'      => sprintf( 'Restore the description of cookie %d (%s)', $id, \Royal_MCP\MCP\Support\Change_View::clean_label( $row['name'] ) ),
 			'target'       => [ 'cookie_id' => $id ],
 			'pre_op_state' => [ 'prior_values' => $before, 'applied_values' => $after ],
 		] );

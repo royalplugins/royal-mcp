@@ -105,6 +105,21 @@ class LaunchTools {
 		return array_values( self::schemas() );
 	}
 
+	/**
+	 * Whether the site lets this tool run (the royal_mcp_tools filter and kill switches; an
+	 * endpoint profile only trims the list), so a report never runs a tool the site switched off.
+	 *
+	 * @param string $name Tool name.
+	 * @return bool
+	 */
+	private static function tool_listed( $name ) {
+		$server = new \Royal_MCP\MCP\Server();
+		// The same answer the dispatcher gives: profiles only trim tools/list, they do not switch a tool off.
+		$offered = new \ReflectionMethod( $server, 'tool_is_offered' );
+		$offered->setAccessible( true );
+		return (bool) $offered->invoke( $server, (string) $name );
+	}
+
 	public static function execute_tool( $name, $args ) {
 		if ( ! self::handles( $name ) ) {
 			throw new \Exception( 'Unknown launch tool: ' . esc_html( is_string( $name ) ? $name : '' ) );
@@ -248,6 +263,27 @@ class LaunchTools {
 				return 'Put back the earlier content of the posts the migration changed.';
 		}
 		return 'Reverse ' . $tool . '.';
+	}
+
+	/**
+	 * Undo for a post another tool created in one call (wp_publish_and_promote): the same undo as
+	 * wp_publish_and_launch removes the post, the image it downloaded (unless used elsewhere) and the
+	 * terms it created (when nothing else uses them).
+	 *
+	 * @param int   $post_id       Created post.
+	 * @param int   $media_id      Image downloaded for it, or 0.
+	 * @param array $created_terms [ [ 'op' => 'delete_term', 'id' => term id, 'tax' => taxonomy ], ... ].
+	 * @return array|null Undo details for the reply.
+	 */
+	public static function created_post_undo( $post_id, $media_id, array $created_terms ) {
+		$payload = [ 'post_id' => (int) $post_id, 'media_id' => (int) $media_id, 'created_terms' => array_values( $created_terms ) ];
+		$stored  = \Royal_MCP\MCP\Undo_Store::store( [
+			'op'           => 'wp_publish_and_launch',
+			'summary'      => sprintf( 'Remove post %d%s and the categories or tags this call created when nothing else uses them.', (int) $post_id, $media_id ? sprintf( ', its featured image %d', (int) $media_id ) : '' ),
+			'target'       => [ 'post_id' => (int) $post_id ],
+			'pre_op_state' => [ 'payload' => $payload, 'modified' => (string) get_post_field( 'post_modified_gmt', (int) $post_id, 'raw' ) ],
+		] );
+		return is_array( $stored ) && ! empty( $stored['token'] ) ? $stored : null;
 	}
 
 	/** Stores what an undo needs and returns the token details for the reply, or null. */
@@ -1523,6 +1559,10 @@ class LaunchTools {
 
 				'condition'  => $include_error_log,
 				'run'        => static function () {
+					// A site that removed the log tool from its tool list does not get its lines here either.
+					if ( ! self::tool_listed( 'wp_get_error_log_tail' ) ) {
+						return [ 'status' => 'skipped', 'message' => 'The error log tool (wp_get_error_log_tail) is switched off on this site, so no log lines are included.' ];
+					}
 					$server = new \Royal_MCP\MCP\Server();
 					$exec   = new \ReflectionMethod( $server, 'execute_tool' );
 					$exec->setAccessible( true );
@@ -1564,6 +1604,9 @@ class LaunchTools {
 						return [ 'status' => 'skipped', 'message' => 'SiteVault not installed — cannot query backup history' ];
 					}
 
+					if ( ! self::tool_listed( 'sv_get_dashboard_summary' ) ) {
+						return [ 'status' => 'skipped', 'message' => 'The SiteVault summary tool (sv_get_dashboard_summary) is switched off on this site.' ];
+					}
 					if ( class_exists( '\\Royal_MCP\\Integrations\\SiteVaultHealth' )
 						 && method_exists( '\\Royal_MCP\\Integrations\\SiteVaultHealth', 'execute_tool' ) ) {
 						$result = \Royal_MCP\Integrations\SiteVaultHealth::execute_tool( 'sv_get_dashboard_summary', [] );
@@ -1675,6 +1718,10 @@ class LaunchTools {
 		if ( $from === '' || $to === '' || $from === $to ) {
 			return self::error_envelope( 'invalid_args', 'from_theme_slug and to_theme_slug must be two different theme folder names (letters, digits, dots, hyphens and underscores).' );
 		}
+		// Links are only pointed at a theme this site has.
+		if ( ! wp_get_theme( $to )->exists() ) {
+			return self::error_envelope( 'invalid_args', sprintf( 'to_theme_slug "%s" is not a theme installed on this site, so no links were changed.', $to ) );
+		}
 		$mode      = self::resolve_mode( $args, 'best_effort' );
 		$dry_run   = ! empty( $args['dry_run'] ) || 'report_only' === $mode;
 		// Posts are scanned in ID order after this ID (next_after_id of the previous call).
@@ -1683,10 +1730,18 @@ class LaunchTools {
 			? array_values( array_filter( array_map( 'sanitize_key', $args['post_types'] ) ) )
 			: [ 'post', 'page' ];
 		$post_types = array_values( array_filter( $post_types, static function ( $pt ) {
-			return ! \Royal_MCP\MCP\Support\Post_Access::is_code_type( $pt ) && ! in_array( $pt, [ 'revision', 'nav_menu_item', 'attachment' ], true );
+			return ! \Royal_MCP\MCP\Support\Post_Access::is_code_type( $pt ) && ! \Royal_MCP\MCP\Support\Post_Access::is_form_data_type( $pt ) && ! in_array( $pt, [ 'revision', 'nav_menu_item', 'attachment' ], true );
 		} ) );
 		if ( ! $post_types ) {
-			return self::error_envelope( 'invalid_args', 'post_types holds no post type this tool rewrites (code, revisions, menu items and attachments are left alone).' );
+			return self::error_envelope( 'invalid_args', 'post_types holds no post type this tool rewrites (code, form data, revisions, menu items and attachments are left alone).' );
+		}
+		// Templates, template parts, global styles and navigation set how the whole site looks:
+		// they answer to the site owner's "Allow AI to modify theme appearance" setting.
+		foreach ( $post_types as $pt ) {
+			$theme_refusal = \Royal_MCP\MCP\Support\Post_Access::theme_post_refusal( $pt );
+			if ( null !== $theme_refusal ) {
+				return self::error_envelope( $theme_refusal->error_code(), sprintf( 'post_types includes %s: %s No links were changed.', $pt, $theme_refusal->getMessage() ) );
+			}
 		}
 
 		$needle_paths = [
@@ -1738,6 +1793,13 @@ class LaunchTools {
 
 			if ( ! current_user_can( 'edit_post', $pid ) ) {
 				$result['not_editable'] = ( $result['not_editable'] ?? 0 ) + 1;
+				continue;
+			}
+			// The same checks as any other write of this post type (for example a closing style tag in global styles).
+			try {
+				\Royal_MCP\MCP\Support\Post_Access::assert_theme_write( (string) get_post_type( $pid ), $new );
+			} catch ( \Royal_MCP\MCP\Support\Tool_Refusal $refused ) {
+				$result['skipped'][] = [ 'id' => $pid, 'reason' => $refused->error_code() ];
 				continue;
 			}
 			if ( $dry_run ) {

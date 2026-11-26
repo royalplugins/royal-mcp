@@ -1274,3 +1274,390 @@
         text-align: center;
     }
 }
+
+/* Slide: Claude Code slash command list (the one dark visual) */
+.rmcp-wn-cc {
+    background: #2C2C2C;
+    border-radius: 10px;
+    overflow: hidden;
+    color: #FAF8F5;
+    font-family: "JetBrains Mono", Consolas, Monaco, monospace;
+    font-size: 10.5px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+}
+.rmcp-wn-cc-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    background: #232323;
+    border-bottom: 1px solid rgba(250, 248, 245, 0.08);
+}
+.rmcp-wn-cc-dots { display: inline-flex; gap: 4px; }
+.rmcp-wn-cc-dots i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #555;
+}
+.rmcp-wn-cc-app {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: #bdb8ad;
+}
+.rmcp-wn-cc-input {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 10px 10px 6px;
+    padding: 6px 8px;
+    border: 1px solid rgba(201, 162, 39, 0.55);
+    border-radius: 5px;
+    color: #fff;
+    font-weight: 700;
+}
+.rmcp-wn-cc-ps { color: #C9A227; }
+.rmcp-wn-cc-caret {
+    width: 6px;
+    height: 12px;
+    margin-left: -4px;
+    background: #C9A227;
+    animation: rmcp-wn-cc-blink 1s steps(1) infinite;
+}
+@keyframes rmcp-wn-cc-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+    .rmcp-wn-cc-caret { animation: none; }
+}
+.rmcp-wn-cc-list { padding: 0 6px 6px; }
+.rmcp-wn-cc-item {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 5px 6px;
+    border-radius: 4px;
+}
+.rmcp-wn-cc-item.is-on { background: rgba(201, 162, 39, 0.18); }
+.rmcp-wn-cc-name {
+    color: #E8D48A;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.rmcp-wn-cc-item em {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-style: normal;
+    font-size: 10px;
+    color: #a9a397;
+}
+.rmcp-wn-cc-foot {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    border-top: 1px solid rgba(250, 248, 245, 0.08);
+    color: #b8d8b8;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 10.5px;
+    font-weight: 600;
+}
+.rmcp-wn-vis .rmcp-wn-cc-foot svg { width: 12px; height: 12px; color: #7fc48f; }
+
+/* Slide: WordPress version badge + MCP plugins report */
+.rmcp-wn-coex {
+    background: #fff;
+    border: 1px solid #e6e6e6;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+}
+.rmcp-wn-coex-wp {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    background: #FAF8F5;
+    border-bottom: 1px solid #ECE4CC;
+}
+.rmcp-wn-coex-wp-num {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 34px;
+    font-weight: 700;
+    line-height: 1;
+    color: #C9A227;
+    letter-spacing: -0.02em;
+}
+.rmcp-wn-coex-wp-text {
+    display: flex;
+    flex-direction: column;
+    font-size: 12px;
+    font-weight: 700;
+}
+.rmcp-wn-coex-wp-text em {
+    align-self: flex-start;
+    margin-top: 3px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: #1e8a3c;
+    color: #fff;
+    font-style: normal;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+}
+.rmcp-wn-coex-head {
+    padding: 8px 14px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #8a7a4a;
+}
+.rmcp-wn-coex-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 14px;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+.rmcp-wn-coex-row.is-new { background: #FBF5E2; }
+.rmcp-wn-coex-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #c8c8c8;
+}
+.rmcp-wn-coex-dot.is-ok { background: #1e8a3c; box-shadow: 0 0 0 3px rgba(30, 138, 60, 0.15); }
+.rmcp-wn-coex-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.rmcp-wn-coex-name em {
+    font-style: normal;
+    font-size: 10px;
+    font-weight: 500;
+    color: #6b6b6b;
+}
+.rmcp-wn-coex-state { color: #8a8a8a; font-size: 10.5px; font-weight: 500; }
+.rmcp-wn-coex-new {
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: #C9A227;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+}
+.rmcp-wn-coex-reason {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 6px 14px 12px;
+    padding: 6px 9px;
+    border: 1px dashed #E3D6A8;
+    border-radius: 6px;
+    color: #6b5a1e;
+    font-size: 10.5px;
+    font-weight: 600;
+}
+.rmcp-wn-vis .rmcp-wn-coex-reason svg { width: 13px; height: 13px; color: #C9A227; }
+
+/* Slide: sign-in check path */
+.rmcp-wn-path { padding: 4px 4px 0; }
+.rmcp-wn-path-step {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding-bottom: 16px;
+}
+.rmcp-wn-path-step::before {
+    content: "";
+    position: absolute;
+    left: 13px;
+    top: 28px;
+    bottom: 2px;
+    width: 2px;
+    background: #ECE4CC;
+}
+.rmcp-wn-path-step.is-ok::before { display: none; }
+.rmcp-wn-path-dot {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f0f0f0;
+    color: #8a8a8a;
+}
+.rmcp-wn-path-step.is-new .rmcp-wn-path-dot { background: #C9A227; color: #fff; box-shadow: 0 0 0 4px rgba(201, 162, 39, 0.18); }
+.rmcp-wn-path-step.is-ok .rmcp-wn-path-dot { background: #1e8a3c; color: #fff; }
+.rmcp-wn-path-text {
+    display: flex;
+    flex-direction: column;
+    padding-top: 5px;
+    font-size: 12px;
+    font-weight: 700;
+}
+.rmcp-wn-path-step.is-skip .rmcp-wn-path-text { color: #8a8a8a; }
+.rmcp-wn-path-text em {
+    font-style: normal;
+    font-size: 10.5px;
+    font-weight: 500;
+    color: #8a8a8a;
+}
+.rmcp-wn-path-step.is-new .rmcp-wn-path-text em { color: #8a7a4a; font-weight: 700; }
+.rmcp-wn-path-keep {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: #FAF8F5;
+    border: 1px solid #ECE4CC;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: #4b4b4b;
+}
+.rmcp-wn-vis .rmcp-wn-path-keep svg { color: #C9A227; }
+
+/* Slide: change record card */
+.rmcp-wn-rec {
+    background: #fff;
+    border: 1px solid #e6e6e6;
+    border-left: 4px solid #C9A227;
+    border-radius: 10px;
+    padding: 12px 14px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+}
+.rmcp-wn-rec-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.rmcp-wn-rec-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #8a7a4a;
+}
+.rmcp-wn-rec-status {
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid #b7dcc1;
+    background: #eef8f1;
+    color: #1e6b33;
+    font-size: 9.5px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.rmcp-wn-rec-title {
+    margin: 6px 0 8px;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.25;
+}
+.rmcp-wn-rec-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 0;
+    border-top: 1px solid #f2f2f2;
+    font-size: 11px;
+}
+.rmcp-wn-rec-row.is-new {
+    margin: 0 -6px;
+    padding: 5px 6px;
+    border-radius: 4px;
+    background: #FBF5E2;
+}
+.rmcp-wn-rec-key { width: 70px; flex-shrink: 0; color: #8a8a8a; }
+.rmcp-wn-rec-val { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rmcp-wn-rec-val.is-code { font-family: Consolas, Monaco, monospace; font-size: 10.5px; }
+.rmcp-wn-rec-foot {
+    margin-top: 6px;
+    padding-top: 7px;
+    border-top: 1px dashed #E3D6A8;
+    color: #8a7a4a;
+    font-size: 10.5px;
+}
+
+/* Slide: one undo removes a group of items */
+.rmcp-wn-bundle {
+    background: #FAF8F5;
+    border: 1px solid #ECE4CC;
+    border-radius: 12px;
+    padding: 10px;
+}
+.rmcp-wn-bundle-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 6px;
+    padding: 8px 10px;
+    border: 1px solid #ece7da;
+    border-radius: 7px;
+    background: #fff;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+.rmcp-wn-bundle-ico {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #F4EEDB;
+    color: #8a7a4a;
+}
+.rmcp-wn-bundle-name {
+    flex: 1;
+    min-width: 0;
+    color: #6b6b6b;
+    text-decoration: line-through;
+    text-decoration-color: rgba(192, 70, 47, 0.6);
+}
+.rmcp-wn-bundle-badge {
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: #FBF0EC;
+    border: 1px solid #efc9bd;
+    color: #a23b2a;
+    font-size: 9.5px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.rmcp-wn-bundle-undo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 7px 10px;
+    border-radius: 6px;
+    background: #C9A227;
+    color: #fff;
+    font-size: 11.5px;
+    font-weight: 700;
+}
+
+/* Slash command named inside slide text: kept on one line */
+.rmcp-wn-slide-body code.rmcp-wn-cmd {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: #FAF8F5;
+    border: 1px solid #ECE4CC;
+    color: #2C2C2C;
+    font-family: "JetBrains Mono", Consolas, Monaco, monospace;
+    font-size: 12.5px;
+    white-space: nowrap;
+}

@@ -128,6 +128,9 @@ function royal_mcp_uninstall_site() {
     // One-shot api_key reveal transients (per-user, 15 min TTL).
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_reveal_api_key_%' OR option_name LIKE '_transient_timeout_royal_mcp_reveal_api_key_%'");
+    // One-use confirm tokens for bridged calls that grant roles (10 min TTL).
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+    $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_royal_mcp_grant_%' OR option_name LIKE '_transient_timeout_royal_mcp_grant_%'");
 
     // Discovery-document transients — Server_Card + Agent_Skills_Index.
     delete_transient('royal_mcp_server_card_json');
@@ -143,6 +146,7 @@ function royal_mcp_uninstall_site() {
     delete_transient('royal_mcp_discovery_chain');
     delete_transient('royal_mcp_foreign_as_endpoint');
     delete_transient('royal_mcp_missing_endpoints_list');
+    delete_transient('royal_mcp_static_names_issuer');
     delete_transient('royal_mcp_register_301_status');
     delete_transient('royal_mcp_pending_notify_lock');
 

@@ -182,9 +182,11 @@ class Composers {
 		}
 
 		// Step 4: assign category (create-if-missing)
+		$created_terms = [];
 		$category_id = null;
 		if ( '' !== $category ) {
 			$term = term_exists( $category, 'category' );
+			$cat_new = ! $term;
 			if ( ! $term ) {
 				$cat_tax = get_taxonomy( 'category' );
 				$term    = ( $cat_tax && current_user_can( $cat_tax->cap->edit_terms ) )
@@ -197,6 +199,9 @@ class Composers {
 				$warnings[] = [ 'step' => 'assign_category', 'message' => $msg ];
 			} else {
 				$category_id = (int) $term['term_id'];
+				if ( $cat_new ) {
+					$created_terms[] = [ 'op' => 'delete_term', 'id' => $category_id, 'tax' => 'category' ];
+				}
 				wp_set_object_terms( $post_id, $category_id, 'category', false );
 				$steps[] = [ 'name' => 'assign_category', 'status' => 'ok', 'data' => [ 'term_id' => $category_id ] ];
 			}
@@ -205,6 +210,10 @@ class Composers {
 		// Step 5: assign tags (create-if-missing via wp_set_post_tags)
 		$tag_ids = [];
 		if ( ! empty( $tags ) ) {
+			$tags_before = [];
+			foreach ( $tags as $tag_name ) {
+				$tags_before[ (string) $tag_name ] = (bool) term_exists( (string) $tag_name, 'post_tag' );
+			}
 			$tag_result = wp_set_post_tags( $post_id, $tags, false );
 			if ( is_wp_error( $tag_result ) ) {
 				$msg = $tag_result->get_error_message();
@@ -218,6 +227,12 @@ class Composers {
 				$warnings[] = [ 'step' => 'assign_tags', 'message' => 'wp_set_post_tags returned false; tags not assigned.' ];
 			} else {
 				$tag_ids = array_map( 'intval', $tag_result );
+				foreach ( $tags_before as $tag_name => $existed ) {
+					$made_tag = $existed ? null : term_exists( $tag_name, 'post_tag' );
+					if ( $made_tag ) {
+						$created_terms[] = [ 'op' => 'delete_term', 'id' => (int) ( is_array( $made_tag ) ? $made_tag['term_id'] : $made_tag ), 'tax' => 'post_tag' ];
+					}
+				}
 				$steps[] = [ 'name' => 'assign_tags', 'status' => 'ok', 'data' => [ 'count' => count( $tag_ids ) ] ];
 			}
 		}
@@ -271,7 +286,11 @@ class Composers {
 			$structured['url'] ?: '(no permalink)'
 		);
 
-		return Envelope::success( $summary, $structured );
+		// One undo removes what this call created: the post, the image and new categories / tags.
+		$undo = class_exists( '\\Royal_MCP\\Integrations\\LaunchTools' ) && method_exists( '\\Royal_MCP\\Integrations\\LaunchTools', 'created_post_undo' )
+			? \Royal_MCP\Integrations\LaunchTools::created_post_undo( $post_id, $attachment_id, $created_terms )
+			: null;
+		return Envelope::success( $summary, $structured, $undo );
 	}
 
 	// ----------------------------------------------------------------------

@@ -3,8 +3,8 @@ Contributors: royalpluginsteam
 Donate link: https://www.royalplugins.com
 Tags: mcp, ai, claude, chatgpt, elementor
 Requires at least: 5.8
-Tested up to: 7.1
-Stable tag: 2.0.1
+Tested up to: 7.2
+Stable tag: 2.0.2
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -366,6 +366,18 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 18. Royal MCP tool list in ChatGPT after connection
 
 == Changelog ==
+
+= 2.0.2 =
+* New: Claude Code can load Royal MCP's skills straight from your site.
+* New: WPBakery AI's MCP server shows on the coexistence report, and its abilities give their own reason when a call is refused.
+* Enhancement: Change history shows the title and the connection recorded when each change was made.
+* Enhancement: Connection Doctor checks the OpenID sign-in address before reporting a blocked step and no longer suggests deleting files your host serves.
+* Enhancement: Browser-based AI apps can send and read the MCP session headers.
+* Enhancement: One undo now removes a post made with wp_publish_and_launch together with its downloaded image and new terms.
+* Enhancement: Text written by visitors or other plugins is marked as untrusted in more replies.
+* Enhancement: Tested with WordPress 7.2.
+* Fix: wp_search and wp_get_option now say which required argument is missing.
+* Security: Stricter safeguards across sign-in, API keys, redirects and plugin abilities.
 
 = 2.0.1 =
 * New: JetEngine tools read post types, meta fields, content types and relations, and change field values with undo.
@@ -958,6 +970,9 @@ Every authenticated MCP request is logged to the Royal MCP activity log with tim
 * Initial release.
 
 == Upgrade Notice ==
+
+= 2.0.2 =
+Skills for Claude Code, WordPress 7.2 support and security improvements; recommended for all sites.
 
 = 2.0.1 =
 JetEngine, FluentSMTP and Mailchimp for WP tools, local WP-CLI connections, safety switches for risky tools and security improvements; recommended for all sites.

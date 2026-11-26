@@ -11,6 +11,16 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 return [
 	'version'  => '1.1.0',
+	'frontmatter' => <<<'ROYAL_MCP_SKILL_TEXT'
+name: sitevault
+description: SiteVault backup playbook for Royal MCP. Use when the user asks to back up the site, asks when the last backup ran, whether scheduled backups work, whether a backup is intact, or is about to make a risky change (bulk delete, plugin or theme update, migration) and needs a fresh backup first.
+compatibility: Royal MCP 2.0 or later, plus SiteVault (the free plugin from WordPress.org) or SiteVault Pro
+metadata:
+  author: Royal Plugins
+  version: "1.1.0"
+  last_updated: "2026-11-14"
+ROYAL_MCP_SKILL_TEXT
+	,
 	'core'     => <<<'ROYAL_MCP_SKILL_TEXT'
 # SiteVault Backup Skill
 
@@ -122,7 +132,8 @@ ROYAL_MCP_SKILL_TEXT
    - `files`: all files, no database.
    - `plugins`, `themes`, `uploads`: that folder only.
    - With `type: "plugins"` or `type: "themes"` you may pass `plugins` or `themes` as a list of folder names (for example `plugins: ["woocommerce"]`) to back up only those. When the installed SiteVault does not support this, the call is refused with `not_supported`. Then back up the whole component.
-3. Call `sv_create_backup` with `type` and, if useful, a `name`. The reply is `id`, `message`, `type`. It means the backup started, not that it finished. Keep the `id`.4. Poll `sv_get_backup_status` with that `id`, about every 15 seconds. Only `status` says whether a backup exists:
+3. Call `sv_create_backup` with `type` and, if useful, a `name`. The reply is `id`, `message`, `type`. It means the backup started, not that it finished. Keep the `id`.
+4. Poll `sv_get_backup_status` with that `id`, about every 15 seconds. Only `status` says whether a backup exists:
    - `in_progress`: the reply may carry `percent`, `step`, `message`. Tell the user now and then, in plain words ("about 40% done, working on the uploads"). Keep polling, unless `step` is `stalled` or the wait limit is reached (step 5).
    - `completed`: the reply has `size`, `size_human`, `completed_at`. Stop polling. This is the only state in which a backup exists.
    - `failed`: the reply has `error`. Stop. Give the user the error in plain words. Do not retry by yourself; the usual causes are disk space, memory limits or file permissions, and the user has to fix them.

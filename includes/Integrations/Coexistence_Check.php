@@ -85,13 +85,22 @@ class Coexistence_Check {
 				: $issuer;
 			$as_url  = self::authorization_server_document_url( $named_issuer );
 			$as      = self::fetch_site_json( $as_url );
-			$steps[] = self::step(
-				'authorization_server',
-				$as_url,
-				$as['status'],
-				self::classify_authorization_server( $as['json'], $issuer ),
-				$as['json']
-			);
+			$as_by   = self::classify_authorization_server( $as['json'], $issuer );
+			$as_step = self::step( 'authorization_server', $as_url, $as['status'], $as_by, $as['json'] );
+			// Clients that find nothing at the RFC 8414 address go on to the OpenID Connect
+			// addresses; when one of those serves Royal MCP's document, they still sign in.
+			// Only a 4xx sends clients on to the next address; a 5xx or an HTML page stops them.
+			if ( 'nobody' === $as_by && (int) $as['status'] >= 400 && (int) $as['status'] < 500 ) {
+				$oidc_url = self::openid_fallback_url( $named_issuer, $issuer );
+				if ( '' !== $oidc_url ) {
+					$as_step = self::step( 'authorization_server', $oidc_url, 200, 'royal_mcp', null ) + [
+						'via'            => 'openid_configuration',
+						'rfc8414_url'    => $as_url,
+						'rfc8414_status' => (int) $as['status'],
+					];
+				}
+			}
+			$steps[] = $as_step;
 		}
 
 		// When this host does not answer at all, the other host name tells us nothing
@@ -139,6 +148,42 @@ class Coexistence_Check {
 		$origin = $parts['scheme'] . '://' . $parts['host'] . ( empty( $parts['port'] ) ? '' : ':' . (int) $parts['port'] );
 		$path   = isset( $parts['path'] ) ? rtrim( (string) $parts['path'], '/' ) : '';
 		return $origin . '/.well-known/oauth-authorization-server' . $path;
+	}
+
+	/**
+	 * OpenID Connect discovery addresses clients read after the RFC 8414 one: the
+	 * issuer path after /.well-known/openid-configuration, then the issuer itself
+	 * followed by /.well-known/openid-configuration.
+	 *
+	 * @param string $issuer Issuer URL.
+	 * @return string[]
+	 */
+	public static function openid_configuration_urls( $issuer ) {
+		$parts = wp_parse_url( (string) $issuer );
+		if ( empty( $parts['scheme'] ) || empty( $parts['host'] ) ) {
+			return [];
+		}
+		$origin = $parts['scheme'] . '://' . $parts['host'] . ( empty( $parts['port'] ) ? '' : ':' . (int) $parts['port'] );
+		$path   = isset( $parts['path'] ) ? rtrim( (string) $parts['path'], '/' ) : '';
+		return array_values( array_unique( [ $origin . '/.well-known/openid-configuration' . $path, $origin . $path . '/.well-known/openid-configuration' ] ) );
+	}
+
+	/**
+	 * The first OpenID Connect address on this site that serves Royal MCP's
+	 * authorization-server document for the expected issuer, or ''.
+	 *
+	 * @param string $issuer   Issuer the client was sent to.
+	 * @param string $expected Royal MCP's issuer.
+	 * @return string
+	 */
+	public static function openid_fallback_url( $issuer, $expected ) {
+		foreach ( self::openid_configuration_urls( $issuer ) as $url ) {
+			$doc = self::fetch_site_json( $url );
+			if ( 200 === (int) $doc['status'] && 'royal_mcp' === self::classify_authorization_server( $doc['json'], $expected ) ) {
+				return $url;
+			}
+		}
+		return '';
 	}
 
 	/**
@@ -314,6 +359,7 @@ class Coexistence_Check {
 		'novamira'         => [ 'name' => 'Novamira', 'folders' => [ 'novamira' ], 'constant' => '', 'namespace' => '', 'endpoint' => '', 'root_oauth' => false, 'takes' => 'the site-root sign-in documents when its OAuth is on; it also bundles its own copy of the MCP Adapter', 'fix' => 'Deactivate Novamira if this site does not need it.' ],
 		'flex-mcp'         => [ 'name' => 'Flex MCP', 'folders' => [ 'stifli-flex-mcp' ], 'constant' => '', 'namespace' => '', 'endpoint' => '', 'root_oauth' => false, 'takes' => 'the site-root sign-in documents when its OAuth is on', 'fix' => 'Use Application Passwords in Flex MCP, or deactivate it if this site does not need it.' ],
 		'ai-puffer'        => [ 'name' => 'AI Puffer', 'folders' => [ 'gpt3-ai-content-generator' ], 'constant' => '', 'namespace' => '', 'endpoint' => '', 'root_oauth' => false, 'takes' => '', 'fix' => 'Turn off the MCP feature in AI Puffer if this site does not need it.' ],
+		'wpbakery-ai'      => [ 'name' => 'WPBakery AI', 'folders' => [ 'wpbakery-ai' ], 'constant' => '', 'namespace' => 'wpbakery-ai/v1', 'endpoint' => '/wp-json/wpbakery-ai/v1/mcp', 'root_oauth' => false, 'takes' => '', 'fix' => 'WPBakery AI\'s MCP signs in through WPBakery\'s own server and does not share Royal MCP\'s sign-in addresses; both can run side by side.' ],
 	];
 
 	/** Addresses MCP clients and AI crawlers read at the site root. */
@@ -458,7 +504,8 @@ class Coexistence_Check {
 			$by_folder = (bool) array_intersect( (array) $k['folders'], $folders );
 			$by_const  = '' !== $k['constant'] && defined( $k['constant'] );
 			$by_space  = '' !== $k['namespace'] && in_array( $k['namespace'], $spaces, true );
-			if ( ! $by_folder && ! $by_const && ! $by_space ) {
+			$by_action = 'wpbakery-ai' === $id && did_action( 'wpbai_loaded' );
+			if ( ! $by_folder && ! $by_const && ! $by_space && ! $by_action ) {
 				continue;
 			}
 			$on     = true;
@@ -473,10 +520,29 @@ class Coexistence_Check {
 				$fallback = (string) get_option( 'easy_mcp_ai_oauth_root_fallback', 'auto' );
 				$armed    = 'on' === $fallback || ( 'auto' === $fallback && (bool) get_option( 'easy_mcp_ai_oauth_root_discovery', false ) );
 				$detail   = sprintf( 'sign-in %s; answers the site-root discovery documents; root fallback %s (%s)', $on ? 'on' : 'off', in_array( $fallback, [ 'auto', 'on', 'off' ], true ) ? $fallback : 'auto', $armed ? 'armed' : 'not armed' );
+			} elseif ( 'wpbakery-ai' === $id ) {
+				$detail = self::wpbakery_detail();
 			}
 			$out[ $id ] = $k + [ 'on' => $on, 'detail' => $detail ];
 		}
 		return $out;
+	}
+
+	/** WPBakery AI's two ways in, and whether this site accepts direct calls to it. */
+	private static function wpbakery_detail() {
+		$detail  = 'site endpoint /wp-json/wpbakery-ai/v1/mcp; hosted at https://mcp.wpbakery.com (sign-in through the WPBakery Support Portal)';
+		$unknown = $detail . '; whether this site accepts direct calls could not be read';
+		if ( ! class_exists( 'Wpbai_Direct_Access' ) || ! method_exists( 'Wpbai_Direct_Access', 'allowed' ) ) {
+			return $unknown;
+		}
+		try {
+			$allowed = (bool) \Wpbai_Direct_Access::allowed();
+		} catch ( \Throwable $e ) {
+			return $unknown;
+		}
+		return $detail . ( $allowed
+			? '; direct calls are allowed on this site (local or staging)'
+			: '; direct calls are not allowed on this site: WPBakery accepts them on local and staging sites only, public sites connect through WPBakery Cloud' );
 	}
 
 	/**

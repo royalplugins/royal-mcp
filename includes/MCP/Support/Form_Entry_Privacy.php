@@ -76,6 +76,10 @@ class Form_Entry_Privacy {
 		'nome', 'cognome', 'indirizzo', 'salute', 'malattia', 'assicurazione', 'reddito', 'stipendio', 'nascita', 'passaporto',
 		'sobrenome', 'endereço', 'endereco', 'telefone', 'saúde', 'saude', 'doença', 'doenca', 'renda', 'salário', 'cpf', 'nascimento', 'passaporte',
 		'naam', 'voornaam', 'achternaam', 'adres', 'telefoon', 'gezondheid', 'medisch', 'ziekte', 'verzekering', 'inkomen', 'salaris', 'bsn', 'geboortedatum', 'paspoort',
+		'medicines', 'diagnoses', 'symptom', 'disabilities', 'prescription', 'taxes', 'belasting',
+		'médicale', 'médicament', 'médicaments', 'maladies', 'impôts', 'impots', 'fiscale',
+		'médica', 'medica', 'medicamento', 'medicamentos', 'enfermedades', 'alergia', 'alergias', 'diagnóstico', 'diagnostico', 'impuestos',
+		'krankheiten', 'allergie', 'allergien', 'medikament', 'medikamente', 'steuern', 'farmaco', 'farmaci', 'tasse',
 	];
 
 	/** Word stems that mark personal data anywhere in a field's name or label once separators are removed. */
@@ -90,7 +94,7 @@ class Form_Entry_Privacy {
 		'naissance', 'assurance', 'mutuelle', 'salaire', 'passeport', 'pasaporte', 'nacimiento', 'enfermedad', 'impuesto',
 		'medica', 'médica', 'médico', 'medicament', 'médicament', 'maladie', 'alerg', 'diagn', 'krankheit', 'impôt', 'impot',
 		'codicefiscale', 'assicurazion', 'indirizzo', 'passaport', 'endereco', 'endereço', 'sobrenome', 'telefone', 'telefoon',
-		'verzekering', 'medisch', 'achternaam', 'voornaam', 'geboortedatum',
+		'verzekering', 'medisch', 'achternaam', 'voornaam', 'geboortedatum', 'medikament',
 	];
 
 	/**

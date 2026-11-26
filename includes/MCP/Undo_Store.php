@@ -319,12 +319,31 @@ class Undo_Store {
         // to the same caller. read() enforces the match on retrieval; the
         // 49 store() callsites across the plugin inherit owner-binding by
         // construction and need no per-callsite change.
+        // The names a change list shows (item titles, the connection's name, the user's login)
+        // are recorded now, so later edits by other users cannot change what an old entry says.
+        $via  = self::$context;
+        $user = wp_get_current_user();
+        if ( $user && $user->exists() ) {
+            $via['user_login'] = Support\Change_View::clean_label( $user->user_login, 60 );
+        }
+        if ( 'oauth-bearer' === ( $via['auth'] ?? '' ) && '' !== (string) ( $via['client_id'] ?? '' ) ) {
+            $client = \Royal_MCP\OAuth\Token_Store::get_client( (string) $via['client_id'] );
+            if ( is_array( $client ) && ! empty( $client['client_name'] ) && is_scalar( $client['client_name'] ) ) {
+                $via['client_name'] = Support\Change_View::clean_label( $client['client_name'] );
+            }
+        }
+        $labels = Support\Change_View::labels_at_write(
+            isset( $snapshot['target'] ) && is_array( $snapshot['target'] ) ? $snapshot['target'] : [],
+            isset( $snapshot['pre_op_state'] ) && is_array( $snapshot['pre_op_state'] ) ? $snapshot['pre_op_state'] : []
+        );
+
         $envelope = array_merge( $snapshot, [
             'token'      => $token,
             'created_at' => $created_at_int,
             'expires_at' => $expires_at_int,
             'user_id'    => (int) get_current_user_id(),
-            'via'        => self::$context,
+            'via'        => $via,
+            'labels'     => $labels,
         ] );
 
         // Compress + base64 so the option value stays plain-text (some hosts
@@ -340,7 +359,7 @@ class Undo_Store {
         return [
             'token'      => $token,
             'expires_at' => gmdate( 'c', $expires_at_int ),
-            'summary'    => isset( $snapshot['summary'] ) ? (string) $snapshot['summary'] : '',
+            'summary'    => isset( $snapshot['summary'] ) ? \Royal_MCP\MCP\Support\Change_View::clean_label( (string) $snapshot['summary'], \Royal_MCP\MCP\Support\Change_View::SUMMARY_MAX ) : '',
             'ttl_hours'  => self::ttl_hours(),
         ];
     }
@@ -670,7 +689,7 @@ class Undo_Store {
             $out[] = [
                 'token'              => isset( $data['token'] ) ? (string) $data['token'] : '',
                 'op'                 => isset( $data['op'] ) ? (string) $data['op'] : '',
-                'summary'            => isset( $data['summary'] ) ? (string) $data['summary'] : '',
+                'summary'            => isset( $data['summary'] ) ? \Royal_MCP\MCP\Support\Change_View::clean_label( (string) $data['summary'], \Royal_MCP\MCP\Support\Change_View::SUMMARY_MAX ) : '',
                 'created_at'         => isset( $data['created_at'] ) ? (int) $data['created_at'] : 0,
                 'expires_at'         => $expires_at,
                 'expires_in_seconds' => max( 0, $expires_at - $now ),

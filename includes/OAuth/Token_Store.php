@@ -270,6 +270,7 @@ class Token_Store {
         );
 
         if ( ! $claimed ) {
+            self::revoke_after_code_replay( $hash );
             return false; // Code doesn't exist, already consumed, or expired.
         }
 
@@ -283,6 +284,26 @@ class Token_Store {
         );
 
         return $row ? $row : false;
+    }
+
+    /**
+     * A used code presented again means it may have leaked: the tokens the same client and user
+     * received while that code could still be exchanged (the pair it produced) are revoked, so a
+     * session the user opened later with another code is left alone.
+     *
+     * @param string $hash sha256 of the presented code.
+     */
+    private static function revoke_after_code_replay( $hash ) {
+        global $wpdb;
+        $codes = self::auth_codes_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from a safe helper
+        $row = $wpdb->get_row( $wpdb->prepare( "SELECT user_id, client_id, created_at FROM `{$codes}` WHERE code_hash = %s AND used = 1 LIMIT 1", $hash ), ARRAY_A );
+        if ( ! is_array( $row ) || (int) $row['user_id'] <= 0 || '' === (string) $row['client_id'] ) {
+            return 0;
+        }
+        $tokens = self::tokens_table();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from a safe helper
+        return (int) $wpdb->query( $wpdb->prepare( "UPDATE `{$tokens}` SET revoked = 1 WHERE client_id = %s AND user_id = %d AND created_at >= %s AND created_at <= DATE_ADD( %s, INTERVAL %d SECOND ) AND revoked IN (0, 2)", (string) $row['client_id'], (int) $row['user_id'], (string) $row['created_at'], (string) $row['created_at'], self::AUTH_CODE_TTL + 60 ) );
     }
 
     /* ------------------------------------------------------------------
@@ -1415,7 +1436,7 @@ class Token_Store {
         // Same address resolution as every other limiter, so a trusted proxy does not merge all callers into one count.
         $ip    = \Royal_MCP\MCP\Server::resolve_client_ip();
         $limit = (int) apply_filters( 'royal_mcp_cimd_fetches_per_ip', 20 );
-        $rkey  = 'royal_mcp_cimd_rate_' . md5( $ip );
+        $rkey  = 'royal_mcp_cimd_rate_' . md5( \Royal_MCP\OAuth\Rate_Limit::address( $ip ) );
         $count = (int) get_transient( $rkey );
         if ( $limit > 0 && $count >= $limit ) {
             self::$cimd_failure = 'rate_limited';
@@ -1902,16 +1923,21 @@ class Token_Store {
      */
     public static function reject_client( $client_id ) {
         global $wpdb;
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $wpdb->delete( self::auth_codes_table(), [ 'client_id' => $client_id ], [ '%s' ] );
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $wpdb->delete( self::tokens_table(), [ 'client_id' => $client_id ], [ '%s' ] );
+        // Only a client still waiting for approval can be rejected; an approved one is revoked elsewhere.
+        // The row goes first and only while still pending, so an approval landing meanwhile keeps everything.
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $deleted = (bool) $wpdb->delete(
             self::clients_table(),
             [ 'client_id' => $client_id, 'status' => 'pending_approval' ],
             [ '%s', '%s' ]
         );
+        if ( ! $deleted ) {
+            return false;
+        }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->delete( self::auth_codes_table(), [ 'client_id' => $client_id ], [ '%s' ] );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->delete( self::tokens_table(), [ 'client_id' => $client_id ], [ '%s' ] );
         // A metadata-document client would register itself again on its next sign-in; remember the rejection.
         if ( $deleted && self::is_cimd_client( $client_id ) ) {
             $rejected = get_option( self::REJECTED_CIMD_OPTION, [] );

@@ -247,7 +247,13 @@ class Registrar {
 				if ( $e instanceof \Exception && 429 === $e->getCode() && 0 === strpos( $e->getMessage(), 'Rate limit exceeded.' ) ) {
 					return new \WP_Error( 'royal_mcp_rate_limited', wp_strip_all_tags( \Royal_MCP\MCP\Support\Secret_Scrubber::scrub_text( $e->getMessage() ) ), array( 'status' => 429 ) );
 				}
-				return new \WP_Error( 'royal_mcp_ability_exception', wp_strip_all_tags( \Royal_MCP\MCP\Support\Secret_Scrubber::scrub_text( $e->getMessage() ) ), array( 'status' => $e instanceof \Exception ? 400 : 500 ) );
+				if ( ! $e instanceof \Exception || $e instanceof \ErrorException ) {
+					// A PHP error's message names files and lines on the server: keep it
+					// in the error log and give the caller a plain sentence.
+					error_log( sprintf( 'Royal MCP ability %s failed: %s: %s in %s:%d', $tool_name, get_class( $e ), $e->getMessage(), $e->getFile(), $e->getLine() ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- server-side record of a failed call
+					return new \WP_Error( 'royal_mcp_ability_exception', 'The tool could not be run.', array( 'status' => 500 ) );
+				}
+				return new \WP_Error( 'royal_mcp_ability_exception', wp_strip_all_tags( \Royal_MCP\MCP\Support\Secret_Scrubber::scrub_text( $e->getMessage() ) ), array( 'status' => 400 ) );
 			}
 		};
 	}

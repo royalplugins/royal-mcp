@@ -994,6 +994,15 @@ class WooCommerce {
 				if ( isset( $args['status'] ) && in_array( $args['status'], [ 'publish', 'future', 'private' ], true ) && ! current_user_can( 'publish_products' ) ) {
 					throw new \Exception( 'publish_products capability required to publish a product.' );
 				}
+				// The status must be one WordPress knows, and moving the product
+				// to the trash needs delete rights on it.
+				if ( isset( $args['status'] ) ) {
+					$up_post           = get_post( $up_product_id );
+					$up_status_refusal = $up_post ? \Royal_MCP\MCP\Support\Post_Access::status_change_refusal( $up_post, $args['status'] ) : '';
+					if ( '' !== $up_status_refusal ) {
+						throw new \Exception( esc_html( $up_status_refusal ) );
+					}
+				}
 
 				// Requested-field extraction. Keys mirror the MCP tool arg
 				// names. WC stores currency values as strings for precision,
